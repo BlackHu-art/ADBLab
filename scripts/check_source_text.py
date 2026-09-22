@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_SUFFIXES = frozenset({".py", ".md", ".ts", ".yaml", ".yml", ".toml", ".spec"})
 EXCLUDED_ROOTS = frozenset({
-    ".git", ".venv", "venv", "env", "build", "dist", "reference", "scrcpy-win64",
+    ".git", ".venv", "venv", "env", "build", "dist", "reference", "runtime-tools",
     ".agents", ".codex", "node_modules",
 })
 

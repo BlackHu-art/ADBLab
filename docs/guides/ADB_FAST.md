@@ -172,10 +172,10 @@ DLL 搜索状态不变。工具仍通过真实操作系统标准句柄接收输�
 
 `resolve_candidate` 按顺序显示每个候选的来源、路径和存在性，`resolve_result` 显示最终
 选择及 `bundled`、`runtime_cache`、`env`、`sdk`、`PATH` 或 `missing` 来源；候选顺序为
-Windows 内置 → `ADB_PATH` → Android SDK platform-tools → PATH，非 Windows 不使用内置
-Windows 二进制。解析结果有进程内缓存，「重新检测」会先清缓存再重扫，安装或移除
+当前平台内置 → `ADB_PATH` → Android SDK platform-tools → PATH；平台与架构不匹配时不使用
+内置二进制。解析结果有进程内缓存，「重新检测」会先清缓存再重扫，安装或移除
 platform-tools 后无需重启应用。正常 Windows onedir 的资源根是
-`sys._MEIPASS` 指向的 `_internal`，因此候选路径为 `_internal\scrcpy-win64\adb.exe`，
+`sys._MEIPASS` 指向的 `_internal`，因此候选路径为 `_internal/runtime-tools/windows-x86_64/adb.exe`，
 不依赖启动命令所在目录。已缓存的路径也会明确标记，避免误认为每次都重新查询 PATH。
 
 应用执行边界缓存绝对路径或明确缺失结果，区分未解析与已解析但缺失。缓存命中只复核选定文件

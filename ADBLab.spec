@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.packaging_manifest import SUBMODULE_PACKAGES, resource_datas
 
+subprocess.run([sys.executable, str(ROOT / 'scripts/prepare_runtime_tools.py')], check=True)
 subprocess.run([sys.executable, str(ROOT / 'scripts/build_scrcpy_adb_bridge.py')], check=True)
 
 a = Analysis(

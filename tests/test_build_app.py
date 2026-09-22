@@ -13,6 +13,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def x64_host(monkeypatch):
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
+
+
 def _spec_analysis(monkeypatch, platform):
     from PyInstaller.utils import hooks
 
@@ -51,7 +56,8 @@ def test_spec_and_cli_consume_the_same_resources_and_hidden_imports(monkeypatch,
     assert cli_data == [f"{ROOT / source}{separator}{target}" for source, target in expected_data]
     assert cli_packages == ["mobileperf", "qfluentwidgets"]
     assert options["hiddenimports"] == ["mobileperf.included", "qfluentwidgets.included"]
-    assert (("scrcpy-win64", "scrcpy-win64") in expected_data) is (platform == "win32")
+    assert (("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64")
+            in expected_data) is (platform == "win32")
     assert ("build/runtime-helpers", "runtime-helpers") in expected_data
 
 
@@ -101,7 +107,7 @@ print(json.dumps(captured["hiddenimports"]))
     assert json.loads(result.stdout) == ["mobileperf.included", "qfluentwidgets.included"]
 
 
-@pytest.mark.parametrize("failed_stage,code", [(None, 0), ("helper", 7), ("app", 9)])
+@pytest.mark.parametrize("failed_stage,code", [(None, 0), ("tools", 5), ("helper", 7), ("app", 9)])
 def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
     monkeypatch, failed_stage, code,
 ):
@@ -111,20 +117,22 @@ def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        stage = "helper" if len(calls) == 1 else "app"
+        stage = ("tools", "helper", "app")[len(calls) - 1]
         return SimpleNamespace(returncode=code if stage == failed_stage else 0)
 
     monkeypatch.setattr(build_app.subprocess, "run", run)
     result = build_app.main(["--name", "example", "--onefile", "--windowed", "--icon", "icon.ico"])
     assert result == code
-    assert len(calls) == (1 if failed_stage == "helper" else 2)
-    assert Path(calls[0][0][-1]).name == "build_scrcpy_adb_bridge.py"
-    if failed_stage != "helper":
-        command = calls[1][0]
+    assert len(calls) == {"tools": 1, "helper": 2, "app": 3, None: 3}[failed_stage]
+    assert Path(calls[0][0][-1]).name == "prepare_runtime_tools.py"
+    if len(calls) > 1:
+        assert Path(calls[1][0][-1]).name == "build_scrcpy_adb_bridge.py"
+    if len(calls) > 2:
+        command = calls[2][0]
         assert command[:3] == [sys.executable, "-m", "PyInstaller"]
         assert "--onefile" in command and "--windowed" in command
         assert command[-1] == str(ROOT / "main.py")
-        assert calls[1][1]["cwd"] == ROOT
+        assert calls[2][1]["cwd"] == ROOT
 
 
 def test_build_dry_run_does_not_import_qt_or_invoke_packager(tmp_path):
@@ -147,9 +155,9 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     )
     assert result.returncode == 0, result.stderr
     commands = json.loads(result.stdout)
-    assert len(commands) == 2
-    assert commands[1][:3] == [sys.executable, "-m", "PyInstaller"]
-    assert commands[1][commands[1].index("--name") + 1] == "dry run"
+    assert len(commands) == 3
+    assert commands[2][:3] == [sys.executable, "-m", "PyInstaller"]
+    assert commands[2][commands[2].index("--name") + 1] == "dry run"
     assert not (tmp_path / "build").exists()
 
 

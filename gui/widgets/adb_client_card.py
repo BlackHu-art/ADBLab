@@ -45,6 +45,7 @@ from utils.adb_resolver import (
     CLIENT_SOURCE_TOKENS,
     list_adb_candidates,
 )
+from utils.host_environment import host_system_name
 
 DETECTION_TIMEOUT_MS = 15000
 SLOW_DETECTION_MS = 3000
@@ -153,9 +154,14 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
     rescan_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        host_system = host_system_name()
         # 换行行使用原生布局测高变体，与展开动画共用 viewLayout 的高度；
         # 分别累加行高会在窄屏大字号下得到不同的收起终点，留下可见空白。
-        super().__init__(FluentIcon.COMMAND_PROMPT, tr("ADB 客户端"), tr("自动选择"), parent)
+        super().__init__(
+            FluentIcon.COMMAND_PROMPT, tr("ADB 客户端"),
+            tr("{system} 下自动选择").format(system=host_system), parent,
+        )
+        self._host_system = host_system
         self._selection = CLIENT_PREFERENCE_AUTO
         self._custom_path = ""
         self._generation = 0
@@ -260,18 +266,20 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
 
         self._candidate_sources = {item.source for item in candidates}
         keys = list(dict.fromkeys(item.source for item in candidates))
+        selected_key = self._key_for(self._selection)
         # 自动策略由固定推荐行承载，不能作为“已消失的客户端来源”再生成同键单选项。
         if (
             self._selection != CLIENT_PREFERENCE_AUTO
             and self._selection in CLIENT_SOURCE_TOKENS
-            and self._selection not in keys
+            and selected_key not in keys
         ):
             keys.append(self._selection)
         focus = QApplication.focusWidget()
         restore_focus = focus is not None and self.isAncestorOf(focus)
         if self._auto_row is None:
             self._auto_row, self._auto_radio, _detail = self._build_radio_row(
-                CLIENT_PREFERENCE_AUTO, tr("自动选择（推荐）"),
+                CLIENT_PREFERENCE_AUTO,
+                tr("{system} 下自动选择（推荐）").format(system=self._host_system),
                 tr("按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项"),
             )
         for key in list(self._rows):
@@ -523,6 +531,10 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
     def _key_for(self, value: str) -> str:
         if value == CLIENT_PREFERENCE_AUTO:
             return CLIENT_PREFERENCE_AUTO
+        if value in {"bundled", "runtime_cache"}:
+            for source in ("bundled", "runtime_cache"):
+                if source in self._candidate_sources:
+                    return source
         if value in CLIENT_SOURCE_TOKENS:
             return value
         return CUSTOM_KEY
@@ -532,15 +544,18 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             self.card.contentLabel.setText(tr("正在识别本地 ADB 环境…可继续选择"))
             return
         if self._selection == CLIENT_PREFERENCE_AUTO:
-            self.card.contentLabel.setText(tr("自动选择"))
+            self.card.contentLabel.setText(
+                tr("{system} 下自动选择").format(system=self._host_system)
+            )
             return
         if self._key_for(self._selection) == CUSTOM_KEY:
             self.card.contentLabel.setText(
                 tr("自定义 · {path}").format(path=self._custom_path or tr("未选择"))
             )
             return
-        probe = self._probes.get(self._selection)
-        label = tr(source_label(self._selection))
+        key = self._key_for(self._selection)
+        probe = self._probes.get(key)
+        label = tr(source_label(key))
         if probe is not None and probe.version:
             label = tr("{label} · {version}").format(label=label, version=probe.version)
         self.card.contentLabel.setText(label)

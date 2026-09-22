@@ -99,7 +99,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1
+          sudo apt-get install -y --no-install-recommends libegl1 libudev1
 
       - name: Install static analysis dependencies
         if: runner.os == 'Windows'
@@ -115,6 +115,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: python -m pyright
+
+      - name: Prepare platform tools
+        shell: bash
+        run: python scripts/prepare_runtime_tools.py
 
       - name: Build scrcpy ADB bridge
         shell: bash
@@ -165,6 +169,13 @@ jobs:
             ls -la dist
             exit 1
           fi
+
+      - name: Smoke test Linux package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          "dist/$name" --self-check packaging
 
       - name: Archive Linux artifact
         if: runner.os == 'Linux'

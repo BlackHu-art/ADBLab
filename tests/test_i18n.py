@@ -206,6 +206,31 @@ def test_runtime_scope_and_session_stop_have_bundled_translations(
     assert "1/2" in translated.format(count=1, checked=2)
 
 
+@pytest.mark.parametrize("language,summary,recommendation", [
+    ("zh_CN", "Ubuntu 下自动选择", "Ubuntu 下自动选择（推荐）"),
+    ("zh_HK", "Ubuntu 下自動選擇", "Ubuntu 下自動選擇（推薦）"),
+    ("en_US", "Automatic selection on Ubuntu", "Automatic selection on Ubuntu (recommended)"),
+])
+def test_adb_host_summary_and_recommendation_use_bundled_translations(
+    monkeypatch, installed_translators, language, summary, recommendation,
+):
+    from PySide6.QtWidgets import QLabel
+
+    from gui.widgets import adb_client_card as cards
+
+    installed_translators(language)
+    monkeypatch.setattr(cards, "host_system_name", lambda: "Ubuntu")
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    try:
+        assert card.card.contentLabel.text() == summary
+        labels = card.client_button("auto").parentWidget().findChildren(QLabel)
+        assert recommendation in [label.text() for label in labels]
+        assert card.selection() == "auto"
+    finally:
+        card.close()
+
+
 @pytest.mark.parametrize("language", ["zh_CN", "en_US", "zh_HK"])
 def test_visible_ui_literals_have_catalog_entries(language):
     root = Path(__file__).resolve().parents[1]

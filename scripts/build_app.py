@@ -36,7 +36,7 @@ def build_command(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """先构建并自检独立桥接工具；任一子进程失败均保留其退出码。"""
+    """先准备平台工具并构建桥接工具；任一子进程失败均保留其退出码。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="ADBLab")
     modes = parser.add_mutually_exclusive_group()
@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     commands = [
+        [sys.executable, str(ROOT / "scripts/prepare_runtime_tools.py")],
         [sys.executable, str(ROOT / "scripts/build_scrcpy_adb_bridge.py")],
         build_command(
             name=args.name, onefile=args.onefile, windowed=args.windowed, icon=args.icon,

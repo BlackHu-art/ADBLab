@@ -57,10 +57,15 @@ License；该版本许可文本见
 
 ## scrcpy 与 Android 平台工具
 
-`scrcpy-win64/` 包含 Genymobile [scrcpy](https://github.com/Genymobile/scrcpy) 的 Windows
-运行文件以及随包提供的 ADB 组件。scrcpy 的 Apache License 2.0 文本随附在
-[`scrcpy-win64/LICENSE.txt`](scrcpy-win64/LICENSE.txt)。正式分发前仍需按实际制品清单核对
-其中 Android 平台二进制及动态库的各自许可和 notice 文件。
+Windows x64 与 Linux x86_64 的准备脚本使用 Genymobile 官方
+[scrcpy 4.1 发行包](https://github.com/Genymobile/scrcpy/releases/tag/v4.1)，下载地址和 SHA256
+固定于 `utils/tool_manifest.py`。生成目录分别为 `runtime-tools/windows-x86_64/` 与
+`runtime-tools/linux-x86_64/`，均不纳入 Git；打包时收集当前平台的完整工具，包括 ADB、
+配套 server 和上游许可文件。Linux 包内 ADB 为 37.0.0。
+
+scrcpy 的 [Apache License 2.0 文本](https://github.com/Genymobile/scrcpy/blob/v4.1/LICENSE)
+随 Windows 包保存在 `LICENSE.txt`，随 Linux 包保存在 `LICENSE`。正式分发前仍需按实际
+制品清单核对其中 Android 平台二进制及动态库的各自许可和 notice 文件。
 
 ## ChkBugReport
 

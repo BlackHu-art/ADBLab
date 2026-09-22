@@ -43,7 +43,7 @@ def test_first_party_text_scope_includes_build_inputs_and_generated_python(name)
 
 
 @pytest.mark.parametrize("name", [
-    "mobileperf/extlib/vendor.py", "scrcpy-win64/README.md", "reference/source.py",
+    "mobileperf/extlib/vendor.py", "runtime-tools/windows-x86_64/README.md", "reference/source.py",
     ".venv/Lib/site-packages/module.py", "build/ADBLab.spec", "dist/main.py",
     "resources/app-icon-helper.jar", "resources/images/image.png", "resources/icon.svg",
 ])
