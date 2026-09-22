@@ -40,16 +40,10 @@ whenToUse: 改动 ADBLab 界面、控件、主题字体、用户可见文案或�
 
 ## 翻译三步（改任何 tr() 文案都要做）
 
-```powershell
-# 1) 更新词条（三个语言都要有非空译文）
-.\.venv\Scripts\pyside6-lupdate.exe <changed-python-files> -ts resources/i18n/adblab.zh_CN.ts resources/i18n/adblab.en_US.ts resources/i18n/adblab.zh_HK.ts
-# 2) 生成 .qm
-.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_CN.ts -qm resources/i18n/adblab.zh_CN.qm
-.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.en_US.ts -qm resources/i18n/adblab.en_US.qm
-.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_HK.ts -qm resources/i18n/adblab.zh_HK.qm
-# 3) 重新生成打包用资源模块
-.\.venv\Scripts\pyside6-rcc.exe --compress 9 --threshold 0 resources/i18n/translations.qrc -o gui/generated/translations_rc.py
-```
+先在三语言 `.ts` 的 `ADBLab` context 中更新非空译文，再生成 `.qm` 和
+`gui/generated/translations_rc.py`。执行命令以
+[构建指南](../../../docs/guides/BUILD_AND_RUN.md)为单一来源；资源必须显式使用 zlib，
+避免当前 Windows Qt 无法解压生成器默认使用的 Zstd 资源。
 
 - `tests/test_i18n.py` 要求 `.ts` 每条非空且与 `.qm` 一致，并检查 `gui/` 内每个 `tr()` 字面量都有词条；
   改完必须跑它（以及 `test_application_languages.py`、`test_dialog_languages.py`）。
@@ -61,5 +55,5 @@ whenToUse: 改动 ADBLab 界面、控件、主题字体、用户可见文案或�
 ## 视觉验证
 
 布局、DPI、焦点、空/忙碌/错误态、重复点击都要检查；无法自动断言的视觉项给出人工检查步骤。
-相关 Qt 测试见 `tests/test_model_*_layout*.py`、`test_settings_typography.py`、
+相关 Qt 测试见 `tests/test_main_window_layout.py`、`test_settings_typography.py`、
 `test_responsive_panels.py`、`test_page_layout.py` 等。

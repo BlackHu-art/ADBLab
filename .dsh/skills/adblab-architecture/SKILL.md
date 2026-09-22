@@ -47,7 +47,8 @@ GUI 信号 → controllers/<mixin> 入口（生成 operation_id/unit_id）
 ```
 
 - `_build_handler_map` 按**反向 MRO** 合并各 mixin 的 `_handlers`：同名键由 MRO 靠前的类胜出，冲突只记 WARNING。
-- `OperationMetadata` 是唯一跨异步边界的身份信封；`owner_token` 用 `is` 恒等比较，代次不符一律静默拒绝。
+- `OperationMetadata` 携带业务操作身份，`ActionEnvelope` 可同时携带通用结果请求身份；
+  `owner_token` 用 `is` 恒等比较，代次不符时拒绝旧结果。
 - `ActionResults`：提交时冻结目标；同 key 有在途请求时不重复执行；`OperationManager`、`TaskSupervisor`
   分别拥有业务状态与资源状态，两者都不该互相推断。
 - 结果呈现的唯一消费者是 `gui/action_feedback.py::ActionFeedbackPresenter`；
@@ -61,7 +62,7 @@ GUI 信号 → controllers/<mixin> 入口（生成 operation_id/unit_id）
   不能当成已释放。
 - 设备选择的单一真源是 `SidePanel.device_context_snapshot()`；`DeviceHubPage`、`DeviceContextBar`、
   各功能页会话都只做投影，回写统一走 `set_selected_devices`。
-- 关闭由 `gui/close_controller.py::CloseController` 分阶段异步执行（广播停止 → 注册任务 → 停 UI →
+- 关闭由 `gui/close_controller.py::CloseController` 分阶段异步执行（封闭监督器准入 → 注册任务 → 停 UI 并请求释放 →
   `stop_all_async` → 后台 finalizer 落盘 → 重入 close），共享 6s deadline；
   "超时返回"不等于"资源已退出"。
 - 日志：`LogService` 跨线程缓冲，`DiagnosticJournal` 有界摘要；控制台出口统一 `redact_diagnostic`

@@ -16,7 +16,10 @@
 | 实施账本 | [Phase 0](ledgers/PHASE0_LEDGER.md)、[Phase 1](ledgers/PHASE1_LEDGER.md) | 早期安全与 Operation 契约实施记录 |
 | 实施账本 | [Screenshot Gate](ledgers/PHASE2_GATE_A_LEDGER.md)、[LiveLogcat Gate](ledgers/PHASE2_GATE_B_LEDGER.md) | 当时的组件与生命周期验证；页面形态后来已变化 |
 | 卫生检查 | [2026-08-18](hygiene/2026-08-18.md) | 当时的文档结构快照 |
+| 卫生检查 | [2026-09-22 项目与文档核对](hygiene/2026-09-22-project-doc-audit.md) | 文件保留与清理依据、文档校准范围、历史材料归档及当时验证边界 |
 | 实施验收 | [2026-09-05 质量与 UI 改进](ledgers/QUALITY_UI_2026_09_05.md) | 本地工作树的业务、生命周期、导航布局、完整测试与 Windows 打包验收 |
 | 实施验收 | [2026-09-05 第二轮界面整合](ledgers/QUALITY_UI_CONSOLIDATION_2026_09_05.md) | 全局多选设备栏、功能归并、列表与采集布局、QObject 归属及最终软件验收 |
 | 执行测量 | [2026-09-07 ADB 快速路径](ledgers/ADB_FAST_2026_09_07.md) | 从使用指南移入的当时测量原文；耗时与验收范围只代表记录时的环境 |
-| 实施验收 | [2026-09-08 ADB 执行链](../superpowers/plans/2026-09-08-adb-execution-gaps.md) | 原路径保留的已完成记录，涵盖查询取消、能力验证、截图 I/O 与 MobilePerf 采样；不作为待执行计划或当前测试快照 |
+| 实施验收 | [2026-09-08 ADB 执行链](ledgers/2026-09-08-adb-execution-gaps.md) | 已完成的查询取消、能力验证、截图 I/O 与 MobilePerf 采样记录；不作为待执行计划或当前测试快照 |
+| 平台实施 | [2026-09-22 多系统兼容性](ledgers/2026-09-22-cross-platform-compatibility.md) | 保留已实施改动及当时 Linux 验证；Windows/macOS、实机设备等未验收项继续由当前风险账本跟踪 |
+| 工具迁移 | [2026-09-22 Windows 工具包](ledgers/2026-09-22-windows-tool-bundle-migration.md) | 保留工具目录迁移、清理范围与验证证据；原生 Windows 产物及设备验证仍以风险账本为准 |

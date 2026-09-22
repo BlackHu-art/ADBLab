@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-21
+last_verified: 2026-09-22
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -33,9 +33,10 @@ flowchart LR
 ## 启动与组合根
 
 - `main.py::_dispatch_cli()` 分派打包自检、MobilePerf worker 和内部原生工具启动器
-  `--native-launch`；普通启动进入 `_run_gui()`。
+  `--adblab-native-launch`；普通启动进入 `_run_gui()`。
   GUI 在创建 QApplication 前加载设置、应用缩放并缓冲诊断；创建应用后安装翻译器，再导入页面、
   初始化 LogService、转交诊断和加载主题。翻译器保持到事件循环结束。
+  自检模式与翻译资源构建见 [构建与运行](../guides/BUILD_AND_RUN.md)。
 - `MainFrame` 组合 SidePanel、ADBController、QtTaskSupervisor、RunLibraryController 和页面树。
   六个物理页面为 Home、Devices/Apps/System 三个业务宿主、Tasks、Settings；可见左栏功能通过
   `WorkspaceRoute` 映射到宿主，具体目录只在 [路由表](BUSINESS_FLOW.md#workspace-路由目录)维护。

@@ -19,16 +19,14 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | 少数公共 model 入口依赖 Controller 的业务参数校验 | 主 UI 的 forward/reverse TCP 端口与 geo 经纬度已有校验；直接调用 `ADBNetworkMixin.forward_port_async/reverse_port_async` 或 `ADBSystemMixin.emu_geo_fix_async` 时未重复完整约束。是否收紧直接调用契约需确认；已 quote 的 URI、组件、设置值和文本不再笼统列为注入缺口 | Partial |
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | [AppSettings](../../core/settings_manager.py) 已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | [AppManagerWorker](../../models/app_manager_worker.py) 校验关键 CommandResult 和拉取 APK 数量，先暂存再原子发布 ZIP；恢复使用安全解压，取消后不启动后续安装或发布完整成功；页面业务批次串行，仍需完整性元数据和授权恢复测试 | Partial |
-| Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 长任务仍有独立 Popen 边界 | 明确只读 model 查询、设备概览、App Manager、Logcat 辅助探测和 Remote 预检支持执行中取消；关闭等待 Executor、模型池和活动短命令，超时保留残留。MobilePerf 同步采集查询与间隔等待可取消。特殊调用保持原契约，真实拔线和平台差异仍需扩展验证 | Partial |
+| Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 内核的 Monkey/logcat ADB 客户端由子进程内调用方拥有 | 顶层 MobilePerf worker 已由 ProcessRunner 与 TaskSupervisor 跟踪；内核 `run_shell_cmd(sync=False)` 仍返回 NativeProcess/Popen，由 Monkey/logcat 自行终止、等待和关流。只读查询与采样等待支持取消，关闭超时保留残留；仍需实机验证 worker 强停、设备拔线和平台差异下的子客户端收尾 | Partial |
 | Medium | 跨平台真实功能验证与依赖闭包仍不完整 | Build 已配置 macOS x64/arm64 架构校验、三平台 packaging 自检和 Linux xcb GUI 探针；CI 不运行 pytest，测试按测试指南在本地执行。仍需对应平台实际运行、Windows windowed MobilePerf 管道、macOS Finder 启动、授权设备投屏与断线验收，不能把构建或路径模拟通过视为功能验收 | Partial |
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
 | Low | 完整 Qt 测试长序列曾出现下拉控件悬停超时，具体前置状态尚未定位 | [下拉材质测试](../../tests/test_dropdown_material.py) 在独立、紧邻前置及原失败节点组合中通过；活动 Popup 遮挡可复现相同症状，但尚未证明全量中的来源。失败时记录鼠标实际命中、活动窗口、Popup 和模态窗口，保留原交互与像素断言 | 待确认 |
 | Low | scrcpy 端口移交与 ADB 映射删除缺少跨应用原子操作 | 已为应用内会话保留独立端口并在删除前核对 scid；探测端口到 scrcpy 绑定、核对映射到删除之间仍可能被外部 ADB 客户端改写，不应视为跨应用独占保证 | Partial |
-
 | Medium | 稳态能力健康检查只保留一次 1 秒尝试，本机服务引导也只在运行实例首次初始化做一次 | 已评估「稳态重试」与「冷却期重试引导」，但会改变 `test_adb_runtime` 固定的行为与 [ADB_FAST](../guides/ADB_FAST.md) 语义，需先做产品决策；当前失败后按 `CHECK_INTERVAL` 在下一轮用完整能力预算恢复 | 待确认 |
 | Low | 设备面板与设置页各有一个「重启 ADB」入口 | 两个入口复用同一 `restart_adb_requested` 信号和同一结果处理器，重启后都会作废能力并重测；是否删除隐藏面板按钮需产品决策 | Open |
-| Low | `models/adb_model.py::_fetch_device_info` 没有生产消费者 | 全仓搜索无引用；删除属清理已核实无消费者的内部代码，需确认后再动 | Open |
 | Low | 首次执行本机 `adb.exe` 可能显著偏慢（Windows 加载与安全扫描），客户端识别依赖预热与护栏 | 设置页构建后空闲预热一次识别、单项 3 秒预算、串行探测、15 秒护栏且失败不入缓存；缺少其它机器与真实设备矩阵验证 | 待确认 |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见

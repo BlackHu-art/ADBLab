@@ -22,10 +22,11 @@ whenToUse: 新增/修改 ADB 命令、文件传输、录屏/投屏等长任务�
 
 ## 客户端解析与执行模式
 
-- 解析链：`utils/adb_resolver.py`（Windows 内置 → `ADB_PATH` → Android SDK → PATH，进程内缓存）。
-  客户端选择来自设置 `adb_client`，切换后要清缓存并重新检测。
+- 解析链由 `utils/adb_resolver.py` 按平台和架构选择内置工具，再发现环境工具；macOS 还支持
+  默认 SDK 和 Homebrew 路径。完整顺序以[构建指南](../../../docs/guides/BUILD_AND_RUN.md#配置)为准。
+  解析结果在进程内缓存；客户端选择来自设置 `adb_client`，切换后要清缓存并重新检测。
 - 源码开发控制台与 `utils/adb_debug.py` 只记录命令类别，不记录 serial、命令参数值与本机路径。
-- 自动适配：`core/adb_runtime.py` 的后台探测决定 `fast`/`native`；被选中设备的短命令可走直连
+- 自动适配：`core/adb_runtime.py` 的后台探测决定 `fast`/`native`；已验证设备的受支持短命令可走直连
   5037（`core/adb_transport.py`）。能力失效、协议不兼容、自定义 server 等情况必须回落原生，
   且**不得重放**已发出的命令。相关文档：`docs/guides/ADB_FAST.md`。
 

@@ -15,7 +15,7 @@ whenToUse: 需要为 ADBLab 选择并执行验证命令，或判断"改完算不
 
 ## 1. 选择测试范围（先窄后宽，不默认全量）
 
-1. **直接测试**：`..venv\Scripts\python.exe -m pytest -q tests/test_<area>.py`（可用 `::node` 收窄）。
+1. **直接测试**：`.\.venv\Scripts\python.exe -m pytest -q tests/test_<area>.py`（可用 `::node` 收窄）。
 2. **关联测试**：按调用链扩大。常见配对：
    - `core/exec.py`、`core/native_process.py` → `test_command_outcomes.py`、`test_model_processes.py`、`test_native_process.py`、`test_native_execution_boundary.py`
    - `models/adb_*.py` → `test_model_*.py`、`test_adb_injection_argv.py`
@@ -61,8 +61,8 @@ PyInstaller 构建（`.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noco
 
 ## 5. 本机已知坑（Windows）
 
-- 用 pwsh 工具 `Get-Content`/`Select-String` 打印 UTF-8 中文源码会乱码（控制台代码页 GBK）。
-  判定文件内容或编码必须用 read 工具；乱码不是文件损坏，不要据此"修复"文件。
+- PowerShell 或子进程输出的编码与终端不一致时可能出现乱码，不能据此判断文件损坏。
+  先用 `scripts/check_source_text.py` 严格验证源文件，再核对读取与输出编码；不要猜测编码后覆盖文件。
 - 中文提交信息、路径带空格（本仓库位于 `Program Files (x86)`）时注意引号。
 - `mobileperf/extlib/`、`reference/`、`runtime-tools/`、`resources/icons/` 不参与 lint/覆盖率，
   也不要在未授权时改动。

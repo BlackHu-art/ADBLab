@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-19
+last_verified: 2026-09-22
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -12,8 +12,8 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 
 | 区域 | 当前职责与边界 | 主要入口 | 代表性测试 |
 | --- | --- | --- | --- |
-| 启动与元数据 | CLI 分派、GUI 比例预加载、QApplication 初始化、诊断转交、打包自检和版本 | `main.py`、`utils/app_metadata.py` | `test_gui_bootstrap.py`、`test_model_meta.py`、`test_runtime_tools.py` |
-| 界面语言 | 创建页面前安装 Qt、Fluent 与应用翻译；设置页保存语言偏好，显示文案和稳定业务值分离 | `gui/i18n.py`、`gui/generated/translations_rc.py`、`resources/i18n/`、`gui/pages/fluent_pages.py` | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py` |
+| 启动与元数据 | CLI 分派、GUI 比例预加载、QApplication 初始化、诊断转交、版本，以及不创建主窗口的打包自检；自检对内嵌应用词库同时验证路径存在与 Qt 可解码性 | `main.py`、`utils/app_metadata.py` | `test_gui_bootstrap.py`、`test_model_meta.py`、`test_runtime_tools.py` |
+| 界面语言 | 创建页面前安装 Qt、Fluent 与应用翻译；设置页保存语言偏好，显示文案和稳定业务值分离；静态资源模块注册 `.qm`，加载失败保留源文案并记录诊断 | `gui/i18n.py`、`gui/generated/translations_rc.py`、`resources/i18n/`、`gui/pages/fluent_pages.py` | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_gui_bootstrap.py` |
 | 主窗口与顶层页面 | FluentWindow 组合根；负责页面注册、主题与屏幕适配、设备扫描、信号接线和异步关闭 | `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`、`gui/close_controller.py` | `test_main_window_layout.py`、`test_phase2_mainframe_shutdown_gate.py` |
 | 内嵌功能路由与会话 | WorkspaceRoute 映射、会话设备、内容宿主，以及页面的懒创建、激活、停用与释放 | `gui/pages/workspace_features.py`、`gui/features/base.py` | `test_workspace_feature_host.py`、`test_workspace_route_payload.py`、`test_workspace_device_recovery.py` |
 | 设备操作准入 | 固定会话的新命令要求设备已选且在线；停止使用原任务目标 | `gui/pages/workspace_features.py`、各功能页的 `set_device_selected` 与提交边界 | `test_session_device_admission.py`、`test_file_app_device_admission.py` |

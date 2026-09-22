@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-12
+last_verified: 2026-09-22
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -15,6 +15,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | --- | --- | --- |
 | device id / serial | ADB 设备选择标识，可能是 USB serial 或网络地址 | model/controller 的 `device_ip`/`device_id` 参数 |
 | MainFrame | 主窗口和 GUI 组合根 | `gui/main_frame.py::MainFrame` |
+| 应用翻译资源 | 以 Qt `.qm` 词库保存并内嵌在 Python 资源模块中的界面译文 | `gui/i18n.py`；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | SidePanel | 持有业务概览面板和共享设备状态的兼容门面 | `gui/panels/side_panel.py::SidePanel` |
 | DeviceManager | 隐藏的原设备面板控制器；其列表复选状态仍是批量目标的兼容状态源，不是单设备会话 registry | `gui/panels/device_manager.py::DeviceManager` |
 | DeviceContextBar | 页面堆叠外的设备选择及会话控件；内部管理连接弹层，连接入口锚定设备概览 | `gui/widgets/device_context_bar.py::DeviceContextBar` |

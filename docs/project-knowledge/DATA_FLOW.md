@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-21
+last_verified: 2026-09-22
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -15,6 +15,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | AppSettings | 默认值、旧 resources JSON、用户设置及运行时 UI 更新 | 加载按白名单合并；加载/更新共用已知字段规范化；RLock 内更新、500ms 防抖、写锁后取最新快照并原子替换 | 用户配置 `app_settings.json` | 跨会话；批量更新只调度一次保存；运行时未知键不等于可跨重启保留的正式键 |
 | DeviceStore 字典 | 旧 resources YAML、ADB 属性 | 锁内 upsert/快照、筛选 IP 历史后原子写入 | 当前进程缓存与用户配置 `connected_devices.yaml` | IP 历史跨会话，非 IP 属性仅在当前进程 |
 | `WorkspaceRoute` | 首页快捷入口、左侧一级功能导航、设备卡和功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
+| 应用翻译资源 | `resources/i18n/*.qm` 经静态 `translations_rc` 注册 | GUI 启动安装应用翻译器，缺失词条回退源文案 | Qt 资源系统、`QTranslator`、界面显示文案 | 翻译器由 QApplication 持有并保留到事件循环退出；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
 | 应用图标 | 设备端 `app_process` 临时执行内置 DEX helper | service 校验有界 PNG 字节；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；列表刷新使缓存及旧 worker 代次失效；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |

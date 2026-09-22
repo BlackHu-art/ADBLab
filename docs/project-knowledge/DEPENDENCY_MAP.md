@@ -70,7 +70,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 提供桌面 GUI、
 `--mobileperf-worker --config <path>`、`--self-check packaging`，以及隔离原生工具环境的
-内部 `--native-launch` 入口；后者由 `core/native_process.py` 调用，不是用户设备操作接口。
+内部 `--adblab-native-launch` 入口；后者由 `core/native_process.py` 调用，不是用户设备操作接口。
 
 主应用的出站 HTTP 仅限应用更新检查：匿名读取 `utils/app_metadata.py` 中的 GitHub 公共
 Releases API，复用 QtNetwork 与平台 TLS 后端且不携带令牌。About 的 GitHub 链接和 Perfetto
@@ -106,8 +106,9 @@ service/model 构造。
 INFO 中的纹理/录制就绪与 FPS 更新页面状态，错误与开发诊断统一脱敏。
 非空 `SCRCPY_PATH` 显式覆盖路径；默认 Windows/Linux x86_64 使用内置可执行文件，
 环境工具按 PATH/macOS Homebrew 策略发现，详见 [构建与运行](../guides/BUILD_AND_RUN.md#配置)；没有网络服务端暴露。
-受支持计划由 `start_plan()` 通过子进程 `ADB` 指向随包独立 CLI；它复用 `core/adb_transport.py`，
-专用协议、会话归属及失败不重放边界见 [ADB_FAST](../guides/ADB_FAST.md#remote-投屏与输入)。
+满足 scrcpy 4.1、已验证快速设备、专用入口与服务端文件可用等条件的 direct 计划，才由
+`start_plan()` 通过子进程 `ADB` 指向随包独立 CLI；其他计划保留选定的原生 ADB。专用协议、
+会话归属及失败不重放边界见 [ADB_FAST](../guides/ADB_FAST.md#remote-投屏与输入)。
 CLI 仅依赖 Python 标准库，构建复用现有 PyInstaller，不新增生产依赖。
 
 ### 执行边界约束

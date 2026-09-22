@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-12
+last_verified: 2026-09-22
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -40,8 +40,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 - 入站接口：没有 Web 服务器、HTTP 路由、RPC 服务或消息消费者。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
 - 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及应用更新检查对 GitHub 公共 Releases API 的匿名 HTTPS 只读请求。除该更新检查外，主应用没有其他出站 HTTP 客户端。
-- 主要平台：Windows 是主支持目标并内置 adb/scrcpy；仓库没有 Windows 10/11 的版本兼容矩阵。
-  CI 还构建 macOS/Linux，但这两类包不包含 scrcpy，完整功能状态待实机确认。
+- 主要平台：Windows 是主支持目标；Windows x64 与 Linux x64 发行包随当前平台工具清单提供 ADB/scrcpy，
+  macOS 继续发现用户安装的兼容工具。仓库没有各桌面系统版本的完整兼容矩阵；完整功能状态仍待目标环境实机确认。
 
 ## 技术栈
 
