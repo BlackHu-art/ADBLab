@@ -31,6 +31,7 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          from pathlib import Path
 
           from utils.app_metadata import APP_RELEASE_TAG
 
@@ -40,6 +41,20 @@ jobs:
           )
           if publish and os.environ["GITHUB_REF"] != "refs/heads/main":
               raise SystemExit("Publishing is only allowed from main; disable publish to build this ref.")
+          if publish:
+              notes_path = Path(".github/release-notes") / f"{APP_RELEASE_TAG}.md"
+              try:
+                  notes = notes_path.read_text(encoding="utf-8")
+              except FileNotFoundError:
+                  raise SystemExit(f"Release notes are missing: {notes_path}") from None
+              except UnicodeError:
+                  raise SystemExit(f"Release notes must be UTF-8: {notes_path}") from None
+              expected_title = f"# ADBLab {APP_RELEASE_TAG}"
+              title, _separator, body = notes.partition("\n")
+              if title.rstrip("\r") != expected_title or not body.strip():
+                  raise SystemExit(
+                      f"Release notes must start with {expected_title!r} and contain a non-empty body: {notes_path}"
+                  )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={APP_RELEASE_TAG}\n")
               output.write(f"publish={str(publish).lower()}\n")
@@ -311,8 +326,14 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.version.outputs.version }}"
           TITLE="Release $TAG"
+          NOTES_FILE=".github/release-notes/$TAG.md"
 
           python3 scripts/check_build_artifacts.py release --directory release_artifacts --version "$TAG"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "Release notes are missing or empty: $NOTES_FILE"
+            exit 1
+          fi
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists; published versions are immutable."
@@ -334,7 +355,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Automated release $TAG"
+            --notes-file "$NOTES_FILE"
         env:
           GH_TOKEN: ${{ github.token }}
 

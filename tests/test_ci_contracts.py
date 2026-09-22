@@ -142,6 +142,16 @@ def test_version_job_computes_publish_mode_and_rejects_non_main(
     monkeypatch.setenv("GITHUB_REF", ref)
     monkeypatch.setenv("REQUESTED_PUBLISH", requested)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    if expected == "true":
+        from utils.app_metadata import APP_RELEASE_TAG
+
+        notes = tmp_path / ".github" / "release-notes" / f"{APP_RELEASE_TAG}.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text(
+            f"# ADBLab {APP_RELEASE_TAG}\n\n有效发布说明。\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
     code = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     if expected is None:
         with pytest.raises(SystemExit) as failure:
@@ -154,6 +164,62 @@ def test_version_job_computes_publish_mode_and_rejects_non_main(
         outputs = dict(line.split("=", 1) for line in _read(output).splitlines())
         assert outputs["publish"] == expected
         assert outputs["version"].startswith("v")
+
+
+@pytest.mark.parametrize(
+    ("event", "ref", "requested", "note_kind", "allowed"),
+    [
+        ("workflow_dispatch", "refs/heads/main", "false", "missing", True),
+        ("push", "refs/heads/main", "", "missing", False),
+        ("push", "refs/heads/main", "", "invalid-utf8", False),
+        ("push", "refs/heads/main", "", "blank", False),
+        ("push", "refs/heads/main", "", "wrong-title", False),
+        ("push", "refs/heads/main", "", "title-only", False),
+        ("push", "refs/heads/main", "", "valid", True),
+    ],
+    ids=[
+        "build-only-without-notes", "publish-missing", "publish-invalid-utf8",
+        "publish-blank", "publish-wrong-title", "publish-title-only", "publish-chinese",
+    ],
+)
+def test_version_job_requires_nonempty_release_notes_only_for_publishing(
+    monkeypatch, tmp_path, event, ref, requested, note_kind, allowed,
+):
+    """发布前校验版本标题和正文；普通构建不读取或要求该文件。"""
+
+    from utils.app_metadata import APP_RELEASE_TAG
+
+    job = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["version"]
+    step = next(step for step in job["steps"] if step.get("id") == "version")
+    output = tmp_path / "github_output"
+    note_text = {
+        "blank": "   \n",
+        "wrong-title": "# ADBLab v0.0.0\n\n旧版本说明。\n",
+        "title-only": f"# ADBLab {APP_RELEASE_TAG}\n",
+        "valid": f"# ADBLab {APP_RELEASE_TAG}\n\n修复发布说明。\n",
+    }.get(note_kind)
+    note_path = tmp_path / ".github" / "release-notes" / f"{APP_RELEASE_TAG}.md"
+    if note_text is not None:
+        note_path.parent.mkdir(parents=True)
+        note_path.write_text(note_text, encoding="utf-8")
+    elif note_kind == "invalid-utf8":
+        note_path.parent.mkdir(parents=True)
+        note_path.write_bytes(b"\xff\xfe")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("GITHUB_REF", ref)
+    monkeypatch.setenv("REQUESTED_PUBLISH", requested)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    code = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+    if allowed:
+        exec(code, {})
+        outputs = dict(line.split("=", 1) for line in _read(output).splitlines())
+        assert outputs["publish"] == ("true" if event == "push" else "false")
+    else:
+        with pytest.raises(SystemExit) as failure:
+            exec(code, {})
+        assert "release notes" in str(failure.value).lower()
 
 
 def test_duplicate_version_guard_applies_only_to_publishing():
@@ -245,6 +311,19 @@ def test_release_validates_all_four_archives_before_creating_release():
     assert "set -euo pipefail" in command
     assert check in command
     assert command.index(check) < command.index("gh release create")
+
+
+def test_release_uses_the_validated_versioned_notes_file():
+    """创建 Release 必须附带 version job 校验过的同版本说明文件。"""
+
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["release"]["steps"]
+    create = next(step for step in steps if "gh release create" in step.get("run", ""))
+    command = create["run"]
+
+    assert 'NOTES_FILE=".github/release-notes/$TAG.md"' in command
+    assert 'if [ ! -s "$NOTES_FILE" ]; then' in command
+    assert '--notes-file "$NOTES_FILE"' in command
+    assert command.index('if [ ! -s "$NOTES_FILE" ]; then') < command.index("gh release create")
 
 
 def test_linux_build_installs_egl_before_qt_self_check():

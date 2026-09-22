@@ -294,7 +294,9 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本，并确定是否发布：`main` push 自动发布；手动
    `workflow_dispatch` 默认 `publish=false`，只构建和上传 Actions artifacts。手动设为 `publish=true`
-   时仅允许 `main`，其他分支明确失败。仅构建允许重复已有版本；发布模式提前拒绝已有远端 tag。
+   时仅允许 `main`，其他分支明确失败。仅构建允许重复已有版本；发布模式提前拒绝已有远端 tag，
+   并校验 `.github/release-notes/<tag>.md`：UTF-8 正文非空，首行为 `# ADBLab <tag>`，
+   标题后必须有正文。缺失、空白或版本不符均在构建前失败；仅构建模式不要求发布说明。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
    通过 apt 安装 `libegl1 libudev1 libxcb-cursor0 xvfb xauth`，提供 Qt、设备访问与无桌面 GUI 探针所需环境；
    仅安装 Python wheel 无法补齐这些系统库。
@@ -311,7 +313,8 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
 7. 仅发布模式进入 Release job，单独使用 `contents: write`。下载失败即停止；
    `scripts/check_build_artifacts.py release` 要求恰好四个预期版本、路径的非空归档，并检查归档
    可读且含主程序；缺包、多包、错误版本或损坏均阻止发布。现存同版本 Release 或远端 tag
-   仍会使发布失败，防止直接覆盖。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
+   仍会使发布失败，防止直接覆盖。Release 正文由 `gh release create --notes-file` 读取同版本说明，
+   不再使用固定占位文案。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
    Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
@@ -356,6 +359,9 @@ pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints �
 - `utils/app_metadata.py` 是版本号唯一事实来源。
 - `APP_VERSION` 仅在准备将 dev 代码推送到 main 分支时递增一次（默认补丁 +1），普通本地与 dev
   提交不主动递增版本号。
+- 每次发布随版本提交 `.github/release-notes/<tag>.md`，其中 `<tag>` 为 `APP_RELEASE_TAG`。
+  首行写 `# ADBLab <tag>`，后续正文记录实际改动、下载选择及必要的使用限制；使用 UTF-8，
+  不把未执行的实机或平台验收写成已通过。说明文件供该版本 Release 使用，后续版本新增对应文件。
 - 推送 main 成功后，应将已发布的 main 同步回日常本地开发分支，优先采用快进同步；同步前检查
   工作区，保留已有未提交修改，不得覆盖。本地同步沿用已发布版本，不再次递增版本号。
 - 主版本和次版本只按明确的发布计划调整；当前值直接读取 `utils/app_metadata.py`。
