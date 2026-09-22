@@ -1195,6 +1195,7 @@ class SettingsPage(ScrollArea):
             self._settings.set("adb_client", text)
         self.adb_client_card.set_selection(text)
         self._frame.recheck_adb_environment()
+        self.adb_client_card.restart_detection()
 
     def _pick_custom_adb(self) -> None:
         """选择自定义 adb 可执行文件；取消选择时恢复原显示。"""

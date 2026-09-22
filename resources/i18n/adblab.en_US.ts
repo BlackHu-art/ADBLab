@@ -6021,6 +6021,10 @@ Check for the latest stable release</translation>
             <translation>Automatic selection on {system}</translation>
         </message>
         <message>
+            <source>当前：{client}</source>
+            <translation>Current: {client}</translation>
+        </message>
+        <message>
             <source>{system} 下自动选择（推荐）</source>
             <translation>Automatic selection on {system} (recommended)</translation>
         </message>

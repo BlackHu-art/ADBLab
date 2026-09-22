@@ -21,6 +21,25 @@ from utils.adb_resolver import AdbCandidate
 pytestmark = pytest.mark.ui
 
 
+@pytest.mark.parametrize("width,font_size", [(978, 12), (420, 12), (978, 22), (420, 22)])
+def test_auto_client_summary_stays_inside_header(qt_application, make_page, width, font_size):
+    page = make_page(width=width, font_size=font_size)
+    card = page.adb_client_card
+    path = "C:/fixture/adb.exe"
+    card._on_effective_path_ready(card._generation, path)
+    card.apply_probes([ClientProbe("bundled", path, True, True, "1.0.41 (37.0.0)")])
+    page.ensureWidgetVisible(card, 0, 0)
+    _settle(qt_application, page)
+    label = card.card.contentLabel
+    assert "应用自带" in label.text()
+    assert "1.0.41 (37.0.0)" in label.text()
+    assert label.toolTip() == path
+    assert card.card.rect().contains(mapped_rect(label, card.card))
+    assert mapped_rect(label, card.card).right() < card.card.expandButton.x()
+    assert card.rect().contains(mapped_rect(card.card.expandButton, card))
+    assert page.viewport().rect().contains(mapped_rect(card, page.viewport()))
+
+
 @pytest.fixture
 def make_page(monkeypatch, qt_application):
     monkeypatch.setattr(cards, "list_adb_candidates", lambda: [

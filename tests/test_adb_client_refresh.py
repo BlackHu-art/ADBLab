@@ -20,6 +20,127 @@ from utils.adb_resolver import AdbCandidate
 pytestmark = pytest.mark.ui
 
 
+@pytest.fixture(autouse=True)
+def isolate_effective_client(monkeypatch):
+    # 卡片探测测试不能初始化真实执行路径缓存或读取本机客户端。
+    monkeypatch.setattr(cards, "resolve_adb_program", lambda: None, raising=False)
+
+
+def test_auto_result_uses_effective_path_instead_of_first_successful_probe(
+    monkeypatch, qt_application,
+):
+    monkeypatch.setattr(cards, "host_system_name", lambda: "Windows")
+    candidates = [
+        AdbCandidate("bundled", "C:/bundle/adb.exe"),
+        AdbCandidate("PATH", "C:/path/adb.exe"),
+    ]
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: candidates)
+    card = cards.AdbClientSettingCard()
+    try:
+        card._on_effective_path_ready(card._generation, candidates[1].path)
+        card.apply_probes([
+            ClientProbe("bundled", candidates[0].path, True, True, "1.0.41 (37.0.0)"),
+            ClientProbe("PATH", candidates[1].path, True, True, "1.0.41 (34.0.1)"),
+        ])
+        assert card.card.contentLabel.text() == (
+            "Windows 下自动选择 · 当前：系统 PATH · 1.0.41 (34.0.1)"
+        )
+        assert card.card.contentLabel.toolTip() == candidates[1].path
+        _assert_unique_selected_auto(card)
+    finally:
+        card.close()
+
+
+@pytest.mark.parametrize("path", ["C:/Android/sdk/platform-tools/adb.exe", None])
+def test_auto_result_handles_hidden_sdk_and_missing_client(monkeypatch, qt_application, path):
+    monkeypatch.setattr(cards, "host_system_name", lambda: "Windows")
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    try:
+        card._on_effective_path_ready(card._generation, path)
+        expected = path if path else "未找到 ADB，请检查安装环境"
+        assert card.card.contentLabel.text() == f"Windows 下自动选择 · 当前：{expected}"
+        assert card.card.contentLabel.toolTip() == (path or "")
+        assert card.client_button("sdk_home") is None
+    finally:
+        card.close()
+
+
+def test_auto_result_is_delivered_from_worker_and_old_generation_is_ignored(
+    monkeypatch, qt_application,
+):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards, "resolve_adb_program", lambda: "C:/effective/adb.exe")
+    card = cards.AdbClientSettingCard()
+    tasks = []
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append),
+    )
+    try:
+        card.start_detection()
+        old_generation = card._generation
+        card.restart_detection()
+        tasks[-1].run()
+        assert "C:/effective/adb.exe" in card.card.contentLabel.text()
+        card._on_effective_path_ready(old_generation, "C:/stale/adb.exe")
+        assert "C:/stale/adb.exe" not in card.card.contentLabel.text()
+        assert card.card.contentLabel.toolTip() == "C:/effective/adb.exe"
+        card.set_selection("PATH")
+        assert card.card.contentLabel.text() == "系统 PATH"
+        assert not card.card.contentLabel.toolTip()
+    finally:
+        card.close()
+
+
+def test_auto_result_preserves_busy_and_timeout_terminal_status(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    try:
+        card.set_busy(True)
+        card._on_effective_path_ready(card._generation, "C:/effective/adb.exe")
+        assert card.card.contentLabel.text() == "正在识别本地 ADB 环境…可继续选择"
+        card._on_detection_timeout()
+        card._on_effective_path_ready(card._generation, "C:/late/adb.exe")
+        assert card.card.contentLabel.text() == "识别超时，可重试"
+        assert not card.card.contentLabel.toolTip()
+        card._on_probes(card._generation, [], [])
+        assert card.card.contentLabel.text() == "识别超时，可重试"
+        assert not card.card.contentLabel.toolTip()
+    finally:
+        card.close()
+
+
+def test_auto_result_keeps_frozen_execution_path_when_candidate_locations_change(
+    monkeypatch, qt_application, tmp_path,
+):
+    from core import exec as execution
+
+    selected = tmp_path / "selected" / "adb.exe"
+    selected.parent.mkdir()
+    selected.touch()
+    replacement = AdbCandidate("bundled", str(tmp_path / "new" / "adb.exe"))
+    monkeypatch.setattr(execution, "_adb_path", str(selected))
+    monkeypatch.setattr(execution, "_adb_path_resolved", True)
+    monkeypatch.setattr(cards, "resolve_adb_program", execution.resolve_adb_program)
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [replacement])
+    monkeypatch.setattr(cards, "detect_clients", lambda *args, **kwargs: [
+        ClientProbe("bundled", replacement.path, True, True, "1.0.99"),
+    ])
+    tasks = []
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append),
+    )
+    card = cards.AdbClientSettingCard()
+    try:
+        card.start_detection()
+        tasks[-1].run()
+        assert card.card.contentLabel.toolTip() == str(selected)
+        assert cards.shorten_path(str(selected)) in card.card.contentLabel.text()
+        assert "1.0.99" not in card.card.contentLabel.text()
+    finally:
+        card.close()
+
+
 def _assert_unique_selected_auto(card):
     buttons = card._group.buttons()
     auto_buttons = [button for button in buttons if button.property("adbKey") == "auto"]
@@ -153,12 +274,16 @@ def test_clicking_recommended_auto_survives_settings_feedback_and_rescan(
     try:
         card = page.adb_client_card
         card._on_probes(card._generation, candidates, probes)
+        previous_generation = card._generation
         card.client_button("auto").click()
+        assert card._generation > previous_generation
+        card._on_effective_path_ready(previous_generation, "C:/stale/adb.exe")
         _assert_unique_selected_auto(card)
         assert card.card.contentLabel.text() == "Windows 下自动选择"
+        card._on_effective_path_ready(card._generation, candidates[0].path)
         card._on_probes(card._generation, candidates, probes)
         _assert_unique_selected_auto(card)
-        assert card.card.contentLabel.text() == "Windows 下自动选择"
+        assert card.card.contentLabel.text() == "Windows 下自动选择 · 当前：系统 PATH · 1.0.41"
         assert values["adb_client"] == "auto"
         assert preferences == ["auto"]
         assert writes == ([] if initial_selection == "auto" else [("adb_client", "auto")])

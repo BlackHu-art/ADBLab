@@ -6021,6 +6021,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>{system} 下自動選擇</translation>
         </message>
         <message>
+            <source>当前：{client}</source>
+            <translation>目前：{client}</translation>
+        </message>
+        <message>
             <source>{system} 下自动选择（推荐）</source>
             <translation>{system} 下自動選擇（推薦）</translation>
         </message>

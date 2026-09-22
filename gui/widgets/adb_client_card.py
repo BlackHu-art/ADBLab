@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, QTimer, Signal
@@ -30,6 +31,7 @@ from qfluentwidgets import (
     SimpleExpandGroupSettingCard,
 )
 
+from core.exec import resolve_adb_program
 from gui.i18n import tr
 from services.adb_clients import (
     ERROR_CANCELLED,
@@ -119,6 +121,7 @@ class _WrappingRow(QWidget):
 
 
 class _ProbeSignals(QObject):
+    effective_path_ready = Signal(int, object)
     candidates_ready = Signal(int, list)
     progress = Signal(int, object)
     finished = Signal(int, list, list)
@@ -137,6 +140,9 @@ class _ProbeTask(QRunnable):
     def run(self) -> None:
         try:
             candidates = list_adb_candidates()
+            # 读取命令执行边界的冻结路径，不能用首个版本探测成功的候选推断当前客户端。
+            if not self._cancelled():
+                self.signals.effective_path_ready.emit(self._generation, resolve_adb_program())
             self.signals.candidates_ready.emit(self._generation, candidates)
             probes = detect_clients(
                 candidates,
@@ -171,6 +177,8 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._busy = False
         self._timed_out_generation: int | None = None
         self._probes: dict[str, ClientProbe] = {}
+        self._effective_path: str | None = None
+        self._effective_path_known = False
         self._candidate_sources: set[str] = set()
         self._rows: dict[str, tuple[QWidget, RadioButton, CaptionLabel]] = {}
         self._tasks: set[_ProbeTask] = set()
@@ -390,6 +398,17 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
 
     # ── 识别 ──────────────────────────────────────────────────────────
 
+    def restart_detection(self) -> None:
+        """客户端选择变更后废弃旧代回调，并重新读取清缓存后的实际执行路径。"""
+
+        self._generation += 1
+        self._cancel_detection_timeout()
+        self._timed_out_generation = None
+        self._effective_path = None
+        self._effective_path_known = False
+        self.set_busy(False)
+        self.start_detection()
+
     def start_detection(self) -> None:
         """后台识别候选客户端；展开卡片或点击重新识别时调用。"""
 
@@ -400,6 +419,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._timed_out_generation = None
         self.set_busy(True)
         task = _ProbeTask(generation, lambda: generation != self._generation)
+        task.signals.effective_path_ready.connect(self._on_effective_path_ready)
         task.signals.candidates_ready.connect(self._on_candidates_ready)
         task.signals.progress.connect(self._on_probe_progress)
         task.signals.finished.connect(self._on_probes)
@@ -433,6 +453,17 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._timed_out_generation = self._generation
         self.set_busy(False)
         self.card.contentLabel.setText(tr("识别超时，可重试"))
+        self.card.contentLabel.setToolTip("")
+
+    def _on_effective_path_ready(self, generation: int, path: str | None) -> None:
+        """接收后台实际路径；旧代与超时后的结果不得覆盖当前选择或终态提示。"""
+
+        if generation != self._generation:
+            return
+        self._effective_path = path
+        self._effective_path_known = True
+        if not self._busy and self._timed_out_generation != generation:
+            self._refresh_content()
 
     def _on_candidates_ready(self, generation: int, candidates: list) -> None:
         if generation != self._generation:
@@ -448,6 +479,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._render_probe_rows()
         if timed_out:
             self.card.contentLabel.setText(terminal_text)
+            self.card.contentLabel.setToolTip("")
         if self._busy:
             budget = max(
                 DETECTION_TIMEOUT_MS,
@@ -476,6 +508,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             self.set_busy(False)
         else:
             self.card.contentLabel.setText(terminal_text)
+            self.card.contentLabel.setToolTip("")
         if self.isExpand:
             self._adjustViewSize()
 
@@ -487,6 +520,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             return
         self.set_busy(False)
         self.card.contentLabel.setText(tr("识别失败：{reason}").format(reason=reason))
+        self.card.contentLabel.setToolTip("")
 
     def apply_probes(self, probes: list) -> None:
         """用识别结果回填候选行；不可用与未设置的项保留并标注原因。"""
@@ -546,13 +580,18 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         return CUSTOM_KEY
 
     def _refresh_content(self) -> None:
+        self.card.contentLabel.setToolTip("")
         if self._busy:
             self.card.contentLabel.setText(tr("正在识别本地 ADB 环境…可继续选择"))
             return
         if self._selection == CLIENT_PREFERENCE_AUTO:
-            self.card.contentLabel.setText(
-                tr("{system} 下自动选择").format(system=self._host_system)
-            )
+            summary = tr("{system} 下自动选择").format(system=self._host_system)
+            if self._effective_path_known:
+                summary += " · " + tr("当前：{client}").format(
+                    client=self._effective_client_label(),
+                )
+                self.card.contentLabel.setToolTip(self._effective_path or "")
+            self.card.contentLabel.setText(summary)
             return
         if self._key_for(self._selection) == CUSTOM_KEY:
             self.card.contentLabel.setText(
@@ -565,6 +604,21 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         if probe is not None and probe.version:
             label = tr("{label} · {version}").format(label=label, version=probe.version)
         self.card.contentLabel.setText(label)
+
+    def _effective_client_label(self) -> str:
+        """摘要只复用同一路径的来源和版本；未展示的 SDK 或旧缓存路径直接显示路径。"""
+
+        if not self._effective_path:
+            return tr("未找到 ADB，请检查安装环境")
+        effective = os.path.normcase(os.path.abspath(self._effective_path))
+        for probe in self._probes.values():
+            if os.path.normcase(os.path.abspath(probe.path)) != effective:
+                continue
+            label = tr(source_label(probe.source))
+            if probe.executable and probe.version:
+                label = tr("{label} · {version}").format(label=label, version=probe.version)
+            return label
+        return shorten_path(self._effective_path)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 风格命名
         """关闭时让在途识别在下一个检查点退出，避免回调落到已销毁的对象。"""
