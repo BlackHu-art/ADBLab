@@ -201,11 +201,12 @@ Windows 11 上即时切换；不支持的系统禁用该开关并使用主题实
 .\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_CN.ts -qm resources/i18n/adblab.zh_CN.qm
 .\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.en_US.ts -qm resources/i18n/adblab.en_US.qm
 .\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_HK.ts -qm resources/i18n/adblab.zh_HK.qm
-.\.venv\Scripts\pyside6-rcc.exe --compress 9 --threshold 0 resources/i18n/translations.qrc -o gui/generated/translations_rc.py
+.\.venv\Scripts\pyside6-rcc.exe --compress-algo zlib --compress 9 --threshold 0 resources/i18n/translations.qrc -o gui/generated/translations_rc.py
 ```
 
+资源压缩显式固定为 zlib，避免生成器默认使用 Zstd 后，缺少 Zstd 支持的 Windows Qt 无法解压词库。
 资源随 Python 模块进入现有 PyInstaller 构建，无需安装目录可写，也不依赖运行时读取参考项目。
-源码与产物的 `--self-check packaging` 同时检查三种语言的内嵌资源；词库回归测试核对 `.ts`、编译资源
+源码与产物的 `--self-check packaging` 同时实际加载三种语言的内嵌词库；词库回归测试核对 `.ts`、编译资源
 和格式占位符一致性。语言设置及显示值与业务值的边界见 [DATA_FLOW](../project-knowledge/DATA_FLOW.md#设置字段)。
 
 遇到 `source code string cannot contain null bytes` 或 UTF-8 解码失败时，先运行

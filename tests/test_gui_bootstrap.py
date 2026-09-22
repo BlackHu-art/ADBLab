@@ -84,6 +84,41 @@ def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypat
     assert "FAIL network:tls_backend" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("loadable", [False, True])
+def test_packaging_check_reports_translation_catalog_loadability(
+    qt_application, tmp_path, monkeypatch, capsys, loadable,
+):
+    """资源路径存在并不证明 Qt 能解码内嵌词库。"""
+
+    from PySide6.QtCore import QTranslator
+    from PySide6.QtNetwork import QSslSocket
+    from qfluentwidgets.components.widgets import acrylic_label
+
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
+    if not loadable:
+        monkeypatch.setattr(QTranslator, "load", lambda _translator, _path: False)
+    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
+        ),
+    )
+
+    result = main._self_check_packaging()
+    output = capsys.readouterr().out
+    for language in ("zh_CN", "en_US", "zh_HK"):
+        expected = f"{'OK' if loadable else 'FAIL'} resource:i18n/{language}"
+        if not loadable:
+            expected += " - translation catalog cannot be loaded"
+        assert expected in output.splitlines()
+    if not loadable:
+        assert result == 1
+
+
 @pytest.mark.parametrize(
     ("missing_paths", "expected_check"),
     [

@@ -109,7 +109,7 @@ def _self_check_packaging() -> int:
     except (ImportError, OSError) as exc:
         check("ui:acrylic", False, type(exc).__name__)
 
-    from PySide6.QtCore import QCoreApplication, QFile
+    from PySide6.QtCore import QCoreApplication, QFile, QTranslator
 
     # TLS 插件发现需要 Qt 应用对象；自检只加载后端，不访问更新服务。
     _tls_application = QCoreApplication.instance() or QCoreApplication([])
@@ -122,7 +122,12 @@ def _self_check_packaging() -> int:
 
     for locale in ("zh_CN", "en_US", "zh_HK"):
         translation = f":/adblab/i18n/adblab.{locale}.qm"
-        check(f"resource:i18n/{locale}", QFile.exists(translation))
+        loaded = QFile.exists(translation) and QTranslator().load(translation)
+        check(
+            f"resource:i18n/{locale}",
+            loaded,
+            "" if loaded else "translation catalog cannot be loaded",
+        )
 
     check("resource:icon.ico", Path(resource_path("icon.ico")).is_file())
     check("resource:resources", Path(resource_path("resources")).is_dir())
