@@ -1,6 +1,7 @@
 """ADB 设置重置和候选刷新回归。"""
 
 import platform
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -237,6 +238,52 @@ def test_scan_adds_and_removes_candidates_from_one_snapshot(monkeypatch, qt_appl
     card.close()
 
 
+def test_homebrew_rescan_probes_each_installed_source_and_removes_missing_rows(
+    monkeypatch, qt_application, tmp_path,
+):
+    from utils import adb_resolver
+
+    for name in ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
+    monkeypatch.setattr(adb_resolver.shutil, "which", lambda _name: None)
+    locations = [
+        ("homebrew_arm64", str(tmp_path / "arm/adb")),
+        ("homebrew_x64", str(tmp_path / "intel/adb")),
+    ]
+    monkeypatch.setattr(adb_resolver, "macos_tool_candidates", lambda _tool: locations)
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    commands = []
+
+    def version(command, **_kwargs):
+        commands.append(command)
+        return CommandResult(True, output="Android Debug Bridge version 1.0.41")
+
+    monkeypatch.setattr(adb_clients.CommandRunner, "run", version)
+    adb_clients.clear_client_probe_cache()
+    try:
+        assert card.client_button("homebrew_arm64") is None
+        for _source, name in locations:
+            path = Path(name)
+            path.parent.mkdir()
+            path.touch(mode=0o755)
+        task = cards._ProbeTask(card._generation, lambda: False)
+        task.signals.finished.connect(card._on_probes)
+        task.run()
+        assert commands == [[name, "version"] for _source, name in locations]
+        for source, _name in locations:
+            assert card.client_button(source).isEnabled()
+            assert "1.0.41" in card.detail_text(source)
+        Path(locations[0][1]).unlink()
+        task.run()
+        assert card.client_button("homebrew_arm64") is None
+        assert card.client_button("homebrew_x64").isEnabled()
+    finally:
+        card.close()
+        adb_clients.clear_client_probe_cache()
+
+
 def test_progress_updates_first_candidate_without_finishing_detection(monkeypatch, qt_application):
     monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
     monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
@@ -408,7 +455,9 @@ def test_refresh_preserves_focus_and_moves_it_from_removed_row(monkeypatch, qt_a
     card.close()
 
 
-@pytest.mark.parametrize("source", ["PATH", "sdk_home"])
+@pytest.mark.parametrize("source", [
+    "PATH", "sdk_home", "sdk_macos", "homebrew_arm64", "homebrew_x64",
+])
 def test_selected_missing_source_remains_disabled(monkeypatch, qt_application, source):
     monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
     card = cards.AdbClientSettingCard()

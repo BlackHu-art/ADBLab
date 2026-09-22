@@ -3,6 +3,7 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 
 WORKFLOW_DIR = Path(".github/workflows")
@@ -105,6 +106,147 @@ def test_build_workflow_does_not_run_pytest_during_packaging():
     assert "Run tests" not in workflow
 
 
+def test_manual_build_defaults_to_build_only_and_main_push_still_triggers():
+    """手动重建同版本默认不发布，main 推送继续进入自动构建发布流程。"""
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    events = workflow.get("on", workflow.get(True))
+    manual = events["workflow_dispatch"]
+    assert isinstance(manual, dict), "Manual builds need an explicit publish input"
+    publish = manual["inputs"]["publish"]
+    assert publish["type"] == "boolean"
+    assert publish["default"] is False
+    assert events["push"]["branches"] == ["main"]
+
+
+@pytest.mark.parametrize("event,ref,requested,expected", [
+    ("workflow_dispatch", "refs/heads/main", "false", "false"),
+    ("workflow_dispatch", "refs/heads/dev", "false", "false"),
+    ("workflow_dispatch", "refs/heads/dev", "", "false"),
+    ("workflow_dispatch", "refs/heads/main", "true", "true"),
+    ("workflow_dispatch", "refs/heads/dev", "true", None),
+    ("workflow_dispatch", "refs/tags/v3.2.18", "true", None),
+    ("push", "refs/heads/main", "", "true"),
+    ("push", "refs/heads/main", "false", "true"),
+])
+def test_version_job_computes_publish_mode_and_rejects_non_main(
+    monkeypatch, tmp_path, event, ref, requested, expected,
+):
+    """实际执行模式选择代码，非 main 发布必须失败，不能静默降级为构建。"""
+    job = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["version"]
+    assert job["outputs"].get("publish") == "${{ steps.version.outputs.publish }}"
+    step = next(step for step in job["steps"] if step.get("id") == "version")
+    assert "if" not in step
+    assert step["env"]["REQUESTED_PUBLISH"] == "${{ inputs.publish }}"
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("GITHUB_REF", ref)
+    monkeypatch.setenv("REQUESTED_PUBLISH", requested)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    code = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    if expected is None:
+        with pytest.raises(SystemExit) as failure:
+            exec(code, {})
+        assert failure.value.code not in (None, 0)
+        assert "main" in str(failure.value)
+        assert not output.exists() or "publish=true" not in _read(output)
+    else:
+        exec(code, {})
+        outputs = dict(line.split("=", 1) for line in _read(output).splitlines())
+        assert outputs["publish"] == expected
+        assert outputs["version"].startswith("v")
+
+
+def test_duplicate_version_guard_applies_only_to_publishing():
+    """已发布版本仍可重新构建，发布模式则在构建前拒绝重复 tag。"""
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    steps = workflow["jobs"]["version"]["steps"]
+    version_index = next(index for index, step in enumerate(steps)
+                         if step.get("id") == "version")
+    guards = [(index, step) for index, step in enumerate(steps)
+              if "git ls-remote" in step.get("run", "")]
+    assert len(guards) == 1
+    index, guard = guards[0]
+    assert version_index < index
+    assert guard.get("if") == "steps.version.outputs.publish == 'true'"
+    assert workflow["jobs"]["build"]["needs"] == "version"
+
+
+def test_release_requires_publish_mode_and_successful_builds():
+    """下载、创建发布和保留期清理仅在明确发布且四平台构建成功后执行。"""
+    release = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["release"]
+    assert set(release["needs"]) == {"version", "build"}
+    assert release["if"] == (
+        "needs.version.outputs.publish == 'true' && needs.build.result == 'success'"
+    )
+    download = next(step for step in release["steps"]
+                    if step.get("uses", "").startswith("actions/download-artifact@"))
+    assert download.get("continue-on-error", False) is False
+    assert download["with"]["path"] == "release_artifacts"
+
+
+def test_build_uploads_only_the_exact_archive_for_each_platform():
+    """上传路径不能包含同目录中残留的主程序、app、内部工具或额外档案。"""
+    job = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]
+    upload = next(step for step in job["steps"]
+                  if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["with"]["name"] == "${{ matrix.artifact }}"
+    assert upload["with"]["if-no-files-found"] == "error"
+    template = upload["with"]["path"]
+    assert "*" not in template and "?" not in template
+    expected = {
+        "ADBLab-win-x64": "dist/ADBLab-win-x64-v9.8.7.zip",
+        "ADBLab-macos-x64": "dist/ADBLab-macos-x64-v9.8.7.zip",
+        "ADBLab-macos-arm64": "dist/ADBLab-macos-arm64-v9.8.7.zip",
+        "ADBLab-linux-x64": "dist/ADBLab-linux-x64-v9.8.7.tar.gz",
+    }
+    for row in job["strategy"]["matrix"]["include"]:
+        resolved = template.replace("${{ needs.version.outputs.version }}", "v9.8.7")
+        for key, value in row.items():
+            resolved = resolved.replace("${{ matrix." + key + " }}", value)
+        assert resolved == expected[row["artifact"]]
+
+
+@pytest.mark.parametrize("platform,executable,archive", [
+    ("Windows", "dist/$name/$name.exe", "Compress-Archive"),
+    ("macOS", "$executable", "ditto -c"),
+    ("Linux", "dist/$name", "tar -C dist"),
+])
+def test_frozen_checks_use_waiting_validator_before_compression(platform, executable, archive):
+    """三平台统一等待产物检查进程，超时或非零退出必须阻止压缩与上传。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    checks = [(index, step) for index, step in enumerate(steps)
+              if "scripts/check_build_artifacts.py frozen" in step.get("run", "")
+              and step.get("if") == f"runner.os == '{platform}'"]
+    assert len(checks) == 1, f"{platform} must use the bounded frozen artifact validator"
+    index, step = checks[0]
+    build_index = next(index for index, step in enumerate(steps)
+                       if "scripts/build_app.py" in step.get("run", ""))
+    archive_index = next(index for index, step in enumerate(steps)
+                         if archive in step.get("run", ""))
+    assert build_index < index < archive_index
+    assert step["shell"] == "bash"
+    assert "set -euo pipefail" in step["run"]
+    command = next(shlex.split(line) for line in step["run"].splitlines()
+                   if "scripts/check_build_artifacts.py frozen" in line)
+    assert command == [
+        "python", "scripts/check_build_artifacts.py", "frozen", "--executable", executable,
+        "--timeout", "60",
+    ]
+    assert "--self-check packaging" not in step["run"]
+
+
+def test_release_validates_all_four_archives_before_creating_release():
+    """下载成功也须验证四包文件名、版本和归档内容，失败时不得创建 Release。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["release"]["steps"]
+    create = next(step for step in steps if "gh release create" in step.get("run", ""))
+    command = create["run"]
+    check = 'python3 scripts/check_build_artifacts.py release --directory release_artifacts '
+    check += '--version "$TAG"'
+    assert "set -euo pipefail" in command
+    assert check in command
+    assert command.index(check) < command.index("gh release create")
+
+
 def test_linux_build_installs_egl_before_qt_self_check():
     """Linux 构建必须先补齐 Qt 导入所需的 EGL，且安装步骤只作用于 Linux。"""
 
@@ -129,6 +271,120 @@ def test_linux_build_installs_egl_before_qt_self_check():
         if "python main.py --self-check packaging" in step.get("run", "")
     )
     assert install_index < qt_import_index
+
+
+def test_build_matrix_uses_native_python_and_preserves_platform_package_modes():
+    """产物名称与宿主、Python 架构必须一致，Windows/Linux 继续沿用既有打包模式。"""
+    job = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]
+    rows = job["strategy"]["matrix"]["include"]
+    expected = {
+        "ADBLab-win-x64": ("windows-latest", "x64", "AMD64", "--onedir", "--windowed"),
+        "ADBLab-macos-x64": ("macos-15-intel", "x64", "x86_64", "--onefile", "--windowed"),
+        "ADBLab-macos-arm64": ("macos-15", "arm64", "arm64", "--onefile", "--windowed"),
+        "ADBLab-linux-x64": ("ubuntu-latest", "x64", "x86_64", "--onefile", ""),
+    }
+    assert {row["artifact"] for row in rows} == set(expected)
+    for row in rows:
+        assert tuple(row.get(key) for key in (
+            "os", "python_architecture", "machine", "package_mode", "windowed",
+        )) == expected[row["artifact"]]
+    setup = next(step for step in job["steps"]
+                 if step.get("uses", "").startswith("actions/setup-python@"))
+    assert setup["with"]["architecture"] == "${{ matrix.python_architecture }}"
+
+
+@pytest.mark.parametrize("actual,expected", [
+    ("x86_64", "x86_64"), ("arm64", "arm64"), ("AMD64", "AMD64"),
+    ("arm64", "x86_64"), ("x86_64", "arm64"),
+])
+def test_build_checks_python_machine_before_installing_or_building(monkeypatch, actual, expected):
+    """runner 或 Python 架构漂移必须在使用缓存和开始构建之前失败。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    checks = [(index, step) for index, step in enumerate(steps)
+              if "platform.machine()" in step.get("run", "")]
+    assert len(checks) == 1, "Build must verify the selected Python architecture"
+    index, step = checks[0]
+    assert "if" not in step
+    assert step["env"]["EXPECTED_MACHINE"] == "${{ matrix.machine }}"
+    setup_index = next(index for index, step in enumerate(steps)
+                       if step.get("uses", "").startswith("actions/setup-python@"))
+    cache_index = next(index for index, step in enumerate(steps)
+                       if step.get("uses", "").startswith("actions/cache@"))
+    assert setup_index < index < cache_index
+    code = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    monkeypatch.setattr("platform.machine", lambda: actual)
+    monkeypatch.setenv("EXPECTED_MACHINE", expected)
+    if actual == expected:
+        exec(code, {})
+    else:
+        with pytest.raises(SystemExit) as failure:
+            exec(code, {})
+        assert failure.value.code != 0
+
+
+def test_pip_cache_restore_is_isolated_by_runner_architecture():
+    """Apple Silicon 不得命中 Intel 缓存，包括宽松恢复前缀。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    cache = next(step for step in steps if step.get("uses", "").startswith("actions/cache@"))
+    assert "${{ runner.arch }}" in cache["with"]["key"]
+    prefixes = cache["with"]["restore-keys"].splitlines()
+    assert prefixes
+    assert all("${{ runner.arch }}" in prefix for prefix in prefixes)
+
+
+def test_macos_checks_helper_and_app_architecture_before_archiving():
+    """helper 与最终主程序都须核对实际 Mach-O 架构，再运行冻结产物自检。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    commands = [step.get("run", "") for step in steps]
+    helper_build = next(index for index, command in enumerate(commands)
+                        if command == "python scripts/build_scrcpy_adb_bridge.py")
+    app_build = next(index for index, command in enumerate(commands)
+                     if "python scripts/build_app.py" in command)
+    archive = next(index for index, command in enumerate(commands) if "ditto -c" in command)
+    checks = [(index, step) for index, step in enumerate(steps)
+              if "lipo -archs" in step.get("run", "")]
+    assert len(checks) == 2, "macOS helper and main executable both need architecture checks"
+    (helper_index, helper), (app_index, app) = checks
+    assert helper_build < helper_index < app_build < app_index < archive
+    for _index, step in checks:
+        assert step["if"] == "runner.os == 'macOS'"
+        assert step["shell"] == "bash"
+        assert "set -euo pipefail" in step["run"]
+        assert 'file "$executable"' in step["run"]
+        assert 'test "$(lipo -archs "$executable")" = "${{ matrix.machine }}"' in step["run"]
+    assert "build/runtime-helpers/adblab-adb-bridge/adblab-adb-bridge" in helper["run"]
+    assert 'name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"' in app["run"]
+    assert 'dist/$name.app/Contents/MacOS/$name' in app["run"]
+    assert ('python scripts/check_build_artifacts.py frozen --executable "$executable" '
+            '--timeout 60') in app["run"]
+
+
+@pytest.mark.parametrize("frozen", [False, True], ids=["source", "frozen"])
+def test_linux_runs_bounded_xcb_gui_probe_before_archiving(frozen):
+    """源码与产物各自启动真实 xcb 探针，系统依赖就绪且卡住时限时失败。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    install_index, install = next((index, step) for index, step in enumerate(steps)
+                                 if "apt-get install" in step.get("run", ""))
+    assert install["if"] == "runner.os == 'Linux'"
+    for package in ("libegl1", "libudev1", "libxcb-cursor0", "xvfb", "xauth"):
+        assert package in shlex.split(install["run"])
+    probes = [(index, step) for index, step in enumerate(steps)
+              if "--self-check gui" in step.get("run", "")]
+    assert len(probes) == 2, "Source and frozen Linux builds need separate GUI probes"
+    index, probe = probes[int(frozen)]
+    assert probe["if"] == "runner.os == 'Linux'"
+    assert probe["env"]["QT_QPA_PLATFORM"] == "xcb"
+    command = next(shlex.split(line) for line in probe["run"].splitlines()
+                   if "--self-check gui" in line)
+    executable = ["dist/$name"] if frozen else ["python", "main.py"]
+    assert command == ["timeout", "15s", "xvfb-run", "-a", *executable, "--self-check", "gui"]
+    build_index = next(index for index, step in enumerate(steps)
+                       if "python scripts/build_app.py" in step.get("run", ""))
+    archive_index = next(index for index, step in enumerate(steps)
+                         if "tar -C dist" in step.get("run", ""))
+    assert install_index < index < archive_index
+    assert (index > build_index) is frozen
+    assert "--self-check packaging" not in probe["run"]
 
 
 def test_windows_build_collects_current_scrcpy_bundle(monkeypatch):

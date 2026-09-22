@@ -359,6 +359,8 @@ class MobilePerfRunner:
                 self._stop_path = os.path.join(config_dir.name, "mobileperf.stop")
                 cmd = self._build_command()
                 env = os.environ.copy()
+                # 源码 -m worker 直接沿用解释器标准流，编码必须与父进程 reader 一致。
+                env["PYTHONIOENCODING"] = "utf-8"
                 runtime = adb_runtime()
                 mode = runtime.snapshot().selection_mode if runtime is not None else "auto"
                 mode_path = os.path.join(config_dir.name, "mobileperf.adb-mode")

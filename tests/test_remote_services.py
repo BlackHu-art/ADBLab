@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import threading
@@ -656,7 +657,8 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
 def test_scrcpy_native_preflight_accepts_six_second_queries_within_twenty_seconds():
     clock, budgets = [100.0], []
 
-    def run(command, *, timeout):
+    def run(command, *, timeout, native_tool):
+        assert native_tool is True
         budgets.append(timeout)
         if "--version" in command:
             return CommandResult(True, output="scrcpy 4.1")
@@ -741,7 +743,7 @@ def test_scrcpy_service_caches_version_per_executable():
     assert service.version("scrcpy.exe") == "4.1"
     assert service.version("scrcpy.exe") == "4.1"
 
-    runner.run.assert_called_once_with(["scrcpy.exe", "--version"], timeout=3)
+    runner.run.assert_called_once_with(["scrcpy.exe", "--version"], timeout=3, native_tool=True)
 
 
 def test_scrcpy_launch_interruption_stops_current_query_and_remaining_plan():
@@ -839,6 +841,85 @@ def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
         assert service.resolve_executable() == "/usr/bin/scrcpy"
 
 
+@pytest.mark.parametrize("machine,expected", [
+    ("arm64", "/opt/homebrew/bin/scrcpy"),
+    ("x86_64", "/usr/local/bin/scrcpy"),
+])
+def test_scrcpy_macos_homebrew_supports_restricted_path(monkeypatch, machine, expected):
+    monkeypatch.delenv("SCRCPY_PATH", raising=False)
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: machine)
+    monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: None)
+    monkeypatch.setattr(os.path, "isfile", lambda path: path in {
+        "/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy",
+    })
+    monkeypatch.setattr(os, "access", lambda *_args: True)
+    assert ScrcpyService().resolve_executable() == expected
+
+
+def test_scrcpy_macos_keeps_path_priority_and_skips_non_executable_fallback(monkeypatch):
+    monkeypatch.delenv("SCRCPY_PATH", raising=False)
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "arm64")
+    monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: "/path/scrcpy")
+    monkeypatch.setattr(os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(os, "access", lambda path, _mode: path.startswith("/usr/"))
+    service = ScrcpyService()
+    assert service.resolve_executable() == "/path/scrcpy"
+    monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: None)
+    assert service.resolve_executable() == "/usr/local/bin/scrcpy"
+
+
+@pytest.mark.parametrize("value", ["~/工具/scrcpy", "relative tool/scrcpy", "missing --flag"])
+@pytest.mark.parametrize("system", ["Darwin", "Linux", "Windows"])
+def test_scrcpy_explicit_override_is_one_absolute_path_without_fallback(
+    monkeypatch, tmp_path, value, system,
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCRCPY_PATH", value)
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: system)
+    monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: "/path/scrcpy")
+    assert ScrcpyService().resolve_executable() == os.path.abspath(os.path.expanduser(value))
+
+
+@pytest.mark.parametrize("system", ["Linux", "Windows"])
+def test_scrcpy_other_platforms_never_use_homebrew(monkeypatch, system):
+    monkeypatch.delenv("SCRCPY_PATH", raising=False)
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: system)
+    monkeypatch.setattr("services.remote.scrcpy_service.get_tool_bundle", lambda _platform: None)
+    monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: None)
+    monkeypatch.setattr(os.path, "isfile", lambda _path: True)
+    assert ScrcpyService().resolve_executable() == "scrcpy"
+
+
+@pytest.mark.parametrize("exists, executable", [
+    (False, False),
+    pytest.param(True, False, marks=pytest.mark.skipif(
+        os.name == "nt", reason="POSIX 可执行权限检查不适用于 Windows",
+    )),
+])
+def test_remote_invalid_scrcpy_override_reports_actionable_error_without_starting(
+    monkeypatch, tmp_path, exists, executable,
+):
+    panel = _remote_batch_panel()
+    panel._session_state = RemotePanel._SESSION_IDLE
+    panel._scrcpy_service = ScrcpyService()
+    panel._scrcpy_config = Mock()
+    monkeypatch.setenv("SCRCPY_PATH", str(tmp_path / "private/scrcpy"))
+    monkeypatch.setattr(os.path, "isfile", lambda _path: exists)
+    monkeypatch.setattr(os, "access", lambda *_args: executable)
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
+
+    panel._start_scrcpy()
+
+    panel._scrcpy_config.assert_not_called()
+    panel._log.assert_called_once_with(
+        "WARNING", "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
+    )
+
+
 def test_scrcpy_service_start_and_stop_delegate_to_process_runner():
     process_runner = Mock(active_keys=[])
     proc = Mock()
@@ -856,6 +937,7 @@ def test_scrcpy_service_start_and_stop_delegate_to_process_runner():
         encoding="utf-8",
         errors="ignore",
         bufsize=1,
+        native_tool=True,
     )
     process_runner.stop.assert_called_once_with("scrcpy_device", timeout=2)
 

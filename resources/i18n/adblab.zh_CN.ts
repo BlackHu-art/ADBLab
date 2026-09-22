@@ -6215,8 +6215,8 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>自动选择（推荐）</translation>
         </message>
         <message>
-            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</source>
-            <translation>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</translation>
+            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项；macOS 最后检查默认 SDK 和 Homebrew</source>
+            <translation>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项；macOS 最后检查默认 SDK 和 Homebrew</translation>
         </message>
         <message>
             <source>应用自带</source>
@@ -6577,6 +6577,22 @@ Android 设备管理、应用操作与诊断工作台</translation>
         <message>
             <source>未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。</source>
             <translation>未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。</translation>
+        </message>
+        <message>
+            <source>Android SDK（macOS 默认目录）</source>
+            <translation>Android SDK（macOS 默认目录）</translation>
+        </message>
+        <message>
+            <source>Homebrew（Apple Silicon）</source>
+            <translation>Homebrew（Apple Silicon）</translation>
+        </message>
+        <message>
+            <source>Homebrew（Intel）</source>
+            <translation>Homebrew（Intel）</translation>
+        </message>
+        <message>
+            <source>SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。</source>
+            <translation>SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。</translation>
         </message>
     </context>
 </TS>

@@ -10,7 +10,7 @@
 | 语法兼容目标 | 静态检查与格式配置目标为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6；精确版本见依赖清单 | `requirements.txt` |
-| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器按平台门控，Windows 用内置 adb.exe，随后 `ADB_PATH`、Android SDK platform-tools、PATH 依次兜底，非 Windows 不使用内置 PE | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows/Linux x86_64 提供内置工具；其他平台使用环境工具；macOS 补充默认 SDK 与 Homebrew 路径发现，具体顺序见下文配置 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
 ## 安装
@@ -54,7 +54,9 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - ADB 解析器按平台和架构门控：Windows x64 使用 `runtime-tools/windows-x86_64/adb.exe`，Linux x86_64 使用
   `runtime-tools/linux-x86_64/adb`；依次尝试当前平台内置工具、`ADB_PATH`
   环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
-  最后回退 PATH；macOS 和未提供内置包的架构使用环境工具，不执行其他平台二进制。
+  再尝试 PATH；macOS 额外尝试 `~/Library/Android/sdk/platform-tools/adb`，随后检查
+  `/opt/homebrew/bin/adb` 和 `/usr/local/bin/adb`，当前架构的标准 Homebrew 前缀优先。
+  macOS 和未提供内置包的架构使用环境工具，不执行其他平台二进制。
 - 解析结果在进程内缓存，包含明确缺失结果；应用执行要求可用绝对路径，缺失时直接失败，
   不交给裸命令名重新搜索 PATH。设置页「重新检测」清空解析与执行两层缓存，并作废客户端
   探测缓存；安装或移除 platform-tools 后无需重启应用。重检合并、持久输入退休和子进程
@@ -62,15 +64,18 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 普通启动会后台检测默认本机 ADB 服务，为受支持短命令选择执行方式；设置页的执行模式只在
   当前运行生效。支持范围、恢复和自定义服务环境的处理见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - 设置页「ADB 维护 → 客户端」可固定使用的 ADB 客户端，配置键 `adb_client` 默认 `auto`
-  （按内置 → `ADB_PATH` → Android SDK → PATH 顺序）；取值也支持命名来源
-  （`bundled`/`runtime_cache`/`env`/`PATH`，旧配置里的 `sdk_home`/`sdk_root`/`sdk_local` 仍被接受）或绝对路径；
+  （按上述解析顺序）；取值也支持命名来源
+  （`bundled`/`runtime_cache`/`env`/`PATH`/`homebrew_arm64`/`homebrew_x64`，
+  SDK 来源 `sdk_home`/`sdk_root`/`sdk_local`/`sdk_macos` 仍被接受）或绝对路径；
   `bundled` 与 `runtime_cache` 兼容源码和 onefile 间的内置选择，不迁移用户设置。
   界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
   缓存并重新检测；所选客户端缺失时按选择如实失败，不会静默改用其它 adb。
   自动选项及折叠摘要显示宿主系统，如「Windows 下自动选择」「Ubuntu 下自动选择」
   「macOS 下自动选择」；其他 Linux 发行版或发行版信息不可读时显示 Linux。
   该名称只说明当前桌面环境，不改变下方执行环境的能力检测、测速及后端选择。
-- Remote 优先使用当前平台内置 scrcpy；Linux 内置包未准备时及未提供内置包的平台使用 PATH。
+- Remote 非空 `SCRCPY_PATH` 显式覆盖 scrcpy 路径，支持 `~` 和相对文件路径；该值是单个文件路径，
+  不能附加启动参数。无效覆盖会报错，不会静默回退。未配置时优先使用当前平台内置 scrcpy；
+  Linux 内置包未准备时及未提供内置包的平台使用 PATH；macOS 最后检查两个 Homebrew 标准前缀。
   主应用启动 MobilePerf 和 scrcpy 时分别冻结
   `ADB_PATH` / `ADB` 子进程环境；所选 ADB 缺失会在启动前失败，详情见
   [Remote 投屏与输入](ADB_FAST.md#remote-投屏与输入) 与 [MobilePerf 采集进程](ADB_FAST.md#mobileperf-采集进程)。
@@ -132,8 +137,27 @@ Windows 包完整保留 ADB、scrcpy/server、DLL、图标、启动辅助文件�
 
 ```bash
 .venv/bin/python scripts/build_app.py --name ADBLab-linux-x64 --onefile
-./dist/ADBLab-linux-x64 --self-check packaging
+.venv/bin/python scripts/check_build_artifacts.py frozen --executable dist/ADBLab-linux-x64 --timeout 60
 ```
+
+Ubuntu 的 Qt X11 启动需要系统动态库；缺少 `libxcb-cursor.so.0` 时安装
+`libxcb-cursor0`。CI 使用 `libegl1 libudev1 libxcb-cursor0 xvfb xauth`，其中 Xvfb/xauth
+用于没有桌面的验收环境。可分别验证源码与产物，显示依赖缺失会返回失败：
+
+```bash
+QT_QPA_PLATFORM=xcb timeout 15s xvfb-run -a .venv/bin/python main.py --self-check gui
+QT_QPA_PLATFORM=xcb timeout 15s xvfb-run -a ./dist/ADBLab-linux-x64 --self-check gui
+```
+
+`--self-check gui` 创建最小窗口并运行一次事件循环，不加载主窗口、用户设置或设备业务；
+不强制离屏模式。它验证 QPA 插件启动，不能代替实际桌面、Wayland、高 DPI 和设备功能验收。
+
+### macOS 工具发现
+
+macOS 发行包不内置 ADB/scrcpy。终端 PATH 已配置的工具继续优先；从 Finder 启动时，
+程序也能发现上述默认 SDK 和 Homebrew 路径。安装或移除 ADB 后在设置页重新检测；
+特殊位置的 scrcpy 可在启动环境中指定 `SCRCPY_PATH`。双架构安装时分别显示 Homebrew 来源，
+不能用来源标签代替真实可执行性和版本检查。
 
 GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
@@ -149,7 +173,7 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 ```
 
 第二条是内部 worker 入口，正常用户应通过左侧“性能采集”页启动，不应手写含真实设备/包信息的配置并提交到仓库。
-另有 `core/native_process.py` 调用的内部 `--native-launch` 模式，用于隔离原生工具启动环境，
+另有 `core/native_process.py` 调用的内部 `--adblab-native-launch` 模式，用于隔离原生工具启动环境，
 不作为日常运行命令。
 
 设置页手动更新检查的状态和重试规则见
@@ -244,7 +268,7 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 
 ```powershell
 .\.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noconfirm --clean
-& .\dist\ADBLab\ADBLab.exe --self-check packaging
+.\.venv\Scripts\python.exe scripts/check_build_artifacts.py frozen --executable dist/ADBLab/ADBLab.exe --timeout 60
 ```
 
 `ADBLab.spec`：
@@ -267,17 +291,26 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
 
 `.github/workflows/Build-exe.yaml` 在 `main` push 或手动触发时：
 
-1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
+1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本，并确定是否发布：`main` push 自动发布；手动
+   `workflow_dispatch` 默认 `publish=false`，只构建和上传 Actions artifacts。手动设为 `publish=true`
+   时仅允许 `main`，其他分支明确失败。仅构建允许重复已有版本；发布模式提前拒绝已有远端 tag。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
-   通过 apt 安装 `libegl1` 和 `libudev1`，提供 Qt/Fluent 导入所需的 `libEGL.so.1` 及工具的设备访问库；
+   通过 apt 安装 `libegl1 libudev1 libxcb-cursor0 xvfb xauth`，提供 Qt、设备访问与无桌面 GUI 探针所需环境；
    仅安装 Python wheel 无法补齐这些系统库。
 3. 准备当前平台工具。Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
    `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
-4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
-5. Windows/Linux 运行打包后 self-check；检查内置文件、可执行权限及版本命令，系统工具不参与兜底。
-6. 压缩并上传三平台制品。
-7. Release job 单独使用 `contents: write`；现存同版本 Release 或远端 tag 会使发布失败，防止直接
-   覆盖。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
+4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、
+   `macos-15` 构建 arm64；Python 显式选择架构并核对 machine，helper 与主程序用 file/lipo 核对架构。
+5. 三平台通过 `scripts/check_build_artifacts.py frozen` 显式等待产物退出并校验退出码，避免 Windows
+   windowed EXE 被 shell 启动后直接放行。探针依次检查 packaging 自检、worker `--help` 的 `--config`
+   输出，以及未知中文参数的 UTF-8 错误输出和退出码 2；每项运行超时为 60 秒，另给清理最多 2 秒，超时会尝试清理进程树，
+   清理未确认也判失败。随包工具检查文件、可执行权限及版本命令，系统工具不参与兜底。
+   Linux 额外对源码和产物运行有超时保护的 Xvfb/xcb GUI 探针；macOS 架构检查继续保留。
+6. 压缩后只上传各任务的精确归档路径，包括 Windows x64、Linux x64、macOS x64 与 arm64。
+7. 仅发布模式进入 Release job，单独使用 `contents: write`。下载失败即停止；
+   `scripts/check_build_artifacts.py release` 要求恰好四个预期版本、路径的非空归档，并检查归档
+   可读且含主程序；缺包、多包、错误版本或损坏均阻止发布。现存同版本 Release 或远端 tag
+   仍会使发布失败，防止直接覆盖。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
    Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
@@ -289,10 +322,33 @@ CLI 生成的 spec 位于 `build/app-spec`，资源、入口及图标路径按�
 CLI 与本地 spec 在构建前运行工具准备脚本，任一准备步骤失败即停止构建。onefile 继续把工具复制到
 稳定的用户缓存运行；缓存缺失时补齐文件，丢失可执行权限时修复权限，保留仍在运行的有效工具文件。
 
+`runtime-tools/` 不从 Git checkout 获取，也不要求手工上传；每个构建任务运行
+`scripts/prepare_runtime_tools.py`，按 `utils/tool_manifest.py` 的固定下载地址与 SHA256 准备：
+
+| 构建平台 | 工具来源 | 生成目录 |
+| --- | --- | --- |
+| Windows x64 | Genymobile/scrcpy 的 v4.1 Release：`scrcpy-win64-v4.1.zip`，包含 ADB、scrcpy/server、DLL 与许可 | `runtime-tools/windows-x86_64/` |
+| Linux x64 | 同一 Release：`scrcpy-linux-x86_64-v4.1.tar.gz`，包含 ADB、scrcpy/server 与许可 | `runtime-tools/linux-x86_64/` |
+| macOS x64 / arm64 | 不生成内置工具包；运行时发现用户安装的兼容工具 | 无 |
+
+只有校验通过的已有工具目录可复用；网络、摘要或准备过程失败会停止构建。生成目录不进入 Git，
+资源收集只带入当前平台工具。应用运行时不联网下载；macOS 安装与发现方式见
+[macOS 工具发现](#macos-工具发现)。
+
+发布集合的目录结构由四个 Actions artifact 名称决定。下载后可在项目根目录离线核验：
+
+```bash
+python3 scripts/check_build_artifacts.py release --directory release_artifacts --version vX.Y.Z
+```
+
+将 `vX.Y.Z` 替换为实际版本。该命令只用 Python 标准库，不需要安装应用依赖。`frozen` 检查使用
+项目构建环境，并需要其中的 psutil 来清理子进程；它验证启动、打包与标准流，不连接真实设备，
+不能代替 Windows/macOS 原生运行、桌面交互及投屏实机验收。
+
 CI 侧只保留 Build（编译发布）与 Retention Audit（手动只读审计）两个工作流；Build 在推送 main
 或手动触发时执行文本完整性、Windows 静态检查、三平台构建与产物自检，并在依赖安装及源码导入前
 检查文本完整性。CI 不运行 pytest，测试由开发者按 [测试指南](TESTING_GUIDE.md) 在本地选择执行；
-pip 缓存同时考虑 requirements 和 constraints 的变化。
+pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints 的变化。
 
 ### 提交版本规则
 
@@ -314,13 +370,14 @@ pip 缓存同时考虑 requirements 和 constraints 的变化。
 
 ## 调试方法
 
-- 普通 ADB 失败：packaging self-check 可确认依赖与打包资源存在，Windows 包括内置 adb 文件；
-  它不执行 ADB 或验证设备连接。继续查看任务中心“本次操作”的错误详情及设置页 ADB 维护状态；
+- 普通 ADB 失败：packaging self-check 可确认依赖与打包资源存在，Windows/Linux 还执行内置工具
+  版本命令；它不验证设备连接。继续查看任务中心“本次操作”的错误详情及设置页 ADB 维护状态；
   实时采集内容保留在对应功能页，归属见 [OPERATION_RESULTS](OPERATION_RESULTS.md)。应用自身异常在设置页导出诊断。
 - 设备扫描：检查 `continuous_device_scan` 和 `device_scan_interval_ms`；原生扫描在有活跃
   CommandRunner 命令时跳过本轮，快速扫描不受该忙碌判断阻塞。能力恢复检查在忙碌判断前提交，
   细节见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
-- Remote：观察预检 warning、scrcpy stderr/FPS 状态；Windows 确认内置 scrcpy 完整，非 Windows 确认 PATH。
+- Remote：观察预检 warning、scrcpy stderr/FPS 状态；先检查显式 `SCRCPY_PATH`，
+  再按平台检查内置包、PATH 或 macOS Homebrew；确认工具匹配宿主架构且有执行权限。
 - MobilePerf：使用左侧“性能采集”页的日志与结果目录；停止先写 `mobileperf.stop`，默认最多等待
   90 秒供报告收尾，再尝试终止进程；未确认退出时保留运行状态，不能将停止请求视为退出成功。
 - 高并发/关闭问题：重点检查功能页 `request_dispose()`、Workspace 会话 registry、TaskSupervisor、
@@ -333,4 +390,5 @@ pip 缓存同时考虑 requirements 和 constraints 的变化。
 | 找不到设备 | ADB 不可用、设备未授权/offline、网络 target 不完整；连接目标必须含 port |
 | APK 信息解析失败 | `aapt` 不在 PATH 或 APK 不存在 |
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
-| 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
+| Remote 提示 scrcpy 不可用 | 检查 SCRCPY_PATH；Windows/Linux x86_64 检查准备后的工具包，macOS/其他架构需兼容的系统工具 |
+| Linux 提示无法加载 xcb 插件 | 检查实际缺失的系统库；缺少 libxcb-cursor.so.0 时安装 libxcb-cursor0，再运行 GUI 自检 |

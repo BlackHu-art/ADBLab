@@ -11,6 +11,9 @@ import pytest
 import core.adb_runtime as runtime_module
 import core.exec as execution
 import main
+from core.adb_transport import ExecutionResult
+from services.remote import ScrcpyService
+from services.remote.types import ScrcpyLaunchPlan
 
 
 def _reject_direct_spawn(*_args, **_kwargs):
@@ -67,6 +70,144 @@ def test_native_entry_routes_through_isolated_boundary(monkeypatch, tmp_path, en
     assert len(observed) == 1
     assert observed[0][0] == command
     assert observed[0][1]["isolate"] is True
+
+
+class _FinishedNativeChild:
+    """提供已退出进程和可关闭管道，避免边界测试创建真实工具或遗留跟踪。"""
+
+    returncode = 0
+
+    def __init__(self, output=b""):
+        self.stdin = None
+        self.stdout = io.BytesIO(output)
+        self.stderr = io.BytesIO()
+        self.output = output
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def communicate(self, **_kwargs):
+        return self.output, b""
+
+
+@pytest.mark.parametrize("entry", ["version", "encoder"])
+@pytest.mark.parametrize("cancellable", [False, True])
+def test_custom_scrcpy_commands_request_native_isolation(
+    monkeypatch, tmp_path, entry, cancellable,
+):
+    tool = str(tmp_path / "custom mirror tool")
+    monkeypatch.setenv("SCRCPY_PATH", tool)
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution, "_adb_path", None)
+    observed = []
+    output = "scrcpy 4.1" if entry == "version" else "OMX.test.encoder h264 encoder"
+
+    def run(command, **kwargs):
+        observed.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    def popen(command, **kwargs):
+        observed.append((command, kwargs))
+        return _FinishedNativeChild(output.encode())
+
+    monkeypatch.setattr(execution, "run_native", run)
+    monkeypatch.setattr(runtime_module, "popen_native", popen)
+    service = ScrcpyService()
+    cancelled = (lambda: False) if cancellable else None
+    if entry == "version":
+        assert service.version(service.resolve_executable(), cancelled=cancelled) == "4.1"
+        expected = [tool, "--version"]
+    else:
+        assert service.detect_encoder(tool, "fixture", cancelled=cancelled) == "OMX.test.encoder"
+        expected = [tool, "-s", "fixture", "shell", "dumpsys media.codec"]
+    assert len(observed) == 1
+    assert observed[0][0] == expected
+    assert observed[0][1]["isolate"] is True
+
+
+@pytest.mark.parametrize("entry", ["legacy", "plan"])
+def test_custom_scrcpy_processes_request_native_isolation(monkeypatch, tmp_path, entry):
+    tool = str(tmp_path / "custom mirror tool")
+    monkeypatch.setenv("SCRCPY_PATH", tool)
+    monkeypatch.setattr(execution, "_adb_path", None)
+    observed = []
+    child = _FinishedNativeChild()
+
+    def popen(command, **kwargs):
+        observed.append((command, kwargs))
+        return child
+
+    monkeypatch.setattr(execution, "popen_native", popen)
+    service = ScrcpyService()
+    command = [service.resolve_executable(), "--port=27183"]
+    try:
+        if entry == "plan":
+            process = service.start_plan("fixture", ScrcpyLaunchPlan(
+                args=command, device_info="", version="4.1", env={"ADB": "chosen-adb"},
+            ))
+        else:
+            process = service.start("fixture", command)
+        assert process is child
+        assert len(observed) == 1
+        assert observed[0][0] == command
+        assert observed[0][1]["isolate"] is True
+    finally:
+        service.stop("fixture")
+        child.stdout.close()
+        child.stderr.close()
+
+
+def test_scrcpy_preflight_keeps_fast_adb_route_with_native_tool_marker(monkeypatch, tmp_path):
+    command = [str(tmp_path / "chosen-adb"), "-s", "fixture", "shell", "echo ok"]
+    calls = []
+
+    def try_run(resolved, _timeout, _cancelled):
+        calls.append(resolved)
+        return ExecutionResult(stdout=b"ok", returncode=0)
+
+    runtime = SimpleNamespace(try_run=try_run, can_shell_fast=lambda *_args: True)
+    monkeypatch.setattr(execution, "_adb_runtime", runtime)
+    monkeypatch.setattr(execution, "run_native", _reject_direct_spawn)
+    assert ScrcpyService().preflight_check(command[0], "fixture").success
+    assert calls == [command]
+
+
+@pytest.mark.parametrize("entry", ["run", "spawn", "start"])
+def test_application_worker_retains_default_nonisolated_execution(monkeypatch, tmp_path, entry):
+    command = [str(tmp_path / "ADBLab"), "--mobileperf-worker", "--config", "fixture.json"]
+    monkeypatch.setattr(execution, "_adb_path", None)
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    observed = []
+    child = _FinishedNativeChild()
+
+    def run(cmd, **kwargs):
+        observed.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, "ready", "")
+
+    def popen(cmd, **kwargs):
+        observed.append((cmd, kwargs))
+        return child
+
+    monkeypatch.setattr(execution, "run_native", run)
+    monkeypatch.setattr(execution, "popen_native", popen)
+    runner = execution.ProcessRunner()
+    try:
+        if entry == "run":
+            assert execution.CommandRunner.run(command).success
+        elif entry == "spawn":
+            assert runner.spawn(command) is child
+        else:
+            assert runner.start("fixture", command) is child
+        assert len(observed) == 1
+        assert observed[0][0] == command
+        assert observed[0][1]["isolate"] is False
+    finally:
+        runner.stop("fixture")
+        child.stdout.close()
+        child.stderr.close()
 
 
 def test_main_dispatches_native_launcher_without_gui(monkeypatch):

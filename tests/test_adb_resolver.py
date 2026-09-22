@@ -9,7 +9,7 @@ import pytest
 
 from core import exec as execution
 from core.adb_bridge import ADBBridge
-from utils import adb_resolver
+from utils import adb_resolver, tool_manifest
 
 _ENVIRONMENT_KEYS = ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA")
 
@@ -222,3 +222,87 @@ def test_bridge_defers_missing_adb_and_follows_later_resolution(monkeypatch):
     monkeypatch.setattr("core.adb_bridge.adb_path", lambda: "C:/new/adb.exe")
     assert bridge.path == "C:/new/adb.exe"
     assert ADBBridge("explicit-adb").path == "explicit-adb"
+
+
+@pytest.mark.parametrize("machine, sources", [
+    ("arm64", ["homebrew_arm64", "homebrew_x64"]),
+    ("aarch64", ["homebrew_arm64", "homebrew_x64"]),
+    ("x86_64", ["homebrew_x64", "homebrew_arm64"]),
+    ("AMD64", ["homebrew_x64", "homebrew_arm64"]),
+])
+def test_macos_homebrew_candidates_order_by_host_architecture(machine, sources):
+    factory = getattr(tool_manifest, "macos_tool_candidates", None)
+    assert callable(factory), "macOS Homebrew candidate generation is missing"
+    paths = {"homebrew_arm64": "/opt/homebrew/bin/adb", "homebrew_x64": "/usr/local/bin/adb"}
+    assert factory("adb", machine) == [(source, paths[source]) for source in sources]
+
+
+def _prepare_macos(monkeypatch, tmp_path):
+    _isolate_environment(monkeypatch)
+    monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
+    monkeypatch.setattr(tool_manifest.host_platform, "machine", lambda: "arm64")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    _which(monkeypatch, None)
+    monkeypatch.setattr(adb_resolver.os, "access", lambda *_args: True)
+    return str(tmp_path / "Library/Android/sdk/platform-tools/adb")
+
+
+def test_macos_restricted_path_uses_default_sdk_before_homebrew(monkeypatch, tmp_path):
+    sdk = _prepare_macos(monkeypatch, tmp_path)
+    _existing_paths(monkeypatch, [sdk, "/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
+
+    assert adb_resolver.resolve_adb_path() == sdk
+    candidates = adb_resolver.list_adb_candidates()
+    assert [(item.source, item.path) for item in candidates] == [
+        ("homebrew_arm64", "/opt/homebrew/bin/adb"),
+        ("homebrew_x64", "/usr/local/bin/adb"),
+    ]
+
+
+@pytest.mark.parametrize("preferred", ["auto", "homebrew_arm64", "homebrew_x64"])
+def test_macos_homebrew_sources_resolve_and_missing_selection_never_falls_back(
+    monkeypatch, tmp_path, preferred,
+):
+    _prepare_macos(monkeypatch, tmp_path)
+    arm, intel = "/opt/homebrew/bin/adb", "/usr/local/bin/adb"
+    _existing_paths(monkeypatch, [arm, intel])
+    adb_resolver.set_client_preference(preferred)
+    assert adb_resolver.resolve_adb_path() == (intel if preferred == "homebrew_x64" else arm)
+
+    _existing_paths(monkeypatch, [intel] if preferred != "homebrew_x64" else [arm])
+    adb_resolver.invalidate_adb_path_cache()
+    assert adb_resolver.resolve_adb_path() == (intel if preferred == "auto" else None)
+
+
+def test_macos_keeps_existing_environment_sdk_and_path_priority(monkeypatch, tmp_path):
+    sdk = _prepare_macos(monkeypatch, tmp_path)
+    monkeypatch.setenv("ADB_PATH", "/explicit/adb")
+    monkeypatch.setenv("ANDROID_HOME", "/sdk-home")
+    monkeypatch.setenv("ANDROID_SDK_ROOT", "/sdk-root")
+    _which(monkeypatch, "/path/adb")
+    _existing_paths(monkeypatch, [sdk, "/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
+    assert adb_resolver.resolve_adb_path() == "/path/adb"
+    assert [source for source, _path in adb_resolver._candidates()] == [
+        "env", "sdk_home", "sdk_root", "PATH", "sdk_macos", "homebrew_arm64", "homebrew_x64",
+    ]
+
+
+def test_macos_skips_non_executable_homebrew_and_omits_uninstalled_rows(monkeypatch, tmp_path):
+    _prepare_macos(monkeypatch, tmp_path)
+    _existing_paths(monkeypatch, ["/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
+    monkeypatch.setattr(adb_resolver.os, "access", lambda path, _mode: path.startswith("/usr/"))
+    assert adb_resolver.resolve_adb_path() == "/usr/local/bin/adb"
+    _existing_paths(monkeypatch, [])
+    assert adb_resolver.list_adb_candidates() == []
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_other_platforms_never_offer_macos_locations(monkeypatch, platform):
+    _isolate_environment(monkeypatch)
+    monkeypatch.setattr(adb_resolver.sys, "platform", platform)
+    monkeypatch.setattr(adb_resolver, "_bundled_candidate", lambda: None)
+    _which(monkeypatch, None)
+    _existing_paths(monkeypatch, ["/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
+    assert adb_resolver.list_adb_candidates() == []
+    assert adb_resolver.resolve_adb_path() is None

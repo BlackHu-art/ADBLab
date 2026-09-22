@@ -47,6 +47,41 @@ def test_fast_plan_binds_only_scrcpy_child_environment(service, monkeypatch, tmp
     assert os.environ["ADB"] == "unrelated-adb.exe"
 
 
+def test_scrcpy_override_keeps_selected_homebrew_adb_in_native_plan(
+    service, monkeypatch, tmp_path,
+):
+    from core import exec as execution
+    from utils import adb_resolver
+
+    selected = tmp_path / "chosen-adb"
+    selected.touch(mode=0o755)
+    exe = tmp_path / "custom scrcpy"
+    monkeypatch.setenv("SCRCPY_PATH", str(exe))
+    monkeypatch.setenv("ADB", "unrelated-adb")
+    monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
+    monkeypatch.setattr(adb_resolver, "_client_preference", "homebrew_x64")
+    monkeypatch.setattr(adb_resolver, "macos_tool_candidates", lambda _tool: [
+        ("homebrew_x64", str(selected)),
+    ])
+    monkeypatch.setattr("services.remote.scrcpy_service.adb_runtime", lambda: None)
+    adb_resolver.invalidate_adb_path_cache()
+    execution.reset_adb_program_cache()
+    try:
+        config = replace(_scrcpy_config(), exe=service.resolve_executable(),
+                         adb=execution.require_adb_program())
+        plan = service.build_launch_plan(config)
+        assert plan.args[0] == str(exe)
+        assert plan.backend == "native"
+        assert plan.env["ADB"] == str(selected)
+        assert all(
+            call.args[0][0] == str(exe if "--version" in call.args[0] else selected)
+            for call in service.command_runner.run.call_args_list
+        )
+    finally:
+        adb_resolver.invalidate_adb_path_cache()
+        execution.reset_adb_program_cache()
+
+
 @pytest.mark.parametrize(
     "reason", ["native", "missing_bridge", "custom_arguments", "custom_server", "version"],
 )

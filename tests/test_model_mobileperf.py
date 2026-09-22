@@ -370,12 +370,12 @@ def test_mobileperf_config_normalizes_save_path_before_write(tmp_path):
     cfg = MobilePerfRunConfig(
         device_id="emulator-5554",
         package="com.example.app",
-        save_path="E:/Download\\mobileperf\\emulator-5554",
+        save_path=os.path.join(str(tmp_path), "parent", "..", "out"),
     )
 
     generated = Path(cfg.write_config(tmp_path))
     text = generated.read_text(encoding="utf-8")
-    expected_save_path = os.path.normpath(r"E:\Download\mobileperf\emulator-5554")
+    expected_save_path = str(tmp_path / "out")
 
     assert f"save_path = {expected_save_path}" in text
 

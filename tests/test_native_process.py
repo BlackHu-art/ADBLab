@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -13,6 +14,68 @@ import pytest
 
 # venv 的 Windows python.exe 是转发器；原生工具替身必须直接运行基础解释器。
 NATIVE_PYTHON = getattr(sys, "_base_executable", sys.executable)
+
+
+@pytest.mark.parametrize("original", [None, "", "/system/native-libs"])
+@pytest.mark.parametrize("explicit_environment", [False, True])
+def test_frozen_linux_native_child_restores_library_environment(
+    monkeypatch, original, explicit_environment,
+):
+    from core import native_process
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/frozen/application-libs")
+    monkeypatch.setenv("ADB", "/selected/adb")
+    monkeypatch.setenv("ADB_PATH", "/configured/adb")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/frozen/application")
+    if original is None:
+        monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+    else:
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", original)
+    parent = dict(os.environ)
+    environment = dict(parent)
+    keys = ["LD_LIBRARY_PATH", "LD_LIBRARY_PATH_ORIG", "ADB", "ADB_PATH",
+            "_PYI_APPLICATION_HOME_DIR"]
+    code = f"import os,json;print(json.dumps({{k:os.environ.get(k) for k in {keys!r}}}))"
+
+    result = native_process.run_native(
+        [sys.executable, "-c", code], isolate=True, capture_output=True, timeout=10,
+        **({"env": environment} if explicit_environment else {}),
+    )
+
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    assert observed["LD_LIBRARY_PATH"] == original
+    assert observed["LD_LIBRARY_PATH_ORIG"] == original
+    assert observed["ADB"] == "/selected/adb"
+    assert observed["ADB_PATH"] == "/configured/adb"
+    assert observed["_PYI_APPLICATION_HOME_DIR"] == "/frozen/application"
+    assert environment == parent
+    assert dict(os.environ) == parent
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "frozen", "isolate", "shell"),
+    [("linux", False, True, False), ("darwin", True, True, False),
+     ("linux", True, False, False), ("linux", True, True, True)],
+)
+def test_non_native_boundaries_preserve_library_environment(
+    monkeypatch, platform_name, frozen, isolate, shell,
+):
+    from core import native_process
+
+    monkeypatch.setattr(sys, "platform", platform_name)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    environment = {"LD_LIBRARY_PATH": "/frozen/libs", "LD_LIBRARY_PATH_ORIG": "/original"}
+    observed = []
+    monkeypatch.setattr(
+        native_process.subprocess, "Popen",
+        lambda command, **kwargs: observed.append(kwargs),
+    )
+    native_process.popen_native(["tool"], isolate=isolate, shell=shell, env=environment)
+    assert observed[0]["env"] == environment
+    assert environment["LD_LIBRARY_PATH"] == "/frozen/libs"
 
 
 def test_source_process_keeps_binary_streams_and_exit_code():

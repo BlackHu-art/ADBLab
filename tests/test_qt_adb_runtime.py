@@ -147,6 +147,45 @@ def test_adapter_recheck_invalidates_path_caches_before_reselection(monkeypatch)
         adapter.close()
 
 
+@pytest.mark.ui
+def test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches(
+    monkeypatch, qt_application, tmp_path,
+):
+    from utils import adb_resolver
+
+    for name in ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
+    monkeypatch.setattr(adb_resolver.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(adb_resolver, "macos_tool_candidates", lambda _tool: [])
+    monkeypatch.setattr(adb_resolver, "_client_preference", "auto")
+    adb_resolver.invalidate_adb_path_cache()
+    execution.reset_adb_program_cache()
+    adapter = QtAdbRuntime()
+    observed = []
+    monkeypatch.setattr(adapter.runtime, "recheck", lambda: observed.append(
+        execution.resolve_adb_program(),
+    ))
+    try:
+        assert execution.resolve_adb_program() is None
+        tool = tmp_path / "Library/Android/sdk/platform-tools/adb"
+        tool.parent.mkdir(parents=True)
+        tool.touch(mode=0o755)
+        assert execution.resolve_adb_program() is None
+
+        adapter.recheck()
+
+        assert observed == [str(tool)]
+        assert adb_resolver.resolve_adb_path() == str(tool)
+        assert execution.resolve_adb_program() == str(tool)
+    finally:
+        adapter.close()
+        adb_resolver.invalidate_adb_path_cache()
+        execution.reset_adb_program_cache()
+
+
 def test_main_frame_projects_initial_native_scope_without_selecting_manual_native(monkeypatch):
     monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
     frame = QWidget()
@@ -469,7 +508,8 @@ def test_adb_client_card_detection_timeout_exits_busy(qt_application):
         card.close()
 
 
-def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_application):
+@pytest.mark.parametrize("source", ["sdk_home", "homebrew_arm64", "homebrew_x64"])
+def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_application, source):
     """选择候选客户端后写配置、清两层路径缓存并重新检测执行环境。"""
 
     calls = []
@@ -498,16 +538,16 @@ def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_ap
     )
     page = SettingsPage(frame)
     try:
-        page._apply_adb_client("sdk_home")
+        page._apply_adb_client(source)
 
-        assert writes == [("adb_client", "sdk_home")]
-        assert values["adb_client"] == "sdk_home"
+        assert writes == [("adb_client", source)]
+        assert values["adb_client"] == source
         assert calls[0] == "set_client_preference"
         assert {
             "invalidate_adb_path_cache", "reset_adb_program_cache", "clear_client_probe_cache",
         } <= set(calls)
         frame.recheck_adb_environment.assert_called_once_with()
-        assert page.adb_client_card.selection() == "sdk_home"
+        assert page.adb_client_card.selection() == source
     finally:
         page.close()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
 import threading
@@ -308,6 +309,37 @@ def test_mobileperf_runner_drains_real_stdout_and_stderr_before_finish(tmp_path,
     assert stdout_lines == [f"OUT-{index}" for index in range(line_count)]
     assert "ERR-0" in diagnostics
     assert f"ERR-{line_count - 1}" in diagnostics
+
+
+def test_mobileperf_runner_overrides_inherited_gbk_for_unicode_logs(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONIOENCODING", "gbk")
+    monkeypatch.setattr(runner_module, "user_data_root", lambda: tmp_path)
+    monkeypatch.setattr(MobilePerfRunner, "_resolve_adb_path", staticmethod(lambda: "adb-unused"))
+    diagnostics = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", diagnostics)
+    runner = MobilePerfRunner(process_runner=ProcessRunner(), project_root=tmp_path)
+    script = (
+        "import sys\n"
+        "print('采样完成🙂')\n"
+        "print('诊断完成🙂', file=sys.stderr)\n"
+    )
+    monkeypatch.setattr(runner, "_build_command", lambda: [sys.executable, "-c", script])
+    received = []
+    finished = threading.Event()
+
+    runner.start(
+        MobilePerfRunConfig(package="com.example.unicode"),
+        on_log=received.append, on_finished=finished.set,
+    )
+    try:
+        assert finished.wait(10), "worker pipes did not reach EOF"
+        assert runner.last_exit_code == 0
+        assert "\n".join(received) == "采样完成🙂"
+        assert "诊断完成🙂" in diagnostics.getvalue()
+        assert os.environ["PYTHONIOENCODING"] == "gbk"
+    finally:
+        runner.stop(timeout=0)
+    assert not runner.is_running()
 
 
 def test_mobileperf_runner_callback_failures_do_not_interrupt_pipe_drain(tmp_path):

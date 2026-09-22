@@ -19,7 +19,7 @@ from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
 from utils.runtime_tools import bundled_tool_path
 from utils.scrcpy_bridge import resolve_scrcpy_bridge
-from utils.tool_manifest import get_tool_bundle
+from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
 from utils.user_data import user_data_root
 
 from .scrcpy_args import build_scrcpy_args
@@ -82,14 +82,16 @@ class ScrcpyService:
         self, cmd: list[str], timeout: float = 5, *, deadline: float | None = None,
         cancelled: Callable[[], bool] | None = None,
     ):
-        """预检共用启动预算，取消后不再执行下一条查询或发布启动计划。"""
+        """预检共用启动预算；ADB/scrcpy 即使改名也须隔离，取消后停止后续查询。"""
         self._check_budget(deadline, cancelled)
         if deadline is not None:
             timeout = min(timeout, max(0, deadline - time.monotonic()))
         if cancelled is None:
-            result = self.command_runner.run(cmd, timeout=timeout)
+            result = self.command_runner.run(cmd, timeout=timeout, native_tool=True)
         else:
-            result = self.command_runner.run(cmd, timeout=timeout, cancelled=cancelled)
+            result = self.command_runner.run(
+                cmd, timeout=timeout, cancelled=cancelled, native_tool=True,
+            )
         self._check_budget(deadline, cancelled)
         return result
 
@@ -102,7 +104,10 @@ class ScrcpyService:
             raise TimeoutError("scrcpy launch preflight timed out")
 
     def resolve_executable(self) -> str:
-        """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
+        """显式路径即使无效也原样交给现有失败边界，禁止静默改用另一份工具。"""
+        override = os.environ.get("SCRCPY_PATH", "").strip()
+        if override:
+            return os.path.abspath(os.path.expanduser(override))
         platform_key = {"Windows": "win32", "Linux": "linux", "Darwin": "darwin"}.get(
             platform.system(), "unsupported",
         )
@@ -111,7 +116,14 @@ class ScrcpyService:
             executable = bundled_tool_path(bundle.directory, bundle.scrcpy)
             if platform_key == "win32" or os.path.isfile(executable):
                 return executable
-        return shutil.which("scrcpy") or "scrcpy"
+        found = shutil.which("scrcpy")
+        if found:
+            return found
+        if platform_key == "darwin":
+            for _source, executable in macos_tool_candidates("scrcpy"):
+                if os.path.isfile(executable) and os.access(executable, os.X_OK):
+                    return executable
+        return "scrcpy"
 
     def version(
         self, exe: str, *, deadline: float | None = None,
@@ -307,6 +319,7 @@ class ScrcpyService:
             process = self.process_runner.start(
                 key, args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="ignore", bufsize=1, env=environment,
+                native_tool=True,
             )
         except Exception:
             with self._bridge_lock:
@@ -413,6 +426,7 @@ class ScrcpyService:
             encoding="utf-8",
             errors="ignore",
             bufsize=1,
+            native_tool=True,
         )
 
     def stop(self, key: str, timeout: float = 2.0) -> int | None:

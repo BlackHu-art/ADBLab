@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-19
+last_verified: 2026-09-22
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -20,7 +20,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | [AppSettings](../../core/settings_manager.py) 已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | [AppManagerWorker](../../models/app_manager_worker.py) 校验关键 CommandResult 和拉取 APK 数量，先暂存再原子发布 ZIP；恢复使用安全解压，取消后不启动后续安装或发布完整成功；页面业务批次串行，仍需完整性元数据和授权恢复测试 | Partial |
 | Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 长任务仍有独立 Popen 边界 | 明确只读 model 查询、设备概览、App Manager、Logcat 辅助探测和 Remote 预检支持执行中取消；关闭等待 Executor、模型池和活动短命令，超时保留残留。MobilePerf 同步采集查询与间隔等待可取消。特殊调用保持原契约，真实拔线和平台差异仍需扩展验证 | Partial |
-| Medium | macOS/Linux 缺少真实功能验证，依赖约束也未覆盖所有平台独有依赖 | Build 保留 Windows 静态检查、三平台构建和产物自检；CI 不再运行 pytest，测试只按测试指南在本地执行；仍需补平台启动/ADB/scrcpy 降级检查与依赖闭包验收，不能把构建成功视为功能验收 | Partial |
+| Medium | 跨平台真实功能验证与依赖闭包仍不完整 | Build 已配置 macOS x64/arm64 架构校验、三平台 packaging 自检和 Linux xcb GUI 探针；CI 不运行 pytest，测试按测试指南在本地执行。仍需对应平台实际运行、Windows windowed MobilePerf 管道、macOS Finder 启动、授权设备投屏与断线验收，不能把构建或路径模拟通过视为功能验收 | Partial |
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
 | Low | 完整 Qt 测试长序列曾出现下拉控件悬停超时，具体前置状态尚未定位 | [下拉材质测试](../../tests/test_dropdown_material.py) 在独立、紧邻前置及原失败节点组合中通过；活动 Popup 遮挡可复现相同症状，但尚未证明全量中的来源。失败时记录鼠标实际命中、活动窗口、Popup 和模态窗口，保留原交互与像素断言 | 待确认 |

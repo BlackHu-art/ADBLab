@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-21
+last_verified: 2026-09-22
 related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
 ---
 
@@ -291,7 +291,8 @@ Settings 中的 About 随 SettingsPage 创建，不属于 Workspace 路由。“
   多行输出不直接拼接成尺寸；失败或无效尺寸不写入缓存。
 - **失败与清理**：没有可用目标时拒绝新操作；单台预检或启动失败不阻断其他设备。关闭时先停止输入
   准入，取消预检，停止原会话进程并等待 executor、warmup、reader、焦点线程及专用入口清理，最后关闭持久输入会话；
-  非 Windows 缺少 PATH scrcpy 时明确失败。
+  找不到当前平台可用的 scrcpy 时明确失败；显式 `SCRCPY_PATH` 无效时不静默回退，
+  平台内置、PATH 与 macOS Homebrew 的顺序见 [构建与运行](../guides/BUILD_AND_RUN.md#配置)。
 
 ## 8. MobilePerf
 

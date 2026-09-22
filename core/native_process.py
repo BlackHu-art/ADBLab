@@ -1,4 +1,4 @@
-"""原生工具启动和有界收尾；冻结 Windows 程序不改变 GUI 的 DLL 搜索状态。"""
+"""原生工具启动和有界收尾；隔离冻结程序对外部工具的动态库搜索影响。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,17 @@ from typing import Any
 
 def _should_isolate(isolate: bool, shell: bool) -> bool:
     return isolate and not shell and sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+
+
+def native_tool_environment(environment: dict[str, str]) -> dict[str, str]:
+    """复制 Linux 原生工具环境，恢复冻结启动前的库路径，不修改调用方环境。"""
+    cleaned = dict(environment)
+    original = cleaned.get("LD_LIBRARY_PATH_ORIG")
+    if original is None:
+        cleaned.pop("LD_LIBRARY_PATH", None)
+    else:
+        cleaned["LD_LIBRARY_PATH"] = original
+    return cleaned
 
 
 def _launcher_prefix() -> list[str]:
@@ -191,8 +202,14 @@ def stop_native_process(process: subprocess.Popen, *, timeout: float) -> bool | 
 
 
 def popen_native(command: list[str], *, isolate: bool = False, **kwargs: Any) -> subprocess.Popen:
-    """仅在显式原生工具边界隔离；本应用 worker、源码及其他平台保持原启动方式。"""
-    if not _should_isolate(isolate, bool(kwargs.get("shell", False))):
+    """隔离显式原生工具的库搜索；应用 worker 保留自身冻结运行环境。"""
+    shell = bool(kwargs.get("shell", False))
+    if isolate and not shell and sys.platform == "linux" and getattr(sys, "frozen", False):
+        environment = kwargs.get("env")
+        kwargs["env"] = native_tool_environment(
+            dict(os.environ) if environment is None else environment,
+        )
+    if not _should_isolate(isolate, shell):
         return subprocess.Popen(command, **kwargs)
     if not command or not os.path.isabs(command[0]) or not os.path.isfile(command[0]):
         raise FileNotFoundError("原生工具不可用，请重新选择有效的可执行文件。")
