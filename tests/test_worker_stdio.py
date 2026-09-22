@@ -203,7 +203,7 @@ def test_existing_text_streams_become_utf8_without_windows_handle_access(monkeyp
     try:
         worker.prepare_worker_stdio()
         stream.write("采样完成🙂\n")
-        assert output.getvalue() == "采样完成🙂\n".encode()
+        assert output.getvalue() == f"采样完成🙂{os.linesep}".encode()
         assert streams.stdout is stream
         assert streams.stderr is injected
         injected.write("可注入输出")
@@ -239,6 +239,8 @@ def test_pythonw_recovers_both_pipes_and_reaches_eof_after_exit():
     root = Path(__file__).resolve().parents[1]
     script = (
         "import atexit, sys\n"
+        "startup_stdout, startup_stderr = sys.stdout, sys.stderr\n"
+        "sys.stdout = sys.stderr = None\n"
         "assert sys.stdout is None and sys.stderr is None\n"
         "from core.worker_stdio import prepare_worker_stdio\n"
         "prepare_worker_stdio()\n"

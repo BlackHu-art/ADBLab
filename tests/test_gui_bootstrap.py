@@ -18,7 +18,10 @@ from core import settings_manager
 @pytest.mark.parametrize("platform_plugin", ["offscreen", "adblab-invalid-platform"])
 def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plugin):
     """独立进程实际加载指定 QPA 插件；失败插件不能被静默替换成离屏模式。"""
-    environment = dict(os.environ, QT_QPA_PLATFORM=platform_plugin)
+    # Windows Qt 默认可将诊断交给调试器，显式写入 stderr 才能核对实际失败原因。
+    environment = dict(
+        os.environ, QT_QPA_PLATFORM=platform_plugin, QT_FORCE_STDERR_LOGGING="1",
+    )
     environment["XDG_CONFIG_HOME"] = str(tmp_path / "config")
     environment["XDG_DATA_HOME"] = str(tmp_path / "data")
     code = (
