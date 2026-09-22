@@ -297,9 +297,11 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    并校验 `.github/release-notes/<tag>.md`：UTF-8 正文非空，首行为 `# ADBLab <tag>`，
    标题后必须有正文。缺失、空白或版本不符均在构建前失败；仅构建模式不要求发布说明。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
-   通过 apt 安装 `libegl1 libudev1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 xvfb xauth`，
-   提供 Qt、设备访问与无桌面 GUI 探针所需环境；xcb 除光标库外还需要 ICCCM、按键和 X11 键盘处理库，
-   依赖依据见 [Qt 6.8 X11 要求](https://doc.qt.io/qt-6.8/linux-requirements.html)。仅安装 Python wheel 无法补齐这些系统库。
+   通过 apt 安装 EGL、udev、X11/xcb 与 Xvfb/xauth 运行库，提供 Qt、设备访问与无桌面 GUI 探针所需环境；
+   具体包清单以 [Build-exe.yaml](../../.github/workflows/Build-exe.yaml) 的 Linux 安装步骤为准。
+   xcb 除光标库外还依赖 shape、randr、xfixes、ICCCM 和 X11 键盘等库，
+   依据见 [Qt 6.8 X11 要求](https://doc.qt.io/qt-6.8/linux-requirements.html)。安装后对当前 Python 的
+   `libqxcb.so` 执行 `ldd`，列出依赖并在出现 `not found` 时立即失败；仅安装 Python wheel 无法补齐系统库。
 3. 准备当前平台工具。Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
    `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、

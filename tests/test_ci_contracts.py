@@ -347,7 +347,11 @@ def test_linux_build_installs_egl_before_qt_self_check():
     install_index, install_step = egl_steps[0]
     assert install_step.get("if") == "runner.os == 'Linux'"
     assert install_step.get("shell") == "bash"
-    commands = [shlex.split(line) for line in install_step["run"].splitlines() if line.strip()]
+    commands = [
+        shlex.split(line)
+        for line in install_step["run"].replace("\\\n", " ").splitlines()
+        if line.strip()
+    ]
     assert ["sudo", "apt-get", "update"] in commands
     assert any(
         command[:3] == ["sudo", "apt-get", "install"]
@@ -455,10 +459,22 @@ def test_linux_runs_bounded_xcb_gui_probe_before_archiving(frozen):
                                  if "apt-get install" in step.get("run", ""))
     assert install["if"] == "runner.os == 'Linux'"
     for package in (
-        "libegl1", "libudev1", "libxcb-cursor0", "libxcb-icccm4",
-        "libxcb-keysyms1", "libxkbcommon-x11-0", "xvfb", "xauth",
+        "libegl1", "libudev1", "libsm6", "libice6", "libx11-xcb1", "libxcb-cursor0",
+        "libxcb-icccm4", "libxcb-image0", "libxcb-keysyms1", "libxcb-randr0", "libxcb-render0",
+        "libxcb-render-util0", "libxcb-shape0", "libxcb-shm0", "libxcb-sync1",
+        "libxcb-util1", "libxcb-xfixes0", "libxcb-xkb1", "libxkbcommon0",
+        "libxkbcommon-x11-0", "xvfb", "xauth",
     ):
-        assert package in shlex.split(install["run"])
+        assert package in shlex.split(install["run"].replace("\\\n", " "))
+    dependency_index, dependencies = next(
+        (index, step) for index, step in enumerate(steps)
+        if step["name"] == "Verify Linux Qt plugin dependencies"
+    )
+    assert dependencies["if"] == "runner.os == 'Linux'"
+    assert "QLibraryInfo" in dependencies["run"]
+    assert 'ldd "$plugin"' in dependencies["run"]
+    assert "not found" in dependencies["run"]
+    assert "exit 1" in dependencies["run"]
     probes = [(index, step) for index, step in enumerate(steps)
               if "--self-check gui" in step.get("run", "")]
     assert len(probes) == 2, "Source and frozen Linux builds need separate GUI probes"
@@ -474,7 +490,7 @@ def test_linux_runs_bounded_xcb_gui_probe_before_archiving(frozen):
                        if "python scripts/build_app.py" in step.get("run", ""))
     archive_index = next(index for index, step in enumerate(steps)
                          if "tar -C dist" in step.get("run", ""))
-    assert install_index < index < archive_index
+    assert install_index < dependency_index < index < archive_index
     assert (index > build_index) is frozen
     assert "--self-check packaging" not in probe["run"]
 

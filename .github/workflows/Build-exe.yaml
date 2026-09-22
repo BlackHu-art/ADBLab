@@ -172,7 +172,24 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libudev1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 xvfb xauth
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libudev1 libsm6 libice6 libx11-xcb1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 \
+            libxkbcommon0 libxkbcommon-x11-0 xvfb xauth
+
+      - name: Verify Linux Qt plugin dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin="$(python -c 'from pathlib import Path; from PySide6.QtCore import QLibraryInfo; print(Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)) / "platforms" / "libqxcb.so")')"
+          ldd "$plugin" | tee "$RUNNER_TEMP/qt-xcb-dependencies.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/qt-xcb-dependencies.txt"; then
+            echo "Qt xcb plugin dependencies are incomplete."
+            exit 1
+          fi
 
       - name: Install static analysis dependencies
         if: runner.os == 'Windows'
