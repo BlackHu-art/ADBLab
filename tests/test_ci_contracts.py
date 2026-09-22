@@ -96,6 +96,15 @@ def test_build_uses_read_only_default_permissions_and_scoped_release_write():
     assert "actions: write" not in workflow
 
 
+def test_build_workflow_forces_utf8_for_all_python_processes():
+    """Windows runner 的 Python 输出不能回退到系统代码页。"""
+
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+
+    assert workflow["env"]["PYTHONUTF8"] == "1"
+    assert workflow["env"]["PYTHONIOENCODING"] == "utf-8"
+
+
 def test_build_workflow_does_not_run_pytest_during_packaging():
     """打包发布只执行静态检查和产物自检，pytest 由开发者按测试指南在本地执行。"""
 
@@ -445,7 +454,10 @@ def test_linux_runs_bounded_xcb_gui_probe_before_archiving(frozen):
     install_index, install = next((index, step) for index, step in enumerate(steps)
                                  if "apt-get install" in step.get("run", ""))
     assert install["if"] == "runner.os == 'Linux'"
-    for package in ("libegl1", "libudev1", "libxcb-cursor0", "xvfb", "xauth"):
+    for package in (
+        "libegl1", "libudev1", "libxcb-cursor0", "libxcb-icccm4",
+        "libxcb-keysyms1", "libxkbcommon-x11-0", "xvfb", "xauth",
+    ):
         assert package in shlex.split(install["run"])
     probes = [(index, step) for index, step in enumerate(steps)
               if "--self-check gui" in step.get("run", "")]
@@ -453,6 +465,7 @@ def test_linux_runs_bounded_xcb_gui_probe_before_archiving(frozen):
     index, probe = probes[int(frozen)]
     assert probe["if"] == "runner.os == 'Linux'"
     assert probe["env"]["QT_QPA_PLATFORM"] == "xcb"
+    assert probe["env"]["QT_DEBUG_PLUGINS"] == "1"
     command = next(shlex.split(line) for line in probe["run"].splitlines()
                    if "--self-check gui" in line)
     executable = ["dist/$name"] if frozen else ["python", "main.py"]

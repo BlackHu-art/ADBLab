@@ -140,9 +140,8 @@ Windows 包完整保留 ADB、scrcpy/server、DLL、图标、启动辅助文件�
 .venv/bin/python scripts/check_build_artifacts.py frozen --executable dist/ADBLab-linux-x64 --timeout 60
 ```
 
-Ubuntu 的 Qt X11 启动需要系统动态库；缺少 `libxcb-cursor.so.0` 时安装
-`libxcb-cursor0`。CI 使用 `libegl1 libudev1 libxcb-cursor0 xvfb xauth`，其中 Xvfb/xauth
-用于没有桌面的验收环境。可分别验证源码与产物，显示依赖缺失会返回失败：
+Ubuntu 的 Qt X11 启动需要系统动态库，CI 使用的完整安装清单见 [Build 工作流](#build-工作流)。
+其中 Xvfb/xauth 用于没有桌面的验收环境。可分别验证源码与产物，显示依赖缺失会返回失败：
 
 ```bash
 QT_QPA_PLATFORM=xcb timeout 15s xvfb-run -a .venv/bin/python main.py --self-check gui
@@ -298,8 +297,9 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    并校验 `.github/release-notes/<tag>.md`：UTF-8 正文非空，首行为 `# ADBLab <tag>`，
    标题后必须有正文。缺失、空白或版本不符均在构建前失败；仅构建模式不要求发布说明。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
-   通过 apt 安装 `libegl1 libudev1 libxcb-cursor0 xvfb xauth`，提供 Qt、设备访问与无桌面 GUI 探针所需环境；
-   仅安装 Python wheel 无法补齐这些系统库。
+   通过 apt 安装 `libegl1 libudev1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxkbcommon-x11-0 xvfb xauth`，
+   提供 Qt、设备访问与无桌面 GUI 探针所需环境；xcb 除光标库外还需要 ICCCM、按键和 X11 键盘处理库，
+   依赖依据见 [Qt 6.8 X11 要求](https://doc.qt.io/qt-6.8/linux-requirements.html)。仅安装 Python wheel 无法补齐这些系统库。
 3. 准备当前平台工具。Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
    `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、
@@ -308,7 +308,8 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    windowed EXE 被 shell 启动后直接放行。探针依次检查 packaging 自检、worker `--help` 的 `--config`
    输出，以及未知中文参数的 UTF-8 错误输出和退出码 2；每项运行超时为 60 秒，另给清理最多 2 秒，超时会尝试清理进程树，
    清理未确认也判失败。随包工具检查文件、可执行权限及版本命令，系统工具不参与兜底。
-   Linux 额外对源码和产物运行有超时保护的 Xvfb/xcb GUI 探针；macOS 架构检查继续保留。
+   Linux 额外对源码和产物运行有超时保护的 Xvfb/xcb GUI 探针，启用 `QT_DEBUG_PLUGINS` 记录插件加载失败原因；
+   macOS 架构检查继续保留。
 6. 压缩后只上传各任务的精确归档路径，包括 Windows x64、Linux x64、macOS x64 与 arm64。
 7. 仅发布模式进入 Release job，单独使用 `contents: write`。下载失败即停止；
    `scripts/check_build_artifacts.py release` 要求恰好四个预期版本、路径的非空归档，并检查归档
@@ -318,6 +319,7 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
+全部任务设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，避免 Windows runner 的默认代码页使中文日志输出失败。
 CI 通过 `scripts/build_app.py` 生成 PyInstaller CLI 参数，和本地 `ADBLab.spec` 共用
 `scripts/packaging_manifest.py` 的资源及子模块白名单。平台产物名、onefile/onedir、windowed
 与图标选择仍由 workflow matrix 决定；`--dry-run` 只显示命令，不构建或写入产物。
