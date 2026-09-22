@@ -178,3 +178,28 @@ def test_ui_fixture_dispatch_preserves_state_and_storage_between_test_kinds(tmp_
         "-q", "-p", "tests.conftest", "--confcutdir", str(tmp_path), str(probe),
     ])
     assert len(result["passed"]) == 4
+
+
+def test_registered_ui_functions_exist_and_carry_the_ui_marker(tmp_path):
+    """按函数名登记的 Qt 用例改名或漏登记后，必须在收集期失败而不是静默失去隔离。"""
+
+    from tests.conftest import _INTEGRATION_TEST_FILES, _UI_TEST_FILES, _UI_TEST_FUNCTIONS
+
+    # 文件级名单相交时，elif 会静默吞掉 integration 标记，先在这里拦住。
+    assert not set(_UI_TEST_FILES) & set(_INTEGRATION_TEST_FILES)
+    targets = sorted(_UI_TEST_FUNCTIONS)
+    collected = _run_pytest(
+        tmp_path, ["--collect-only", "-q", *[f"tests/{name}" for name in targets]],
+    )["collected"]
+    for name in targets:
+        # 与 conftest 一致按 originalname 匹配：参数化用例的收集名带 [param] 后缀。
+        available = {
+            node.rsplit("::", 1)[-1].partition("[")[0]: marks
+            for node, marks in collected.items()
+            if node.startswith(f"tests/{name}::")
+        }
+        registered = set(_UI_TEST_FUNCTIONS[name])
+        missing = sorted(registered - set(available))
+        assert not missing, f"{name} 登记的用例不存在：{missing}"
+        unmarked = sorted(item for item in registered if "ui" not in available[item])
+        assert not unmarked, f"{name} 登记的用例缺少 ui 标记：{unmarked}"

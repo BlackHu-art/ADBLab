@@ -6,10 +6,11 @@ ContextVar 只在同步提交或回调作用域内生效，worker 必须携带�
 
 from __future__ import annotations
 
+import sys
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -53,6 +54,38 @@ class ActionResult:
     finished_at: float | None = None
     target_names: tuple[str, ...] = ()
     target_labels: tuple[str, ...] = ()
+
+
+def expired_action_results(
+    results: Iterable[ActionResult], *, capacity: int, text_budget: int,
+    protected: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """按调用方提供的旧到新顺序淘汰历史，不截断正文或淘汰在途、受保护结果。
+
+    容量覆盖正文和说明的 Python 字符串占用；同一快照内共享的字符串只计一次。
+    当前阅读或在途正文可以超过预算，超额时先释放其余已结束历史。
+    """
+    snapshots = tuple(results)
+    protected_ids = frozenset(protected)
+
+    def text_size(result: ActionResult) -> int:
+        values = (result.message, *(item.detail for item in result.items))
+        return sum(sys.getsizeof(text) for text in {id(value): value for value in values}.values())
+
+    sizes = {result.request_id: text_size(result) for result in snapshots}
+    total = sum(sizes.values())
+    ended = [result for result in snapshots if result.state != "running"]
+    count = len(ended)
+    expired = []
+    for result in ended:
+        if count <= capacity and total <= text_budget:
+            break
+        if result.request_id in protected_ids:
+            continue
+        expired.append(result.request_id)
+        total -= sizes[result.request_id]
+        count -= 1
+    return tuple(expired)
 
 
 @dataclass(frozen=True)
@@ -108,13 +141,18 @@ def report_action_message(success: bool, message: str) -> bool:
 class ActionResults:
     """管理本次应用会话的有界结果；同类在途请求幂等，已结束结果不被晚到消息覆盖。"""
 
-    def __init__(self, publish: Callable[[ActionResult], None], *, capacity: int = 80):
+    def __init__(
+        self, publish: Callable[[ActionResult], None], *, capacity: int = 80,
+        text_budget: int = 32 * 1024 * 1024,
+    ):
         self._publish = publish
         self._capacity = max(1, capacity)
+        self._text_budget = max(1, text_budget)
         self._requests: OrderedDict[str, _Request] = OrderedDict()
         self._failures: dict[str, str] = {}
         self._messages: dict[str, str] = {}
         self._closed = False
+        self._last_completed_request = ""
         self._target_labels: dict[str, str] = {}
 
     def set_target_labels(self, labels: dict[str, str]) -> None:
@@ -341,18 +379,28 @@ class ActionResults:
                 else "failed"
             )
             request.result = replace(request.result, state=state, finished_at=time.time())
+            # 完成顺序独立于启动顺序和墙钟精度，长任务的刚完成结果不会优先被淘汰。
+            self._requests.move_to_end(request_id)
+            self._last_completed_request = request_id
             self._failures.pop(request_id, None)
         self._update(request_id)
-        ended = [key for key, item in self._requests.items() if item.result.state != "running"]
-        for key in ended[: -self._capacity]:
-            del self._requests[key]
+        self._prune_history()
+
+    def _prune_history(self) -> None:
+        """保留最新完成结果及全部在途结果，按条数和正文容量共同裁剪更早历史。"""
+        snapshots = tuple(request.result for request in self._requests.values())
+        for request_id in expired_action_results(
+            snapshots, capacity=self._capacity, text_budget=self._text_budget,
+            protected=(self._last_completed_request,),
+        ):
+            del self._requests[request_id]
 
     def _update(self, request_id: str) -> None:
         if not self._closed:
             self._publish(self._requests[request_id].result)
 
     def recent(self, section: str | None = None) -> tuple[ActionResult, ...]:
-        """读取最新快照；正文由结果控件按需呈现，不使用全局日志缓存。"""
+        """按最近提交或完成顺序读取快照；独立页面说明更新也进入最新位置。"""
         return tuple(
             request.result
             for request in reversed(self._requests.values())
@@ -386,10 +434,10 @@ class ActionResults:
                           state, text[:64000])
         request.result = replace(result, items=(*result.items[-199:], item),
                                  message=text[:200], finished_at=time.time())
+        self._requests.move_to_end(result.request_id)
+        self._last_completed_request = result.request_id
         self._update(result.request_id)
-        ended = [key for key, entry in self._requests.items() if entry.result.state != "running"]
-        for key in ended[:-self._capacity]:
-            del self._requests[key]
+        self._prune_history()
         return request.result
 
     def close(self) -> None:
@@ -399,6 +447,7 @@ class ActionResults:
         self._failures.clear()
         self._messages.clear()
         self._target_labels.clear()
+        self._last_completed_request = ""
 
 
 def artifact_name(path: str) -> str:

@@ -561,9 +561,12 @@ def test_start_checks_all_enabled_fields_before_committing_any_value(
         dialog.close()
 
 
+@pytest.mark.parametrize("field_name,invalid", [("pct_touch", "101"), ("seed", "bad")])
 def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
     qt_application,
     monkeypatch,
+    field_name,
+    invalid,
 ):
     """关闭 Monkey 后非法子项不阻止启动，也不清除用户原文。"""
 
@@ -571,9 +574,13 @@ def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
     monkeypatch.setattr(FluentMessageBox, "warning", lambda *_args, **_kwargs: None)
     try:
         dialog.monkey_check.setChecked(True)
-        field = dialog.monkey_pct_combos["pct_touch"]
+        field = (
+            dialog.monkey_seed_input if field_name == "seed"
+            else dialog.monkey_pct_combos[field_name]
+        )
         editor = _editor(field)
-        editor.setText("101")
+        editor.setText(invalid)
+        assert field.isError()
 
         dialog.start_mobileperf()
         assert runner.start_count == 0
@@ -583,8 +590,13 @@ def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
 
         dialog._set_running(False)
         dialog.monkey_check.setChecked(True)
-        assert editor.text() == "101"
+        assert editor.text() == invalid
         assert field.input_is_acceptable() is False
+        assert field.isError()
+        if field_name == "seed":
+            editor.setText("2026")
+            assert field.commit_value()
+            assert not field.isError() and field.value() == 2026
     finally:
         dialog._set_running(False)
         dialog.close()

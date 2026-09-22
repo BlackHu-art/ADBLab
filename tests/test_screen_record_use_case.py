@@ -68,3 +68,24 @@ def test_stop_succeeded_flag_round_trip():
     assert use_case.mark_stop_succeeded("d1", "b1") is True
     assert use_case.is_stop_succeeded("d1", "b1") is True
     assert use_case.is_stop_succeeded("d1", "b2") is False
+
+
+def test_retry_history_keeps_64_latest_failures_and_never_evicts_inflight():
+    records = ScreenRecordUseCase()
+    records.start("running", "active", "/save", 30)
+    for index in range(65):
+        device = f"mock-{index}"
+        records.start(device, "failed", "/save", 30)
+        records.mark_started(device, "failed", f"/sdcard/{index}.mp4", f"{index}.mp4")
+        records.mark_pull_submitted(device, "failed")
+        if index == 64:
+            # 最早开始但刚重试失败的保存，应晚于其他失败项淘汰。
+            records.mark_pull_submitted("mock-0", "failed")
+            records.mark_pull_failed("mock-0", "failed")
+        records.mark_pull_failed(device, "failed")
+
+    assert len(records.active_devices()) == 65
+    assert records.active("running") is not None
+    assert records.active("mock-0") is not None
+    assert records.active("mock-1") is None
+    assert records.active("mock-64") is not None

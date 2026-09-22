@@ -235,13 +235,17 @@ class PerformancePage(QWidget):
         self._sync_theme_state(force=True)
         self._theme_sync_timer.start()
         self.show()
+        self._flush_pending_logs()
 
     def deactivate(self, _reason: str = "navigation") -> None:
-        """停止隐藏页的主题轮询，但允许采集和进度轮询继续。"""
+        """停止隐藏页的主题与日志绘制，保留采集和有界日志缓冲。"""
 
+        scrollbar = self.log_view.verticalScrollBar()
+        self._pending_log_scroll_to_bottom = scrollbar.value() >= scrollbar.maximum() - 20
         self._view_active = False
         self.progress_display.set_animation_enabled(False)
         self._theme_sync_timer.stop()
+        self._log_flush_timer.stop()
 
     def set_run_library(self, controller) -> None:
         """接入主窗口拥有的本地结果库，页面不自行创建存储。"""

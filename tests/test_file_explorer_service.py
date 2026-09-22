@@ -16,7 +16,8 @@ ls: /sdcard/secret: Permission denied
     rows, links = explorer_service.parse_ls_output(output)
 
     assert [row.name for row in rows] == ["Camera", "dcim-link", "archive.tar.gz", "readme.txt"]
-    assert [row.file_type for row in rows] == ["Folder", "Folder", "GZ", "TXT"]
+    assert [row.file_type for row in rows] == ["Folder", "Link", "GZ", "TXT"]
+    assert rows[1].is_symlink and not rows[1].is_dir
     assert rows[2].size_text == "2.0 KB"
     assert rows[3].size == 1536
     assert links == {"dcim-link": "/sdcard/DCIM"}

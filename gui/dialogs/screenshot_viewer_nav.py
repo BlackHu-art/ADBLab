@@ -6,7 +6,7 @@ from datetime import datetime
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QImageReader, QPixmap, QTransform
 
-from gui.dialogs.screenshot_viewer_tasks import ScreenshotImageCache, ScreenshotReadWorker
+from gui.dialogs.screenshot_viewer_tasks import ImageKey, ScreenshotImageCache, ScreenshotReadWorker
 from gui.i18n import tr
 
 MIN_ZOOM = 0.05
@@ -24,6 +24,7 @@ class ScreenshotViewerNav:
         self._worker: ScreenshotReadWorker | None = None
         self._pending = False
         self._suspended = False
+        self._display_key: ImageKey | None = None
 
     def _current_path(self) -> str:
         frame = self._frame
@@ -45,8 +46,10 @@ class ScreenshotViewerNav:
         self._generation += 1
         self._pending = True
         if frame._display_path != self._current_path():
+            self._display_key = None
             had_image = frame._display_pixmap is not None
             frame._original_pixmap = frame._display_pixmap = None
+            frame._display_image = None
             frame._display_path = ""
             frame._empty_label.setText(tr("Loading preview…"))
             if not had_image:
@@ -101,6 +104,7 @@ class ScreenshotViewerNav:
                 self._navigate_to(min(frame._current_idx, max(0, len(frame._image_paths) - 1)))
                 frame._notify_image_count()
             else:
+                self._display_key = key
                 changed_image = frame._display_path != path
                 frame._display_path = path
                 if changed_image:
@@ -117,6 +121,7 @@ class ScreenshotViewerNav:
         self._generation += 1
         self._pending = False
         self._cache.clear()
+        self._display_key = None
 
     def _show_pixmap(self, pixmap: QPixmap):
         frame = self._frame
@@ -128,6 +133,8 @@ class ScreenshotViewerNav:
             )
             if angle else pixmap
         )
+        # 同一份显示像素同时以 QImage 暴露给绘制路径，旋转只在下达显示时做一次。
+        frame._display_image = frame._display_pixmap.toImage()
         # 当前像素只归页面持有，不能再写入每个历史 item 绕过页内缓存预算。
         frame._image_stack.setCurrentWidget(frame._view)
         if frame._fit_to_window:
@@ -137,8 +144,10 @@ class ScreenshotViewerNav:
             self._update_zoom_label()
 
     def _show_placeholder(self, text: str):
+        self._display_key = None
         frame = self._frame
         frame._original_pixmap = frame._display_pixmap = None
+        frame._display_image = None
         frame._display_path = ""
         frame._current_idx = 0
         frame._fit_to_window = True
@@ -306,23 +315,24 @@ class ScreenshotViewerNav:
         frame._schedule_metadata_reflow()
         self._update_nav_label()
 
-    @staticmethod
-    def _format_size(path: str) -> str:
-        try:
-            size_bytes = os.path.getsize(path)
-        except OSError:
+    def _format_size(self, path: str) -> str:
+        """元数据来自与当前像素一起校验的快照，不在 GUI 线程重新访问文件。"""
+        if self._display_key is None or self._display_key[0] != path:
             return "-"
+        size_bytes = self._display_key[2]
         if size_bytes >= 1_048_576:
             return f"{size_bytes / 1_048_576:.1f} MB"
         if size_bytes >= 1024:
             return f"{size_bytes / 1024:.0f} KB"
         return f"{size_bytes} B"
 
-    @staticmethod
-    def _format_modified_time(path: str) -> str:
+    def _format_modified_time(self, path: str) -> str:
+        """展示读取时的修改时间，避免慢存储把已完成的后台解码重新变为同步等待。"""
+        if self._display_key is None or self._display_key[0] != path:
+            return "-"
         try:
-            return datetime.fromtimestamp(os.path.getmtime(path)).strftime("%H:%M:%S")
-        except OSError:
+            return datetime.fromtimestamp(self._display_key[1] / 1_000_000_000).strftime("%H:%M:%S")
+        except (OSError, OverflowError, ValueError):
             return "-"
 
     def _update_nav_visibility(self):
@@ -359,4 +369,7 @@ class ScreenshotViewerNav:
             bool(frame._image_paths) and not frame._disposed
             and not frame._disposing and not deleting
         )
-        frame._add_action.setEnabled(not frame._disposed and not frame._disposing)
+        frame._add_action.setEnabled(
+            not frame._disposed and not frame._disposing and frame._add_worker is None
+            and not frame._actions_controller._image_dialog_open
+        )

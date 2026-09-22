@@ -442,6 +442,23 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, 
     runner.stop()
 
 
+def test_mobileperf_default_source_directory_can_launch_worker_help(tmp_path, monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    runner = MobilePerfRunner()
+    runner._config_path = str(tmp_path / "unused.conf")
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    environment["MOBILEPERF_LOG_DIR"] = str(tmp_path)
+
+    result = subprocess.run(
+        [*runner._build_command(), "--help"], cwd=runner._project_root,
+        env=environment, capture_output=True, text=True, timeout=15, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--config" in result.stdout
+
+
 def test_mobileperf_runner_uses_worker_entry_when_frozen(tmp_path, monkeypatch):
     runner_process = Mock(spec=ProcessRunner)
     proc = Mock()

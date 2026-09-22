@@ -155,7 +155,7 @@ def test_fast_input_uses_remote_result_without_native_replay(
     bridge = ADBBridge(ADB)
     native = Mock(side_effect=AssertionError("sent input must not replay natively"))
     monkeypatch.setattr(bridge._process_runner, "start", native)
-    monkeypatch.setattr(execution.subprocess, "run", native)
+    monkeypatch.setattr(execution, "run_native", native)
 
     def capture(command, args, **kwargs):
         calls.append((command, args, kwargs["serial"]))

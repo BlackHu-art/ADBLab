@@ -194,7 +194,7 @@ def test_controller_supervision_retains_unfinished_native_short_command(monkeypa
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
     monkeypatch.setattr(execution, "_adb_runtime", None)
-    monkeypatch.setattr(execution.subprocess, "run", native)
+    monkeypatch.setattr(execution, "run_native", native)
     worker = threading.Thread(target=lambda: execution.CommandRunner.run(["test-client"]))
     frame = _frame(lambda: None)
     try:

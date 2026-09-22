@@ -7,6 +7,38 @@ from core.exec import CommandResult
 from models.app_manager_worker import AppManagerWorker
 
 
+@pytest.mark.parametrize(
+    ("archive_name", "members", "expected_modes"),
+    [
+        ("ordinary.zip", ["one.apk", "two.apk"], ["install", "install"]),
+        ("base.apk-backup.zip", ["one.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["base.apk-folder/one.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["not-base.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["base.apk", "split.apk"], ["install-multiple"]),
+    ],
+)
+def test_restore_chooses_split_mode_only_from_exact_apk_basename(
+    tmp_path, archive_name, members, expected_modes,
+):
+    archive = tmp_path / archive_name
+    with zipfile.ZipFile(archive, "w") as zf:
+        for member in members:
+            zf.writestr(member, b"fake apk")
+    worker = AppManagerWorker("mock-device", "restore_apps")
+    modes, completed = [], []
+    worker.operation_done.connect(completed.append)
+
+    def install(*args, **_kwargs):
+        modes.append(args[0])
+        return CommandResult(success=True)
+
+    with patch.object(worker, "_adb", side_effect=install):
+        worker._restore_apps([str(archive)])
+
+    assert modes == expected_modes
+    assert completed == ["restore"]
+
+
 @pytest.mark.parametrize("cancel_phase", ["extract", "first_install", "last_install"])
 def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_phase):
     archive = tmp_path / "backup.zip"
@@ -85,5 +117,39 @@ def test_backup_last_pull_cancellation_preserves_old_zip_and_emits_no_success(tm
         worker._backup_app("org.example.app", str(tmp_path))
     archive.assert_not_called()
     assert old.read_bytes() == b"previous backup"
+    assert done == []
+    assert feedback and all(level != "success" for level, _ in feedback)
+
+
+def test_backup_cancel_during_compression_preserves_old_zip(tmp_path):
+    from pathlib import Path
+    from shutil import make_archive
+
+    worker = AppManagerWorker("mock-device", "backup_app")
+    previous = tmp_path / "backup_org.example.app.zip"
+    previous.write_bytes(b"previous backup")
+    done, feedback = [], []
+    worker.operation_done.connect(done.append)
+    worker.operation_feedback.connect(lambda level, message: feedback.append((level, message)))
+
+    def adb(*args, **kwargs):
+        if args[0] == "shell":
+            return CommandResult(success=True, output="package:/app/base.apk")
+        (Path(args[2]) / "base.apk").write_bytes(b"new apk")
+        return CommandResult(success=True)
+
+    def compress(*args):
+        archive = make_archive(*args)
+        worker.abort()
+        return archive
+
+    with (
+        patch.object(worker, "_adb", side_effect=adb),
+        patch("models.app_manager_worker.shutil.make_archive", side_effect=compress),
+    ):
+        worker._backup_app("org.example.app", str(tmp_path))
+
+    assert previous.read_bytes() == b"previous backup"
+    assert list(tmp_path.iterdir()) == [previous]
     assert done == []
     assert feedback and all(level != "success" for level, _ in feedback)

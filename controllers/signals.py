@@ -22,6 +22,7 @@ class ADBControllerSignals(QObject):
 
     record_finished = Signal()
     record_target_finished = Signal(str, str)  # 参数：批次标识、设备
+    record_target_retryable = Signal(str, str)  # 录制已结束但下载失败，保留原批次供用户重试保存。
     monkey_target_finished = Signal(str, str)  # 参数：批次标识、设备
     monkey_preparation_finished = Signal(str, dict)  # 参数：准备请求标识、完整目标包信息
     run_record_ready = Signal(object)  # 参数：已结束运行的 RunRecord，由组合根持久化

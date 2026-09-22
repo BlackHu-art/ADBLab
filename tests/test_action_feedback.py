@@ -1,5 +1,6 @@
 """验证全部入口的任务记录、分级通知与专用业务结果阅读。"""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -122,6 +123,68 @@ def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
     assert not hasattr(frame.left_panel._apps_tab, "action_result_views")
     assert not hasattr(frame.left_panel._advanced_tab, "action_result_views")
     assert not hasattr(frame._settings_page, "action_results")
+
+
+@pytest.mark.parametrize("payload,level", [
+    ({"success": True}, "success"),
+    ({"success": False, "error": "failed"}, "error"),
+    ({"cancelled": True}, "info"),
+])
+def test_notice_compaction_keeps_running_completion_and_does_not_rearm_timer(
+    result_frame, monkeypatch, payload, level,
+):
+    frame = result_frame
+    store = frame.adb_controller.action_results
+    scheduled, notices = [], []
+    monkeypatch.setattr("gui.action_feedback.QTimer", SimpleNamespace(
+        singleShot=lambda _ms, _owner, callback: scheduled.append(callback),
+    ))
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
+    monkeypatch.setattr(frame._task_page, "present_action_result", lambda _result: None)
+
+    def start(name):
+        return store.run(ActionSpec(name, "system.shell", name), (),
+                         lambda: capture_action_job("query_async"))
+
+    long_job = start("long")
+    for _ in range(161):
+        store.complete(start("short"), {"success": True})
+    timers_before = len(scheduled)
+    store.progress(long_job, "still running")
+    assert len(scheduled) == timers_before
+    store.complete(long_job, payload)
+    snapshot = next(result for result in store.recent()
+                    if result.request_id == long_job.request_id)
+    frame._action_feedback.present(snapshot)
+    terminal = [notice for notice in notices if notice["key"] == long_job.request_id]
+    assert len(terminal) == 1
+    assert terminal[0]["level"] == level
+    assert callable(terminal[0]["on_action"])
+
+
+def test_result_view_retains_recent_completions_when_wall_clock_ties(qt_application, monkeypatch):
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    view = ActionResultView()
+    view.TEXT_BUDGET = 4500
+    store = ActionResults(view.present)
+
+    def start(name):
+        return store.run(ActionSpec(name, "system.shell", name), (),
+                         lambda: capture_action_job("query_async"))
+
+    def finish(job):
+        store.complete(job, {"success": True, "output": "x" * 2000})
+
+    try:
+        long_job = start("long")
+        finish(start("first"))
+        finish(start("second"))
+        finish(long_job)
+        finish(start("last"))
+        assert view.select_request(long_job.request_id)
+        assert view._detail == "x" * 2000
+    finally:
+        view.close()
 
 
 def test_late_older_result_does_not_steal_new_request_or_device_selection(qt_application):
@@ -285,6 +348,68 @@ def test_bounded_history_preserves_all_inflight_results(qt_application):
         store.complete(jobs[0], {"success": True, "output": "late answer"})
         assert view._records[jobs[0].request_id].state == "succeeded"
     finally:
+        view.close()
+
+
+def test_result_view_byte_budget_preserves_selected_text_and_inflight(qt_application):
+    view = ActionResultView()
+    view.TEXT_BUDGET = 2048
+    store = ActionResults(view.present)
+    jobs = []
+    raw = "完整正文" * 2000 + "end-marker"
+    try:
+        for key in ("background", "pending", "selected"):
+            store.run(
+                ActionSpec(key, "system.shell", "查询", "text"), (),
+                lambda: jobs.append(capture_action_job("query_async")),
+            )
+        store.complete(jobs[2], {"success": True, "output": raw})
+        assert view.select_request(jobs[2].request_id)
+        store.complete(jobs[0], {"success": True, "output": "其他结果" * 2000})
+        assert jobs[0].request_id not in view._records
+        assert jobs[1].request_id in view._records
+        assert view._selected == jobs[2].request_id
+        view.copy_button.click()
+        assert QApplication.clipboard().text() == raw
+        exported = QSignalSpy(view.export_requested)
+        view.export_button.click()
+        assert exported.at(0)[1] == raw
+        view.search.setText("end-marker")
+        view._find()
+        assert view.output.textCursor().selectedText() == "end-marker"
+    finally:
+        store.close()
+        view.close()
+
+
+def test_diagnostic_history_receives_old_terminal_without_reviving_running_records(
+    qt_application, monkeypatch,
+):
+    from itertools import count
+
+    ticks = count(1.0)
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: next(ticks))
+    view = ActionResultView(diagnostic=True)
+    store = ActionResults(view.present)
+    try:
+        for index in range(25):
+            jobs = []
+            store.run(
+                ActionSpec(f"old-{index}", "apps.diagnostics", "较早查询", "text"), (),
+                lambda: jobs.extend(capture_action_job("query_async") for _ in range(2)),
+            )
+            store.complete(jobs[0], {"success": True, "output": "较早的部分结果"})
+            store.run(
+                ActionSpec(f"new-{index}", "apps.diagnostics", "较新查询", "text"), (),
+                lambda: jobs.append(capture_action_job("query_async")),
+            )
+            store.complete(jobs[2], {"success": True, "output": "最新可见结果"})
+            store.complete(jobs[1], {"success": True, "output": "旧请求的晚到结果"})
+            assert view._detail == "最新可见结果"
+        assert not view.running_results()
+        assert len(view._records) <= 20
+    finally:
+        store.close()
         view.close()
 
 

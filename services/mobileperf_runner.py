@@ -261,6 +261,9 @@ class _MobilePerfRunContext:
     finished_notified: bool = False
     config_cleaned: bool = False
     process_tracking_released: bool = False
+    log_lock: threading.RLock = field(default_factory=threading.RLock)
+    pending_logs: list[str] = field(default_factory=list)
+    last_log_flush: float = field(default_factory=time.monotonic)
 
 
 class MobilePerfRunner:
@@ -458,7 +461,7 @@ class MobilePerfRunner:
     def _sync_adb_mode(
         self, context: _MobilePerfRunContext, runtime: AdbRuntime | None, mode: str,
     ) -> None:
-        """在后台同步后续命令策略；旧运行只持有自己的目录与退出事件。"""
+        """同步命令策略并限时派发日志；循环和回调均归本运行的关闭屏障拥有。"""
         write_failed = False
         published: str | None = None
         try:
@@ -476,7 +479,8 @@ class MobilePerfRunner:
                     else:
                         published = selected
                         write_failed = False
-                if runtime is None or context.mode_stop.wait(self.MODE_SYNC_INTERVAL_SECONDS):
+                self._flush_logs(context)
+                if context.mode_stop.wait(self.MODE_SYNC_INTERVAL_SECONDS):
                     return
         finally:
             # 模式线程完成最后一次写入后才允许清理目录，仍由原有完成屏障汇合。
@@ -608,24 +612,6 @@ class MobilePerfRunner:
         if stream is None:
             self._mark_reader_done(context, context.stdout_done)
             return
-        on_log = context.on_log
-        pending: list[str] = []
-        last_flush = time.monotonic()
-
-        def flush_pending():
-            nonlocal last_flush
-            payload = "\n".join(pending)
-            pending.clear()
-            last_flush = time.monotonic()
-            if payload and on_log:
-                try:
-                    on_log(payload)
-                except Exception as exc:
-                    self._safe_write_diagnostic(
-                        f"MobilePerf on_log callback failed: {type(exc).__name__}",
-                        context,
-                    )
-
         try:
             for line in stream:
                 text = line.rstrip("\r\n")
@@ -635,25 +621,43 @@ class MobilePerfRunner:
                 if self._DEBUG_RECORD_PATTERN.match(text):
                     self._safe_write_diagnostic(text, context)
                     continue
-                pending.append(text)
-                now = time.monotonic()
-                if (
-                    len(pending) >= self.LOG_BATCH_SIZE
-                    or now - last_flush >= self.LOG_BATCH_INTERVAL_SECONDS
-                ):
-                    flush_pending()
-            flush_pending()
+                with context.log_lock:
+                    context.pending_logs.append(text)
+                    self._flush_logs(context)
         except Exception as exc:
             self._safe_write_diagnostic(
                 f"MobilePerf stdout reader failed: {type(exc).__name__}",
                 context,
             )
         finally:
+            self._flush_logs(context, force=True)
             try:
                 stream.close()
             except Exception:
                 pass
             self._mark_reader_done(context, context.stdout_done)
+
+    def _flush_logs(self, context: _MobilePerfRunContext, *, force: bool = False) -> None:
+        """按数量或时间串行派发；回调完成后才释放锁，防止跨线程乱序和提前终态。"""
+        with context.log_lock:
+            if not context.pending_logs:
+                return
+            now = time.monotonic()
+            if (
+                not force and len(context.pending_logs) < self.LOG_BATCH_SIZE
+                and now - context.last_log_flush < self.LOG_BATCH_INTERVAL_SECONDS
+            ):
+                return
+            payload = "\n".join(context.pending_logs)
+            context.pending_logs.clear()
+            context.last_log_flush = now
+            if context.on_log is not None:
+                try:
+                    context.on_log(payload)
+                except Exception as exc:
+                    self._safe_write_diagnostic(
+                        f"MobilePerf on_log callback failed: {type(exc).__name__}", context,
+                    )
 
     def _read_diagnostics(self, context: _MobilePerfRunContext) -> None:
         """持续排空子进程 stderr，源码模式转发到 IDE，打包模式直接丢弃。"""
@@ -995,7 +999,8 @@ class MobilePerfRunner:
     def _default_project_root() -> Path:
         if getattr(sys, "frozen", False):
             return Path(resource_path("."))
-        return Path(__file__).resolve().parents[2]
+        # 源码 worker 通过 -m 导入 mobileperf，工作目录必须是包含该包的仓库根。
+        return Path(__file__).resolve().parents[1]
 
     @staticmethod
     def _is_frozen() -> bool:

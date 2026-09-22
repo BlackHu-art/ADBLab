@@ -1,4 +1,4 @@
-"""冻结 Windows 程序的原生工具边界；GUI 不改变自身 DLL 搜索状态。"""
+"""原生工具启动和有界收尾；冻结 Windows 程序不改变 GUI 的 DLL 搜索状态。"""
 
 from __future__ import annotations
 
@@ -140,26 +140,47 @@ class NativeProcess(subprocess.Popen):
 
     def cancel_and_drain(self, timeout: float = 2.0):
         """客户端回收与管道排空共用清理预算；独立服务持有写端不能拖住调用者。"""
-        deadline = time.monotonic() + timeout
-        if not self.stop(timeout):
-            raise TimeoutError("原生工具清理超时，尚未确认客户端退出。")
-        try:
-            return self.communicate(timeout=max(0.0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired as error:
-            # Windows 的既有守护读取线程持有剩余管道，EOF 后自行关闭；不等待独立服务退出。
-            return error.output, error.stderr
+        return cancel_and_drain_native(self, timeout=timeout)
 
     def __exit__(self, exc_type, value, traceback):
         try:
             if self.poll() is None and not self.stop(2.0):
                 raise TimeoutError("原生工具清理超时，尚未确认客户端退出。")
         finally:
-            for stream_name in ("stdin", "stdout", "stderr"):
-                stream = getattr(self, stream_name, None)
-                reader = getattr(self, stream_name + "_thread", None)
-                # 正在 ReadFile 的线程拥有流锁；同步 close 会绕过所有清理预算而永久等待。
-                if stream is not None and (reader is None or not reader.is_alive()):
-                    stream.close()
+            close_native_pipes(self)
+
+
+def close_native_pipes(process: subprocess.Popen) -> None:
+    """关闭调用者拥有的管道；Windows 活跃 reader 保留流并在 EOF 时自行关闭。
+
+    communicate 的读取线程正在 ReadFile 时持有流锁，同步 close 会绕过清理预算。
+    独立后代仍持有写端时只转交读取端所有权，不能为取得 EOF 终止独立 ADB 服务。
+    """
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(process, stream_name, None)
+        reader = getattr(process, stream_name + "_thread", None)
+        if stream is not None and (reader is None or not reader.is_alive()):
+            stream.close()
+
+
+def cancel_and_drain_native(process: subprocess.Popen, *, timeout: float):
+    """仅终止自有客户端，在共享预算内确认退出并排空，不等待后代的管道 EOF。"""
+    deadline = time.monotonic() + max(0.0, timeout)
+    if isinstance(process, NativeProcess):
+        if not process.stop(timeout):
+            raise TimeoutError("原生工具清理超时，尚未确认客户端退出。")
+    elif process.poll() is None:
+        process.kill()
+        try:
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as error:
+            # 未确认客户端退出属于清理失败，不能伪装成原业务超时或抛到后台探测线程。
+            raise TimeoutError("原生工具清理超时，尚未确认客户端退出。") from error
+    try:
+        return process.communicate(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired as error:
+        # reader 的最终收口依赖独立后代关闭写端；调用者只发布超时/取消，不伪造成功输出。
+        return error.output, error.stderr
 
 
 def stop_native_process(process: subprocess.Popen, *, timeout: float) -> bool | None:
@@ -182,12 +203,7 @@ def run_native(
     command: list[str], *, isolate: bool = False, input=None, capture_output: bool = False,
     timeout: float | None = None, check: bool = False, **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    """保留 run 的流和退出契约；隔离入口超时后先确认客户端回收再返回失败。"""
-    if not _should_isolate(isolate, bool(kwargs.get("shell", False))):
-        return subprocess.run(
-            command, input=input, capture_output=capture_output,
-            timeout=timeout, check=check, **kwargs,
-        )
+    """保留 run 的流和退出契约；各启动方式共用两秒的终止及排空预算。"""
     if input is not None:
         if kwargs.get("stdin") is not None:
             raise ValueError("stdin and input arguments may not both be used")
@@ -196,19 +212,28 @@ def run_native(
         if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
             raise ValueError("stdout and stderr arguments may not be used with capture_output")
         kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
-    with popen_native(command, isolate=True, **kwargs) as process:
-        assert isinstance(process, NativeProcess)
+    process = popen_native(command, isolate=isolate, **kwargs)
+    try:
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired as error:
-            stdout, stderr = process.cancel_and_drain()
-            error.output, error.stderr = stdout, stderr
+            stdout, stderr = cancel_and_drain_native(process, timeout=2.0)
+            # Windows 的 run 用最终 communicate 输出补全异常；排空仍超时则保留已捕获数据。
+            # POSIX 原异常已携带 bytes，不能被 text 模式的排空结果替换。
+            if sys.platform == "win32":
+                if stdout is not None:
+                    error.output = stdout
+                if stderr is not None:
+                    error.stderr = stderr
             error.cmd = command
             raise
         except BaseException:
-            process.cancel_and_drain()
+            cancel_and_drain_native(process, timeout=2.0)
             raise
         returncode = process.wait()
         if check and returncode:
             raise subprocess.CalledProcessError(returncode, command, stdout, stderr)
+    finally:
+        # 普通 Popen 上下文退出会同步关闭活跃 reader 的流，绕过上面的共享预算。
+        close_native_pipes(process)
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)

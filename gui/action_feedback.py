@@ -116,7 +116,7 @@ class ActionFeedbackPresenter(QObject):
             content = tr("本次保留 {count} 条异常摘要；最近：{message}").format(
                 count=len(warnings), message=warnings[-1][2][:100],
             )
-        self.frame._settings_page.diagnostics_card.setContent(content)
+        self.frame._settings_page.update_diagnostics_summary(content)
         # 运行时 INFO 也会刷新诊断文件，不能据此重复提示之前保留的异常。
         if notify and journal.entries[-1][1] in warning_levels and not self.frame._closing:
             show_toast(
@@ -148,10 +148,12 @@ class ActionFeedbackPresenter(QObject):
         if result.state != "running" and result.request_id not in self._ended:
             self._ended.add(result.request_id)
             if len(self._ended) > 160:
-                self._ended = {
-                    item.request_id for item in self.frame.adb_controller.action_results.recent()
-                }
-                self._started.intersection_update(self._ended)
+                retained = self.frame.adb_controller.action_results.recent()
+                # 去重只保留真正发过终态通知的请求；在途身份仍保留延迟通知的幂等性。
+                self._ended.intersection_update(
+                    item.request_id for item in retained if item.state != "running"
+                )
+                self._started.intersection_update(item.request_id for item in retained)
             if result.state == "cancelled" and not result.items:
                 return
             levels: dict[str, ToastLevel] = {

@@ -49,13 +49,17 @@ class LogcatMonitor(Monitor):
             self.running = True
 
     def stop(self):
-        """移除回调并停止设备 logcat 进程。"""
+        """移除回调并停止设备 logcat 进程。
+
+        先停止采集再摘除回调：handler 移除失败（例如重复 stop）时不得让
+        adb logcat 客户端失去唯一终止入口。
+        """
         logger.debug("logcat monitor: stop...")
+        self.device.adb.stop_logcat()
         self.remove_log_handle(self.launchtime.handle_launchtime)
         logger.debug("logcat monitor: stopped")
         if self.exception_log_list:
             self.remove_log_handle(self.handle_exception)
-        self.device.adb.stop_logcat()
         self.running = False
 
     def parse(self, file_path):
@@ -87,8 +91,15 @@ class LogcatMonitor(Monitor):
                 )
                 # 进程异常退出后 PID 可能变化，只允许使用异常发生时保存的旧 PID。
                 if RuntimeData.old_pid:
+                    # handler 由 logcat reader 线程内联调用，采集已停止时必须放弃查询，
+                    # 并把设备侧查询限制在有界超时内，避免拖住停止流程。
                     self.device.adb.get_process_stack_from_pid(
-                        RuntimeData.old_pid, process_stack_log_file
+                        RuntimeData.old_pid,
+                        process_stack_log_file,
+                        timeout=2,
+                        cancelled=lambda: not getattr(
+                            self.device.adb, "_logcat_running", False
+                        ),
                     )
 
 

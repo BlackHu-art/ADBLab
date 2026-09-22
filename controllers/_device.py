@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from _thread import LockType
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from PySide6.QtCore import QTimer
@@ -36,6 +36,7 @@ class ADBDeviceMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     _overview_refresh: _OverviewRefresh | None = None
     _overview_store_lock: LockType | None = None
+    _overview_query_slots: threading.BoundedSemaphore | None = None
     log_service: LogService
     executor: ThreadPoolExecutor
 
@@ -93,16 +94,32 @@ class ADBDeviceMixin(_ADBControllerBase):
         self.signals.devices_updated.emit(devices)
         self._async_update_devices(devices, generation=generation)
 
-    def publish_detected_devices(self, devices: list[str]):
+    def publish_detected_devices(
+        self, devices: list[str], *, discovery_token: tuple[int, int] | None = None,
+    ):
+        """仅接纳最新发现区间捕获的扫描，阻止防抖和信号队列中的旧快照回退拓扑。"""
+        if getattr(self, "_shutting_down", False):
+            return
+        if discovery_token is not None:
+            current = self.device_discovery_token()
+            if discovery_token != current or current[1]:
+                return
         self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
         if getattr(self, "_shutting_down", False):
             return
+        with self._device_topology_lock:
+            self._discovery_generation = getattr(self, "_discovery_generation", 0) + 1
+            self._discovery_refresh_pending = getattr(self, "_discovery_refresh_pending", 0) + 1
+            generation = self._discovery_generation
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:
-            self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
+            # async_command 可能先同步发出失败结果再抛出；同次提交只能收口一次。
+            if self.device_discovery_token()[0] == generation:
+                self._finish_device_discovery()
+                self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
 
     def _async_update_devices(self, devices: list, *, generation: int):
         """逐台发布当前拓扑的概览快照，最后统一落盘；旧代次与关闭后的结果不发布。"""
@@ -128,6 +145,9 @@ class ADBDeviceMixin(_ADBControllerBase):
             if self._overview_store_lock is None:
                 self._overview_store_lock = threading.Lock()
             store_lock = self._overview_store_lock
+            if self._overview_query_slots is None:
+                self._overview_query_slots = threading.BoundedSemaphore(3)
+            query_slots = self._overview_query_slots
 
         def _is_current_topology() -> bool:
             if getattr(self, "_shutting_down", False):
@@ -139,11 +159,14 @@ class ADBDeviceMixin(_ADBControllerBase):
                     and topology == self._device_topology
                 )
 
-        def _update_batch():
-            records = []
-            for ip in devices:
+        def _query_device(ip):
+            # 旧拓扑尚在退出时仍共享命令额度；等待额度期间也响应取消。
+            while not query_slots.acquire(timeout=0.05):
                 if not _is_current_topology():
-                    return
+                    return None
+            try:
+                if not _is_current_topology():
+                    return None
                 try:
                     info = ADBDevice.get_device_overview_info(
                         ip, cancelled=lambda: not _is_current_topology(),
@@ -159,16 +182,38 @@ class ADBDeviceMixin(_ADBControllerBase):
                         "CPU Architecture": info.get("CPU Architecture", ""),
                         "Hardware": info.get("Hardware", ""),
                     }
-                    records.append(record)
                 except Exception:
                     record = {}
                     self.log_service.log(
                         "WARNING", "设备概览属性读取失败，将清除本轮缺失的动态指标",
                     )
-                if not _is_current_topology():
-                    return
-                # 已完成的设备不等待后续查询；扩展字段仅在窗口内存中展示。
-                self.signals.device_info_updated.emit(ip, record)
+                return record
+            finally:
+                query_slots.release()
+
+        def _update_batch():
+            records_by_device = {}
+            # 子池由当前 Controller 任务拥有；退出上下文先收口查询，再结束监督中的父任务。
+            with ThreadPoolExecutor(
+                max_workers=min(3, len(devices)), thread_name_prefix="adblab-overview",
+            ) as queries:
+                pending = {queries.submit(_query_device, ip): ip for ip in devices}
+                try:
+                    for future in as_completed(pending):
+                        if not _is_current_topology():
+                            return
+                        ip = pending[future]
+                        record = future.result()
+                        if record is None or not _is_current_topology():
+                            return
+                        if record:
+                            records_by_device[ip] = record
+                        # 先完成的设备立即发布，不受前面慢设备的查询顺序阻挡。
+                        self.signals.device_info_updated.emit(ip, record)
+                finally:
+                    for future in pending:
+                        future.cancel()
+            records = [records_by_device[ip] for ip in devices if ip in records_by_device]
             if records:
                 # 设备属性查询可能持续数秒；拓扑已变化时旧结果不得再写盘或刷新 UI，
                 # 否则已离线设备会被晚到的补全任务重新显示。

@@ -8,15 +8,17 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QWidget
 from qfluentwidgets import FluentIcon, FluentWindow
 
+from core.diagnostics import DiagnosticJournal
 from core.settings_manager import DEFAULTS, AppSettings
+from gui.action_feedback import ActionFeedbackPresenter
 from gui.i18n import install_translators
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
 from services.app_update import ReleaseInfo, UpdateSnapshot
-from tests.ui_geometry_helpers import wait_for_stable_geometry
+from tests.ui_geometry_helpers import assert_contained, wait_for_stable_geometry
 
 
 def _setting_card_controls(page):
@@ -35,6 +37,7 @@ def _setting_card_controls(page):
         (page.ui_size_card, page.ui_size_card.combo_box),
         (page.log_size_card, page.log_size_card.combo_box),
         (page.reset_card, page.reset_card.button),
+        (page.diagnostics_card, page.diagnostics_card.button),
         (page.restart_adb_card, page.restart_adb_card.button),
         (page.about_panel.project_card, page.about_panel.project_button),
         (page.about_panel.project_card, page.about_panel.check_update_button),
@@ -51,6 +54,9 @@ def _settle_settings(qt_application, page):
 
 @pytest.fixture
 def settings_page(monkeypatch, qt_application):
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda self: None,
+    )
     values = dict(DEFAULTS)
     values.update(font_family="Microsoft YaHei", ui_font_size=12, save_directory="C:/示例输出")
     writes = []
@@ -75,6 +81,82 @@ def settings_page(monkeypatch, qt_application):
     page = SettingsPage(frame)
     yield page, values, writes, frame
     page.close()
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
+def test_diagnostics_card_and_dynamic_summary_remain_inside_visible_ancestors(
+    qt_application, settings_page, width, font_size,
+):
+    page, values, _writes, _frame = settings_page
+    values["ui_font_size"] = font_size
+    BaseStyles.reload_from_settings()
+    page.resize(width, 640)
+    page.show()
+    _settle_settings(qt_application, page)
+    card = page.diagnostics_card
+    group = card.parentWidget()
+    page.ensureWidgetVisible(card.button, 0, 0)
+    qt_application.processEvents()
+    assert not card.button.isEnabled()
+    assert_contained(card, group)
+    assert_contained(card.button, card)
+    assert_contained(card.button, page.viewport())
+    assert card.button.visibleRegion().boundingRect() == card.button.rect()
+
+    host = QWidget()
+    host._settings_page = page
+    host._closing = False
+    journal = DiagnosticJournal()
+    host.log_service = Mock(diagnostics=journal)
+    host.run_library = Mock()
+    host.left_panel = Mock()
+    host.adb_controller = Mock()
+    host._task_page = Mock()
+    presenter = ActionFeedbackPresenter(host)
+    presenter.export_result = Mock()
+    QTest.mouseClick(card.button, Qt.MouseButton.LeftButton)
+    presenter.export_result.assert_not_called()
+    before = (card.height(), group.height(), page.widget().height())
+    try:
+        message = "保存应用设置时发生异常，请检查输出目录后重试。" * 5
+        journal.accept([("12:00:00", "ERROR", message)])
+        presenter._diagnostics_changed(notify=False)
+        page.ensureWidgetVisible(card.button, 0, 0)
+        _settle_settings(qt_application, page)
+        wait_for_stable_geometry(qt_application, (
+            page.widget(), group, card, card.titleLabel, card.contentLabel, card.button,
+        ))
+        assert card.button.isEnabled()
+        assert "保存应用设置" in card.contentLabel.text()
+        assert card.button.accessibleDescription() == card.contentLabel.text()
+        assert card.contentLabel.height() >= card.contentLabel.heightForWidth(
+            card.contentLabel.width(),
+        )
+        assert all(after > previous for after, previous in zip(
+            (card.height(), group.height(), page.widget().height()), before,
+        ))
+        assert_contained(card, group)
+        for control in (card.titleLabel, card.contentLabel, card.button):
+            assert_contained(control, control.parentWidget())
+            assert_contained(control, card)
+            assert_contained(control, group)
+        page.ensureWidgetVisible(card.button, 0, 0)
+        qt_application.processEvents()
+        assert_contained(card.button, page.viewport())
+        assert card.button.visibleRegion().boundingRect() == card.button.rect()
+        QTest.mouseClick(card.button, Qt.MouseButton.LeftButton)
+        presenter.export_result.assert_called_once_with("application-diagnostics", journal.text())
+        journal.entries.clear()
+        journal.accept([("12:00:01", "INFO", "运行状态已更新")], include_info=True)
+        presenter._diagnostics_changed(notify=False)
+        _settle_settings(qt_application, page)
+        assert (card.height(), group.height(), page.widget().height()) == before
+        assert card.button.isEnabled()
+        assert_contained(card, group)
+        assert card.button.accessibleDescription() == card.contentLabel.text()
+        assert_contained(card.contentLabel, card.contentLabel.parentWidget())
+    finally:
+        host.close()
 
 
 @pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
@@ -105,6 +187,7 @@ def test_setting_cards_keep_full_text_and_actions_inside_viewport(
         assert control.font().pointSizeF() == BaseStyles.font_for_role(FontRole.UI).pointSizeF()
         assert control.height() >= control.fontMetrics().height() + 14
         for label in (card.titleLabel, card.contentLabel):
+            assert_contained(label, label.parentWidget())
             assert label.height() >= label.heightForWidth(label.width()), (
                 card.titleLabel.text(), label.text(), label.geometry(),
                 control.geometry(), control.sizeHint(), card.size(),

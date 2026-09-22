@@ -377,7 +377,7 @@ def test_screenshot_page_actual_size_updates_zoom_label(tmp_path):
         viewer.close()
 
 
-def test_pull_recorded_video_reports_pull_failure():
+def test_pull_recorded_video_reports_pull_failure(tmp_path):
     model = ADBAdvanced()
     proc = SimpleNamespace(pid=11, poll=lambda: 0)
     started = _start_owned_recording(model, proc, batch="")
@@ -389,7 +389,7 @@ def test_pull_recorded_video_reports_pull_failure():
             model,
             "device-1",
             started["remote_path"],
-            "C:/tmp",
+            str(tmp_path),
             started["filename"],
         )
 
@@ -1048,6 +1048,8 @@ def test_transfer_worker_pre_aborted_does_not_start_process(tmp_path):
 
 
 def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
+    from PySide6.QtWidgets import QLineEdit, QTableWidget
+
     _app = QApplication.instance() or QApplication([])
     dialog = SimpleNamespace()
     dialog.current_path = "/sdcard"
@@ -1055,7 +1057,9 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     dialog.NAME_COL = FileExplorerPage.NAME_COL
     dialog.SIZE_COL = FileExplorerPage.SIZE_COL
     dialog.MODIFIED_COL = FileExplorerPage.MODIFIED_COL
-    dialog.table = Mock()
+    dialog.table = Mock(wraps=QTableWidget(0, 4))
+    dialog.search_field = QLineEdit()
+    dialog.search_field.setText("readme")
     dialog.status_bar = Mock()
     dialog.symlink_targets = {}
     dialog._file_type_icon = Mock(return_value=QIcon())
@@ -1088,6 +1092,10 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     assert type_item.text() == "Folder"
     assert type_item.data(Qt.ItemDataRole.AccessibleTextRole) == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
+    assert {
+        dialog.table.item(row, dialog.NAME_COL).text()
+        for row in range(dialog.table.rowCount()) if not dialog.table.isRowHidden(row)
+    } == {"..", "readme.txt"}
     dialog.status_bar.setText.assert_called_once_with("/sdcard  |  1 folders, 1 files")
 
 
@@ -1523,7 +1531,9 @@ def _start_owned_recording(model, proc, batch="b1"):
         )
 
 
-def test_recording_pull_waits_for_owned_process_natural_exit():
+def test_recording_pull_waits_for_owned_process_natural_exit(tmp_path):
+    from pathlib import Path
+
     model = ADBAdvanced()
     exited = threading.Event()
     waiting = threading.Event()
@@ -1535,13 +1545,15 @@ def test_recording_pull_waits_for_owned_process_natural_exit():
         waiting.set()
         return 0 if exited.is_set() else None
     proc.poll = poll
-    def run(*_args, **_kwargs):
+    def run(command, **_kwargs):
         pulled.set()
+        if command[3] == "pull":
+            Path(command[-1]).write_bytes(b"complete video")
         return {"success": True}
     with patch.object(model, "_run", side_effect=run):
         worker = threading.Thread(target=lambda: result.append(
             ADBAdvanced.pull_recorded_video_async.__wrapped__(
-                model, "device-1", started["remote_path"], "C:/tmp",
+                model, "device-1", started["remote_path"], str(tmp_path),
                 started["filename"], batch_id="b1",
             )
         ))

@@ -121,6 +121,7 @@ class PerfChartView(QWidget):
             axis.setTitleBrush(QColor(BaseStyles.color("TEXT_SECONDARY")))
             axis.setLabelsColor(BaseStyles.color("TEXT_SECONDARY"))
             axis.setLabelsFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+            axis.setTitleFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
             axis.setLinePenColor(BaseStyles.color("BORDER_COLOR"))
             axis.setGridLineColor(BaseStyles.color("BORDER_COLOR"))
         self._chart.setBackgroundVisible(False)
@@ -132,7 +133,7 @@ class PerfChartView(QWidget):
     def _update_readable_width(self) -> None:
         """按真实字体预留轴和图例宽度，窄宿主通过滚动访问全部指标而不缩小文字。"""
         font = QFontMetricsF(self._chart.legend().font())
-        axis_width = 0.0
+        axis_widths = []
         for axis in self._chart.axes(Qt.Orientation.Vertical):
             if not isinstance(axis, QValueAxis):
                 continue
@@ -140,9 +141,15 @@ class PerfChartView(QWidget):
             longest = max(labels.horizontalAdvance(f"{value:.1f}")
                           for value in (axis.min(), axis.max()))
             title = QFontMetricsF(axis.titleFont()).height() if axis.titleText() else 0
-            axis_width += longest + title + 32
+            axis_widths.append(longest + title + 32)
         legend_width = sum(font.horizontalAdvance(name) + 48 for name in self._series_names)
-        width = max(320 + axis_width, legend_width + 64) if self._series_names else 0
+        # QtCharts 最多把绘图区外框宽度的 40% 分给纵轴，并按轴数分摊；
+        # 只累加文字宽度仍会触发内部压缩，大字体标题需同时满足该比例预算。
+        axis_budget = max(axis_widths, default=0) * len(axis_widths) / 0.4 + 64
+        width = (
+            max(320 + sum(axis_widths), axis_budget, legend_width + 64)
+            if self._series_names else 0
+        )
         self._chart_view.setMinimumWidth(int(width))
 
 

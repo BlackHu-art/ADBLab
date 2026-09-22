@@ -1167,6 +1167,7 @@ class SettingsPage(ScrollArea):
                 (self.ui_size_card, self.ui_size_card.combo_box),
                 (self.log_size_card, self.log_size_card.combo_box),
                 (self.reset_card, self.reset_card.button),
+                (self.diagnostics_card, self.diagnostics_card.button),
                 (self.restart_adb_card, self.restart_adb_card.button),
             )
         ]
@@ -1267,6 +1268,12 @@ class SettingsPage(ScrollArea):
             self._last_adb_environment_text = content
         self.adb_check_card.set_status(content)
         self.adb_check_card.set_recheck_enabled(not snapshot.checking)
+        self._reflow_settings()
+
+    def update_diagnostics_summary(self, content: str) -> None:
+        """诊断摘要变化后同步重排卡片与分组，保证多行说明和导出按钮可达。"""
+        self.diagnostics_card.setContent(content)
+        self.diagnostics_card.button.setAccessibleDescription(content)
         self._reflow_settings()
 
     def _refresh_typography(self, _config=None) -> None:

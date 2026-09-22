@@ -15,6 +15,34 @@ import main
 from core import settings_manager
 
 
+@pytest.mark.parametrize("available", [False, True])
+@pytest.mark.ui
+def test_packaging_check_reports_acrylic_capability(
+    qt_application, tmp_path, monkeypatch, capsys, available,
+):
+    """主包可导入不代表覆盖磨砂可用，自检必须报告图像依赖的实际能力。"""
+    from PySide6.QtNetwork import QSslSocket
+    from qfluentwidgets.components.widgets import acrylic_label
+
+    monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", available)
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
+        ),
+    )
+
+    result = main._self_check_packaging()
+
+    output = capsys.readouterr().out
+    assert f"{'OK' if available else 'FAIL'} ui:acrylic" in output
+    assert result == (0 if available else 1)
+
+
 def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypatch, capsys):
     from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
 

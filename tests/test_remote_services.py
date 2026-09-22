@@ -457,11 +457,16 @@ def test_remote_single_mirror_shutdown_waits_for_reader_and_focus_tasks():
     workers = []
 
     class BlockingStderr:
+        closed = False
+
         def __iter__(self):
             workers.append(threading.current_thread())
             reader_entered.set()
             assert release_reader.wait(2)
             return iter(())
+
+        def close(self):
+            self.closed = True
 
     def focus(_title):
         workers.append(threading.current_thread())

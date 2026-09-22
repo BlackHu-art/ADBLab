@@ -3,6 +3,30 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>Year unavailable; sorted by month, day and time after dated entries</source>
+            <translation>缺少年份；排在完整日期之後，按月、日和時間排序</translation>
+        </message>
+        <message>
+            <source>清空反向规则</source>
+            <translation>清空反向規則</translation>
+        </message>
+        <message>
+            <source>移除所选设备的全部反向转发规则</source>
+            <translation>移除所選裝置的全部反向轉發規則</translation>
+        </message>
+        <message>
+            <source>Select APK File</source>
+            <translation>選擇 APK 檔案</translation>
+        </message>
+        <message>
+            <source>Select APK files to install</source>
+            <translation>選擇要安裝的 APK 檔案</translation>
+        </message>
+        <message>
+            <source>APK Files (*.apk);;All Files (*)</source>
+            <translation>APK 檔案 (*.apk);;所有檔案 (*)</translation>
+        </message>
+        <message>
             <source>将当前测试参数保存为命名方案</source>
             <translation>將目前測試參數儲存為命名方案</translation>
         </message>
@@ -6517,6 +6541,30 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>详情已记录，可在任务中心查看。</source>
             <translation>詳情已記錄，可在工作中心查看。</translation>
+        </message>
+        <message>
+            <source>Link</source>
+            <translation>符號連結</translation>
+        </message>
+        <message>
+            <source>链接目标不存在或无法访问，请刷新后重试。</source>
+            <translation>連結目標不存在或無法存取，請重新整理後再試。</translation>
+        </message>
+        <message>
+            <source>无法启动应用任务，请重试。</source>
+            <translation>無法啟動應用程式任務，請重試。</translation>
+        </message>
+        <message>
+            <source>重试保存</source>
+            <translation>重試儲存</translation>
+        </message>
+        <message>
+            <source>重新下载并保存原批次录屏</source>
+            <translation>重新下載並儲存原批次錄影</translation>
+        </message>
+        <message>
+            <source>Invalid UTF-8 text; editing is disabled</source>
+            <translation>文字不是有效的 UTF-8 編碼，已停用編輯</translation>
         </message>
     </context>
 </TS>

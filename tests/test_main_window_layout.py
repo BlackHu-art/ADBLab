@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 import warnings
 from dataclasses import dataclass
@@ -7,10 +8,21 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, QSignalBlocker, QSize, Qt
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QCoreApplication,
+    QDeadlineTimer,
+    QEvent,
+    QEventLoop,
+    QObject,
+    QPoint,
+    QSignalBlocker,
+    QSize,
+    Qt,
+)
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton, QWidget
 from qfluentwidgets import (
     CardWidget,
     ComboBox,
@@ -194,13 +206,51 @@ def populate_device_workbench(frame, count=8):
     return frame._device_hub.device_cards
 
 
-def test_main_title_bar_hides_icon_without_clearing_window_icon(qt_application):
-    """主标题栏不显示图标，同时保留系统任务栏使用的窗口图标。"""
-
-    frame = build_main_frame()
+@pytest.mark.parametrize("theme,width,font_size", [("Light", 1120, 12), ("Dark", 720, 22)])
+def test_main_title_bar_keeps_brand_area_empty_without_clearing_window_metadata(
+    qt_application, monkeypatch, theme, width, font_size,
+):
+    """标题栏品牌区域留空，系统窗口信息和标题栏操作仍保留。"""
+    settings = _MainFrameSettings()
+    settings.values.update(ui_font_size=font_size, mica_enabled=False, window_width=width)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr(
+        "models.device_store.DeviceStore.get_full_devices_info", lambda _devices: [],
+    )
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme(theme)
+    frame = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("titlebar-test", QSize(width, 900))),
+    )
     try:
-        assert frame.titleBar.iconLabel.isHidden()
+        frame.show()
+        qt_application.processEvents()
+        bar = frame.titleBar
+        icon = bar.iconLabel
+        assert icon.isHidden()
+        assert bar.titleLabel.isHidden()
+        assert frame.windowTitle() == "ADBLab"
         assert not frame.windowIcon().isNull()
+        assert bar.canDrag(QPoint(60, bar.height() // 2))
+        assert all(button.isVisibleTo(frame) for button in (bar.minBtn, bar.maxBtn, bar.closeBtn))
+        frame._bind_window_screen()
+        for notification in (
+            frame._screen_adapter.emit_logical_dpi_changed,
+            frame._screen_adapter.emit_screen_changed,
+        ):
+            notification(frame._bound_screen)
+            qt_application.processEvents()
+            assert icon.isHidden()
+            assert bar.titleLabel.isHidden()
+        frame.setWindowTitle("ADBLab - title update")
+        assert icon.isHidden()
+        assert bar.titleLabel.isHidden()
+        assert frame.windowTitle() == "ADBLab - title update"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -3119,3 +3169,77 @@ def test_minimum_window_keeps_task_result_reachable_with_large_font(
     finally:
         frame._close_ready = True
         frame.close()
+
+
+def _visible_content_height(page: QWidget) -> int:
+    """用同一把尺子量页面内的可见内容，隐藏子树的历史几何不参与比较。"""
+
+    return sum(child.height() for child in page.findChildren(QWidget) if child.isVisible())
+
+
+def _settled_visible_content_height(app: QApplication, page: QWidget) -> int:
+    """推进事件循环直到可见内容高度连续稳定，返回稳定值。"""
+
+    previous = _visible_content_height(page)
+    stable_rounds = 0
+    deadline = QDeadlineTimer(3000)
+    while stable_rounds < 3 and not deadline.hasExpired():
+        QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
+        current = _visible_content_height(page)
+        stable_rounds = stable_rounds + 1 if current == previous else 0
+        previous = current
+    del app
+    return previous
+
+
+# 概览页与功能页共享同一套隐藏期规划：首次可见必须已经落实最终宽度计划。
+_FIRST_VISIBLE_FRAME_ROUTES = (
+    ("system-overview", "system", "overview"),
+    ("apps-overview", "apps", "overview"),
+    ("remote-overview", "devices", "remote"),
+    ("logcat", "system", "logcat"),
+    ("file-explorer", "devices", "files"),
+    ("performance", "system", "performance"),
+    ("screenshot", "apps", "media"),
+)
+
+
+@pytest.mark.parametrize(
+    ("section", "feature"),
+    [(section, feature) for _label, section, feature in _FIRST_VISIBLE_FRAME_ROUTES],
+    ids=[label for label, _section, _feature in _FIRST_VISIBLE_FRAME_ROUTES],
+)
+def test_first_visible_frame_already_uses_final_responsive_layout(
+    qt_application,
+    section,
+    feature,
+):
+    """首次切换到功能页时，首帧几何必须等于稳定后的几何。
+
+    面板在隐藏期按旧宽度规划过响应式行；页面首次可见时若不把最终计划同步落实，
+    用户会先看到堆叠的旧布局，再在下一轮事件循环里跳回网格布局。
+    """
+
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("fake", QSize(1280, 800)))
+    )
+    try:
+        frame.resize(1120, 640)
+        frame.show()
+        wait_until(qt_application, lambda: frame.isVisible())
+        populate_device_workbench(frame, 8)
+        wait_for_stable_geometry(qt_application, frame.stackedWidget)
+
+        assert frame._open_workspace_feature(section, feature) is True
+        page = frame.stackedWidget.currentWidget()
+        first_frame = _visible_content_height(page)
+
+        assert _settled_visible_content_height(qt_application, page) == first_frame
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+        # 逐个路由各建一个主窗口；及时回收上一个窗口的 Qt 对象，避免同进程内
+        # 累积的图表/页面对象影响后续路由的首帧测量。
+        qt_application.processEvents()
+        gc.collect()

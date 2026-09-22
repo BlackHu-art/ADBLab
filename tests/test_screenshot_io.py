@@ -377,3 +377,198 @@ def test_screenshot_read_during_delete_does_not_publish_partial_gallery_counts(
     finally:
         release.set()
         _close(qt_application, page)
+
+
+def test_screenshot_metadata_uses_worker_snapshot_without_gui_file_queries(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_nav as nav
+
+    page = ScreenshotPage([_write_image(tmp_path / "metadata.png")])
+    try:
+        _ready(qt_application, page)
+        before = page._info_label.text()
+
+        def reject(_path):
+            raise AssertionError("metadata must come from the completed read")
+
+        monkeypatch.setattr(nav.os.path, "getsize", reject)
+        monkeypatch.setattr(nav.os.path, "getmtime", reject)
+        page._update_info()
+        assert page._info_label.text() == before
+        assert "64 x 96" in before and " B" in before
+    finally:
+        _close(qt_application, page)
+
+
+def test_screenshot_single_delete_is_background_and_rejects_duplicate_submission(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    path = _write_image(tmp_path / "single.png")
+    page = ScreenshotPage([path])
+    main_thread = threading.get_ident()
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    remove = actions.os.remove
+
+    def slow_remove(target):
+        calls.append((target, threading.get_ident()))
+        entered.set()
+        if threading.get_ident() != main_thread:
+            assert release.wait(2)
+            remove(target)
+
+    try:
+        _ready(qt_application, page)
+        monkeypatch.setattr(actions.os, "remove", slow_remove)
+        page._delete_file()
+        assert entered.wait(1)
+        assert calls == [(path, calls[0][1])] and calls[0][1] != main_thread
+        page._delete_file()
+        assert len(calls) == 1
+        assert page.image_paths == (path,)
+        release.set()
+        wait_until(qt_application, lambda: page._delete_worker is None)
+        assert page.image_paths == ()
+    finally:
+        release.set()
+        _close(qt_application, page)
+
+
+def test_screenshot_add_validation_runs_off_gui_and_is_owned_until_join(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    path = _write_image(tmp_path / "added.png")
+    page = ScreenshotPage([])
+    entered, release = threading.Event(), threading.Event()
+    main_thread = threading.get_ident()
+    calls = []
+
+    class Reader:
+        def __init__(self, target):
+            self.target = target
+
+        def canRead(self):
+            calls.append(threading.get_ident())
+            entered.set()
+            if threading.get_ident() != main_thread:
+                assert release.wait(2)
+            return True
+
+    monkeypatch.setattr(actions, "QImageReader", Reader)
+    monkeypatch.setattr(actions.QFileDialog, "getOpenFileNames", lambda *_args: ([path], ""))
+    try:
+        page._add_images()
+        assert entered.wait(1)
+        assert calls and calls[0] != main_thread
+        assert not page._add_action.isEnabled()
+        page._add_images()
+        assert len(calls) == 1
+        assert page.image_paths == ()
+        release.set()
+        wait_until(qt_application, lambda: page.image_paths == (path,) and not page._workers)
+        assert page._add_action.isEnabled()
+    finally:
+        release.set()
+        _close(qt_application, page)
+
+
+def test_screenshot_add_validation_failure_keeps_good_files_and_releases_worker(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    good = _write_image(tmp_path / "good.png")
+    broken = _write_image(tmp_path / "broken.png")
+    page = ScreenshotPage([])
+    notices = []
+
+    class Reader:
+        def __init__(self, path):
+            self.path = path
+
+        def canRead(self):
+            if self.path == broken:
+                raise OSError("synthetic unreadable file")
+            return True
+
+    monkeypatch.setattr(actions, "QImageReader", Reader)
+    monkeypatch.setattr(actions.QFileDialog, "getOpenFileNames", lambda *_: ([broken, good], ""))
+    monkeypatch.setattr(actions, "show_toast", lambda *args, **kw: notices.append(kw["level"]))
+    try:
+        page._add_images()
+        wait_until(qt_application, lambda: page.image_paths == (good,) and not page._workers)
+        assert notices == ["warning"]
+        assert page._add_action.isEnabled()
+    finally:
+        _close(qt_application, page)
+
+
+def test_screenshot_add_validation_close_cancels_rest_and_discards_late_result(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    paths = [_write_image(tmp_path / f"close-{i}.png") for i in range(2)]
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    page = ScreenshotPage([])
+    main_thread = threading.get_ident()
+
+    class Reader:
+        def __init__(self, path):
+            self.path = path
+
+        def canRead(self):
+            calls.append(self.path)
+            entered.set()
+            if threading.get_ident() != main_thread:
+                assert release.wait(2)
+            return True
+
+    monkeypatch.setattr(actions, "QImageReader", Reader)
+    monkeypatch.setattr(actions.QFileDialog, "getOpenFileNames", lambda *_: (paths, ""))
+    try:
+        page._add_images()
+        assert entered.wait(1)
+        assert page.image_paths == ()
+        assert page.request_dispose() is False
+        assert not page.is_disposed
+        release.set()
+        wait_until(qt_application, lambda: page.is_disposed)
+        assert calls == paths[:1]
+        assert page.image_paths == () and not page._workers
+    finally:
+        release.set()
+        _close(qt_application, page)
+
+
+def test_screenshot_add_thread_start_failure_restores_admission(
+    qt_application, tmp_path, monkeypatch,
+):
+    from PySide6.QtCore import QThread
+
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    path = _write_image(tmp_path / "start-failure.png")
+    page = ScreenshotPage([])
+    notices = []
+
+    def reject_start(_worker):
+        raise RuntimeError("synthetic thread creation failure")
+
+    monkeypatch.setattr(QThread, "start", reject_start)
+    monkeypatch.setattr(actions.QFileDialog, "getOpenFileNames", lambda *_: ([path], ""))
+    monkeypatch.setattr(actions, "show_toast", lambda *args, **kw: notices.append(kw["level"]))
+    try:
+        page._add_images()
+        assert page.image_paths == ()
+        assert not page._workers
+        assert page._add_action.isEnabled()
+        assert notices == ["error"]
+    finally:
+        _close(qt_application, page)

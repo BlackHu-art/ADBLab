@@ -37,7 +37,7 @@ def test_native_readonly_query_cancels_in_flight_but_write_keeps_default(monkeyp
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "resolve_adb_program", lambda: "adb")
     monkeypatch.setattr(execution, "native_capture", capture)
-    monkeypatch.setattr(execution.subprocess, "run", native)
+    monkeypatch.setattr(execution, "run_native", native)
     worker = threading.Thread(target=lambda: result.append(
         ADBAdvanced.get_kernel_version_async.__wrapped__(model, "device-1")
     ))
@@ -116,7 +116,7 @@ def test_short_command_wait_reports_live_command_until_native_exit(monkeypatch):
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
     monkeypatch.setattr(execution, "_adb_runtime", None)
-    monkeypatch.setattr(execution.subprocess, "run", native)
+    monkeypatch.setattr(execution, "run_native", native)
     worker = threading.Thread(target=lambda: execution.CommandRunner.run(["test-client"]))
     try:
         worker.start()

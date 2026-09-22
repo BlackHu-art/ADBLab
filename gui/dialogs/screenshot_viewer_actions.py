@@ -5,14 +5,14 @@ import sys
 
 from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import QApplication, QFileDialog
-from qfluentwidgets import RoundMenu
 from shiboken6 import isValid
 
 from core.exec import ProcessRunner
-from gui.dialogs.screenshot_viewer_tasks import ScreenshotDeleteWorker
+from gui.dialogs.screenshot_viewer_tasks import ScreenshotDeleteWorker, ScreenshotValidateWorker
 from gui.i18n import tr
 from gui.notifications import ToastLevel, show_toast
-from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import create_transient_menu
+from gui.widgets.transient_menu import add_shared_menu_action
 
 
 class ScreenshotViewerActions:
@@ -26,7 +26,8 @@ class ScreenshotViewerActions:
         """本地多选只追加可解码图片；弹窗取消、重入或页面释放后不再改变会话。"""
 
         frame = self._frame
-        if self._image_dialog_open or frame._disposed or not isValid(frame):
+        if (self._image_dialog_open or frame._add_worker is not None
+                or frame._disposed or frame._disposing or not isValid(frame)):
             return
         self._image_dialog_open = True
         frame._add_action.setEnabled(False)
@@ -37,21 +38,33 @@ class ScreenshotViewerActions:
                 os.path.dirname(frame._current_path()),
                 tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)"),
             )
-            if not isValid(frame) or frame._disposed or not paths:
+            if not isValid(frame) or frame._disposed or frame._disposing or not paths:
                 return
-            accepted = [
-                path for path in paths if os.path.isfile(path) and QImageReader(path).canRead()
-            ]
-            if accepted:
-                frame.receive_payload({"paths": accepted, "focus_new": True})
-            if len(accepted) != len(paths):
-                self._flash_status(
-                    tr("Some selected files could not be opened as images"), level="warning"
-                )
+            worker = ScreenshotValidateWorker(tuple(paths), QImageReader, frame)
+            frame._add_worker = worker
+            frame._start_io_worker(worker)
         finally:
             self._image_dialog_open = False
             if isValid(frame) and not frame._disposed:
-                frame._add_action.setEnabled(True)
+                frame._update_nav_visibility()
+
+    def add_finished(self, worker: ScreenshotValidateWorker) -> None:
+        """只消费当前校验任务；关闭或取消后释放忙碌状态但不追加晚到结果。"""
+        frame = self._frame
+        if frame._add_worker is not worker:
+            return
+        frame._add_worker = None
+        if frame._disposed or frame._disposing:
+            return
+        frame._update_nav_visibility()
+        if worker.cancelled:
+            return
+        if worker.accepted:
+            frame.receive_payload({"paths": worker.accepted, "focus_new": True})
+        if worker.rejected:
+            self._flash_status(
+                tr("Some selected files could not be opened as images"), level="warning",
+            )
 
     def _rotate_image(self) -> None:
         """旋转只影响当前预览与复制方向，原始文件保持不变。"""
@@ -103,44 +116,23 @@ class ScreenshotViewerActions:
         ProcessRunner().spawn(command)
 
     def _delete_file(self):
-        """单次触发删除当前截图文件；失败保留图片，成功后同步图库和圆点分页。"""
-
-        if (self._frame._disposed or self._frame._disposing
-                or self._frame._delete_worker is not None):
-            return
+        """单张删除与批量删除共享后台快照、取消和结果合并边界。"""
         path = self._frame._current_path()
-        if not path or not os.path.exists(path):
-            return
-        try:
-            os.remove(path)
-        except OSError as exc:
-            show_toast(
-                self._frame,
-                tr("Delete Failed"),
-                str(exc),
-                level="error",
-            )
-            return
-        del self._frame._image_paths[self._frame._current_idx]
-        self._frame._current_idx = max(
-            0, min(self._frame._current_idx, len(self._frame._image_paths) - 1)
-        )
-        self._frame._rebuild_images()
-        if not self._frame._image_paths:
-            self._frame._show_placeholder(tr("No screenshot available"))
-        else:
-            self._frame._navigate_to(self._frame._current_idx)
-        self._frame._notify_image_count()
-        self._frame._apply_theme()
+        if path:
+            self._start_delete((path,))
 
     def _delete_all_files(self):
         """后台删除当前图库快照；忙碌时拒绝重复删除，新到图片不加入旧任务。"""
+        self._start_delete(tuple(self._frame._image_paths))
+
+    def _start_delete(self, paths: tuple[str, ...]) -> None:
+        """固定删除目标，重复点击不扩大当前批次。"""
         frame = self._frame
-        if (frame._disposed or frame._disposing or not frame._image_paths
+        if (frame._disposed or frame._disposing or not paths
                 or frame._delete_worker is not None):
             return
         worker = ScreenshotDeleteWorker(
-            tuple(frame._image_paths), dict(frame._path_versions), frame,
+            paths, dict(frame._path_versions), frame,
         )
         frame._delete_worker = worker
         frame._update_nav_visibility()
@@ -163,33 +155,38 @@ class ScreenshotViewerActions:
         for path in deleted:
             frame._nav_controller._cache.remove_path(path)
         frame._current_idx = (
-            frame._image_paths.index(current) if current in frame._image_paths else 0
+            frame._image_paths.index(current) if current in frame._image_paths
+            else min(frame._current_idx, max(0, len(frame._image_paths) - 1))
         )
         frame._rebuild_images()
         frame._navigate_to(frame._current_idx)
         frame._notify_image_count()
         frame._apply_theme()
         if worker.failed:
-            self._flash_status(
-                tr("Could not delete {value0} image(s)").format(value0=len(worker.failed)),
-                level="error",
-            )
+            if len(worker.paths) == 1:
+                show_toast(
+                    frame, tr("Delete Failed"), worker.errors[worker.failed[0]], level="error",
+                )
+            else:
+                self._flash_status(
+                    tr("Could not delete {value0} image(s)").format(value0=len(worker.failed)),
+                    level="error",
+                )
 
     def _on_context_menu(self, pos):
-        """上下文菜单复用同一批 Action，不额外连接回调或产生独立启用状态。"""
+        """临时菜单独占代理，启用状态和触发行为仍由页面动作统一提供。"""
 
         if self._frame._disposed:
             return
-        menu = RoundMenu(parent=self._frame)
-        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
-        menu.addAction(self._frame._copy_action)
-        menu.addAction(self._frame._folder_action)
+        menu = create_transient_menu(self._frame)
+        add_shared_menu_action(menu, self._frame._copy_action)
+        add_shared_menu_action(menu, self._frame._folder_action)
         menu.addSeparator()
-        menu.addAction(self._frame._rotate_action)
-        menu.addAction(self._frame._zoom_in_action)
-        menu.addAction(self._frame._zoom_out_action)
-        menu.addAction(self._frame._fit_action)
-        menu.addAction(self._frame._actual_action)
+        add_shared_menu_action(menu, self._frame._rotate_action)
+        add_shared_menu_action(menu, self._frame._zoom_in_action)
+        add_shared_menu_action(menu, self._frame._zoom_out_action)
+        add_shared_menu_action(menu, self._frame._fit_action)
+        add_shared_menu_action(menu, self._frame._actual_action)
         menu.addSeparator()
-        menu.addAction(self._frame._delete_action)
+        add_shared_menu_action(menu, self._frame._delete_action)
         menu.exec(self._frame._view.viewport().mapToGlobal(pos))

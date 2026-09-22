@@ -109,7 +109,7 @@ def test_native_entries_log_resolved_client_without_command_values(
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
     monkeypatch.setattr(subprocess, "Popen", Process)
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(execution, "run_native", run)
     cmd = ["adb", "-s", "synthetic-private-device", "shell", "echo secret=hidden-value"]
     if entry == "short":
         assert execution.CommandRunner.run(cmd).success

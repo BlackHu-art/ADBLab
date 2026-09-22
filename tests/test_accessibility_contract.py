@@ -1,8 +1,12 @@
+from unittest.mock import Mock
+
 import pytest
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt
 from PySide6.QtGui import QPixmap, QShortcut
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QPushButton, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import CardWidget, TransparentToolButton
+from shiboken6 import isValid
 
 from gui.features.media import ScreenshotPage
 from gui.pages.fluent_pages import ActionCard
@@ -191,16 +195,103 @@ def test_adb_server_action_is_keyboard_triggerable(qt_application):
         panel.close()
 
 
-def test_remote_shortcuts_are_unique_and_do_not_claim_application_quit(qt_application):
-    panel = SidePanel()
-    try:
-        remote = panel._ensure_tab_loaded(2)
-        shortcuts = [shortcut.key().toString() for shortcut in remote.findChildren(QShortcut)]
+@pytest.fixture
+def visible_remote_shortcuts(qt_application, monkeypatch):
+    from core.settings_manager import AppSettings
+    from gui.panels.remote_panel import RemotePanel
+    from tests.test_main_window_layout import _MainFrameSettings
 
-        assert len(shortcuts) == len(set(shortcuts))
-        assert "Ctrl+Q" not in shortcuts
-        assert "Ctrl+Return" in shortcuts
-        assert "Ctrl+Shift+Return" in shortcuts
+    settings = _MainFrameSettings()
+    monkeypatch.setattr(AppSettings, "instance", lambda: settings)
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    start, stop = Mock(), Mock()
+    monkeypatch.setattr(RemotePanel, "_start_scrcpy", start)
+    monkeypatch.setattr(RemotePanel, "_stop_scrcpy", stop)
+    panel = SidePanel()
+    remote = panel._ensure_tab_loaded(2)
+    remote.set_target_devices(["demo-remote"])
+    view = panel._tab_scroll_areas[2].takeWidget()
+    window = QWidget()
+    stack = QStackedWidget(window)
+    QVBoxLayout(window).addWidget(stack)
+    stack.addWidget(view)
+    other = QPushButton("Other page")
+    stack.addWidget(other)
+    window.resize(1000, 800)
+    window.show()
+    window.activateWindow()
+    remote.btn_start.setFocus()
+    wait_until(qt_application, lambda: remote.btn_start.hasFocus())
+    try:
+        yield remote, view, stack, other, start, stop
     finally:
         panel.shutdown()
+        window.close()
+        window.deleteLater()
         panel.close()
+        panel.deleteLater()
+
+
+def test_remote_shortcuts_are_unique_and_do_not_claim_application_quit(visible_remote_shortcuts):
+    _remote, view, _stack, _other, _start, _stop = visible_remote_shortcuts
+    shortcuts = [shortcut.key().toString() for shortcut in view.findChildren(QShortcut)]
+
+    assert len(shortcuts) == len(set(shortcuts))
+    assert "Ctrl+Q" not in shortcuts
+    assert "Ctrl+Return" in shortcuts
+    assert "Ctrl+Shift+Return" in shortcuts
+
+
+def test_remote_stop_shortcut_remains_available_when_start_is_disabled(
+    qt_application, visible_remote_shortcuts,
+):
+    remote, _view, _stack, _other, start, stop = visible_remote_shortcuts
+    remote.btn_start.setEnabled(False)
+    remote.btn_stop.setEnabled(True)
+    remote.btn_stop.setFocus()
+    wait_until(qt_application, remote.btn_stop.hasFocus)
+    QTest.keyClick(
+        remote.btn_stop, Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    stop.assert_called_once_with()
+    start.assert_not_called()
+
+
+def test_remote_shortcuts_dispatch_only_while_the_real_page_is_visible(
+    qt_application, visible_remote_shortcuts,
+):
+    remote, view, stack, other, start, stop = visible_remote_shortcuts
+    assert remote.isHidden() and view.isVisible()
+
+    def press_both(target):
+        QTest.keyClick(target, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClick(
+            target, Qt.Key.Key_Return,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        qt_application.processEvents()
+
+    press_both(remote.btn_start)
+    start.assert_called_once_with()
+    stop.assert_called_once_with()
+    stack.setCurrentWidget(other)
+    other.setFocus()
+    wait_until(qt_application, other.hasFocus)
+    press_both(other)
+    assert start.call_count == stop.call_count == 1
+    stack.setCurrentWidget(view)
+    remote.btn_start.setFocus()
+    wait_until(qt_application, remote.btn_start.hasFocus)
+    press_both(remote.btn_start)
+    assert start.call_count == stop.call_count == 2
+
+    shortcuts = view.findChildren(QShortcut)
+    stack.setCurrentWidget(other)
+    stack.removeWidget(view)
+    view.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert all(not isValid(shortcut) for shortcut in shortcuts)
+    other.setFocus()
+    press_both(other)
+    assert start.call_count == stop.call_count == 2

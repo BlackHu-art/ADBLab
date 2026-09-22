@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.adb_dimensions import parse_wm_size
 from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
@@ -25,6 +26,9 @@ from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
 
 _port_lock = threading.Lock()
 _reserved_ports: set[int] = set()
+# 等待 helper 释放租约的上限：helper 正常在父进程消失后约 1 秒退出，慢链路下上传
+# 仍可能更久；超预算按清理失败登记，端口与会话目录留给既有重试入口处理。
+_HELPER_EXIT_BUDGET = 30.0
 
 
 def _reserve_port() -> int:
@@ -53,6 +57,7 @@ class _BridgeSession:
     thread: threading.Thread | None = None
     cleanup_failed: bool = False
     starting: bool = True
+    output_unclaimed: bool = False
 
 
 class ScrcpyService:
@@ -130,10 +135,9 @@ class ScrcpyService:
                 timeout=query_timeout(device, 5, adb_path=adb),
                 deadline=deadline, cancelled=cancelled,
             )
-            for prefix in ("Override size:", "Physical size:"):
-                for line in (result.output or "").splitlines():
-                    if prefix in line:
-                        return line.split(":", 1)[1].strip()
+            dimensions = parse_wm_size(result.output or "") if result.success else None
+            if dimensions:
+                return "x".join(dimensions)
         except (InterruptedError, TimeoutError):
             raise
         except Exception:
@@ -306,7 +310,7 @@ class ScrcpyService:
             session.process = process
             try:
                 session.thread = threading.Thread(
-                    target=self._finish_bridge_session, args=(process, session),
+                    target=self._finish_bridge_session, args=(key, process, session),
                     name="scrcpy-session-cleanup", daemon=True,
                 )
                 session.starting = False
@@ -315,6 +319,8 @@ class ScrcpyService:
                 session.starting = False
                 session.thread = None
                 session.cleanup_failed = True
+                # 启动没有返回句柄，界面尚不能创建 reader；重试清理必须接管这两个流。
+                session.output_unclaimed = True
                 self.process_runner.request_stop(key)
                 raise
         return process
@@ -333,16 +339,27 @@ class ScrcpyService:
             path.unlink()
         folder.rmdir()
 
-    def _finish_bridge_session(self, process: ExecHandle, session: _BridgeSession) -> None:
+    def _finish_bridge_session(
+        self, key: str, process: ExecHandle, session: _BridgeSession,
+    ) -> None:
         """后台等待父进程和 helper 租约释放，再清理本会话端口；失败保留诊断状态。"""
         import logging
 
         try:
             process.wait()
+            if session.output_unclaimed:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+            # 进程退出与隧道清理分别归属；旧代次只能释放自身句柄，reader 自行关闭管道。
+            self.process_runner.release_finished(key, process)
             if session.folder is not None:
                 session_file = Path(session.environment["ADBLAB_SCRCPY_SESSION_FILE"])
+                helper_deadline = time.monotonic() + _HELPER_EXIT_BUDGET
                 while has_active_helpers(session_file):
-                    time.sleep(0.05)
+                    if time.monotonic() >= helper_deadline:
+                        raise TimeoutError("Scrcpy helper did not release its lease in time.")
+                    time.sleep(0.1)
                 cleanup_session_tunnels(session.environment, timeout=3.0)
                 self._remove_session_folder(session.folder)
             self._release_port(session)
@@ -365,7 +382,7 @@ class ScrcpyService:
                 assert session.process is not None
                 session.cleanup_failed = False
                 session.thread = threading.Thread(
-                    target=self._finish_bridge_session, args=(session.process, session),
+                    target=self._finish_bridge_session, args=(key, session.process, session),
                     name="scrcpy-session-cleanup", daemon=True,
                 )
                 try:

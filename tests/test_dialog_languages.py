@@ -1,10 +1,11 @@
 """验证业务页真实语言呈现，并保证翻译后的标签不进入设备操作参数。"""
 
 import re
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
 from gui.dialogs.app_manager import AppManagerPage
@@ -20,6 +21,49 @@ from gui.styles import BaseStyles, FontRole
 from tests.ui_text_helpers import visible_ui_texts
 
 
+@pytest.mark.parametrize("language, single_title, batch_title, file_filter", [
+    ("zh_CN", "选择 APK 文件", "选择要安装的 APK 文件", "APK 文件 (*.apk);;所有文件 (*)"),
+    ("zh_HK", "選擇 APK 檔案", "選擇要安裝的 APK 檔案", "APK 檔案 (*.apk);;所有檔案 (*)"),
+    ("en_US", "Select APK File", "Select APK files to install", "APK Files (*.apk);;All Files (*)"),
+])
+@pytest.mark.parametrize("operation", ["parse_apk_info", "install_apk", "batch_install_apk"])
+def test_apk_choosers_translate_titles_and_filters_without_submitting_on_cancel(
+    qt_application, monkeypatch, dialog_language, language, single_title, batch_title,
+    file_filter, operation,
+):
+    from controllers._app import ADBAppMixin
+    from controllers._app_install import ADBAppInstallMixin
+
+    dialog_language(language)
+    owner = QWidget()
+    controller = SimpleNamespace(
+        window_owner=owner, _require_devices=Mock(return_value=True),
+        _emit_operation=Mock(), _start_install_batch=Mock(), app_model=Mock(),
+    )
+    multiple = operation == "batch_install_apk"
+    chooser = Mock(return_value=([] if multiple else "", ""))
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QFileDialog." + ("getOpenFileNames" if multiple else "getOpenFileName"),
+        chooser,
+    )
+    try:
+        if operation == "parse_apk_info":
+            assert ADBAppMixin.parse_apk_info(controller) is None
+            controller._emit_operation.assert_not_called()
+        else:
+            assert getattr(ADBAppInstallMixin, operation)(controller, ["demo-device"]) is None
+            controller._emit_operation.assert_called_once_with(
+                "batch_install" if multiple else "install", False, "APK selection canceled",
+            )
+        chooser.assert_called_once_with(
+            owner, batch_title if multiple else single_title, "", file_filter,
+        )
+        controller._start_install_batch.assert_not_called()
+        controller.app_model.parse_apk_info_async.assert_not_called()
+    finally:
+        owner.deleteLater()
+
+
 @pytest.fixture
 def dialog_language(qt_application):
     translators = []
@@ -32,6 +76,26 @@ def dialog_language(qt_application):
         qt_application.removeTranslator(translator)
         translator.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("language, label, description", [
+    ("zh_CN", "清空反向规则", "移除所选设备的全部反向转发规则"),
+    ("zh_HK", "清空反向規則", "移除所選裝置的全部反向轉發規則"),
+    ("en_US", "Clear reverse rules", "Remove all reverse forwarding rules from selected devices"),
+])
+def test_reverse_clear_scope_is_explicit_in_every_language(
+    qt_application, dialog_language, language, label, description,
+):
+    from tests.test_system_panel_categories import _build_system_panel
+
+    dialog_language(language)
+    panel, widget = _build_system_panel()
+    try:
+        assert panel.btn_remove_rev.text() == label
+        assert panel.btn_remove_rev.toolTip() == description
+        assert panel.btn_remove_rev.accessibleDescription() == description
+    finally:
+        widget.deleteLater()
 
 
 def test_business_pages_and_error_toast_render_english(
@@ -163,10 +227,57 @@ def test_permission_submission_uses_raw_names_after_translation(
     qt_application, monkeypatch, dialog_language, language,
 ):
     dialog_language(language)
+    created: list = []
+
+    class _FakePermissionWorker(QObject):
+        """复刻权限写入 worker 的最小信号面，用于驱动逐项串行批次。"""
+
+        app_details_loaded = Signal(dict)
+        permissions_loaded = Signal(list, list, list)
+        operation_done = Signal(str)
+        operation_feedback = Signal(str, str)
+        log_message = Signal(str)
+        finished = Signal()
+
+        def __init__(self, _device, operation, **kwargs):
+            super().__init__()
+            self.operation = operation
+            self.kwargs = kwargs
+            self.running = False
+            created.append(self)
+
+        def start(self) -> None:
+            self.running = True
+
+        def isRunning(self) -> bool:
+            return self.running
+
+        def abort(self) -> None:
+            self.running = False
+
+        def finish(self) -> None:
+            self.running = False
+            if self.operation == "modify_permission":
+                self.operation_done.emit("permissions_changed")
+            self.finished.emit()
+
+    monkeypatch.setattr(
+        "gui.dialogs.app_manager_details.AppManagerWorker", _FakePermissionWorker
+    )
+    monkeypatch.setattr(
+        "gui.dialogs.app_manager_details.report_feedback", lambda *args, **kwargs: None
+    )
     page = AppDetailsPage(device_ip="demo-device")
     page.package_name = "com.example.demo"
-    monkeypatch.setattr(page, "_rw", Mock())
     monkeypatch.setattr(page, "_can_operate", lambda: True)
+
+    def submitted_permissions() -> list:
+        return [
+            (worker.kwargs["permission"], worker.kwargs["action"])
+            for worker in created
+            if worker.operation == "modify_permission"
+        ]
+
     try:
         page._op([], ["android.permission.RECORD_AUDIO"], [("android.permission.CAMERA", True)])
         page.runtime_list.item(0).setCheckState(Qt.CheckState.Checked)
@@ -175,10 +286,18 @@ def test_permission_submission_uses_raw_names_after_translation(
         page.runtime_list.item(0).setText("Translated permission label")
         page.requested_list.item(0).setText("Another translated label")
         page._mp("grant")
-        permissions = [call.kwargs["permission"] for call in page._rw.call_args_list]
-        assert permissions == ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
-        assert all(call.kwargs["action"] == "grant" for call in page._rw.call_args_list)
+        assert submitted_permissions() == [("android.permission.CAMERA", "grant")]
+        created[0].finish()
+        qt_application.processEvents()
+        assert submitted_permissions() == [
+            ("android.permission.CAMERA", "grant"),
+            ("android.permission.RECORD_AUDIO", "grant"),
+        ]
     finally:
+        for worker in created:
+            if worker.running:
+                worker.finish()
+        qt_application.processEvents()
         page.close()
 
 

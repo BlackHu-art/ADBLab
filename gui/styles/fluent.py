@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
 from qfluentwidgets import RoundMenu, setCustomStyleSheet
@@ -226,6 +227,18 @@ def configure_button(
     return button
 
 
+def create_transient_menu(parent: QWidget) -> RoundMenu:
+    """创建关闭后释放的菜单；非阻塞 exec 返回时仍保留控件和动作。
+
+    菜单私有动作可直接加入；页面共享 QAction 必须通过 add_shared_menu_action
+    隔离第三方保存的菜单行指针，避免其它菜单在本菜单释放后访问悬空行。
+    """
+    menu = RoundMenu(parent=parent)
+    menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    apply_font_role(menu)
+    return menu
+
+
 def add_menu_action(
     menu: RoundMenu,
     text: str,
@@ -256,6 +269,7 @@ __all__ = [
     "apply_reading_surface",
     "configure_button",
     "configure_fluent_control",
+    "create_transient_menu",
     "refresh_fluent_widget_style",
     "set_function_tooltip",
 ]

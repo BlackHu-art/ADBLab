@@ -373,7 +373,7 @@ def test_command_runner_run_to_file_streams_binary_stdout(tmp_path):
     output_path = tmp_path / "out.bin"
     proc_result = Mock(returncode=0, stderr=b"")
 
-    with patch("core.exec.subprocess.run", return_value=proc_result) as run:
+    with patch("core.exec.run_native", return_value=proc_result) as run:
         result = CommandRunner.run_to_file(["python", "-c", "print('ok')"], str(output_path))
 
     assert result.success is True
@@ -389,7 +389,7 @@ def test_command_runner_logs_slow_sanitized_command():
 
     with (
         patch("core.exec.resolve_adb_program", return_value="adb.exe"),
-        patch("core.exec.subprocess.run", return_value=proc_result),
+        patch("core.exec.run_native", return_value=proc_result),
         patch("core.exec.perf_counter", side_effect=[1.0, 1.5]),
         patch("core.exec._slow_threshold_ms", return_value=100),
         patch("core.log_service.LogService") as log_service_cls,
@@ -606,7 +606,7 @@ def test_command_runner_run_reports_nonzero_returncode():
     completed.returncode = 1
     completed.stderr = "adb: device not found\n"
     completed.stdout = ""
-    with patch("core.exec.subprocess.run", return_value=completed):
+    with patch("core.exec.run_native", return_value=completed):
         r = CommandRunner.run(["adb", "devices"])
 
     assert r.success is False
@@ -616,7 +616,7 @@ def test_command_runner_run_reports_nonzero_returncode():
 def test_command_runner_run_reports_timeout():
     from core.exec import CommandRunner
 
-    with patch("core.exec.subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 5)):
+    with patch("core.exec.run_native", side_effect=subprocess.TimeoutExpired("adb", 5)):
         r = CommandRunner.run(["adb", "devices"], timeout=5)
 
     assert r.success is False
@@ -626,7 +626,7 @@ def test_command_runner_run_reports_timeout():
 def test_command_runner_run_reports_exception():
     from core.exec import CommandRunner
 
-    with patch("core.exec.subprocess.run", side_effect=OSError("boom")):
+    with patch("core.exec.run_native", side_effect=OSError("boom")):
         r = CommandRunner.run(["adb", "devices"])
 
     assert r.success is False

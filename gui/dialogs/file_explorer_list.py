@@ -10,6 +10,7 @@ from qfluentwidgets import TableItemDelegate
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from gui.i18n import tr
 from gui.styles.icon_loader import get_fluent_icon
+from models.file_explorer_worker import ADBWorker
 from services import file_explorer as explorer_service
 
 
@@ -32,11 +33,60 @@ class FileExplorerItemDelegate(TableItemDelegate):
             setattr(option, "text", "")
 
 
+class FileSizeItem(QTableWidgetItem):
+    """大小显示保留单位，比较原始字节数；两种方向都保留父目录和目录在前。"""
+
+    def __init__(self, text: str, size: int, group: int):
+        super().__init__(text)
+        self._size = size
+        self._group = group
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if not isinstance(other, FileSizeItem):
+            return super().__lt__(other)
+        if self._group != other._group:
+            table = self.tableWidget()
+            descending = (
+                table is not None
+                and table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+            )
+            return self._group > other._group if descending else self._group < other._group
+        return self._size < other._size
+
+
+class FileModifiedItem(QTableWidgetItem):
+    """日期显示保留原文；无年份与不可解析项独立置后，不伪造准确时间。"""
+
+    def __init__(self, text: str, group: int):
+        super().__init__(text)
+        self._group = group
+        self._key = explorer_service.modified_sort_key(text)
+        if self._key[0] == 1:
+            self.setToolTip(tr(
+                "Year unavailable; sorted by month, day and time after dated entries",
+            ))
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if not isinstance(other, FileModifiedItem):
+            return super().__lt__(other)
+        left_group = self._group, self._key[0]
+        right_group = other._group, other._key[0]
+        if left_group != right_group:
+            table = self.tableWidget()
+            descending = (
+                table is not None
+                and table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+            )
+            return left_group > right_group if descending else left_group < right_group
+        return self._key[1:] < other._key[1:]
+
+
 class FileExplorerList:
     """组合进 FileExplorerPage 的列表控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
+        self._link_requests: dict[tuple[int, str, bool], ADBWorker] = {}
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
@@ -85,7 +135,7 @@ class FileExplorerList:
 
     def _go_parent(self):
         self._frame.status_bar.setText(tr("Opening parent folder..."))
-        self._navigate(os.path.dirname(self._frame.current_path))
+        self._navigate(os.path.dirname(self._frame.current_path.rstrip("/")) or "/")
 
     # ── 目录列表 ────────────────────────────────────────────────────────
 
@@ -103,6 +153,7 @@ class FileExplorerList:
         requested_path = str(requested_path or self._frame.current_path).strip()
         if not requested_path:
             return
+        self.cancel_link_requests()
         if navigation_action == "refresh":
             self._frame._view_controller.invalidate_cache()
         self._frame._refresh_request_id += 1
@@ -191,7 +242,8 @@ class FileExplorerList:
 
             for index, entry in enumerate(rows, parent_offset):
                 self._set_file_row(
-                    index, entry.name, entry.file_type, entry.size_text, entry.modified
+                    index, entry.name, entry.file_type, entry.size_text, entry.modified,
+                    size_bytes=entry.size,
                 )
                 # 显示文本会取整；原始列表元数据随对应行保存，不作为精细版本凭据。
                 self._frame.table.item(index, self._frame.NAME_COL).setData(
@@ -199,6 +251,8 @@ class FileExplorerList:
                 )
         finally:
             self._frame.table.setSortingEnabled(True)
+            # 列表重建和排序会复用行位置，必须按等待期间最新的搜索词重算隐藏状态。
+            self._filter(self._frame.search_field.text())
             self._frame.table.setUpdatesEnabled(True)
             self._set_loading(False)
 
@@ -236,8 +290,11 @@ class FileExplorerList:
         if callable(sync_controls):
             sync_controls()
 
-    def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
-        display_type = tr(file_type) if file_type in {"Folder", "File"} else file_type
+    def _set_file_row(
+        self, row: int, name: str, file_type: str, size: str, modified: str,
+        *, size_bytes: int = 0,
+    ):
+        display_type = tr(file_type) if file_type in {"Folder", "File", "Link"} else file_type
         type_item = QTableWidgetItem(display_type)
         # 类型文字可随语言变化；目录导航和图标选择始终读取原始业务类型。
         type_item.setData(Qt.ItemDataRole.UserRole, file_type)
@@ -248,8 +305,9 @@ class FileExplorerList:
         name_item.setToolTip(name)
         self._frame.table.setItem(row, self._frame.TYPE_COL, type_item)
         self._frame.table.setItem(row, self._frame.NAME_COL, name_item)
-        self._frame.table.setItem(row, self._frame.SIZE_COL, QTableWidgetItem(size))
-        self._frame.table.setItem(row, self._frame.MODIFIED_COL, QTableWidgetItem(modified))
+        group = 0 if name == ".." else 1 if file_type == "Folder" else 2
+        self._frame.table.setItem(row, self._frame.SIZE_COL, FileSizeItem(size, size_bytes, group))
+        self._frame.table.setItem(row, self._frame.MODIFIED_COL, FileModifiedItem(modified, group))
 
     def _file_name_at(self, row: int) -> str:
         item = self._frame.table.item(row, self._frame.NAME_COL)
@@ -267,6 +325,8 @@ class FileExplorerList:
             return "arrow-u-up-left.svg"
         if file_type == "Folder":
             return "folder.svg"
+        if file_type == "Link":
+            return "link.svg"
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         explicit = {
             "apk": "android-logo.svg",
@@ -326,6 +386,8 @@ class FileExplorerList:
         ftype = self._file_type_at(row)
         if name == "..":
             self._go_parent()
+        elif ftype == "Link":
+            self._open_symlink(name)
         elif ftype == "Folder":
             target = self._frame.symlink_targets.get(name)
             new_path = (
@@ -336,6 +398,68 @@ class FileExplorerList:
             self._navigate(new_path)
         else:
             self._frame._view_or_pull(name)
+
+    def _open_symlink(self, name: str) -> None:
+        """按需查询一次链接目标；同目录重复打开合并，过期或失选结果不启动操作。"""
+        frame = self._frame
+        if not frame._can_operate():
+            return
+        full_path = self._dpath(frame.current_path, name)
+        root = frame.root_cb.isChecked()
+        request = (frame._refresh_request_id, full_path, root)
+        if request in self._link_requests:
+            return
+        self.cancel_link_requests()
+        worker = frame._run_adb("shell", self._root(
+            explorer_service.link_target_type_command(full_path),
+        ))
+        if worker is None:
+            return
+        self._link_requests[request] = worker
+        directory = frame.current_path
+
+        def forget() -> bool:
+            if self._link_requests.get(request) is not worker:
+                return False
+            self._link_requests.pop(request)
+            return True
+
+        def finish(output: str, failed: bool) -> None:
+            if not forget():
+                return
+            if (
+                not frame._can_operate() or frame.current_path != directory
+                or frame._refresh_request_id != request[0] or frame.root_cb.isChecked() != root
+            ):
+                return
+            kind = output.strip()
+            if not failed and kind == "directory":
+                # ls -l 会显示链接本身；尾斜杠明确要求跟随到目录内容。
+                self._navigate(full_path.rstrip("/") + "/")
+            elif not failed and kind == "file":
+                frame._view_or_pull(name)
+            else:
+                frame.status_bar.setText(tr("Unable to open {value0}").format(value0=name))
+                frame.status_bar.setToolTip(tr("Directory loading failed") if failed else tr(
+                    "链接目标不存在或无法访问，请刷新后重试。",
+                ))
+
+        frame._connect_worker_ui(worker, worker.result_ready, finish)
+        frame._connect_worker_ui(
+            worker, worker.finished, forget,
+        )
+        worker.start()
+
+    def cancel_link_requests(self, *_args) -> None:
+        """导航、选择或 Root 上下文改变即失效旧查询；只请求取消，不等待线程。"""
+        workers = tuple(self._link_requests.values())
+        self._link_requests.clear()
+        for worker in workers:
+            try:
+                worker.abort()
+            except RuntimeError:
+                # 页面终态清理可能已经销毁 QObject，无需再次请求停止。
+                continue
 
     # ── 排序与筛选 ──────────────────────────────────────────────────────
 

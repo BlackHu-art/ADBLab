@@ -205,6 +205,53 @@ def test_load_only_emits_selected_snapshot_and_does_not_change_library(make_pane
     assert panel.selected_record.parameters["nested"]["events"] == 100
 
 
+def test_refresh_preserves_selected_artifact_and_opens_the_same_path(
+    make_panel, tmp_path, monkeypatch, qt_application,
+):
+    paths = [tmp_path / name for name in ("first.html", "chosen.html")]
+    for path in paths:
+        path.write_text("report", encoding="utf-8")
+    artifacts = tuple(RunArtifact(path.stem, str(path)) for path in paths)
+    record = _record(artifacts=artifacts)
+    panel, controller = make_panel((record,))
+    panel.artifact_combo.setCurrentIndex(1)
+    selection_changes = QSignalSpy(panel.artifact_combo.currentIndexChanged)
+    opened = []
+    monkeypatch.setattr(
+        "gui.run_library.QDesktopServices.openUrl", lambda url: opened.append(url) or True,
+    )
+    controller.record_run(_record("new", finished_at=record.finished_at + 1))
+    wait_until(qt_application, lambda: panel.table.rowCount() == 2)
+    assert panel.selected_record.run_id == record.run_id
+    assert panel.artifact_combo.currentData() == str(paths[1])
+    assert selection_changes.count() == 0
+    panel.open_button.click()
+    wait_until(qt_application, lambda: len(opened) == 1)
+    assert Path(opened[0].toLocalFile()) == paths[1]
+
+
+def test_artifact_selection_falls_back_when_record_changes_or_path_disappears(
+    make_panel, qt_application, tmp_path,
+):
+    artifacts = tuple(
+        RunArtifact(name, str(tmp_path / name)) for name in ("first.html", "second.html")
+    )
+    record = _record(artifacts=artifacts)
+    other = _record("other", artifacts=artifacts, finished_at=record.finished_at - 1)
+    panel, controller = make_panel((record, other))
+    panel.artifact_combo.setCurrentIndex(1)
+    panel.table.selectRow(1)
+    assert panel.selected_record.run_id == "other"
+    assert panel.artifact_combo.currentData() == artifacts[0].path
+    panel.table.selectRow(0)
+    panel.artifact_combo.setCurrentIndex(1)
+    controller.record_run(replace(record, artifacts=(artifacts[0],)))
+    wait_until(qt_application, lambda: panel.artifact_combo.count() == 1)
+    assert panel.selected_record.run_id == record.run_id
+    assert panel.artifact_combo.currentData() == artifacts[0].path
+    assert panel.open_button.isEnabled()
+
+
 def test_artifact_open_uses_explicit_local_paths_and_gui_thread(
     make_panel,
     tmp_path,

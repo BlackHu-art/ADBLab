@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import BinaryIO
 
 from core.adb_transport import CancelCheck, ExecutionResult, capture
-from core.native_process import NativeProcess, popen_native
+from core.native_process import cancel_and_drain_native, close_native_pipes, popen_native
 from utils import adb_debug
 
 
@@ -22,50 +22,52 @@ def native_capture(
     *,
     stdout_sink: BinaryIO | None = None,
 ) -> ExecutionResult:
-    """执行可取消的原生探针或短命令；只终止本次创建的客户端，不停止 ADB 服务。"""
+    """执行可取消短命令；结束后最多另用 0.5 秒回收客户端，不停止独立 ADB 服务。"""
     deadline = time.monotonic() + timeout
     if cancelled():
         return ExecutionResult(kind="cancelled")
     adb_debug.command(cmd, backend="native_client", timeout=timeout)
     try:
-        with popen_native(
+        proc = popen_native(
             cmd,
             isolate=True,
             stdin=subprocess.DEVNULL,
             stdout=stdout_sink if stdout_sink is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        ) as proc:
+        )
+        completed = False
+        try:
+            while True:
+                if cancelled():
+                    adb_debug.command(
+                        cmd, backend="native_client", phase="finish", status="cancelled",
+                    )
+                    return ExecutionResult(kind="cancelled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    adb_debug.command(
+                        cmd, backend="native_client", phase="finish", status="timeout",
+                    )
+                    return ExecutionResult(kind="timeout")
+                try:
+                    out, err = proc.communicate(timeout=min(0.1, remaining))
+                    completed = True
+                    if adb_debug.enabled():
+                        adb_debug.command(
+                            cmd, backend="native_client", phase="finish", status="completed",
+                            returncode=proc.returncode,
+                        )
+                    return ExecutionResult(out or b"", err, proc.returncode)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
             try:
-                while True:
-                    if cancelled():
-                        adb_debug.command(
-                            cmd, backend="native_client", phase="finish", status="cancelled",
-                        )
-                        return ExecutionResult(kind="cancelled")
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        adb_debug.command(
-                            cmd, backend="native_client", phase="finish", status="timeout",
-                        )
-                        return ExecutionResult(kind="timeout")
-                    try:
-                        out, err = proc.communicate(timeout=min(0.1, remaining))
-                        if adb_debug.enabled():
-                            adb_debug.command(
-                                cmd, backend="native_client", phase="finish", status="completed",
-                                returncode=proc.returncode,
-                            )
-                        return ExecutionResult(out or b"", err, proc.returncode)
-                    except subprocess.TimeoutExpired:
-                        continue
+                if not completed:
+                    cancel_and_drain_native(proc, timeout=0.5)
             finally:
-                if proc.poll() is None:
-                    if isinstance(proc, NativeProcess):
-                        proc.cancel_and_drain()
-                    else:
-                        proc.kill()
-                        proc.communicate()
+                # 普通 Popen.__exit__ 会无界等待 reader 的流锁，必须走相同的有界所有权边界。
+                close_native_pipes(proc)
     except OSError as exc:
         adb_debug.command(
             cmd, backend="native_client", phase="finish", status="transport",

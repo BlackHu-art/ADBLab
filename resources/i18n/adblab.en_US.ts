@@ -3,6 +3,30 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>Year unavailable; sorted by month, day and time after dated entries</source>
+            <translation>Year unavailable; sorted by month, day and time after dated entries</translation>
+        </message>
+        <message>
+            <source>清空反向规则</source>
+            <translation>Clear reverse rules</translation>
+        </message>
+        <message>
+            <source>移除所选设备的全部反向转发规则</source>
+            <translation>Remove all reverse forwarding rules from selected devices</translation>
+        </message>
+        <message>
+            <source>Select APK File</source>
+            <translation>Select APK File</translation>
+        </message>
+        <message>
+            <source>Select APK files to install</source>
+            <translation>Select APK files to install</translation>
+        </message>
+        <message>
+            <source>APK Files (*.apk);;All Files (*)</source>
+            <translation>APK Files (*.apk);;All Files (*)</translation>
+        </message>
+        <message>
             <source>将当前测试参数保存为命名方案</source>
             <translation>Save the current test parameters as a named preset</translation>
         </message>
@@ -6517,6 +6541,30 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>详情已记录，可在任务中心查看。</source>
             <translation>Details were recorded. View them in Task Center.</translation>
+        </message>
+        <message>
+            <source>Link</source>
+            <translation>Symbolic link</translation>
+        </message>
+        <message>
+            <source>链接目标不存在或无法访问，请刷新后重试。</source>
+            <translation>The link target is missing or inaccessible. Refresh and try again.</translation>
+        </message>
+        <message>
+            <source>无法启动应用任务，请重试。</source>
+            <translation>Unable to start the app operation. Please try again.</translation>
+        </message>
+        <message>
+            <source>重试保存</source>
+            <translation>Retry saving</translation>
+        </message>
+        <message>
+            <source>重新下载并保存原批次录屏</source>
+            <translation>Download and save the original recording batch again</translation>
+        </message>
+        <message>
+            <source>Invalid UTF-8 text; editing is disabled</source>
+            <translation>Invalid UTF-8 text; editing is disabled</translation>
         </message>
     </context>
 </TS>

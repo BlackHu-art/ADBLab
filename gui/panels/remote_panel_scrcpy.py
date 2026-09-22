@@ -236,8 +236,8 @@ class RemotePanelScrcpy:
             status = "Error" if any(s.state == "failed" for s in sessions.values()) else "Idle"
             frame._frozen_session_config = None
             frame._watchdog.stop()
+        # 行状态已由上面的 _set_session_state 刷新；这里不再重复整表重写。
         frame._update_status(status, None)
-        self._refresh_session_rows()
 
     def _refresh_session_rows(self) -> None:
         form = getattr(self._frame, "_form_controller", None)
@@ -534,25 +534,29 @@ class RemotePanelScrcpy:
     def _read_process_output(self, proc, stream):
         """两个输出流使用同一进程身份投递事件，关闭屏障分别等待各 reader。"""
         if stream:
-            for line in stream:
-                if getattr(self._frame, "_closing", False):
-                    return
-                line = line.strip()
-                if not line:
-                    continue
-                if hasattr(self._frame, "_device_sessions"):
-                    self._frame._scrcpy_output_requested.emit(proc, line)
-                # 兼容旧版将 FPS 写入 stderr 的行为，两个输出流均先识别 FPS。
-                fps = self._frame._scrcpy_service.parse_fps(line)
-                if fps:
-                    if not hasattr(self._frame, "_device_sessions"):
-                        self._frame._status_update_requested.emit(fps, None)
-                elif self._frame._should_ignore_scrcpy_log_line(line):
-                    continue
-                else:
-                    self._frame._log(
-                        "DEBUG", f"[scrcpy] {self._frame._redact_remote_diagnostic(line)}"
-                    )
+            try:
+                for line in stream:
+                    if getattr(self._frame, "_closing", False):
+                        return
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if hasattr(self._frame, "_device_sessions"):
+                        self._frame._scrcpy_output_requested.emit(proc, line)
+                    # 兼容旧版将 FPS 写入 stderr 的行为，两个输出流均先识别 FPS。
+                    fps = self._frame._scrcpy_service.parse_fps(line)
+                    if fps:
+                        if not hasattr(self._frame, "_device_sessions"):
+                            self._frame._status_update_requested.emit(fps, None)
+                    elif self._frame._should_ignore_scrcpy_log_line(line):
+                        continue
+                    else:
+                        self._frame._log(
+                            "DEBUG", f"[scrcpy] {self._frame._redact_remote_diagnostic(line)}"
+                        )
+            finally:
+                # 读取线程独占流的关闭，GUI 与进程清理线程不争抢阻塞读取持有的锁。
+                stream.close()
 
     def _poll_process(self):
         if hasattr(self._frame, "_device_sessions"):

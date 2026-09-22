@@ -423,8 +423,13 @@ class RemotePanel(BasePanel):
             self.orientation,
         ):
             combo.currentTextChanged.connect(self._on_custom_setting_changed)
-        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
-        QShortcut(QKeySequence("Ctrl+Shift+Return"), self).activated.connect(self._stop_scrcpy)
+        # 协调器本身隐藏；快捷键归属可见页面，随页面显隐和销毁自动停止响应。
+        QShortcut(QKeySequence("Ctrl+Return"), self.category_stack).activated.connect(
+            self._start_scrcpy
+        )
+        QShortcut(QKeySequence("Ctrl+Shift+Return"), self.category_stack).activated.connect(
+            self._stop_scrcpy
+        )
         # 启动时应用已加载预设；此时仍处于 loading 状态，不会重复保存。
         idx = self.preset.currentIndex()
         if idx in self._PRESETS:
@@ -579,7 +584,9 @@ class RemotePanel(BasePanel):
     # ── 状态指示 ────────────────────────────────────────────────────────
 
     def _update_status(self, text: str, color: str | None):
-        self._status_label.setStyleSheet("font-weight: bold;")
+        # 字重只在缺失时补写：轮询每 500ms 调用一次，重复设置样式表会触发全量样式重算。
+        if self._status_label.styleSheet() != "font-weight: bold;":
+            self._status_label.setStyleSheet("font-weight: bold;")
         del color
         localized = {
             "Checking...": tr("正在检查…"),

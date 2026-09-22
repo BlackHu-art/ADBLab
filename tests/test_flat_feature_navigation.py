@@ -1,5 +1,7 @@
 """验证一级功能导航、共享应用工具和设备工作台的集成行为。"""
 
+from unittest.mock import Mock
+
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt
 from PySide6.QtGui import QPixmap
@@ -7,6 +9,8 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QPushButton
 from shiboken6 import isValid
 
+from adblab.application.action_results import ActionResults
+from controllers.signals import ADBControllerSignals
 from gui.features.app_manager import AppManagerPage
 from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceRoute
@@ -257,6 +261,72 @@ def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tm
     for button in (apps.btn_send_text, apps.btn_screenshot, apps.btn_screen_record):
         assert not button.isEnabled()
     assert not apps.btn_stop_record.isEnabled()
+
+
+@pytest.fixture
+def recording_frame(qt_application):
+    controller = Mock()
+    controller.signals = ADBControllerSignals()
+    controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
+    window = build_main_frame(controller=controller)
+    yield window
+    controller.action_results.close()
+    window._unbind_window_screen()
+    window._close_ready = True
+    window.close()
+
+
+def test_recording_download_retry_keeps_original_pending_target_and_rejects_old_batch(
+    recording_frame,
+):
+    frame = recording_frame
+    frame._on_devices_updated(["device-a", "device-b"])
+    frame._global_device_bar.selection_requested.emit(["device-a", "device-b"])
+    apps = frame.left_panel._apps_tab
+    stops = QSignalSpy(apps.signals.stop_screen_record_batch_requested)
+    apps._on_record_start()
+    batch = apps._recording_batch_id
+    apps._on_record_stop()
+    signals = frame.adb_controller.signals
+    signals.record_target_finished.emit(batch, "device-a")
+    signals.record_target_retryable.emit(batch, "device-b")
+    frame._global_device_bar.selection_requested.emit([])
+    assert apps.btn_stop_record.isEnabled()
+    assert apps.btn_stop_record.text() == "重试保存"
+    apps.btn_stop_record.click()
+    apps.btn_stop_record.click()
+    assert stops.count() == 2
+    assert stops.at(1) == [["device-b"], batch]
+    signals.record_target_retryable.emit(batch, "device-b")
+    frame._global_device_bar.selection_requested.emit(["device-a"])
+    assert apps.btn_screen_record.isEnabled()
+    apps.btn_screen_record.click()
+    current_batch = apps._recording_batch_id
+    assert current_batch != batch
+    signals.record_target_retryable.emit(batch, "device-b")
+    signals.record_target_finished.emit(batch, "device-b")
+    assert apps._recording_batch_id == current_batch
+    assert apps.btn_stop_record.text() == "停止录屏"
+    assert not apps.btn_screen_record.isEnabled()
+
+
+def test_recording_partial_retry_does_not_replace_another_inflight_download(recording_frame):
+    frame = recording_frame
+    frame._on_devices_updated(["device-a", "device-b"])
+    frame._global_device_bar.selection_requested.emit(["device-a", "device-b"])
+    apps = frame.left_panel._apps_tab
+    apps._on_record_start()
+    batch = apps._recording_batch_id
+    signals = frame.adb_controller.signals
+    for device in ("device-a", "device-b"):
+        signals.record_target_retryable.emit(batch, device)
+    assert apps.btn_screen_record.isEnabled()
+    apps.btn_stop_record.click()
+    signals.record_target_retryable.emit(batch, "device-a")
+    assert not apps.btn_screen_record.isEnabled()
+    signals.record_target_finished.emit(batch, "device-b")
+    assert apps.btn_screen_record.isEnabled()
+    assert apps.btn_stop_record.text() == "重试保存"
 
 
 def test_screen_tools_follow_batch_selection_and_preserve_recording_targets_after_clear(

@@ -34,6 +34,10 @@ py -3.11 -m venv .venv
   更新依赖时同步更新约束并验证对应安装入口、`pip check` 与受影响测试。该快照不包含制品哈希，
   也未锁定 macOS 独有依赖，不将它称为所有平台的完整锁文件。
 
+Fluent Widgets 使用同版本的 `[full]` 依赖，提供覆盖导航菜单的 Acrylic 模糊能力；NumPy、
+SciPy、Pillow 与 ColorThief 的版本由 `constraints.txt` 固定。安装基础包时上游仍可导入，
+但覆盖菜单会退回实色。补齐依赖后须重新启动应用，模块导入时缓存的能力状态才会更新。
+
 只运行源码时可以改装 `requirements.txt`；执行本地打包时安装 `requirements-build.txt`。开发、
 测试和提交前检查统一安装 `requirements-dev.txt`。项目没有根级 `setup.py`/`setup.cfg`、
 Poetry、PDM 或 npm 构建入口。
@@ -92,6 +96,9 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 [应用更新检查](../project-knowledge/BUSINESS_FLOW.md#11-应用更新检查)。源码和产物的
 `--self-check packaging` 同时检查 QtNetwork 可导入及 TLS 后端可用，保持离线执行；它不能
 证明实际 HTTPS 握手、代理或目标网络可达。验收产物时还需从设置页显式检查，并验证检查中关闭。
+
+同一自检的 `ui:acrylic` 项检查覆盖磨砂的图像依赖是否可用，缺失时返回失败；自检不截取屏幕。
+图像模糊及导航绘制由相关 Qt 回归测试验证，实际桌面效果仍需人工检查。
 
 设置页的“显示缩放”支持跟随系统、100%、125%、150%、175%、200%，写入正式键 `ui_scale`，
 重启应用后生效。GUI 入口在创建 QApplication 前应用手动比例；跟随系统保留系统 DPI 和外部启动环境。
@@ -220,9 +227,9 @@ CI 通过 `scripts/build_app.py` 生成 PyInstaller CLI 参数，和本地 `ADBL
 CLI 生成的 spec 位于 `build/app-spec`，资源、入口及图标路径按仓库根解析，避免默认名称
 `ADBLab` 覆盖受控的根目录 spec；生成文件不进入版本控制。
 
-独立 [Tests 工作流](../../.github/workflows/Tests.yaml) 在 push、pull request 或手动触发时，
-使用 Windows/Python 3.11 执行文本完整性、静态检查、文档检查和串行 pytest；它没有发布写权限，
-不构建应用。Build 保留编译发布职责且不执行 pytest。两者都在依赖安装及源码导入前检查文本完整性，
+CI 侧只保留 Build（编译发布）与 Retention Audit（手动只读审计）两个工作流；Build 在推送 main
+或手动触发时执行文本完整性、Windows 静态检查、三平台构建与产物自检，并在依赖安装及源码导入前
+检查文本完整性。CI 不运行 pytest，测试由开发者按 [测试指南](TESTING_GUIDE.md) 在本地选择执行；
 pip 缓存同时考虑 requirements 和 constraints 的变化。
 
 ### 提交版本规则

@@ -8,8 +8,10 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -32,8 +34,14 @@ class _RecordingSession:
     batch_id: str
     remote_path: str
     deadline: float
+    owner_path: str = ""
     stop_pending: bool = False
     error: str = ""
+    # 下载失败的已完成录屏按设备最多保留一份；新录屏可替换，下载在途不可替换。
+    save_retryable: bool = False
+    pull_pending: bool = False
+    # 本批次申请时长；下载预算按它放大，避免长录屏固定 60 秒必然超时。
+    duration: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -46,6 +54,104 @@ def _recording_positive_integer(value: object, label: str) -> int:
     if number <= 0:
         raise ValueError(f"{label} must be a positive integer")
     return number
+
+
+def _recording_identity_script(remote_path: str) -> str:
+    """生成设备端身份核对函数；PID、启动时刻和唯一输出路径必须同时匹配。
+
+    读取 stat 时先去掉括号内的进程名，避免名称中的空格导致 starttime 字段错位。
+    检查和发信号仍有操作系统级时隙；绝不以进程名扩大停止范围。
+    """
+    return """recording_start() {
+    record_stat=$(cat "/proc/$1/stat") || return 1
+    record_tail=${record_stat##*) }
+    set -- $record_tail
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$1"
+}
+recording_owned() {
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    case "$started" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] || return 1
+    record_args=$(cat "/proc/$pid/cmdline" | tr '\\000' '\\n') || return 1
+    record_exe=${record_args%%'
+'*}
+    record_output=${record_args##*'
+'}
+    case "$record_exe" in screenrecord|*/screenrecord) ;; *) return 1 ;; esac
+    [ "$record_output" = __ADBLAB_OUTPUT__ ] || return 1
+    [ "$(recording_start "$pid")" = "$started" ]
+}
+""".replace("__ADBLAB_OUTPUT__", shlex.quote(remote_path))
+
+
+def _recording_launch_script(owner_path: str, remote_path: str) -> str:
+    """独占登记设备进程；包装 Shell 等待录屏封口并负责精确清理自己的登记文件。"""
+    return _recording_identity_script(remote_path) + f"""
+umask 077
+owner={shlex.quote(owner_path)}
+(set -C; : > "$owner") || exit 1
+trap 'rm -f -- "$owner"' EXIT
+pid=
+started=
+recording_interrupt() {{
+    trap '' HUP INT TERM
+    pid=${{pid:-$!}}
+    if [ -n "$pid" ]; then
+        [ -n "$started" ] || started=$(recording_start "$pid")
+        attempt=0
+        while [ "$attempt" -lt 20 ]; do
+            if recording_owned; then kill -2 "$pid"; break; fi
+            [ -n "$started" ] && [ "$(recording_start "$pid")" = "$started" ] || break
+            attempt=$((attempt + 1))
+            sleep 0.05
+        done
+        wait "$pid"
+    fi
+    exit 130
+}}
+trap recording_interrupt HUP INT TERM
+screenrecord "$@" &
+pid=$!
+started=$(recording_start "$pid")
+if [ -z "$started" ] || ! printf '%s %s\\n' "$pid" "$started" > "$owner"; then
+    if recording_owned; then kill -2 "$pid"; fi
+    wait "$pid"
+    exit 1
+fi
+wait "$pid"
+status=$?
+exit "$status"
+"""
+
+
+def _recording_stop_script(owner_path: str, remote_path: str) -> str:
+    """只读取本会话登记并定向停止；未登记、格式错误或 PID 复用均拒绝发信号。"""
+    return _recording_identity_script(remote_path) + f"""
+set -f
+attempt=0
+while :; do
+    owner_record=$(cat {shlex.quote(owner_path)} 2>/dev/null)
+    [ -n "$owner_record" ] && break
+    attempt=$((attempt + 1))
+    [ "$attempt" -ge 20 ] && break
+    sleep 0.05
+done
+set -- $owner_record
+if [ "$#" -ne 2 ]; then
+    printf '%s\\n' 'Recording ownership unavailable; no device process was signalled' >&2
+    exit 1
+fi
+pid=$1
+started=$2
+if ! recording_owned; then
+    printf '%s\\n' 'Recording ownership changed; no device process was signalled' >&2
+    exit 1
+fi
+kill -2 "$pid"
+"""
 
 
 class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
@@ -86,14 +192,17 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 height = str(_recording_positive_integer(height, "Recording height"))
             sanitized = re.sub(r"\W+", "_", device_ip)
             timestamp = datetime.now().strftime("%H%M%S_%f")
-            filename = f"record_{sanitized}_{timestamp}.mp4"
+            identity = uuid.uuid4().hex
+            filename = f"record_{sanitized}_{timestamp}_{identity[:8]}.mp4"
             remote_path = f"/sdcard/{filename}"
+            owner_path = f"/data/local/tmp/adblab-record-{identity}"
             cmd = [
                 "adb",
                 "-s",
                 device_ip,
                 "shell",
-                "screenrecord",
+                "sh", "-c", shlex.quote(_recording_launch_script(owner_path, remote_path)),
+                "adblab-record",
                 "--time-limit",
                 str(duration),
                 "--bit-rate",
@@ -111,7 +220,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                         "error": "Model is shutting down",
                         "batch_id": batch_id,
                     }
-                if device_ip in self._record_sessions:
+                previous = self._record_sessions.get(device_ip)
+                if previous is not None and (not previous.save_retryable or previous.pull_pending):
                     raise RuntimeError("Recording is already active")
                 key = f"record_{device_ip}_{batch_id}"
                 proc = self._rec_procs.start(
@@ -121,6 +231,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 )
                 session = _RecordingSession(
                     proc, key, batch_id, remote_path, time.monotonic() + duration + 30,
+                    owner_path=owner_path, duration=duration,
                 )
                 self._record_sessions[device_ip] = session
             if proc.poll() not in (None, 0):
@@ -195,7 +306,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             if remaining <= 0 or self.is_shutting_down():
                 raise RuntimeError("Recording stop cancelled or timed out")
             signal_result = self._run(
-                ["adb", "-s", device_ip, "shell", "pkill", "-2", "screenrecord"],
+                ["adb", "-s", device_ip, "shell",
+                 _recording_stop_script(session.owner_path, session.remote_path)],
                 timeout=remaining, cancelled=self.is_shutting_down,
             )
             if not signal_result.get("success"):
@@ -230,52 +342,84 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         filename: str,
         batch_id: str = "",
     ) -> dict:
-        """在后台确认本批次完成后拉取，关闭取消等待但不删除未确认完整的远端文件。"""
+        """等待封口并原子发布视频；失败保留原文件及每设备一份可重试的原批次身份。
+
+        在途下载独占该会话。新录屏可替换已失败的保存状态，但不得复用旧远端路径；
+        关闭时只清理本次临时文件，不删除未成功发布的远端视频。
+        """
         local_path = os.path.join(save_dir, filename)
         with self._record_lifecycle_lock:
             session = self._record_sessions.get(device_ip)
-        if session is None or session.batch_id != batch_id or session.remote_path != remote_path:
-            return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
-                    "error": "No matching recording process"}
+            if (session is None or session.batch_id != batch_id
+                    or session.remote_path != remote_path):
+                return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                        "error": "No matching recording process"}
+            if session.pull_pending:
+                return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                        "error": "Recording save is already pending"}
+            session.pull_pending = True
+        temporary_path = ""
+        result = {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                  "local_path": local_path}
+        complete = False
         try:
             completion = self._wait_recording_complete(session)
             if not completion["success"]:
-                return {**completion, "device_ip": device_ip, "batch_id": batch_id}
-            pull = self._run(
-                ["adb", "-s", device_ip, "pull", remote_path, local_path],
-                timeout=60, cancelled=self.is_shutting_down,
+                result.update(completion)
+                return result
+            complete = True
+            fd, temporary_path = tempfile.mkstemp(
+                prefix=".adblab-record-", suffix=".part", dir=save_dir,
             )
+            os.close(fd)
+            pull = self._run(
+                ["adb", "-s", device_ip, "pull", remote_path, temporary_path],
+                timeout=max(60, session.duration * 2 + 60), cancelled=self.is_shutting_down,
+            )
+            if self.is_shutting_down() or pull.get("cancelled"):
+                result.update(cancelled=True, error=pull.get("error") or "Recording save cancelled")
+                return result
             if not pull["success"]:
-                return {
-                    "success": False,
-                    "device_ip": device_ip,
-                    "local_path": local_path,
-                    "error": f"pull failed: {pull.get('error', 'unknown error')}",
-                    "batch_id": batch_id,
-                }
+                result["error"] = f"pull failed: {pull.get('error', 'unknown error')}"
+                return result
+            os.replace(temporary_path, local_path)
+            temporary_path = ""
+            result["success"] = True
             cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", shlex.quote(remote_path)])
-            result = {
-                "success": True,
-                "device_ip": device_ip,
-                "local_path": local_path,
-                "batch_id": batch_id,
-            }
             if not cleanup["success"]:
                 result["cleanup_error"] = cleanup.get("error", "unknown error")
             return result
         except Exception as exc:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "local_path": local_path,
-                "error": str(exc),
-                "batch_id": batch_id,
-            }
+            # 发布后仅可能远端清理失败，本地成功事实不能被清理异常改写。
+            result["cleanup_error" if result["success"] else "error"] = str(exc)
+            return result
         finally:
-            # 清理失败时保留设备占用，防止新批次与残留的录屏进程并行。
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    result["cleanup_error"] = str(exc)
+            # 只释放本次进程跟踪；失败产物的身份随设备保留，关闭及保存成功则释放。
             self._rec_procs.stop(session.key)
             with self._record_lifecycle_lock:
-                if (self._record_sessions.get(device_ip) is session
+                session.pull_pending = False
+                session.save_retryable = (
+                    complete and not result["success"] and not self.is_shutting_down()
+                )
+                result["retryable"] = session.save_retryable
+                if session.save_retryable:
+                    # 按最近失败次序保留最多 64 份身份，不淘汰在途下载或删除远端产物。
+                    self._record_sessions.pop(device_ip)
+                    self._record_sessions[device_ip] = session
+                    failed_devices = [
+                        device for device, saved in self._record_sessions.items()
+                        if saved.save_retryable and not saved.pull_pending
+                    ]
+                    for expired in failed_devices[:-64]:
+                        self._record_sessions.pop(expired)
+                if (not session.save_retryable and self._record_sessions.get(device_ip) is session
                         and session.proc.poll() is not None):
                     self._record_sessions.pop(device_ip)
 
@@ -353,6 +497,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         """后台关闭线程同时排空普通命令和录屏专用池，确保模型释放前不留回调。"""
         super().wait_for_commands()
         self._record_pool.waitForDone()
+        if self.is_shutting_down():
+            with self._record_lifecycle_lock:
+                self._record_sessions.clear()
 
     # 性能诊断
 

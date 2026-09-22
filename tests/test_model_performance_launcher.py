@@ -273,6 +273,7 @@ def test_performance_page_batches_logs_and_uses_log_font_size():
     BaseStyles.LOG_FONT_SIZE_VAR = 11
     dialog = PerformancePage(device_ip="device-1")
     try:
+        dialog.activate()
         dialog._apply_theme()
 
         dialog._append_log("INFO", "first")
@@ -353,6 +354,7 @@ def test_performance_page_log_follows_log_font_size():
     BaseStyles.LOG_FONT_SIZE_VAR = 10
     dialog = PerformancePage(device_ip="device-1")
     try:
+        dialog.activate()
         dialog._append_log("INFO", "before")
         dialog._flush_pending_logs()
 
@@ -430,6 +432,7 @@ def test_performance_page_raw_mobileperf_logs_are_not_reprefixed():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="device-1")
     try:
+        dialog.activate()
         raw_line = "[2026-06-13 10:00:00,000]INFO:mobileperf:startup:time is up"
 
         dialog._append_log("RAW", raw_line)
@@ -513,6 +516,7 @@ def test_performance_page_failed_stop_keeps_controls_active_for_retry():
     runner.last_config = None
     dialog._runner = runner
     try:
+        dialog.activate()
         dialog._runner_finished_handled = False
         dialog._set_running(True)
         dialog._stopping = True
@@ -601,6 +605,7 @@ def test_performance_page_runner_finished_restores_buttons_once():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="device-1")
     try:
+        dialog.activate()
         dialog._set_running(True)
         dialog._runner_finished_handled = False
         dialog._poll_timer.start()

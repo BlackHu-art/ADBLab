@@ -261,7 +261,7 @@ _INTEGRATION_TEST_FILES = frozenset(
 _UI_TEST_FUNCTIONS = {
     "test_adb_execution_selection.py": frozenset({
         "test_remote_client_invalidation_queues_cleanup_without_blocking_gui",
-        "test_performance_finish_reuses_discovery_but_retries_after_oserror",
+        "test_legacy_performance_finish_reuses_discovery_but_retries_after_oserror",
     }),
     "test_runtime_recheck.py": frozenset({
         "test_qt_pending_reset_publishes_auto_and_preserves_later_manual_choice",

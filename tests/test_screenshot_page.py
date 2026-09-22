@@ -292,6 +292,7 @@ def test_screenshot_add_images_cancellation_and_invalid_files_preserve_current_i
 
         selected[:] = [str(invalid), str(tmp_path / "missing.png")]
         page._add_action.trigger()
+        wait_for_screenshot(page)
         assert page.image_paths == (first,)
         assert page._current_path() == first
         assert changes.count() == 0
@@ -300,6 +301,7 @@ def test_screenshot_add_images_cancellation_and_invalid_files_preserve_current_i
 
         selected[:] = [second, str(invalid), first, second]
         page._add_action.trigger()
+        wait_for_screenshot(page)
         assert page.image_paths == (first, second)
         assert page._current_path() == second
         assert page._view.count() == page._pager.count() == 2
@@ -701,12 +703,24 @@ def test_screenshot_delete_entries_remove_all_or_current_image_once(
                 else:
                     page._view.customContextMenuRequested.emit(page._view.viewport().rect().center())
                 menu = next(menu for menu in page.findChildren(RoundMenu) if menu.isVisible())
-                assert delete_action in menu.menuActions()
+                if entry == "context_menu":
+                    menu_delete_action = next(
+                        action for action in menu.menuActions()
+                        if action.text() == delete_action.text()
+                    )
+                    assert menu_delete_action.isEnabled() == delete_action.isEnabled()
+                    delete_action.setEnabled(False)
+                    assert not menu_delete_action.isEnabled()
+                    delete_action.setEnabled(True)
+                    assert menu_delete_action.isEnabled()
+                else:
+                    assert delete_action in menu.menuActions()
+                    menu_delete_action = delete_action
                 if opening == 0:
                     menu.close()
             item = next(
                 menu.view.item(row) for row in range(menu.view.count())
-                if menu.view.item(row).data(Qt.ItemDataRole.UserRole) is delete_action
+                if menu.view.item(row).data(Qt.ItemDataRole.UserRole) is menu_delete_action
             )
             menu.view.scrollToItem(item)
             qt_application.processEvents()

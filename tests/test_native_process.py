@@ -212,3 +212,206 @@ def test_timeout_does_not_wait_for_independent_server_to_close_pipe(frozen_launc
             pid = int(marker.read_text())
             if psutil.pid_exists(pid):
                 psutil.Process(pid).kill()
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+@pytest.mark.parametrize("ending", ["timeout", "cancelled", "client_exited"])
+def test_native_capture_bounds_cleanup_when_descendant_holds_pipes(
+    request, monkeypatch, tmp_path, isolated, ending,
+):
+    from core import adb_runtime, native_process
+
+    if isolated:
+        request.getfixturevalue("frozen_launcher")
+    else:
+        monkeypatch.setattr(native_process, "_should_isolate", lambda *_args: False)
+    processes = []
+    spawn = adb_runtime.popen_native
+
+    def capture_process(*args, **kwargs):
+        process = spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(adb_runtime, "popen_native", capture_process)
+    # 连续调用覆盖取消后的 reader 归属，不让上一轮资源污染下一轮。
+    for attempt in range(2):
+        marker = tmp_path / f"server-{attempt}.pid"
+        daemon = "import time;time.sleep(3)"
+        command = [
+            NATIVE_PYTHON, "-c", "import subprocess,time,pathlib;"
+            f"server=subprocess.Popen([{NATIVE_PYTHON!r},'-c',{daemon!r}]);"
+            f"pathlib.Path({str(marker)!r}).write_text(str(server.pid));"
+            + ("time.sleep(30)" if ending != "client_exited" else ""),
+        ]
+        started = time.monotonic()
+        server = None
+        try:
+            result = adb_runtime.native_capture(
+                command, 0.5, lambda: ending == "cancelled" and marker.exists(),
+            )
+            elapsed = time.monotonic() - started
+            assert result.kind == ("cancelled" if ending == "cancelled" else "timeout")
+            assert elapsed < 1.5
+            assert marker.exists(), "合成后代必须已启动才能验证管道继承"
+            server = psutil.Process(int(marker.read_text()))
+            assert server.is_running(), "短命令取消不能杀死独立服务"
+            assert processes[-1].poll() is not None
+        finally:
+            if server is None and marker.exists():
+                try:
+                    server = psutil.Process(int(marker.read_text()))
+                except psutil.NoSuchProcess:
+                    server = None
+            if server is not None:
+                server.kill()
+                server.wait(timeout=3)
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=3)
+                for name in ("stdout", "stderr"):
+                    reader = getattr(process, name + "_thread", None)
+                    if reader is not None:
+                        reader.join(timeout=2)
+                        assert not reader.is_alive()
+                    stream = getattr(process, name, None)
+                    if stream is not None:
+                        assert stream.closed
+
+
+def test_native_capture_reports_unconfirmed_cleanup_as_transport_failure(monkeypatch):
+    from core import adb_runtime
+
+    class UnconfirmedProcess:
+        killed = False
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            assert self.killed and 0 <= timeout <= 0.5
+            raise subprocess.TimeoutExpired("test-client", timeout)
+
+    process = UnconfirmedProcess()
+    monkeypatch.setattr(adb_runtime, "popen_native", lambda *_args, **_kwargs: process)
+    cancellation = iter((False, True))
+    result = adb_runtime.native_capture(["test-client"], 1, lambda: next(cancellation))
+    assert result.kind == "transport"
+    assert result.stderr == b"ADB process failed"
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+def test_run_timeout_bounds_inherited_pipe_and_eventually_closes_readers(
+    request, monkeypatch, tmp_path, isolated,
+):
+    from core import native_process
+
+    if isolated:
+        request.getfixturevalue("frozen_launcher")
+    processes = []
+    spawn = native_process.popen_native
+
+    def capture(*args, **kwargs):
+        process = spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(native_process, "popen_native", capture)
+    marker = tmp_path / "independent.pid"
+    daemon = "import time;time.sleep(5)"
+    command = [
+        NATIVE_PYTHON, "-c", "import subprocess,time,pathlib;"
+        f"server=subprocess.Popen([{NATIVE_PYTHON!r},'-c',{daemon!r}]);"
+        f"pathlib.Path({str(marker)!r}).write_text(str(server.pid));time.sleep(30)",
+    ]
+    try:
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired) as failure:
+            native_process.run_native(command, isolate=True, capture_output=True, timeout=0.5)
+        assert time.monotonic() - started < 3.5
+        assert failure.value.cmd == command
+        assert failure.value.timeout == 0.5
+        assert marker.exists()
+        assert psutil.pid_exists(int(marker.read_text()))
+        assert processes and processes[0].poll() is not None
+    finally:
+        if marker.exists():
+            try:
+                server = psutil.Process(int(marker.read_text()))
+                server.kill()
+                server.wait(timeout=3)
+            except psutil.NoSuchProcess:
+                pass
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=3)
+            for name in ("stdout", "stderr"):
+                reader = getattr(process, name + "_thread", None)
+                if reader is not None:
+                    reader.join(timeout=2)
+                    assert not reader.is_alive()
+                assert getattr(process, name).closed
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+@pytest.mark.parametrize("text_mode", [False, True])
+def test_run_preserves_input_check_and_timeout_stream_contracts(request, isolated, text_mode):
+    from core import native_process
+
+    if isolated:
+        request.getfixturevalue("frozen_launcher")
+    payload = "中文\n" if text_mode else b"INPUT\0\xff"
+    command = [NATIVE_PYTHON, "-c", "import sys;"
+               "sys.stdout.buffer.write(sys.stdin.buffer.read());"
+               "sys.stderr.buffer.write(b'ERR');sys.exit(7)"]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        native_process.run_native(
+            command, isolate=True, input=payload, capture_output=True, text=text_mode,
+            encoding="utf-8" if text_mode else None, timeout=3, check=True,
+        )
+    assert failure.value.cmd == command
+    assert failure.value.returncode == 7
+    assert failure.value.output == payload
+    assert failure.value.stderr == ("ERR" if text_mode else b"ERR")
+
+    command = [NATIVE_PYTHON, "-c", "import os,time;"
+               "os.write(1,b'OUT');os.write(2,b'ERR');time.sleep(30)"]
+    with pytest.raises(subprocess.TimeoutExpired) as failure:
+        native_process.run_native(
+            command, isolate=True, capture_output=True, text=text_mode, timeout=0.5,
+        )
+    # Windows 的 run 在终止后的 communicate 返回文本；POSIX 保留异常的 bytes。
+    expected_text = text_mode and sys.platform == "win32"
+    assert failure.value.output == ("OUT" if expected_text else b"OUT")
+    assert failure.value.stderr == ("ERR" if expected_text else b"ERR")
+
+
+@pytest.mark.parametrize("failure_point", ["poll", "kill", "wait"])
+def test_run_cleanup_failure_is_reported_as_failure_not_timeout(monkeypatch, failure_point):
+    import io
+    from unittest.mock import Mock
+
+    from core import exec as execution
+    from core import native_process
+
+    process = Mock(stdin=None, stdout=io.BytesIO(), stderr=io.BytesIO(),
+                   stdout_thread=None, stderr_thread=None)
+    process.communicate.side_effect = subprocess.TimeoutExpired("synthetic", 0.1)
+    process.poll.return_value = None
+    getattr(process, failure_point).side_effect = (
+        subprocess.TimeoutExpired("synthetic", 2) if failure_point == "wait"
+        else OSError("synthetic cleanup failure")
+    )
+    monkeypatch.setattr(native_process, "popen_native", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution, "_log_if_slow", lambda *_args: None)
+    result = execution.CommandRunner.run(["synthetic"], timeout=0.1)
+    assert not result.success
+    assert result.outcome == "failed"
+    assert process.stdout.closed and process.stderr.closed

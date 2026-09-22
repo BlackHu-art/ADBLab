@@ -535,8 +535,10 @@ class ADBMediaMixin(_ADBControllerBase):
             _emit_record_target_finished(self, batch_id, ip)
 
     def _submit_recording_pull(self, device_ip: str, info: dict) -> bool:
-        """每个设备批次只提交一次录屏拉取；提交失败时立即释放终态。"""
+        """同批次只允许一次在途拉取；失败后的显式重试沿用原目标及路径。"""
 
+        if getattr(self, "_shutting_down", False):
+            return False
         batch_id = str(info.get("batch_id", ""))
         # Stop 结果和启动回调都在 GUI 线程进入此入口；use case 内原子标记阻断重入。
         if not self.screen_records.mark_pull_submitted(device_ip, batch_id):
@@ -559,14 +561,23 @@ class ADBMediaMixin(_ADBControllerBase):
                 submit()
             return True
         except Exception as exc:
-            self.screen_records.finish(device_ip, batch_id)
+            retryable = bool(info.get("retryable"))
+            if retryable:
+                expired = self.screen_records.mark_pull_failed(device_ip, batch_id)
+                for old_device, old_batch in expired:
+                    _emit_record_target_finished(self, old_batch, old_device)
+            else:
+                self.screen_records.finish(device_ip, batch_id)
             self.screen_records.clear_stop_request(device_ip, batch_id)
             self._emit_operation(
                 "pull_recording",
                 False,
                 f"Failed to submit recording pull for {device_ip}: {exc}",
             )
-            _emit_record_target_finished(self, batch_id, device_ip)
+            if retryable:
+                self.signals.record_target_retryable.emit(batch_id, device_ip)
+            else:
+                _emit_record_target_finished(self, batch_id, device_ip)
             return False
 
     def _auto_pull(self, device_ip: str, batch_id: str = ""):
@@ -584,14 +595,21 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def stop_screen_record(self, devices: list, batch_id: str = ""):
+        if getattr(self, "_shutting_down", False):
+            return
         devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "stop_recording"):
             return
         for ip in devices:
             info = self.screen_records.active(ip) or {}
+            if not info:
+                continue
             current_batch = str(info.get("batch_id", ""))
             requested_batch = str(batch_id).strip() or current_batch
             if batch_id and requested_batch != current_batch:
+                continue
+            if info.get("retryable"):
+                ADBMediaMixin._submit_recording_pull(self, ip, info)
                 continue
             if not self.screen_records.request_stop(ip, requested_batch):
                 continue
@@ -634,7 +652,13 @@ class ADBMediaMixin(_ADBControllerBase):
         batch_id = result.get("batch_id") or (info or {}).get("batch_id", "")
         if info is None or batch_id != info.get("batch_id", ""):
             return
-        self.screen_records.finish(ip, batch_id)
+        retryable = (not result.get("success") and bool(result.get("retryable"))
+                     and not getattr(self, "_shutting_down", False))
+        if retryable:
+            for old_device, old_batch in self.screen_records.mark_pull_failed(ip, batch_id):
+                _emit_record_target_finished(self, old_batch, old_device)
+        else:
+            self.screen_records.finish(ip, batch_id)
         self.screen_records.clear_stop_request(ip, batch_id)
         if result.get("success"):
             self._emit_operation(
@@ -646,7 +670,10 @@ class ADBMediaMixin(_ADBControllerBase):
                 False,
                 f"Failed to pull recording from {ip}: {result.get('error')}",
             )
-        _emit_record_target_finished(self, batch_id, ip)
+        if retryable:
+            self.signals.record_target_retryable.emit(batch_id, ip)
+        else:
+            _emit_record_target_finished(self, batch_id, ip)
 
     # 性能诊断
 

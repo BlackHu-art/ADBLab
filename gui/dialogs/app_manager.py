@@ -35,7 +35,10 @@ class AppSortProxy(QSortFilterProxyModel):
         self._app_type = "All"
 
     def set_filters(self, search_text: str, app_type: str) -> None:
-        self._search_text = search_text.strip().lower()
+        search_text = search_text.strip().lower()
+        if (search_text, app_type) == (self._search_text, self._app_type):
+            return
+        self._search_text = search_text
         self._app_type = app_type
         self.invalidateFilter()
 
@@ -70,10 +73,13 @@ class AppSortProxy(QSortFilterProxyModel):
         col = left.column()
         ld = self.sourceModel().data(left)
         rd = self.sourceModel().data(right)
-        if col == 2 and ld in self.STATUS_ORDER:
-            return self.STATUS_ORDER[ld] < self.STATUS_ORDER[rd]
-        if col == 3 and ld in self.TYPE_ORDER:
-            return self.TYPE_ORDER[ld] < self.TYPE_ORDER[rd]
+        order = self.STATUS_ORDER if col == 4 else self.TYPE_ORDER if col == 5 else None
+        if order is not None:
+            # 未知业务值在升序中排到已知值之后，同组仍沿用 Qt 的文本比较。
+            left_order = order.get(ld, len(order))
+            right_order = order.get(rd, len(order))
+            if left_order != right_order:
+                return left_order < right_order
         return super().lessThan(left, right)
 
 
@@ -138,6 +144,9 @@ class AppManagerPage(QWidget):
         self._detail_timer = QTimer(self)
         self._detail_timer.setSingleShot(True)
         self._detail_timer.timeout.connect(self._load_visible_details)
+        self._detail_filter_timer = QTimer(self)
+        self._detail_filter_timer.setSingleShot(True)
+        self._detail_filter_timer.timeout.connect(self._flush_detail_filter)
         self.setObjectName("appManagerPage")
         self.setProperty("feature", "app_manager")
         self.setProperty("deviceConnected", self._device_connected)
@@ -523,6 +532,11 @@ class AppManagerPage(QWidget):
     def _filter(self):
         return (getattr(self, "_views_controller", None) or AppManagerViews(self))._filter()
 
+    def _flush_detail_filter(self) -> None:
+        """同一轮详情结果合并筛选；定时器归页面所有，释放后不再投递。"""
+        if not self._closing:
+            self._filter()
+
     def _on_table_item_changed(self, item):
         return (
             getattr(self, "_views_controller", None) or AppManagerViews(self)
@@ -687,6 +701,8 @@ class AppManagerPage(QWidget):
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()
             safe_disconnect(self._detail_timer.timeout, self._load_visible_details)
+        self._detail_filter_timer.stop()
+        safe_disconnect(self._detail_filter_timer.timeout, self._flush_detail_filter)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.accent_color_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)

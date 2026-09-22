@@ -71,6 +71,79 @@ def test_progress_is_not_success_and_multiple_targets_finish_once():
     assert len(events) == count
 
 
+def test_result_history_byte_budget_evicts_old_records_without_truncating_latest(monkeypatch):
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    store = ActionResults(lambda _result: None, capacity=80, text_budget=2048)
+    spec = ActionSpec("query", "system.shell", "查询", "text")
+    bodies = [f"result-{index}:" + "正文" * 1000 for index in range(3)]
+    for body in bodies:
+        jobs = []
+        store.run(spec, (), lambda: jobs.append(capture_action_job("query_async")))
+        store.complete(jobs[0], {"success": True, "output": body})
+    results = store.recent()
+    assert len(results) == 1
+    assert results[0].items[0].detail == bodies[-1]
+
+
+def test_result_history_byte_budget_keeps_inflight_results_and_the_latest_completion():
+    store = ActionResults(lambda _result: None, capacity=80, text_budget=2048)
+    running = []
+    store.run(
+        ActionSpec("batch", "system.shell", "批次"), ("one", "two"),
+        lambda: running.extend(
+            capture_action_job("query_async", target) for target in ("one", "two")
+        ),
+    )
+    body = "未完成批次正文" * 1000
+    store.complete(running[0], {"success": True, "output": body})
+    finished = []
+    store.run(
+        ActionSpec("query", "system.shell", "查询"), (),
+        lambda: finished.append(capture_action_job("query_async")),
+    )
+    store.complete(finished[0], {"success": True, "output": "最新结果"})
+    assert len(store.recent()) == 2
+    assert store.accepts(running[1])
+    pending = next(result for result in store.recent() if result.state == "running")
+    assert pending.items[0].detail == body
+
+
+@pytest.mark.parametrize("capacity,text_budget", [(2, 32 * 1024 * 1024), (80, 4500)])
+def test_result_history_evicts_in_completion_order_with_equal_timestamps(
+    monkeypatch, capacity, text_budget,
+):
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    store = ActionResults(lambda _result: None, capacity=capacity, text_budget=text_budget)
+
+    def start(name):
+        return store.run(ActionSpec(name, "system.shell", name), (),
+                         lambda: capture_action_job("query_async"))
+
+    def finish(job):
+        store.complete(job, {"success": True, "output": "x" * 2000})
+
+    long_job = start("long")
+    finish(start("first"))
+    finish(start("second"))
+    finish(long_job)
+    finish(start("last"))
+    assert [result.spec.key for result in store.recent()] == ["last", "long"]
+
+
+def test_updated_notes_are_recent_without_reviving_finished_commands():
+    store = ActionResults(lambda _result: None, capacity=2)
+    notes = ActionSpec("notes:manager", "apps.manager", "记录", "notes")
+    original = store.record_note(notes, (), "old", "info")
+    other = ActionSpec("notes:other", "apps.manager", "其他", "notes")
+    store.record_note(other, (), "other", "info")
+    updated = store.record_note(notes, (), "new", "info")
+    store.record_note(ActionSpec("notes:last", "apps.manager", "最后", "notes"), (),
+                      "last", "info")
+    assert original.request_id == updated.request_id
+    assert [result.spec.key for result in store.recent()] == ["notes:last", "notes:manager"]
+    assert store.recent()[1].items[-1].detail == "new"
+
+
 def test_callback_semantic_failure_overrides_transport_success():
     events = []
     store = ActionResults(events.append)

@@ -537,6 +537,77 @@ def test_internal_layout_request_during_settling_does_not_create_generation(qt_a
     assert target.applied == ["A"]
 
 
+def test_settle_now_applies_pending_generation_before_timers_run(qt_application):
+    """首次可见边界必须同步落实计划，不能等防抖或排定定时器。"""
+
+    target = ResizeEchoTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+
+    coordinator.request_reflow(ReflowReason.RESIZE)
+    assert coordinator.diagnostics.stable is False
+
+    assert coordinator.settle_now() is True
+
+    assert target.applied == [900]
+    assert coordinator.diagnostics.generation == 1
+    del qt_application
+
+
+def test_settle_now_closes_finishing_window_and_keeps_coordinator_usable(qt_application):
+    """收尾窗口内同步落实要主动关闭窗口，且不能让协调器永久停摆。"""
+
+    target = ResizeEchoTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: bool(target.applied))
+    # 复现 1ms 收尾窗口：0ms 复核轮次与收尾定时器此时都还没有执行。
+    coordinator._finish_generation(coordinator.diagnostics.generation)
+    assert coordinator._finishing is True
+
+    target.width = 700
+    assert coordinator.settle_now() is True
+
+    assert coordinator._finishing is False
+    assert target.applied[-1] == 700
+    assert coordinator.diagnostics.generation == 2
+
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(
+        qt_application,
+        lambda: coordinator.diagnostics.stable and coordinator.diagnostics.generation == 3,
+    )
+    assert target.applied[-1] == 700
+
+
+def test_settle_now_defers_when_called_during_apply(qt_application):
+    """apply 过程中重入 settle_now 只排下一批原因，不重入计划落实。"""
+
+    coordinator = ResponsiveCoordinator()
+    results = []
+
+    def during_apply(apply_count):
+        # 只在首轮 apply 内重入：真实调用点不会在每次落实计划时都请求一次。
+        if apply_count == 1:
+            results.append(coordinator.settle_now())
+
+    target = FakeTarget(candidates=["A"], conservative="D", after_apply=during_apply)
+    coordinator.register(target)
+
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(
+        qt_application,
+        lambda: coordinator.diagnostics.stable and coordinator.diagnostics.generation == 2,
+    )
+
+    assert results == [False]
+    assert target.applied == ["A", "A"]
+
+
+
 def test_real_binding_queued_layout_request_does_not_start_extra_generation(qt_application):
     container = QWidget()
     container.resize(200, 100)

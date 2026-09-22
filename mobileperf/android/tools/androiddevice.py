@@ -483,65 +483,80 @@ class ADB:
         logs = []
         logger.debug("logcat_thread_func")
         log_is_none = 0
-        while self._logcat_running:
-            try:
-                log = self._log_pipe.stdout.readline().strip()
-                if not isinstance(log, str):
-                    try:
-                        log = str(log, "utf8")
-                    except Exception as e:
-                        log = repr(log)
-                        logger.error(
-                            "logcat decode failed: exception_type=%s payload_length=%s",
-                            type(e).__name__,
-                            _payload_length(log),
-                        )
-                if log:
-                    log_is_none = 0
-                    logs.append(log)
-                    for _handle in self._logcat_handle:
+        try:
+            while self._logcat_running:
+                try:
+                    log = self._log_pipe.stdout.readline().strip()
+                    if not isinstance(log, str):
                         try:
-                            _handle(log)
+                            log = str(log, "utf8")
                         except Exception as e:
+                            log = repr(log)
                             logger.error(
-                                "logcat handler failed: exception_type=%s",
+                                "logcat decode failed: exception_type=%s payload_length=%s",
                                 type(e).__name__,
+                                _payload_length(log),
                             )
+                    if log:
+                        log_is_none = 0
+                        logs.append(log)
+                        for _handle in self._logcat_handle:
+                            try:
+                                _handle(log)
+                            except Exception as e:
+                                logger.error(
+                                    "logcat handler failed: exception_type=%s",
+                                    type(e).__name__,
+                                )
 
-                    self.append_log_line_num = self.append_log_line_num + 1
-                    self.file_log_line_num = self.file_log_line_num + 1
-                    if self.append_log_line_num > 100:
-                        if not self.log_file_create_time:
+                        self.append_log_line_num = self.append_log_line_num + 1
+                        self.file_log_line_num = self.file_log_line_num + 1
+                        if self.append_log_line_num > 100:
+                            if not self.log_file_create_time:
+                                self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
+                            logcat_file = os.path.join(
+                                save_dir, f"logcat_{self.log_file_create_time}.log"
+                            )
+                            self.append_log_line_num = 0
+                            self.save(logcat_file, logs)
+                            logs = []
+                        # 新建文件
+                        if self.file_log_line_num > 600000:
+                            self.file_log_line_num = 0
                             self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
-                        logcat_file = os.path.join(
-                            save_dir, f"logcat_{self.log_file_create_time}.log"
-                        )
-                        self.append_log_line_num = 0
-                        self.save(logcat_file, logs)
-                        logs = []
-                    # 新建文件
-                    if self.file_log_line_num > 600000:
-                        self.file_log_line_num = 0
-                        self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
-                        logcat_file = os.path.join(
-                            save_dir, f"logcat_{self.log_file_create_time}.log"
-                        )
-                        self.save(logcat_file, logs)
-                        logs = []
-                else:
-                    time.sleep(1)  # readline() 到 EOF 时避免忙等空转。
-                    log_is_none = log_is_none + 1
-                    if log_is_none % 1000 == 0:
-                        logger.info("log is none")
-                        self._log_pipe = self.run_shell_cmd(
-                            "logcat -v threadtime " + params, sync=False
-                        )
-            except Exception:
-                exc = sys.exc_info()[1]
-                logger.error(
-                    "logcat thread failed: exception_type=%s",
-                    type(exc).__name__,
+                            logcat_file = os.path.join(
+                                save_dir, f"logcat_{self.log_file_create_time}.log"
+                            )
+                            self.save(logcat_file, logs)
+                            logs = []
+                    else:
+                        time.sleep(1)  # readline() 到 EOF 时避免忙等空转。
+                        log_is_none = log_is_none + 1
+                        if log_is_none % 1000 == 0:
+                            logger.info("log is none")
+                            # 停止流程可能正好落在这一秒空转窗口内，重建客户端前必须复查运行标志，
+                            # 否则会拉起一个无人终止的 adb logcat 客户端。
+                            if self._logcat_running:
+                                self._log_pipe = self.run_shell_cmd(
+                                    "logcat -v threadtime " + params, sync=False
+                                )
+                except Exception:
+                    exc = sys.exc_info()[1]
+                    logger.error(
+                        "logcat thread failed: exception_type=%s",
+                        type(exc).__name__,
+                    )
+        finally:
+            # 停止时内存中可能残留不足 100 行阈值的日志，丢弃会丢掉采集尾部；
+            # 此时必须补齐文件名，否则会落成 logcat_None.log。
+            if logs:
+                self.log_file_create_time = (
+                    self.log_file_create_time or TimeUtils.getCurrentTimeUnderline()
                 )
+                logcat_file = os.path.join(
+                    save_dir, f"logcat_{self.log_file_create_time}.log"
+                )
+                self.save(logcat_file, logs)
 
     def save(self, save_file_path, loglist):
         logcat_file = os.path.join(save_file_path)
@@ -581,12 +596,46 @@ class ADB:
         self._logcat_thread.start()
 
     def stop_logcat(self):
-        """停止logcat进程"""
+        """停止logcat进程
+
+        顺序契约：先停 reader 循环并终止 adb 客户端，有界等待 reader 退出后才允许关闭
+        stdout/stderr；提前关流会让阻塞中的 readline 抛错，丢掉已读入内存的日志。
+        未启动或重复停止都必须安全返回，非法状态不得抛出异常。
+        """
         self._logcat_running = False
         logger.debug("stop logcat")
-        if hasattr(self, "_log_pipe"):
-            if self._log_pipe.poll() is None:  # 判断logcat进程是否存在
-                self._log_pipe.terminate()
+        process = getattr(self, "_log_pipe", None)
+        if process is not None and process.poll() is None:  # 判断logcat进程是否存在
+            process.terminate()
+        thread = getattr(self, "_logcat_thread", None)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2)
+            if thread.is_alive():
+                # 有界等待后 reader 仍未退出，强杀客户端以打断其阻塞读取。
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("logcat client did not exit after kill")
+                thread.join(timeout=2)
+        # reader 已退出，空闲重启分支不会再替换 _log_pipe；此处复查可回收停止竞态中
+        # 新建的客户端，同时对本进程做有界收尾，避免留下孤儿 adb logcat。
+        process = getattr(self, "_log_pipe", None)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    logger.warning("logcat client did not exit after kill")
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
 
     def push_file(self, src_path, dst_path):
         """拷贝文件到手机中
@@ -835,15 +884,18 @@ class ADB:
                 pck_list.append(item)
         return pck_list
 
-    def get_process_stack_from_pid(self, pid, save_path):
+    def get_process_stack_from_pid(self, pid, save_path, timeout=2, cancelled=None):
         """
-        :param package_name: 进程名
+        :param pid: 目标进程 ID
         :param save_path: 堆栈文件保存路径
+        :param timeout: 设备侧 debuggerd 查询的超时秒数，超时按失败处理
+        :param cancelled: 可选取消回调，返回 True 时放弃本次查询
         :return: 无
         """
         # debuggerd 的输出重定向由设备端 shell 解释，会把堆栈写到设备侧路径而非本机文件；
         # 改为捕获 stdout 后由本机写入 save_path。
-        stack = self.run_shell_cmd(f"debuggerd -b {pid}")
+        # 该查询可能内联在 logcat reader 线程中执行，必须带上超时和取消边界。
+        stack = self.run_shell_cmd(f"debuggerd -b {pid}", timeout=timeout, cancelled=cancelled)
         if stack:
             with open(save_path, "w+", encoding="utf-8") as f:
                 f.write(stack)

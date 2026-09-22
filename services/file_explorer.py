@@ -6,11 +6,86 @@ UI 层只负责交互和展示；这里的函数必须保持无 Qt 依赖，方�
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 SHELL_DANGER = re.compile(r'[;&|`$(){}!<>"\'\n\r]')
 _VALID_MODE = re.compile(r"^[0-7]{3,4}$")
+_MONTH_NUMBERS = {name: month for month, name in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1,
+)}
+
+
+def modified_sort_key(value: str) -> tuple[int, tuple[int, ...], str]:
+    """完整日期、缺年日期、未知格式分组；缺年仅比较月日，不推断当前年份。"""
+    value = value.strip()
+    iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2}) (\d{1,2}):(\d{2})(?::(\d{2}))?", value)
+    month = re.fullmatch(
+        r"([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{4}|\d{1,2}:\d{2}(?::\d{2})?))?", value,
+    )
+    group = 0
+    if iso:
+        parts = tuple(int(part or 0) for part in iso.groups())
+    elif month and month[1].lower() in _MONTH_NUMBERS:
+        suffix = month[3] or ""
+        has_year = suffix.isdigit() and len(suffix) == 4
+        group = 0 if has_year else 1
+        time_parts = [int(part) for part in suffix.split(":")] if ":" in suffix else []
+        time_parts += [0] * (3 - len(time_parts))
+        parts = (int(suffix) if has_year else 0, _MONTH_NUMBERS[month[1].lower()],
+                 int(month[2]), *time_parts)
+    else:
+        return 2, (), value.casefold()
+    try:
+        # 2000 仅用于校验未知年份的月日（允许 2 月 29 日），绝不进入排序键。
+        datetime(
+            parts[0] if group == 0 else 2000, parts[1], parts[2], parts[3], parts[4], parts[5],
+        )
+    except ValueError:
+        return 2, (), value.casefold()
+    return group, parts, value.casefold()
+
+
+@dataclass(frozen=True)
+class TextPreview:
+    """保存原始正文与编码策略；未编辑时绕过 Qt 文档的换行归一。"""
+
+    raw: bytes
+    text: str
+    editable: bool
+    truncated: bool
+    newline: str
+    bom: bool
+
+    def encode(self, text: str, *, modified: bool) -> bytes:
+        """仅完整 UTF-8 正文允许保存；编辑后沿用原文首个换行风格和 BOM。"""
+        if not self.editable:
+            raise ValueError("Incomplete or invalid UTF-8 text cannot be saved")
+        if not modified:
+            return self.raw
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        return (b"\xef\xbb\xbf" if self.bom else b"") + normalized.replace(
+            "\n", self.newline,
+        ).encode("utf-8")
+
+
+def decode_text_preview(raw: bytes, byte_limit: int) -> TextPreview:
+    """先以原始字节判断截断，解码替代字符仅用于只读展示。"""
+    truncated = len(raw) > byte_limit
+    visible = raw[:byte_limit]
+    valid = True
+    try:
+        text = visible.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        valid = False
+        text = visible.decode("utf-8-sig", errors="replace")
+    newline = re.search(r"\r\n|\r|\n", text)
+    return TextPreview(
+        raw, text, valid and not truncated, truncated,
+        newline.group() if newline else "\n", raw.startswith(b"\xef\xbb\xbf"),
+    )
 
 
 @dataclass(frozen=True)
@@ -21,6 +96,7 @@ class FileEntry:
     modified: str
     size: int
     is_dir: bool
+    is_symlink: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,7 +273,7 @@ def _looks_iso_date(value: str) -> bool:
 
 
 def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
-    """解析 adb shell `ls -la` 输出，并保持文件夹优先、名称升序。"""
+    """解析列表并保留链接身份；ls 的链接权限位不能证明目标是目录。"""
     rows: list[FileEntry] = []
     symlink_targets: dict[str, str] = {}
     for line in output.splitlines():
@@ -220,20 +296,32 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
         if not name or name in (".", ".."):
             continue
 
-        is_dir = entry["perms"].startswith(("d", "l"))
+        is_dir = entry["perms"].startswith("d")
         rows.append(
             FileEntry(
                 name=name,
-                file_type="Folder" if is_dir else extension_label(name),
+                file_type="Folder" if is_dir else "Link" if is_symlink else extension_label(name),
                 size_text="-" if is_dir else format_size(entry["size"]),
                 modified=entry["modified"],
                 size=safe_int(entry["size"]),
                 is_dir=is_dir,
+                is_symlink=is_symlink,
             )
         )
 
-    rows.sort(key=lambda item: (not item.is_dir, item.name.lower()))
+    rows.sort(key=lambda item: (not (item.is_dir or item.is_symlink), item.name.lower()))
     return rows, symlink_targets
+
+
+def link_target_type_command(path: str) -> str:
+    """单次只读查询链接目标类型，路径始终按设备 shell 参数引用。"""
+    quoted = shell_quote(path)
+    return (
+        f"if [ -d {quoted} ]; then printf directory; "
+        f"elif [ -f {quoted} ]; then printf file; "
+        f"elif [ -L {quoted} ] && [ ! -e {quoted} ]; then printf missing; "
+        "else printf unavailable; fi"
+    )
 
 
 
@@ -269,8 +357,45 @@ def copy_for_root_pull_command(src: str, dst: str) -> str:
     return f"dd if={shell_quote(src)} of={shell_quote(dst)} && chmod 644 {shell_quote(dst)}"
 
 
-def save_text_command(base64_content: str, dst: str) -> str:
-    return f"printf %s {shell_quote(base64_content)} | base64 -d > {shell_quote(dst)}"
+def resolve_text_target_command(path: str) -> str:
+    """解析链接的实际普通文件目标；固定标记保护路径首尾空白。"""
+    return (
+        f"target=$(readlink -f -- {shell_quote(path)}) && "
+        '[ -f "$target" ] && [ -w "$target" ] && '
+        'printf \'ADBLAB_TARGET:%s:END\' "$target"'
+    )
+
+
+def publish_text_command(target: str, directory: str, uploaded: str) -> str:
+    """复制原权限和所有权至同目录新文件，完整写入后原子替换实际目标。"""
+    staged = shell_quote(f"{directory}/ready")
+    return (
+        f"cp -p -- {shell_quote(target)} {staged} && "
+        f"cat -- {shell_quote(uploaded)} > {staged} && "
+        f"mv -f -- {staged} {shell_quote(target)}"
+    )
+
+
+def prepare_text_directory_command(directory: str) -> str:
+    """独占创建目录并留下归属标记，取消导致返回丢失时仍可安全清理。"""
+    token = posixpath.basename(directory)
+    return (
+        f"mkdir -m 700 -- {shell_quote(directory)} && "
+        f"printf %s {shell_quote(token)} > {shell_quote(f'{directory}/owner')}"
+    )
+
+
+def cleanup_text_directory_command(directory: str) -> str:
+    """只删除本次独占目录的已知文件；拒绝递归扩展清理范围。"""
+    token = posixpath.basename(directory)
+    return (
+        f"if [ ! -e {shell_quote(directory)} ]; then exit 0; fi; "
+        f"[ ! -L {shell_quote(directory)} ] && "
+        f'[ "$(cat -- {shell_quote(f"{directory}/owner")})" = {shell_quote(token)} ] && '
+        f"rm -f -- {shell_quote(f'{directory}/upload')} {shell_quote(f'{directory}/ready')}"
+        f" {shell_quote(f'{directory}/owner')}"
+        f" && rmdir -- {shell_quote(directory)}"
+    )
 
 
 def mkdir_command(path: str) -> str:

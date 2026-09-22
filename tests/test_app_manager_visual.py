@@ -21,6 +21,52 @@ from gui.styles.fonts import FontMixin
 from tests.ui_geometry_helpers import assert_scroll_target_reachable, wait_until
 
 
+@pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+@pytest.mark.parametrize("column,values,ascending", [
+    (4, ["Mystery", "Disabled", "Enabled", "Awaiting"],
+     ["Enabled", "Disabled", "Awaiting", "Mystery"]),
+    (5, ["Vendor", "Other", "System", "User", "Mystery", "Awaiting"],
+     ["User", "System", "Vendor", "Other", "Awaiting", "Mystery"]),
+    (1, ["Zulu", "Alpha", "Beta"], ["Alpha", "Beta", "Zulu"]),
+    (2, ["Enabled", "Disabled"], ["Disabled", "Enabled"]),
+    (3, ["User", "System", "Other"], ["Other", "System", "User"]),
+])
+def test_application_column_sort_preserves_business_order_source_and_selection(
+    qt_application, column, values, ascending, order,
+):
+    """状态和类型按业务顺序排列，未知值及其他列保持文字排序且不改变勾选。"""
+    page = AppManagerPage(device_ip="sort-demo")
+    try:
+        apps = [
+            (value if column == 1 else f"App {row}",
+             value if column == 2 else f"com.example.app{row}",
+             value if column == 4 else "Enabled",
+             value if column == 5 else "User")
+            for row, value in enumerate(values)
+        ]
+        page._populate(apps)
+        if column == 3:
+            for row, value in enumerate(values):
+                page.model.item(row, 3).setText(value)
+        page.model.item(0, 0).setCheckState(Qt.CheckState.Checked)
+        page.tree.sortByColumn(column, order)
+        qt_application.processEvents()
+        assert [
+            page.proxy.mapToSource(page.proxy.index(row, column)).data()
+            for row in range(page.proxy.rowCount())
+        ] == (ascending if order == Qt.SortOrder.AscendingOrder else list(reversed(ascending)))
+        assert [page.model.item(row, column).text() for row in range(len(values))] == values
+        assert page.selected_packages == {apps[0][1]}
+        selected_rows = [
+            page.proxy.index(row, 2).data() for row in range(page.proxy.rowCount())
+            if page.proxy.index(row, 0).data(Qt.ItemDataRole.CheckStateRole)
+            == Qt.CheckState.Checked.value
+        ]
+        assert selected_rows == [apps[0][1]]
+    finally:
+        page.close()
+
+
 @pytest.mark.ui
 def test_search_buttons_filter_both_views_and_clear_only_text_condition(
     qt_application, monkeypatch,
@@ -370,6 +416,7 @@ def test_icon_rows_keep_full_names_for_search_and_accessible_details(qt_applicat
         page.search_input.setText("晚到名称")
         assert item.isHidden() and page.proxy.rowCount() == 0
         page._on_detail(package, "晚到名称", "3.2.19", "")
+        qt_application.processEvents()
         assert not item.isHidden() and page.proxy.rowCount() == 1
     finally:
         page.close()
