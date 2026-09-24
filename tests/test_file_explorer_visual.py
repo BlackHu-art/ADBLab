@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QSize, Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QAbstractAnimation, QPoint, QSize, Qt
+from PySide6.QtGui import QFont, QFontMetrics, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
 from qfluentwidgets import CommandBar, RoundMenu
@@ -211,6 +211,150 @@ def _paint_option(page, row, column):
     option = QStyleOptionViewItem()
     page.table.itemDelegate().initStyleOption(option, page.table.model().index(row, column))
     return option
+
+
+def test_file_list_font_changes_keep_readable_rows_widths_and_selection(
+    qt_application, monkeypatch,
+):
+    """字号往返切换须影响实际文字绘制，且不重建列表或覆盖用户列宽。"""
+    font_size = 12
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, role, size=None: QFont("Arial", size or font_size),
+    ))
+    qt_application.setFont(QFont("Arial", font_size))
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(1100, 700)
+    page._on_ls_result(LISTING, False)
+    page.show()
+    qt_application.processEvents()
+    try:
+        header = page.table.horizontalHeader()
+        widths = (100, 330, 120)
+        for column, width in enumerate(widths):
+            page.table.setColumnWidth(column, width)
+        row = next(row for row in range(page.table.rowCount())
+                   if page._file_name_at(row) == "notes.txt")
+        selected = page.table.item(row, page.NAME_COL)
+        page.table.selectRow(row)
+        original_height = None
+        for font_size in (12, 22, 12):
+            qt_application.setFont(QFont("Arial", font_size))
+            BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+            qt_application.processEvents()
+            option = _paint_option(page, row, page.NAME_COL)
+            assert option.font.pointSize() == font_size
+            assert option.font.family() == "Arial"
+            assert page.table.font().pointSize() == font_size
+            assert header.font().pointSize() == font_size
+            assert page.table.rowHeight(row) >= QFontMetrics(option.font).height() + 12
+            assert option.fontMetrics.height() == QFontMetrics(option.font).height()
+            assert tuple(page.table.columnWidth(column) for column in range(3)) == widths
+            assert page.table.item(row, page.NAME_COL) is selected
+            assert selected.isSelected()
+            assert header.length() == page.table.viewport().width()
+            if original_height is None:
+                original_height = page.table.rowHeight(row)
+            elif font_size == 22:
+                assert page.table.rowHeight(row) > original_height
+            else:
+                assert page.table.rowHeight(row) == original_height
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_long_directory_status_does_not_widen_workspace(
+    qt_application, monkeypatch, font_size,
+):
+    """长目录摘要保持单行可省略，完整路径仍可悬停读取且不撑宽功能页。"""
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, role, size=None: QFont("Arial", size or font_size),
+    ))
+    page = FileExplorerPage(device_ip="demo-a")
+    page.prepare_for_workspace()
+    workspace = QScrollArea()
+    workspace.setWidgetResizable(True)
+    workspace.setWidget(page)
+    workspace.resize(500, 650)
+    workspace.show()
+    try:
+        long_directory = "/sdcard/" + "directory_name_" * 16
+        for directory in (long_directory, "/sdcard", long_directory):
+            page.current_path = directory
+            page._on_ls_result(LISTING, False)
+            qt_application.processEvents()
+            qt_application.processEvents()
+            assert page.width() <= workspace.viewport().width()
+            assert workspace.horizontalScrollBar().maximum() == 0
+            assert directory in page.status_bar.text()
+            assert directory in page.status_bar.toolTip()
+            assert directory in page.status_bar.accessibleDescription()
+            assert page.status_bar.height() < page.status_bar.fontMetrics().height() * 2
+    finally:
+        workspace.close()
+        page.close()
+
+
+def test_file_explorer_name_column_drag_survives_refresh_and_window_resize(qt_application):
+    """名称列可拖宽和拖窄，列表刷新及窗口缩放不能覆盖手动宽度。"""
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(980, 690)
+    page._on_ls_result(LISTING, False)
+    page.show()
+    qt_application.processEvents()
+    try:
+        header = page.table.horizontalHeader()
+        for delta in (-60, 100):
+            before = page.table.columnWidth(page.NAME_COL)
+            edge = QPoint(
+                header.sectionViewportPosition(page.NAME_COL) + before - 1,
+                header.height() // 2,
+            )
+            QTest.mouseMove(header.viewport(), edge)
+            QTest.mousePress(header.viewport(), Qt.MouseButton.LeftButton, pos=edge)
+            QTest.mouseMove(header.viewport(), edge + QPoint(delta, 0))
+            QTest.mouseRelease(
+                header.viewport(), Qt.MouseButton.LeftButton, pos=edge + QPoint(delta, 0),
+            )
+            qt_application.processEvents()
+            assert page.table.columnWidth(page.NAME_COL) == before + delta
+            assert header.length() == page.table.viewport().width()
+
+        adjusted_width = page.table.columnWidth(page.NAME_COL)
+        page._on_ls_result(LISTING, False)
+        page.resize(1100, 690)
+        qt_application.processEvents()
+        assert page.table.columnWidth(page.NAME_COL) == adjusted_width
+        assert header.length() == page.table.viewport().width()
+    finally:
+        page.close()
+
+
+def test_file_explorer_columns_fill_window_and_preview_panel(qt_application):
+    """表格随可用面板填满宽度，预览关闭后不在右侧留下空白。"""
+    page = FileExplorerPage(device_ip="demo-a")
+    page._on_ls_result(LISTING, False)
+    page.show()
+    try:
+        for width in (980, 1400, 750, 1600):
+            page.resize(width, 700)
+            qt_application.processEvents()
+            assert page.table.horizontalHeader().length() == page.table.viewport().width()
+
+        page._show_text_preview("notes.txt", "hello", "/sdcard/notes.txt")
+        qt_application.processEvents()
+        assert page.preview_panel.isVisible()
+        for browser_width in (800, 1000):
+            page.content_splitter.setSizes([browser_width, 1600 - browser_width])
+            qt_application.processEvents()
+            assert page.table.horizontalHeader().length() == page.table.viewport().width()
+
+        QTest.mouseClick(page.preview_close_btn, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert not page.preview_panel.isVisible()
+        assert page.table.horizontalHeader().length() == page.table.viewport().width()
+    finally:
+        page.close()
 
 
 def _icon_lightness(icon):

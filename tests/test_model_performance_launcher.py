@@ -107,6 +107,45 @@ def test_performance_page_get_current_package_updates_package_field():
     dialog.close()
 
 
+@pytest.mark.parametrize("edited", ["com.example.manual", "", "com.example.original"])
+def test_performance_late_package_query_keeps_user_input(edited, qt_application):
+    """用户重新编辑即撤销旧查询，即使最后输入恢复原文也不接受迟返结果。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from gui.dialogs.performance_launcher import CurrentPackageWorker
+    from gui.i18n import tr
+
+    page = PerformancePage(device_ip="session-device", package_name="com.example.original")
+    worker = CurrentPackageWorker("session-device")
+    try:
+        with patch("gui.dialogs.performance_launcher.CurrentPackageWorker", return_value=worker):
+            with patch.object(worker, "start"):
+                page.fetch_current_package()
+        page.package_edit.selectAll()
+        QTest.keyClick(page.package_edit, Qt.Key.Key_Backspace)
+        QTest.keyClicks(page.package_edit, edited)
+        worker.package_ready.emit("com.example.detected")
+        page._on_package_worker_finished(worker)
+        assert page.package_edit.text() == edited
+        assert page.get_package_btn.isEnabled()
+        assert page.package_feedback.isHidden()
+
+        retry = CurrentPackageWorker("session-device")
+        with patch("gui.dialogs.performance_launcher.CurrentPackageWorker", return_value=retry):
+            with patch.object(retry, "start"):
+                page.fetch_current_package()
+        retry.package_ready.emit("com.example.fresh")
+        page._on_package_worker_finished(retry)
+        assert page.package_edit.text() == "com.example.fresh"
+        assert page.package_feedback.text() == tr("已填入当前应用，可继续编辑包名。")
+        assert page.get_package_btn.isEnabled()
+    finally:
+        if page._package_worker is not None:
+            page._on_package_worker_finished(page._package_worker)
+        page.close()
+
+
 def test_performance_page_build_config_uses_title_device_and_device_save_dir(tmp_path):
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="127.0.0.1:5555", package_name="com.example.app")
@@ -259,7 +298,7 @@ def test_performance_page_normalizes_mixed_separator_save_path():
     try:
         cfg = dialog.build_config()
 
-        assert cfg.save_path == os.path.normpath(r"E:\Download\emulator-5554")
+        assert cfg.save_path == os.path.normpath(os.path.join("E:/Download", "emulator-5554"))
         assert "E:/Download\\" not in cfg.save_path
     finally:
         dialog.close()

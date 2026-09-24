@@ -96,7 +96,6 @@ class FileExplorerImagePreview(QWidget):
         self._source_pixmap = QPixmap()
         # Fluent 的图像由 image 属性持有，QLabel.clear() 不会释放这份像素。
         self.image_label.setImage(QImage())
-        self.image_label.setFixedSize(QSize())
 
     def _schedule_fit(self) -> None:
         if self._fit_pending:

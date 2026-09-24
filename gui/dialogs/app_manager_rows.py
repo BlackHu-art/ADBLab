@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPalette
 from PySide6.QtWidgets import QStyleOptionViewItem, QTreeWidgetItem, QWidget
 from qfluentwidgets import TreeItemDelegate, TreeWidget
@@ -34,8 +34,11 @@ class AppManagerIconView(TreeWidget):
 
     def _on_column_resized(self, _column: int, _old_size: int, _new_size: int) -> None:
         # header 的信号也涵盖现有 setColumnWidth 调用，只有本类自动分配可忽略。
-        if self._column_fill_configured and not self._filling_columns:
+        if self._auto_fill_enabled and not self._filling_columns:
             self._auto_fill_enabled = False
+            # 手工调整后不再重分配名称与包名，末列继续补齐窗口和详情面板的余量。
+            # 延后到 Qt 列宽变更结束，避免在表头内部布局过程中切换拉伸策略。
+            QTimer.singleShot(0, self, lambda: self.header().setStretchLastSection(True))
 
     def _fill_default_columns(self) -> None:
         """默认布局把剩余宽度分给名称和包名，狭窄视口以横滚保留可读宽度。"""

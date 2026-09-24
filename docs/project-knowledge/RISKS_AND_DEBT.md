@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-09-24
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -28,6 +28,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | 稳态能力健康检查只保留一次 1 秒尝试，本机服务引导也只在运行实例首次初始化做一次 | 已评估「稳态重试」与「冷却期重试引导」，但会改变 `test_adb_runtime` 固定的行为与 [ADB_FAST](../guides/ADB_FAST.md) 语义，需先做产品决策；当前失败后按 `CHECK_INTERVAL` 在下一轮用完整能力预算恢复 | 待确认 |
 | Low | 设备面板与设置页各有一个「重启 ADB」入口 | 两个入口复用同一 `restart_adb_requested` 信号和同一结果处理器，重启后都会作废能力并重测；是否删除隐藏面板按钮需产品决策 | Open |
 | Low | 首次执行本机 `adb.exe` 可能显著偏慢（Windows 加载与安全扫描），客户端识别依赖预热与护栏 | 设置页构建后空闲预热一次识别、单项 3 秒预算、串行探测、15 秒护栏且失败不入缓存；缺少其它机器与真实设备矩阵验证 | 待确认 |
+| Low | 表格的手动列宽与排序分组规则尚未统一 | 文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序；是否统一手动调整及目录置顶属于后续交互决策 | 待确认 |
+| Low | 通知紧凑高度测试存在 Linux 字体度量差异 | [通知测试](../../tests/test_notifications.py) 的 22pt 中文浮条在本机为 67px，超过固定 64px 断言；原 HEAD 同样复现，全文、按钮与窗口边界检查通过。尚需确定跨平台紧凑高度标准；未放宽断言或缩小字号 | 待确认 |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见
 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。

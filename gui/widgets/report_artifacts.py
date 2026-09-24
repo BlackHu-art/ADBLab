@@ -8,7 +8,8 @@ from qfluentwidgets import BodyLabel, ComboBox, PushButton
 
 from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
-from gui.styles.fluent import set_function_tooltip
+from gui.styles import BaseStyles
+from gui.styles.fluent import apply_font_role, configure_fluent_control, set_function_tooltip
 
 
 class ReportArtifactsView(QWidget):
@@ -40,7 +41,15 @@ class ReportArtifactsView(QWidget):
         actions.addWidget(self.folder_button)
         actions.addStretch(1)
         layout.addLayout(actions)
+        BaseStyles.ui_font_changed.connect(self._refresh_font)
+        self._refresh_font()
         self.hide()
+
+    def _refresh_font(self, *_args) -> None:
+        """原位更新报告入口字号，不重建附件选项或改变当前打开目标。"""
+        apply_font_role(self.heading)
+        for control in (self.files, self.open_button, self.folder_button):
+            configure_fluent_control(control)
 
     def present(self, result: ActionResult) -> None:
         previous = self.files.currentData()

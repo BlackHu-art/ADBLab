@@ -195,6 +195,7 @@ _UI_TEST_FILES = frozenset(
         "test_fluent_components.py",
         "test_fluent_dialog_contract.py",
         "test_notifications.py",
+        "test_action_result_presentation.py",
         "test_performance_sessions.py",
         "test_preset_spin_box.py",
         "test_main_window_layout.py",

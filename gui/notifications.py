@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from math import ceil
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtGui import QFontMetricsF
 from PySide6.QtWidgets import QFrame, QLayout, QLineEdit, QSizePolicy, QWidget
 from qfluentwidgets import (
     FluentStyleSheet,
@@ -146,7 +148,8 @@ class ToastNotification(InfoBar):
             return
         title = " ".join(self.title.splitlines())
         title_metrics = self.titleLabel.fontMetrics()
-        title_natural = title_metrics.horizontalAdvance(title)
+        # 整数度量可能向下取整，省略绘制仍用小数宽度，短标题也会因此少一个字。
+        title_natural = ceil(QFontMetricsF(self.titleLabel.font()).horizontalAdvance(title))
         body_natural = self.content_edit.fontMetrics().horizontalAdvance(self.content_edit.text())
         action_natural = 0
         if self.action_button is not None:

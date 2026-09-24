@@ -78,11 +78,12 @@ def populate(window, count=1, prefix="example.app"):
 
 def test_icon_view_fetches_real_image_and_keeps_selection_and_cache(page, qt_application):
     window, workers = page
+    assert window.stack.currentWidget() is window.icon_list
+    assert window.icon_list.isVisible()
     populate(window)
     item = window.icon_list.topLevelItem(0)
     package = item.data(0, Qt.ItemDataRole.UserRole)
     window.model.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers), timeout_ms=1000)
     worker = workers[0]
     assert worker.operation == "load_icon_batch"
@@ -103,7 +104,6 @@ def test_icon_view_fetches_real_image_and_keeps_selection_and_cache(page, qt_app
 def test_icon_requests_follow_viewport_and_filter_instead_of_loading_all_apps(page, qt_application):
     window, workers = page
     populate(window, 120)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     first = workers[0]
     visible = {
@@ -126,7 +126,6 @@ def test_icon_requests_follow_viewport_and_filter_instead_of_loading_all_apps(pa
 def test_refresh_discards_old_icon_results_and_requests_new_generation(page, qt_application):
     window, workers = page
     populate(window)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     old = workers[0]
     populate(window)
@@ -144,7 +143,6 @@ def test_refresh_discards_old_icon_results_and_requests_new_generation(page, qt_
 def test_failed_icon_keeps_placeholder_and_refresh_allows_retry(page, qt_application):
     window, workers = page
     populate(window)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     item = window.icon_list.topLevelItem(0)
     original = item.icon(0).cacheKey()
@@ -159,7 +157,6 @@ def test_failed_icon_keeps_placeholder_and_refresh_allows_retry(page, qt_applica
 def test_offline_pauses_requests_and_reconnect_retries_unfinished_icons(page, qt_application):
     window, workers = page
     populate(window)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     worker = workers[0]
     window.set_device_connected(False)
@@ -174,7 +171,6 @@ def test_offline_pauses_requests_and_reconnect_retries_unfinished_icons(page, qt
 def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_application):
     window, workers = page
     populate(window)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     item = window.icon_list.topLevelItem(0)
     original = item.icon(0).cacheKey()
@@ -191,7 +187,6 @@ def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_applicati
 def test_visible_icons_finish_before_background_detail_queries(page, qt_application):
     window, workers = page
     populate(window, 3)
-    window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
     window._load_visible_details()
     assert [worker.operation for worker in workers] == ["load_icon_batch"]
@@ -206,7 +201,6 @@ def test_visible_icons_finish_before_background_detail_queries(page, qt_applicat
 def test_icon_view_detail_queries_follow_scrolled_viewport(page, qt_application):
     window, _workers = page
     populate(window, 120)
-    window.view_toggle.click()
     wait_for_stable_geometry(qt_application, window.icon_list)
     window.icon_list.scrollToItem(window.icon_list.topLevelItem(119))
     wait_for_stable_geometry(qt_application, window.icon_list)

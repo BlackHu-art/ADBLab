@@ -194,6 +194,7 @@ class PerformancePage(QWidget):
         self.runner_finished.connect(self._on_runner_finished)
 
         self._build_ui(package_name)
+        self.package_edit.textEdited.connect(self._on_package_edited)
         from gui.dialogs.performance_result_tasks import PerformanceResultLoader
         self._result_loader = PerformanceResultLoader(self)
         # P3 图表视图：注入到双视图栈，运行结束后由 _mark_runner_finished 加载指标。
@@ -282,11 +283,16 @@ class PerformancePage(QWidget):
         )
 
     def _invalidate_package_query(self) -> None:
-        """撤销设备资格后再次选回，也不能接受原查询的晚到结果。"""
+        """设备资格或用户输入变化后，不再接受原查询的晚到结果。"""
         self._device_admission_revision += 1
         worker = self._package_worker
         if worker is not None:
             worker.requestInterruption()
+
+    def _on_package_edited(self) -> None:
+        """手动编辑优先于未完成查询，重新输入相同包名也不能复活旧结果。"""
+        self._invalidate_package_query()
+        self.package_feedback.hide()
 
     def set_device_selected(self, selected: bool) -> None:
         """由宿主投影固定设备是否被全局勾选，不改已有采集目标。"""
@@ -556,14 +562,14 @@ class PerformancePage(QWidget):
             self._package_worker = None
             self.get_package_btn.setText(tr("获取当前应用"))
             if (
-                not self._package_query_succeeded
-                and not self._configuration_locked
-                and self._can_operate_device()
+                worker._device_admission_revision != self._device_admission_revision
+                or self._configuration_locked
+                or not self._can_operate_device()
             ):
+                self.package_feedback.hide()
+            elif not self._package_query_succeeded:
                 self.package_feedback.setText(tr("未能读取当前应用，请手动输入包名或重试。"))
                 self.package_feedback.show()
-            elif self._configuration_locked or not self._can_operate_device():
-                self.package_feedback.hide()
         if self.get_package_btn:
             self._sync_device_actions()
         if worker in self._disposing_package_workers:
@@ -705,6 +711,16 @@ class PerformancePage(QWidget):
             self.serialnum_label,
         ):
             widget.setFont(mono_font)
+        # 同行的包名查询按钮可能高于输入框，统一计划字段高度以保持输入中心对齐。
+        plan_controls = (
+            self.package_edit, self.get_package_btn, self.frequency_input, self.timeout_input,
+        )
+        plan_height = max(
+            max(widget.fontMetrics().height() + 10, widget.minimumSizeHint().height())
+            for widget in plan_controls
+        )
+        for widget in plan_controls:
+            widget.setMinimumHeight(plan_height)
         # 字体遍历后只恢复区块标题的字重，字段标签保持普通正文层级。
         for label in self.findChildren(QWidget):
             if label.objectName() == "dialogTitle" or label.property("performanceSectionTitle"):

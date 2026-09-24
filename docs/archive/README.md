@@ -22,4 +22,5 @@
 | 执行测量 | [2026-09-07 ADB 快速路径](ledgers/ADB_FAST_2026_09_07.md) | 从使用指南移入的当时测量原文；耗时与验收范围只代表记录时的环境 |
 | 实施验收 | [2026-09-08 ADB 执行链](ledgers/2026-09-08-adb-execution-gaps.md) | 已完成的查询取消、能力验证、截图 I/O 与 MobilePerf 采样记录；不作为待执行计划或当前测试快照 |
 | 平台实施 | [2026-09-22 多系统兼容性](ledgers/2026-09-22-cross-platform-compatibility.md) | 保留已实施改动及当时 Linux 验证；Windows/macOS、实机设备等未验收项继续由当前风险账本跟踪 |
+| UI 检查 | [2026-09-24 体验检查与修复](ledgers/2026-09-24-ui-experience-audit.md) | 界面源码扫描、字号与窄窗修复、输入状态及菜单生命周期验证 |
 | 工具迁移 | [2026-09-22 Windows 工具包](ledgers/2026-09-22-windows-tool-bundle-migration.md) | 保留工具目录迁移、清理范围与验证证据；原生 Windows 产物及设备验证仍以风险账本为准 |

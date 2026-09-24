@@ -27,7 +27,7 @@
 | 应用更新检查 | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` | 正式版本与链接校验、受控网络响应、超时/限流/关闭、主窗口显式触发和多语言卡片；后两者纳入 `ui` marker，测试不依赖外网 |
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
 | Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
-| 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_diagnostics.py`、`test_console_log_level.py`、`test_console_colors.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、诊断容量及原子导出；控制台级别白名单、阈值过滤与颜色探测缓存 |
+| 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_action_result_presentation.py`、`test_diagnostics.py`、`test_console_log_level.py`、`test_console_colors.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、字号与窄窗、诊断容量及原子导出；控制台级别白名单、阈值过滤与颜色探测缓存 |
 | 测试归档与参数方案 | `test_run_library.py`、`test_run_library_ui.py`、`test_run_library_integration.py` | 跨重启记录、参数复用不自动执行、损坏/未来版本保护、后台写入失败和关闭排空；页内结果另见 `test_run_results*.py` |
 | UI、主题与响应式 | `test_main_window_layout.py`、`test_responsive_*.py`、`test_*typography.py` | 导航、主题、字体、DPI、断点重排、无障碍与瞬态交互 |
 | Monkey 与性能页交互 | `test_monkey_layout.py`、`test_monkey_preparation.py`、`test_performance_responsive.py` | 分组布局、查询显隐、输入保留、诊断常显与日志结果可达；这些 Qt 用例纳入 `ui` marker |

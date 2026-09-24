@@ -69,7 +69,7 @@ class RunResultsWidget(QWidget):
         self._library = library
         self._visible_records: tuple[RunRecord, ...] = ()
         self._selected: RunRecord | None = None
-        self._layout_mode: tuple[bool, bool, int, bool] | None = None
+        self._layout_mode: tuple[bool, bool, bool, int, bool] | None = None
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
@@ -77,6 +77,7 @@ class RunResultsWidget(QWidget):
         layout.setSpacing(8)
 
         self.filters = QWidget(self)
+        self.filters.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._filter_layout = QGridLayout(self.filters)
         self._filter_layout.setContentsMargins(0, 0, 0, 0)
         self._filter_layout.setSpacing(8)
@@ -388,6 +389,9 @@ class RunResultsWidget(QWidget):
             + self.state_combo.sizeHint().width()
             + 16
         )
+        stacked_filters = width < (
+            self.kind_combo.sizeHint().width() + self.state_combo.sizeHint().width() + 8
+        )
         buttons = (self.open_button, self.folder_button, self.reuse_button)
         button_width = max(button.sizeHint().width() for button in buttons)
         columns = min(3, max(1, (width + 8) // (button_width + 8)))
@@ -399,7 +403,7 @@ class RunResultsWidget(QWidget):
             for text in ("MM-dd HH:mm", "Monkey", tr("应用"), tr("结果不完整"))
         )
         compact_table = width < table_width
-        mode = (inline, actions_inline, columns, compact_table)
+        mode = (inline, stacked_filters, actions_inline, columns, compact_table)
         if mode == self._layout_mode:
             return
         self._layout_mode = mode
@@ -420,6 +424,11 @@ class RunResultsWidget(QWidget):
             filters.addWidget(self.kind_combo, 0, 1)
             filters.addWidget(self.state_combo, 0, 2)
             filters.setColumnStretch(0, 2)
+        elif stacked_filters:
+            filters.addWidget(self.search_edit, 0, 0)
+            filters.addWidget(self.kind_combo, 1, 0)
+            filters.addWidget(self.state_combo, 2, 0)
+            filters.setColumnStretch(0, 1)
         else:
             filters.addWidget(self.search_edit, 0, 0, 1, 2)
             filters.addWidget(self.kind_combo, 1, 0)

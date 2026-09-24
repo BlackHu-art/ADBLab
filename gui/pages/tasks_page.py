@@ -20,11 +20,14 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QBoxLayout,
     QFrame,
     QHBoxLayout,
     QLayout,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -44,7 +47,7 @@ from adblab.application.operations import OperationManager, OperationSnapshot, O
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_label_role, configure_button
+from gui.styles.fluent import apply_font_role, apply_label_role, configure_button
 from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.content_section import ContentSection
 from gui.widgets.run_results import RunResultsWidget
@@ -171,6 +174,35 @@ class _StatusBadge(InfoBadge):
         self.setLevel(self._TONE_LEVELS.get(self._tone, InfoLevel.INFOAMTION))
 
 
+class _RunningActionsButton(PushButton):
+    """窄页省略在途入口文字，完整动作和计数仍可悬停或辅助读取。"""
+
+    def __init__(self, parent=None) -> None:
+        self._full_text = ""
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def setText(self, text: str) -> None:
+        self._full_text = text
+        self.setToolTip(text)
+        self.setAccessibleName(text)
+        self.refresh_text()
+
+    def refresh_text(self) -> None:
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        contents = self.style().subElementRect(
+            QStyle.SubElement.SE_PushButtonContents, option, self,
+        )
+        super().setText(self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, max(0, contents.width()),
+        ))
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.refresh_text()
+
+
 class _ActiveTaskRow(QWidget):
     """窄宽度下把任务信息和取消控件分行，保留原控件及任务身份。"""
 
@@ -179,14 +211,17 @@ class _ActiveTaskRow(QWidget):
         progress: ProgressBar, cancel: PrimaryPushButton,
     ) -> None:
         super().__init__()
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._summary = summary
         self._badge = badge
         self._progress = progress
+        self._cancel = cancel
         self._snapshot: OperationSnapshot | None = None
         summary.setWordWrap(True)
         summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._controls = QWidget(self)
-        controls_layout = QHBoxLayout(self._controls)
+        controls_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self._controls)
+        self._controls_layout = controls_layout
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
         controls_layout.addStretch(1)
@@ -212,6 +247,17 @@ class _ActiveTaskRow(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self.refresh_layout()
+
+    def refresh_layout(self) -> None:
+        """字号改变后立即重新分行，保留原任务控件和正在选择的文本。"""
+        controls_width = sum(
+            control.sizeHint().width() for control in (self._badge, self._progress, self._cancel)
+        ) + self._controls_layout.spacing() * 2
+        self._controls_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if self.width() < controls_width
+            else QBoxLayout.Direction.LeftToRight
+        )
         required = (
             self._summary.fontMetrics().horizontalAdvance(self._summary.text())
             + self._controls.sizeHint().width() + self._row_layout.spacing()
@@ -278,7 +324,7 @@ class TaskCenterPage(QWidget):
             FontRole.UI_SMALL, color_key="TEXT_SECONDARY",
         )
         self.action_empty_label.setWordWrap(True)
-        self.running_actions_button = PushButton(content)
+        self.running_actions_button = _RunningActionsButton(content)
         self.running_actions_button.hide()
         self.running_actions_button.clicked.connect(self._open_running_action)
         content_layout.insertWidget(0, self.running_actions_button)
@@ -313,6 +359,8 @@ class TaskCenterPage(QWidget):
         self._poll_timer.timeout.connect(self.refresh)
 
         self._sync_theme_state()
+        BaseStyles.ui_font_changed.connect(self._refresh_typography)
+        self._refresh_typography()
     # ── 数据刷新契约 ────────────────────────────────────────────────────
 
     def present_action_result(self, result: ActionResult) -> None:
@@ -503,6 +551,24 @@ class TaskCenterPage(QWidget):
         self._poll_timer.stop()
 
     # ── 主题与辅助 ──────────────────────────────────────────────────────
+
+    def _refresh_typography(self, _config=None) -> None:
+        """只刷新页面自有文字，嵌入的结果组件继续拥有各自的字体与选择状态。"""
+        for card in (self._active_card, self._history_card):
+            for widget in card.findChildren(QWidget):
+                role = widget.property("fontRole")
+                if role:
+                    apply_font_role(
+                        widget, role, ensure_height=isinstance(widget, QAbstractButton),
+                    )
+        for label in (self.action_empty_label, self._idle_label):
+            if label is not None:
+                apply_font_role(label, FontRole.UI_SMALL)
+        apply_font_role(self.running_actions_button, FontRole.UI, ensure_height=True)
+        self.running_actions_button.refresh_text()
+        for row in self._active_rows.values():
+            row.refresh_layout()
+        self.updateGeometry()
 
     def _sync_theme_state(self) -> None:
         """按当前主题重建页面内全部主题化控件样式。"""

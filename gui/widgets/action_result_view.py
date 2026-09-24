@@ -9,7 +9,14 @@ from datetime import datetime
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, PlainTextEdit, PushButton, SearchLineEdit
+from qfluentwidgets import (
+    BodyLabel,
+    ComboBox,
+    FlowLayout,
+    PlainTextEdit,
+    PushButton,
+    SearchLineEdit,
+)
 
 from adblab.application.action_results import (
     ActionResult,
@@ -19,7 +26,13 @@ from adblab.application.action_results import (
 )
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_label_role, apply_reading_surface, set_function_tooltip
+from gui.styles.fluent import (
+    apply_font_role,
+    apply_label_role,
+    apply_reading_surface,
+    configure_fluent_control,
+    set_function_tooltip,
+)
 
 STATE_LABELS = {
     "running": "执行中",
@@ -95,14 +108,16 @@ class ActionResultView(QWidget):
         self.preview_notice = apply_label_role(BodyLabel(), FontRole.UI_SMALL)
         self.preview_notice.setWordWrap(True)
         detail_layout.addWidget(self.preview_notice)
-        commands = QHBoxLayout()
+        commands = FlowLayout()
+        commands.setContentsMargins(0, 0, 0, 0)
+        commands.setHorizontalSpacing(8)
+        commands.setVerticalSpacing(8)
         self.copy_button = PushButton(tr("复制完整结果"))
         self.export_button = PushButton(tr("导出结果"))
         set_function_tooltip(self.copy_button, "将当前设备的完整结果复制到剪贴板")
         set_function_tooltip(self.export_button, "将当前设备的完整结果保存到本地文件")
         commands.addWidget(self.copy_button)
         commands.addWidget(self.export_button)
-        commands.addStretch(1)
         detail_layout.addLayout(commands)
         layout.addWidget(self.detail_host)
         self.artifacts = ComboBox()
@@ -111,15 +126,16 @@ class ActionResultView(QWidget):
         self.artifacts.setAccessibleName(tr("本次操作产物"))
         layout.addWidget(self.artifacts)
         self.artifact_actions = QWidget()
-        artifact_layout = QHBoxLayout(self.artifact_actions)
+        artifact_layout = FlowLayout(self.artifact_actions)
         artifact_layout.setContentsMargins(0, 0, 0, 0)
+        artifact_layout.setHorizontalSpacing(8)
+        artifact_layout.setVerticalSpacing(8)
         self.open_button = PushButton(tr("打开结果"))
         self.folder_button = PushButton(tr("打开文件夹"))
         set_function_tooltip(self.open_button, "打开所选的操作结果文件")
         set_function_tooltip(self.folder_button, "打开所选操作结果所在的文件夹")
         artifact_layout.addWidget(self.open_button)
         artifact_layout.addWidget(self.folder_button)
-        artifact_layout.addStretch(1)
         layout.addWidget(self.artifact_actions)
         self.history.currentIndexChanged.connect(self._choose_history)
         self.targets.currentIndexChanged.connect(self._render_detail)
@@ -143,6 +159,16 @@ class ActionResultView(QWidget):
         self.hide()
 
     def _refresh_font(self, *_args) -> None:
+        """原位同步界面和日志字号，保留历史选择、查找位置与全文。"""
+        apply_font_role(self.summary, FontRole.UI)
+        for label in (self.message_label, self.preview_notice):
+            apply_font_role(label, FontRole.UI_SMALL)
+        for control in (
+            self.history, self.targets, self.detail_toggle, self.search,
+            self.copy_button, self.export_button, self.artifacts,
+            self.open_button, self.folder_button,
+        ):
+            configure_fluent_control(control)
         self.output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
     def _toggle_detail(self, expanded: bool) -> None:

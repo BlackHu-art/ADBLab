@@ -18,6 +18,7 @@ from gui.i18n import tr
 from gui.styles.fonts import FontMixin
 from gui.styles.theme import ThemeMixin
 from gui.styles.typography import FontRole
+from gui.widgets.transient_menu import TransientMenuFocusGuard
 
 _WidgetT = TypeVar("_WidgetT", bound=QWidget)
 _ButtonT = TypeVar("_ButtonT", bound=QAbstractButton)
@@ -235,6 +236,8 @@ def create_transient_menu(parent: QWidget) -> RoundMenu:
     """
     menu = RoundMenu(parent=parent)
     menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    TransientMenuFocusGuard(menu)
     apply_font_role(menu)
     return menu
 

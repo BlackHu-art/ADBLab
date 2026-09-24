@@ -9,6 +9,7 @@ from gui.dialogs.live_logcat import LiveLogcatPage
 from gui.dialogs.live_logcat_worker import CurrentPackageWorker as LogcatPackageWorker
 from gui.dialogs.performance_launcher import CurrentPackageWorker as PerfPackageWorker
 from gui.features.performance import PerformancePage
+from gui.i18n import tr
 from gui.panels.remote_panel import RemotePanel
 
 
@@ -252,6 +253,50 @@ def test_workspace_selection_is_closed_until_explicitly_projected(page_type):
         page.set_device_connected(False)
         assert not page.start_btn.isEnabled()
     finally:
+        page.close()
+
+
+@pytest.mark.parametrize("transition", ["selection", "connection"])
+def test_logcat_recovery_replaces_stale_admission_hint(transition, qt_application):
+    """恢复准入时开始动作和状态说明应同步恢复，避免仍指示勾选或连接。"""
+    page = LiveLogcatPage(device_ip="session-device")
+    change = page.set_device_selected if transition == "selection" else page.set_device_connected
+    try:
+        change(False)
+        assert not page.start_btn.isEnabled()
+        change(True)
+        assert page.start_btn.isEnabled()
+        assert page.status_bar.text() == tr("点击开始采集，读取当前设备日志")
+        assert page.status_bar.compactText() == tr("待采集")
+        assert page.status_bar.accessibleDescription() == page.status_bar.text()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("transition", ["selection", "connection"])
+def test_logcat_device_sync_keeps_current_runtime_message(active, transition, qt_application):
+    """设备通知不能用默认文案覆盖最新运行结果或错误事实。"""
+    page = LiveLogcatPage(device_ip="session-device")
+    change = page.set_device_selected if transition == "selection" else page.set_device_connected
+    worker = Mock()
+    worker.is_active.return_value = active
+    page.worker = worker if active else None
+    try:
+        message = tr("正在等待目标应用启动；过滤期间不会显示其他应用日志")
+        page.status_bar.setText(message, tr("等待应用"))
+        if active:
+            change(False)
+            assert page.status_bar.text() == message
+            assert page.stop_btn.isEnabled()
+        else:
+            change(False)
+            message = tr("日志采集启动失败，请检查设备连接后重试")
+            page.status_bar.setText(message, tr("启动失败"))
+        change(True)
+        assert page.status_bar.text() == message
+    finally:
+        page.worker = None
         page.close()
 
 

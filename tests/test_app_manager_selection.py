@@ -302,6 +302,8 @@ def test_app_manager_commands_stay_on_one_row_at_776_with_large_font(monkeypatch
         dialog.resize(776, 600)
         dialog.show()
         app.processEvents()
+        QTest.mouseClick(dialog.view_toggle, Qt.MouseButton.LeftButton)
+        assert dialog.tree.isVisible()
         _patch_font_size(monkeypatch, {"ui": 22})
         dialog._apply_theme()
         app.processEvents()
@@ -413,6 +415,17 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
             ]
         )
         dialog._detail_timer.stop()
+        dialog.resize(1000, 800)
+        dialog.show()
+        _app.processEvents()
+        assert dialog.stack.currentWidget() is dialog.icon_list
+        assert dialog.icon_list.isVisible()
+        assert dialog.view_toggle.toolTip() == "切换为列表视图"
+        assert dialog.view_toggle.accessibleName() == "切换为列表视图"
+        QTest.mouseClick(dialog.view_toggle, Qt.MouseButton.LeftButton)
+        assert dialog.stack.currentWidget() is dialog.tree
+        assert dialog.tree.isVisible()
+        assert dialog.view_toggle.toolTip() == "切换为图标视图"
 
         first_checkbox = dialog.model.item(0, 0)
         first_icon = dialog._detail_icon_by_pkg["com.example.one"]
@@ -427,8 +440,11 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
             if action.property("requiresSelection")
         )
 
-        dialog._toggle_view()
+        QTest.mouseClick(dialog.view_toggle, Qt.MouseButton.LeftButton)
         assert dialog._view_mode is True
+        assert dialog.stack.currentWidget() is dialog.icon_list
+        assert dialog.icon_list.isVisible()
+        assert dialog.view_toggle.toolTip() == "切换为列表视图"
         assert first_icon.isSelected() is True
 
         first_icon.setSelected(False)

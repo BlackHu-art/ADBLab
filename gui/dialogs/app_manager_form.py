@@ -63,6 +63,22 @@ def _apply_adaptive_text_heights(widget: QWidget) -> None:
         )
 
 
+class AppManagerTableHeader(QHeaderView):
+    """复选框列只用于选择；拦截其表头点击，避免覆盖当前数据列排序。"""
+
+    def mousePressEvent(self, event) -> None:
+        if self.logicalIndexAt(event.position().toPoint()) == 0:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if self.logicalIndexAt(event.position().toPoint()) == 0:
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
 class AppManagerItemDelegate(TreeItemDelegate):
     """保留 Fluent 复选绘制，并使用页面字号展示应用名与包名。"""
 
@@ -203,14 +219,14 @@ class AppManagerForm:
         summary_layout.addWidget(self._frame.selection_label)
         self._frame.view_toggle = TransparentToolButton()
         self._frame.view_toggle.setFixedSize(28, 28)
-        self._frame.view_toggle.setToolTip(tr("切换图标或列表视图"))
-        self._frame.view_toggle.setAccessibleName(tr("切换图标或列表视图"))
+        self._frame.view_toggle.setToolTip(tr("切换为列表视图"))
+        self._frame.view_toggle.setAccessibleName(tr("切换为列表视图"))
         self._frame.view_toggle.clicked.connect(self._frame._toggle_view)
         self._frame.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
         self._frame.view_toggle.setIconSize(QSize(16, 16))
         self._frame.refresh_btn = PushButton()
         self._frame.refresh_btn.setText(tr("刷新"))
-        self._frame.refresh_btn.setToolTip(tr("重新加载已安装应用"))
+        self._frame.refresh_btn.setToolTip(tr("刷新应用列表并重试未读取的图标"))
         self._frame.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.refresh_btn.setIconSize(QSize(14, 14))
         self._frame.refresh_btn.clicked.connect(self._frame._load_apps)
@@ -267,12 +283,16 @@ class AppManagerForm:
         self._frame.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._frame.proxy.setFilterKeyColumn(-1)
         self._frame.tree = TreeView()
+        self._frame.tree.setHeader(
+            AppManagerTableHeader(Qt.Orientation.Horizontal, self._frame.tree)
+        )
         self._frame.tree.setObjectName("appManagerTable")
         self._frame.tree.setItemDelegate(AppManagerItemDelegate(self._frame.tree))
         self._frame.tree.setBorderVisible(False)
         self._frame.tree.setFrameShape(QFrame.Shape.NoFrame)
         self._frame.tree.setModel(self._frame.proxy)
         self._frame.tree.setSortingEnabled(True)
+        self._frame.tree.sortByColumn(1, Qt.SortOrder.AscendingOrder)
         self._frame.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self._frame.tree.setAlternatingRowColors(True)
         self._frame.tree.setRootIsDecorated(False)
@@ -280,6 +300,10 @@ class AppManagerForm:
         self._frame.tree.customContextMenuRequested.connect(self._frame._context_menu)
         self._frame.tree.clicked.connect(self._frame._on_row_clicked)
         h = self._frame.tree.header()
+        h.setHighlightSections(False)
+        h.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        h.setSectionsMovable(True)
+        h.setStretchLastSection(True)
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         for i in range(1, 6):
             h.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
@@ -334,7 +358,8 @@ class AppManagerForm:
         self._frame.stack.addWidget(self._frame.icon_list)
         self._material = AppManagerMaterial(self._frame, (self._frame.tree, icons))
 
-        self._frame._view_mode = False  # False 表示表格视图，True 表示四列图文视图
+        self._frame._view_mode = True  # 默认四列图文视图，按钮可切换到表格视图。
+        self._frame.stack.setCurrentWidget(icons)
         layout.addWidget(self._frame.stack, 2)
 
         bar = CommandBar(self._frame._master_panel)

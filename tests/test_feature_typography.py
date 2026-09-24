@@ -4,8 +4,9 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QLabel, QPushButton, QScrollArea
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtWidgets import QLabel, QPushButton, QScrollArea, QStyleOptionViewItem
 from qfluentwidgets import HeaderCardWidget
 
 from core.settings_manager import AppSettings
@@ -60,6 +61,57 @@ def _feature_page_set(qt_application):
                 page.close()
             qt_application.processEvents()
             qt_application.setFont(previous_application_font)
+
+
+def test_permission_lists_refresh_font_without_losing_choices(qt_application, monkeypatch):
+    """权限列表实际绘制跟随字号往返变化，选中和勾选状态不被重建丢失。"""
+    font_size = 12
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, role, size=None: QFont("Arial", size or font_size),
+    ))
+    qt_application.setFont(QFont("Arial", font_size))
+    page = AppDetailsPage(device_ip="demo-a", package_name="com.example.app")
+    page._op(["android.permission.CAMERA"], ["android.permission.CAMERA"], [
+        ("android.permission.CAMERA", False),
+    ])
+    page.tabs.setCurrentIndex(1)
+    page.resize(900, 700)
+    page.show()
+    lists = (page.declared_list, page.requested_list, page.runtime_list)
+    items = tuple(widget.item(0) for widget in lists)
+    for item in items[1:]:
+        item.setCheckState(Qt.CheckState.Checked)
+        item.setSelected(True)
+    try:
+        initial_heights = []
+        for font_size in (12, 22, 12):
+            qt_application.setFont(QFont("Arial", font_size))
+            BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+            qt_application.processEvents()
+            for index, (widget, item) in enumerate(zip(lists, items, strict=True)):
+                option = QStyleOptionViewItem()
+                widget.itemDelegate().initStyleOption(option, widget.model().index(0, 0))
+                assert option.font.pointSize() == font_size
+                assert option.font.family() == "Arial"
+                assert widget.font().pointSize() == font_size
+                assert option.fontMetrics.height() == QFontMetrics(option.font).height()
+                height = widget.visualItemRect(item).height()
+                assert height >= QFontMetrics(option.font).height() + 12
+                assert widget.item(0) is item
+                assert item.data(Qt.ItemDataRole.UserRole) == "android.permission.CAMERA"
+                if index:
+                    assert item.isSelected()
+                    assert item.checkState() == Qt.CheckState.Checked
+                else:
+                    assert not item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                if len(initial_heights) < len(lists):
+                    initial_heights.append(height)
+                elif font_size == 22:
+                    assert height > initial_heights[index]
+                else:
+                    assert height == initial_heights[index]
+    finally:
+        page.close()
 
 
 def test_feature_pages_use_semantic_font_roles(qt_application):

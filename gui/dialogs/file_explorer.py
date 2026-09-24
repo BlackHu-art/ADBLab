@@ -3,7 +3,7 @@
 import weakref
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -62,6 +62,31 @@ from models.file_explorer_worker import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
 
 __all__ = ["FileExplorerPage"]
+
+
+class _FileExplorerStatusLabel(CaptionLabel):
+    """状态保持单行，完整目录和操作信息留给悬停与辅助技术读取。"""
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(8, super().minimumSizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(BaseStyles.get_color("TEXT_SECONDARY"))
+        painter.drawText(
+            self.contentsRect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.fontMetrics().elidedText(
+                self.text().replace("\n", " "), Qt.TextElideMode.ElideRight,
+                self.contentsRect().width(),
+            ),
+        )
+        painter.end()
 
 
 class FileExplorerPage(QWidget):
@@ -320,12 +345,10 @@ class FileExplorerPage(QWidget):
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setIconSize(QSize(16, 16))
         self.table.setColumnCount(4)
+        self.table.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.table.setHorizontalHeaderLabels([tr("Type"), tr("Name"), tr("Size"), tr("Modified")])
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(
-            self.NAME_COL, QHeaderView.ResizeMode.Stretch
-        )
-        for i in (self.TYPE_COL, self.SIZE_COL, self.MODIFIED_COL):
+        for i in (self.TYPE_COL, self.NAME_COL, self.SIZE_COL, self.MODIFIED_COL):
             self.table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.Interactive
             )
@@ -341,12 +364,15 @@ class FileExplorerPage(QWidget):
             type_header.fontMetrics().horizontalAdvance(tr("Type")) + 24,
         )
         self.table.setColumnWidth(self.TYPE_COL, type_width)
+        self.table.setColumnWidth(self.NAME_COL, 360)
         self.table.setColumnWidth(self.SIZE_COL, 92)
         self.table.setColumnWidth(self.MODIFIED_COL, 140)
+        # 末列承接面板剩余宽度，名称列保持可拖动且不被窗口缩放重置。
+        self.table.horizontalHeader().setStretchLastSection(True)
         browser_layout.addWidget(self.table, 1)
 
         self.status_bar = apply_label_role(
-            CaptionLabel(tr("Ready")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            _FileExplorerStatusLabel(tr("Ready")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self.status_bar.setAccessibleName(tr("File explorer status"))
         browser_layout.addWidget(self.status_bar)
@@ -636,7 +662,8 @@ class FileExplorerPage(QWidget):
         self.back_btn.setEnabled(interactive and bool(self.history))
         self.fwd_btn.setEnabled(interactive and bool(self.forward_stack))
         self.refresh_action.setEnabled(available)
-        self.table.setEnabled(interactive)
+        # 失选和离线仍可滚动查看缓存，设备操作由各入口继续复核准入。
+        self.table.setEnabled(not (self._directory_loading or self._closing or self._disposing))
         self.preview_save_device_btn.setEnabled(
             available and bool(self._preview_full_path) and not self.preview_text_edit.isReadOnly()
             and not self._ops_controller.saving
@@ -712,8 +739,12 @@ class FileExplorerPage(QWidget):
             self.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
             self.status_badge.setFont(bs.font_for_role(FontRole.UI))
             self._refresh_status_badge()
-        # 表格样式由 qfluentwidgets TableWidget 自维护（随主题切换），无需在此重建。
-        # 状态信息直接使用 qfluentwidgets CaptionLabel，无需额外 QSS。
+        # Fluent 委托和默认行高不跟随应用字号，显式同步且不重建列表或重置列宽。
+        self.table.setFont(ui_font)
+        self.table.horizontalHeader().setFont(ui_font)
+        self.table.verticalHeader().setDefaultSectionSize(
+            max(38, self.table.fontMetrics().height() + 16)
+        )
         # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
         self.path_field.setFont(mono_font)
         self.search_field.setFont(ui_font)

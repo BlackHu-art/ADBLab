@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent
+from PySide6.QtGui import QAction, QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -24,14 +24,15 @@ from qfluentwidgets import (
     FluentIcon,
     Flyout,
     FlyoutViewBase,
+    HorizontalSeparator,
     InfoBadge,
     ListWidget,
     PrimaryPushButton,
     PushButton,
     StrongBodyLabel,
     ToolButton,
+    TransparentDropDownPushButton,
     TransparentPushButton,
-    TransparentToolButton,
 )
 
 from gui.i18n import tr
@@ -115,6 +116,7 @@ class DevicePicker(FlyoutViewBase):
 
     selection_requested = Signal(list)
     session_requested = Signal(str)
+    close_session_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -169,6 +171,16 @@ class DevicePicker(FlyoutViewBase):
         actions.addWidget(self.clear_button)
         actions.addStretch(1)
         layout.addLayout(actions)
+        self.close_section = QWidget(self)
+        close_layout = QVBoxLayout(self.close_section)
+        close_layout.setContentsMargins(0, 0, 0, 0)
+        close_layout.setSpacing(8)
+        close_layout.addWidget(HorizontalSeparator(self.close_section))
+        self.close_button = TransparentPushButton(FluentIcon.CLOSE, "", self.close_section)
+        self.close_button.clicked.connect(self.close_session_requested)
+        close_layout.addWidget(self.close_button)
+        self.close_section.hide()
+        layout.addWidget(self.close_section)
         BaseStyles.ui_font_changed.connect(self._apply_fonts)
         self._apply_fonts()
 
@@ -292,6 +304,16 @@ class DevicePicker(FlyoutViewBase):
         self.session_target.setChecked(target.isChecked())
         self.session_target.setEnabled(target.isEnabled())
         self.set_selection_mode(single=self._single_selection, locked=self._selection_locked)
+
+    def set_close_context(self, action: QAction) -> None:
+        """只复制宿主关闭动作的展示状态，不持有宿主控件或改变设备选择。"""
+        self.close_section.setVisible(action.isVisible())
+        self.close_button.setText(action.text())
+        self.close_button.setAccessibleName(action.text())
+        self.close_button.setToolTip(action.toolTip())
+        self.close_button.setAccessibleDescription(action.statusTip())
+        self.close_button.setEnabled(action.isEnabled())
+        self._sync_list_height()
 
     def _choose_session(self, _index: int) -> None:
         target = str(self.session_combo.currentData() or "")
@@ -417,7 +439,9 @@ class DeviceContextBar(QWidget):
         self._session_required = False
         self._session_signature: tuple | None = None
         self._target_text = ""
-        self._close_text = tr("关闭会话")
+        self._close_action = QAction(self)
+        self._close_action.setVisible(False)
+        self._close_action.setEnabled(False)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(32, 12, 32, 6)
         self._surface = QWidget(self)
@@ -434,7 +458,7 @@ class DeviceContextBar(QWidget):
         target.setContentsMargins(0, 0, 0, 0)
         target.setSpacing(8)
         self._target_layout = target
-        self.targets_button = TransparentPushButton(DEVICE_ICON, tr("操作设备"), self)
+        self.targets_button = TransparentDropDownPushButton(DEVICE_ICON, tr("操作设备"), self)
         self.targets_button.setAccessibleName(tr("操作设备（支持多选）"))
         self.targets_button.clicked.connect(self.open_picker)
         self.status_label = BodyLabel(tr("未发现设备"), self)
@@ -443,11 +467,6 @@ class DeviceContextBar(QWidget):
         target.addWidget(self.targets_button)
         self.status_label.hide()
 
-        self.session_row = QWidget(self)
-        session = QHBoxLayout(self.session_row)
-        self._session_layout = session
-        session.setContentsMargins(0, 0, 0, 0)
-        session.setSpacing(8)
         self.session_label = BodyLabel(tr("当前查看"), self)
         self.session_combo = _SessionComboBox(self)
         self.session_combo.setMinimumWidth(0)
@@ -463,17 +482,10 @@ class DeviceContextBar(QWidget):
         self.session_target.setAccessibleName(tr("将当前查看的设备选为操作目标"))
         self.session_target.setToolTip(tr("勾选后允许对此设备执行操作；取消勾选仍可查看已加载内容和停止任务"))
         self.session_target.clicked.connect(self._toggle_session_target)
-        self.close_button = TransparentToolButton(FluentIcon.CLOSE, self)
-        self.close_button.clicked.connect(self.close_session_requested)
-        self.close_button.setAccessibleName(tr("关闭当前功能会话"))
-        self.close_button.setToolTip(tr("停止并关闭当前功能的设备会话"))
         self.session_label.hide()
         self.session_combo.hide()
         self.session_target.hide()
-        session.addWidget(self.close_button)
         self._layout.addWidget(self.target_row)
-        self._layout.addWidget(self.session_row)
-        self.session_row.hide()
         BaseStyles.ui_font_changed.connect(self._apply_fonts)
         BaseStyles.theme_changed.connect(self._apply_theme)
         self._apply_theme()
@@ -508,12 +520,10 @@ class DeviceContextBar(QWidget):
         self.setPalette(palette)
         self.setAutoFillBackground(False)
         self._surface.setPalette(palette)
-        for widget in (self.target_row, self.session_row):
-            widget.setPalette(palette)
-            widget.setAutoFillBackground(False)
+        self.target_row.setPalette(palette)
+        self.target_row.setAutoFillBackground(False)
         # 状态标签由 Fluent 的明暗主题文字色管理，通用色板会覆盖其语义色。
-        for widget in (self.targets_button, self.session_label,
-                       self.session_combo, self.close_button):
+        for widget in (self.targets_button, self.session_label, self.session_combo):
             widget.setPalette(palette)
         self.update()
 
@@ -621,6 +631,7 @@ class DeviceContextBar(QWidget):
             self._picker.set_context(
                 self._picker_selection(), self._connected, labels=self.device_labels(),
             )
+            self._picker.set_close_context(self._close_action)
 
     def _picker_selection(self) -> tuple[str, ...]:
         """单设备页只投影当前会话的操作资格，切页本身不裁剪共享目标。"""
@@ -690,7 +701,8 @@ class DeviceContextBar(QWidget):
             self.session_hint.clear()
             self.session_hint.setToolTip("")
             self.session_hint.setAccessibleDescription("")
-        self.close_button.setVisible(close is not None)
+        had_close_action = self._close_action.isVisible()
+        self._close_action.setVisible(close is not None)
         state_description = self._display_device_text("\n".join(dict.fromkeys(filter(None, (
             self.session_hint.text(), self.session_hint.toolTip(),
             self.session_hint.accessibleDescription(),
@@ -704,20 +716,21 @@ class DeviceContextBar(QWidget):
         ))))
         self.setAccessibleDescription(state_description)
         if close is not None:
-            self._close_text = close.text()
-            self.close_button.setAccessibleName(close.text())
-            self.close_button.setEnabled(close.isEnabled())
-            self.close_button.setToolTip("\n".join(filter(None, (
+            self._close_action.setText(close.text() if close.isEnabled() else tr("正在关闭"))
+            self._close_action.setEnabled(close.isEnabled())
+            self._close_action.setToolTip("\n".join(filter(None, (
                 close.text(), close.toolTip(), state_description,
             ))))
-            self.close_button.setAccessibleDescription(state_description)
+            self._close_action.setStatusTip(state_description)
         else:
-            self.close_button.setToolTip("")
-            self.close_button.setAccessibleDescription("")
-        self.session_row.setVisible(close is not None)
+            self._close_action.setEnabled(False)
+            self._close_action.setToolTip("")
+            self._close_action.setStatusTip("")
         self._sync_session_target()
         self._sync_picker_session()
         self._sync_target_presentation()
+        if had_close_action and close is None:
+            self.dismiss_popups()
 
     def _sync_session_target(self) -> None:
         """操作授权只来自共享复选集，投影会话和候选不反向提交选择。"""
@@ -754,10 +767,24 @@ class DeviceContextBar(QWidget):
         picker.set_context(self._picker_selection(), self._connected, labels=self.device_labels())
         picker.selection_requested.connect(self.selection_requested)
         picker.session_requested.connect(self.session_requested)
+        picker.close_session_requested.connect(self._request_close_session)
         self._picker = picker
         self._sync_picker_session()
         self._picker_flyout = self._show_popup(picker, self.targets_button, align_right=True)
         self._picker_flyout.closed.connect(self._forget_picker)
+
+    def _request_close_session(self) -> None:
+        """只接受当前弹层的有效关闭动作，先禁用再交回宿主执行原有释放流程。"""
+        if (
+            self.sender() is not self._picker
+            or not self._close_action.isVisible()
+            or not self._close_action.isEnabled()
+        ):
+            return
+        self._close_action.setEnabled(False)
+        self._close_action.setText(tr("正在关闭"))
+        self._sync_picker_session()
+        self.close_session_requested.emit()
 
     def _forget_picker(self, *_args) -> None:
         self._picker = None
@@ -842,15 +869,18 @@ class DeviceContextBar(QWidget):
     def _sync_compact_mode(self) -> None:
         """设备入口使用自然宽度，窄屏优先压缩标题和设备名称，始终保持单行。"""
         width = max(0, self.width() - 64)
-        natural = self.targets_button.fontMetrics().horizontalAdvance(self._target_text) + 48
+        # 设备图标和下拉箭头分别占用两端，省略区不能覆盖任一入口提示。
+        text_padding = 68
+        natural = (
+            self.targets_button.fontMetrics().horizontalAdvance(self._target_text) + text_padding
+        )
         height = max(32, self.session_combo.fontMetrics().height() + 14)
-        self.close_button.setFixedSize(max(height, self.close_button.sizeHint().width()), height)
-        fixed = self.close_button.width() + 12 if not self.close_button.isHidden() else 0
         title_width = self.page_title.sizeHint().width() + 24
-        self.page_title.setVisible(width >= fixed + natural + title_width)
-        available = max(56, width - fixed - (title_width if self.page_title.isVisible() else 0))
+        self.page_title.setVisible(width >= natural + title_width)
+        available = max(72, width - (title_width if self.page_title.isVisible() else 0))
         self.targets_button.setFixedWidth(min(natural, available))
         self.targets_button.setFixedHeight(height)
         self.targets_button.setText(self.targets_button.fontMetrics().elidedText(
-            self._target_text, Qt.TextElideMode.ElideRight, self.targets_button.width() - 48,
+            self._target_text, Qt.TextElideMode.ElideRight,
+            self.targets_button.width() - text_padding,
         ))

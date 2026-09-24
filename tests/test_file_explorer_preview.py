@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QSize, Qt, QThread, qInstallMessageHandler
 from PySide6.QtGui import QImage, QPixmap
 
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
@@ -78,19 +78,33 @@ def test_real_decoder_completion_advances_nested_preview_stages(qt_application, 
         page.close()
 
 
-def test_closing_image_preview_releases_fluent_image(qt_application):
+@pytest.mark.parametrize("preview_state", ["empty", "pending", "displayed"])
+def test_closing_image_preview_releases_fluent_image(qt_application, preview_state):
     preview = FileExplorerImagePreview()
-    image = QImage(32, 24, QImage.Format.Format_RGB32)
-    image.fill(0xFF336699)
-    preview.set_image_source(QPixmap.fromImage(image), "photo.png")
-    preview._refit_image()
-    assert not preview.image_label.image.isNull()
+    if preview_state != "empty":
+        image = QImage(32, 24, QImage.Format.Format_RGB32)
+        image.fill(0xFF336699)
+        preview.set_image_source(QPixmap.fromImage(image), "photo.png")
+        assert preview._fit_timer.isActive()
+        if preview_state == "displayed":
+            preview._refit_image()
+            assert not preview.image_label.image.isNull()
 
-    preview.release_image_source()
-
-    assert preview.image_label.image.isNull()
-    assert preview._source_pixmap.isNull()
-    assert not preview._fit_timer.isActive()
+    messages = []
+    previous_handler = qInstallMessageHandler(
+        lambda _kind, _context, message: messages.append(message),
+    )
+    try:
+        for _ in range(2):
+            preview.release_image_source()
+            qt_application.processEvents()
+            assert preview.image_label.image.isNull()
+            assert preview.image_label.size() == QSize(0, 0)
+            assert preview._source_pixmap.isNull()
+            assert not preview._fit_timer.isActive()
+        assert not [message for message in messages if "Negative sizes" in message]
+    finally:
+        qInstallMessageHandler(previous_handler)
 
 
 def test_remote_version_retains_exact_size_and_subsecond_changes():

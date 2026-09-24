@@ -1,10 +1,11 @@
 """提供文件浏览器页的导航、列表解析与渲染控制器。"""
 
 import os
+from typing import cast
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QTableWidgetItem
+from PySide6.QtGui import QFontMetrics, QIcon
+from PySide6.QtWidgets import QTableWidgetItem, QWidget
 from qfluentwidgets import TableItemDelegate
 
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
@@ -24,10 +25,14 @@ def file_explorer_icon(name: str) -> QIcon:
 
 
 class FileExplorerItemDelegate(TableItemDelegate):
-    """仅隐藏类型的绘制文字，保留 Qt 排序和 Fluent 行状态绘制。"""
+    """按页面字号绘制并隐藏类型文字，保留 Qt 排序和 Fluent 行状态。"""
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
+        # PySide6 类型桩缺少这些公开结构字段，实际 Qt 绘制必须同步字号和度量。
+        font = cast(QWidget, self.parent()).font()
+        setattr(option, "font", font)
+        setattr(option, "fontMetrics", QFontMetrics(font))
         if index.column() == 0:
             # PySide6 的类型桩未列出此公开结构字段，实际 Qt 委托使用 text 绘制。
             setattr(option, "text", "")
@@ -176,7 +181,6 @@ class FileExplorerList:
                 pass
         self._frame.search_field.clear()
         self._frame.status_bar.setText(tr('Opening {value0}…').format(value0=requested_path))
-        self._frame.status_bar.setToolTip("")
         self._set_loading(True)
 
         cmd = explorer_service.ls_command(requested_path)
@@ -260,7 +264,6 @@ class FileExplorerList:
         files = len(rows) - folders
         if request_id is not None:
             self._frame._active_refresh = None
-        self._frame.status_bar.setToolTip("")
         self._frame.status_bar.setText(
             tr("{value0}  |  {value1} folders, {value2} files").format(
                 value0=requested_path, value1=folders, value2=files

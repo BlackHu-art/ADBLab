@@ -32,6 +32,56 @@ def _write_image(path, color: Qt.GlobalColor) -> str:
     return str(path)
 
 
+@pytest.mark.parametrize("control", ["command", "wheel"])
+def test_long_screenshot_zoom_stays_monotonic_below_manual_minimum(
+    qt_application, tmp_path, control,
+):
+    image = QPixmap(200, 20000)
+    image.fill(Qt.GlobalColor.red)
+    path = tmp_path / "long-screenshot.png"
+    assert image.save(str(path))
+    page = make_screenshot_page([str(path)])
+    try:
+        page.resize(720, 500)
+        page.show()
+        wait_for_screenshot(page)
+        wait_for_stable_geometry(qt_application, (page, page._view))
+        for rotated in (False, True):
+            if rotated:
+                page._rotate_action.trigger()
+            page._reset_zoom()
+            fit_zoom = page._zoom_factor
+            assert 0 < fit_zoom < 0.05
+
+            if control == "command":
+                page._zoom_out_action.trigger()
+            else:
+                page._zoom_from_wheel(-120)
+            assert 0 < page._zoom_factor <= fit_zoom
+            assert page._zoom_label.text() == f"{round(page._zoom_factor * 100)}%"
+
+            page.resize(page.width() + 40, page.height() + 40)
+            wait_for_stable_geometry(qt_application, (page, page._view))
+            before = page._zoom_factor
+            page._zoom_out_action.trigger()
+            assert 0 < page._zoom_factor <= before
+
+            before = page._zoom_factor
+            if control == "command":
+                page._zoom_in_action.trigger()
+            else:
+                page._zoom_from_wheel(120)
+            assert page._zoom_factor > before
+            assert page._zoom_label.text() == f"{round(page._zoom_factor * 100)}%"
+
+        page._actual_action.trigger()
+        assert page._zoom_factor == 1.0
+        page._set_zoom(10)
+        assert page._zoom_factor == 5.0
+    finally:
+        close_screenshot_page(page)
+
+
 def test_screenshot_flip_view_and_pips_share_navigation_and_batch_selection(
     qt_application, tmp_path,
 ):

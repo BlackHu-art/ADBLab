@@ -1,8 +1,26 @@
 """隔离瞬态 RoundMenu 行对象与页面长期共享动作的生命周期。"""
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import QEvent, QObject, Qt, Slot
 from PySide6.QtGui import QAction
 from qfluentwidgets import RoundMenu
+
+
+class TransientMenuFocusGuard(QObject):
+    """在瞬态菜单或宿主析构开始前归还列表焦点，保留打开期间的键盘交互。"""
+
+    def __init__(self, menu: RoundMenu) -> None:
+        super().__init__(menu)
+        self._menu = menu
+        menu.installEventFilter(self)
+        parent = menu.parent()
+        if parent is not None:
+            parent.destroyed.connect(menu.view.clearFocus)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self._menu and event.type() == QEvent.Type.DeferredDelete:
+            # close 后仍可能有排队的焦点事件；此时列表和 viewport 过滤链尚未开始析构。
+            self._menu.view.clearFocus()
+        return super().eventFilter(watched, event)
 
 
 class MenuActionProxy(QAction):

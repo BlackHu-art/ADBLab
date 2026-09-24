@@ -8,10 +8,18 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QPushButton,
+    QStyle,
+    QStyleOptionButton,
+    QStyleOptionFrame,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import FluentTitleBar, InfoBarIcon
 
 import gui.dialogs.file_explorer_ops as file_ops_module
@@ -27,6 +35,7 @@ from gui.features.performance import PerformancePage
 from gui.notifications import ToastNotification, show_toast
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
+from tests.ui_geometry_helpers import wait_until
 
 
 def _flush_deferred_deletes(application: QApplication) -> None:
@@ -232,6 +241,51 @@ def test_fluent_dialog_role_fonts_survive_qfluent_qss_polish(qt_application):
             else:
                 _dispose_dialog(qt_application, dialog)
         _flush_deferred_deletes(qt_application)
+        owner.close()
+
+
+@pytest.mark.parametrize("font_size", [9, 22])
+@pytest.mark.parametrize("accept", [True, False])
+def test_fluent_input_controls_fit_text_and_remain_operable_in_short_window(
+    qt_application, font_size, accept,
+):
+    owner = QWidget()
+    owner.resize(500, 360)
+    owner.show()
+    role_font = QFont(qt_application.font().family(), font_size)
+    with patch.object(BaseStyles, "font_for_role", return_value=role_font):
+        dialog = FluentInputDialog(owner, "Rename", "New name:", text="original")
+    dialog.yesButton.setText("Apply")
+    dialog.cancelButton.setText("Cancel")
+    try:
+        dialog.show()
+        qt_application.processEvents()
+        assert owner.rect().contains(QRect(dialog.widget.mapTo(owner, QPoint()),
+                                           dialog.widget.size()))
+        for widget in (dialog.lineEdit, dialog.yesButton, dialog.cancelButton):
+            if widget is dialog.lineEdit:
+                option = QStyleOptionFrame()
+                widget.initStyleOption(option)
+                element = QStyle.SubElement.SE_LineEditContents
+            else:
+                option = QStyleOptionButton()
+                widget.initStyleOption(option)
+                element = QStyle.SubElement.SE_PushButtonContents
+            content = widget.style().subElementRect(element, option, widget)
+            assert content.height() >= widget.fontMetrics().height()
+            assert dialog.widget.rect().contains(
+                QRect(widget.mapTo(dialog.widget, QPoint()), widget.size())
+            )
+        dialog.lineEdit.setFocus()
+        dialog.lineEdit.selectAll()
+        QTest.keyClicks(dialog.lineEdit, "updated-name")
+        assert dialog.lineEdit.text() == "updated-name"
+        button = dialog.yesButton if accept else dialog.cancelButton
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        wait_until(qt_application, lambda: not dialog.isVisible())
+        assert dialog.result() == int(accept)
+    finally:
+        _dispose_dialog(qt_application, dialog)
         owner.close()
 
 

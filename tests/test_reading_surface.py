@@ -68,7 +68,10 @@ def reading_widget(request, qt_application, monkeypatch, tmp_path):
         reader = owner.summary_edit if request.param == "summary" else owner.parameters_edit
     owner.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     owner.resize(1150, 950)
-    owner.show()
+    if isinstance(owner, PerformancePage):
+        owner.activate()
+    else:
+        owner.show()
     qt_application.processEvents()
     yield owner, reader
     owner.close()

@@ -4,9 +4,10 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QContextMenuEvent, QFont
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QPushButton, QWidget
-from qfluentwidgets import FluentIcon
+from qfluentwidgets import FluentIcon, RoundMenu
 
 from gui.dialogs.app_manager import AppManagerPage
 from gui.dialogs.file_explorer import FileExplorerPage
@@ -97,6 +98,72 @@ def test_fixed_page_rejects_new_operations_without_selected_online_target(
         assert page.model.rowCount() == 1
         assert not page.details_page.grant_btn.isEnabled()
     assert submitted_workers == []
+
+
+@pytest.mark.parametrize("selected,connected", [
+    ([], ["device-a", "device-b"]),
+    (["device-a"], ["device-b"]),
+])
+def test_cached_file_rows_remain_scrollable_without_operation_access(
+    qt_application, submitted_workers, selected, connected,
+):
+    """失选和离线仍能读到缓存末行，真实交互不能越过设备命令准入。"""
+    host, page = _host_page(FileExplorerPage)
+    page._close_preview()
+    page._on_ls_result("\n".join(
+        f"drwxr-xr-x 2 shell shell 4096 Sep 05 folder-{index:03}"
+        for index in range(100)
+    ), False)
+    host.resize(800, 650)
+    host.show()
+    qt_application.processEvents()
+    try:
+        table = page.table
+        table.setCurrentCell(0, page.NAME_COL)
+        cached_items = tuple(table.item(row, page.NAME_COL) for row in range(table.rowCount()))
+        assert len(cached_items) == 101
+        host.set_device_context(selected, connected)
+        submitted_workers.clear()
+        table.setFocus()
+        QTest.keyClick(table, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
+        qt_application.processEvents()
+        assert table.currentRow() == table.rowCount() - 1
+        assert table.verticalScrollBar().value() > 0
+        assert table.viewport().rect().intersects(table.visualItemRect(cached_items[-1]))
+        assert page._file_name_at(table.currentRow()) == "folder-099"
+
+        point = table.visualItemRect(cached_items[-1]).center()
+        double_clicked = QSignalSpy(table.cellDoubleClicked)
+        context_requested = QSignalSpy(table.customContextMenuRequested)
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        context_event = QContextMenuEvent(
+            QContextMenuEvent.Reason.Mouse, point, table.viewport().mapToGlobal(point),
+        )
+        qt_application.sendEvent(table.viewport(), context_event)
+        assert double_clicked.count() == 1
+        assert context_requested.count() == 1
+        QTest.keyClick(table, Qt.Key.Key_Return)
+        page.path_field.setText("/sdcard/other")
+        QTest.keyClick(page.path_field, Qt.Key.Key_Return)
+        qt_application.processEvents()
+        assert submitted_workers == []
+        assert not any(menu.isVisible() for menu in page.findChildren(RoundMenu))
+        assert not page.path_field.isEnabled()
+        assert not page.refresh_action.isEnabled()
+        assert all(not action.isEnabled() for action in page.command_bar.actions())
+        assert tuple(table.item(row, page.NAME_COL) for row in range(table.rowCount())) == (
+            cached_items
+        )
+        page._set_directory_loading(True)
+        assert not table.isEnabled()
+        page._set_directory_loading(False)
+        assert table.isEnabled()
+        page.request_dispose("test")
+        assert not table.isEnabled()
+    finally:
+        host.shutdown()
+        host.close()
 
 
 @pytest.mark.parametrize("page_class", [FileExplorerPage, AppManagerPage])

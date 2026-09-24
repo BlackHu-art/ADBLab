@@ -45,6 +45,11 @@ def test_application_column_sort_preserves_business_order_source_and_selection(
             for row, value in enumerate(values)
         ]
         page._populate(apps)
+        page.resize(1000, 800)
+        page.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert page.tree.isVisible()
         if column == 3:
             for row, value in enumerate(values):
                 page.model.item(row, 3).setText(value)
@@ -126,11 +131,11 @@ def test_icon_view_has_four_independent_resizable_columns(qt_application):
     page = AppManagerPage(device_ip="visual-demo")
     try:
         page._populate([("示例应用", "com.example.app", "Enabled", "User")])
-        page._toggle_view()
         page.resize(1000, 800)
         page.show()
         qt_application.processEvents()
         view = page.icon_list
+        assert view.isVisible()
         assert all(view.model().index(0, column).isValid() for column in range(4))
         assert not view.model().index(0, 4).isValid()
         item = view.topLevelItem(0)
@@ -165,17 +170,17 @@ def test_icon_view_has_four_independent_resizable_columns(qt_application):
 
 @pytest.mark.ui
 def test_icon_column_widths_survive_theme_toggle_and_refresh(qt_application):
-    """用户调整的四列宽度不被主题刷新、视图切换或数据刷新覆盖。"""
+    """用户调整的前三列宽度保持，状态列填满主题与数据刷新后的面板。"""
     previous_theme = BaseStyles.current_theme()
     page = AppManagerPage(device_ip="visual-demo")
     try:
         apps = [("示例应用", "com.example.app", "Enabled", "User")]
         page._populate(apps)
-        page._toggle_view()
         page.resize(1000, 800)
         page.show()
         qt_application.processEvents()
         view = page.icon_list
+        assert view.isVisible()
         assert all(view.model().index(0, column).isValid() for column in range(4))
         assert not view.model().index(0, 4).isValid()
         expected = [72, 280, 360, 140]
@@ -186,7 +191,9 @@ def test_icon_column_widths_survive_theme_toggle_and_refresh(qt_application):
         page._toggle_view()
         page._populate(apps)
         qt_application.processEvents()
-        assert [view.columnWidth(column) for column in range(4)] == expected
+        assert [view.columnWidth(column) for column in range(3)] == expected[:3]
+        assert view.columnWidth(3) >= expected[3]
+        assert view.header().length() == view.viewport().width()
     finally:
         page.close()
         BaseStyles.switch_theme(previous_theme)
@@ -201,11 +208,11 @@ def test_icon_selection_preserves_hidden_selected_apps(qt_application):
             ("Alpha", "com.example.alpha", "Enabled", "User"),
             ("Beta", "com.example.beta", "Enabled", "User"),
         ])
-        page._toggle_view()
         page.resize(1000, 800)
         page.show()
         qt_application.processEvents()
         view = page.icon_list
+        assert view.isVisible()
         hidden = view.topLevelItem(0)
         visible = view.topLevelItem(1)
         hidden.setSelected(True)
@@ -240,11 +247,11 @@ def test_icon_keyboard_search_uses_application_name_column(qt_application, curre
             ("Beagle", "com.example.hidden", "Enabled", "User"),
             ("Beryl", "com.example.keep_beryl", "Enabled", "User"),
         ])
-        page._toggle_view()
         page.resize(1000, 800)
         page.show()
         qt_application.processEvents()
         view = page.icon_list
+        assert view.isVisible()
         view.setCurrentItem(view.topLevelItem(0), current_column)
         view.setFocus()
         assert view.currentItem().text(0) == ""
@@ -268,11 +275,11 @@ def test_icon_selection_background_stays_inside_cell_after_horizontal_scroll(
     page = AppManagerPage(device_ip="visual-demo")
     try:
         page._populate([("Alpha", "com.example.alpha", "Enabled", "User")])
-        page._toggle_view()
         page.resize(520, 700)
         page.show()
         qt_application.processEvents()
         view = page.icon_list
+        assert view.isVisible()
         view.topLevelItem(0).setSelected(True)
         view.horizontalScrollBar().setValue(view.columnWidth(0) - 2)
         qt_application.processEvents()
@@ -364,10 +371,10 @@ def test_icon_view_uses_full_width_rows_after_resize(qt_application, monkeypatch
             (f"示例应用 {row}", f"com.example.app{row}", "Enabled", "User")
             for row in range(8)
         ])
-        page._toggle_view()
         page.resize(width, 900)
         page.show()
         view = page.icon_list
+        assert view.isVisible()
         column_widths = [64, 300, 700, 150]
         for column, column_width in enumerate(column_widths):
             view.header().resizeSection(column, column_width)
@@ -521,6 +528,8 @@ def test_app_manager_rows_keep_readable_background_after_theme_switch(qt_applica
         ])
         host.resize(1000, 740)
         host.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
+        assert page.tree.isVisible()
         BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
         qt_application.processEvents()
         BaseStyles.switch_theme(theme)
@@ -610,6 +619,9 @@ def test_application_checkbox_keyboard_and_delegate_follow_page_font(qt_applicat
         page._populate([("示例应用", "com.example.app", "Enabled", "User")])
         page.resize(1000, 740)
         page.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert page.tree.isVisible()
         index = page.proxy.index(0, 0)
         page.tree.setCurrentIndex(index)
         page.tree.setFocus()
@@ -651,8 +663,8 @@ def test_small_workspace_keeps_complete_application_rows(
     try:
         host.resize(720, 600)
         host.show()
-        if icon_mode:
-            page._toggle_view()
+        if not icon_mode:
+            QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
         QTest.qWait(50)
         wait_until(
             qt_application,
@@ -660,6 +672,7 @@ def test_small_workspace_keeps_complete_application_rows(
         )
         if icon_mode:
             view = page.icon_list
+            assert view.isVisible()
             rows = {}
             for index in range(view.topLevelItemCount()):
                 rect = view.visualRect(view.model().index(index, 0))
@@ -669,6 +682,7 @@ def test_small_workspace_keeps_complete_application_rows(
             assert all(view.viewport().rect().contains(rect) for rect in first_rows)
         else:
             view = page.tree
+            assert view.isVisible()
             assert all(
                 view.viewport().rect().contains(view.visualRect(page.proxy.index(row, 0)))
                 for row in range(3)
@@ -694,7 +708,9 @@ def test_manager_search_and_table_header_fit_large_text(qt_application, monkeypa
             page.prepare_for_workspace()
         page.resize(1000, 900)
         page.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
         qt_application.processEvents()
+        assert page.tree.isVisible()
         editor = page.search_input
         option = QStyleOptionFrame()
         editor.initStyleOption(option)
@@ -811,6 +827,8 @@ def test_narrow_workspace_keeps_tools_visible_with_long_status(
         ])
         host.setFixedSize(452, 640)
         host.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
+        assert page.tree.isVisible()
         QTest.qWait(50)
         viewport = host.content_scroll.viewport()
         assert viewport.width() == 404

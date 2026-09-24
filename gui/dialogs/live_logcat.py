@@ -206,10 +206,15 @@ class LiveLogcatPage(QWidget):
         )
         if not self._device_connected and not active:
             self.status_bar.setText(tr("设备已离线，请重新连接后开始采集"), tr("请连接设备"))
-        elif not self._device_selected:
+        elif not self._device_selected and not active:
             self.status_bar.setText(
                 tr("请在顶部勾选当前设备后操作；已有采集仍可停止"), tr("请勾选设备"),
             )
+        elif self._can_operate_device() and not active and self.status_bar.text() in (
+            tr("设备已离线，请重新连接后开始采集"),
+            tr("请在顶部勾选当前设备后操作；已有采集仍可停止"),
+        ):
+            self.status_bar.setText(tr("点击开始采集，读取当前设备日志"), tr("待采集"))
 
     def request_dispose(self, _reason: str = "user") -> bool:
         """非阻塞停止日志会话；资源归零后由 ``dispose_ready`` 通知宿主。"""

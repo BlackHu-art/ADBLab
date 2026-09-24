@@ -5,7 +5,16 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QCoreApplication,
+    QEvent,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractButton, QScrollArea, QVBoxLayout, QWidget
@@ -40,6 +49,20 @@ def frame(monkeypatch):
         window._unbind_window_screen()
         window._close_ready = True
         window.close()
+
+
+class _ClosableSessionPage(QWidget):
+    dispose_ready = Signal(object)
+
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
+        self.dispose_reasons = []
+        self.dispose_immediately = True
+
+    def request_dispose(self, reason):
+        self.dispose_reasons.append(reason)
+        return self.dispose_immediately
 
 
 def test_public_device_snapshot_preserves_admission_and_is_immutable(frame):
@@ -194,6 +217,130 @@ def test_remote_picker_updates_all_targets_and_keeps_empty_page(frame, qt_applic
     picker.clear_button.click()
     assert remote.selected_devices == []
     assert host.stack.currentWidget() is page
+
+
+@pytest.mark.parametrize("section,feature", [
+    ("apps", "manager"), ("devices", "files"), ("system", "logcat"),
+])
+def test_picker_closes_only_current_session_and_preserves_device_context(
+    frame, qt_application, section, feature,
+):
+    host = frame._workspace_feature_hosts[section]
+    host._definitions[feature] = replace(
+        host._definitions[feature], factory=_ClosableSessionPage,
+    )
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame.left_panel.set_selected_devices(["demo-a", "demo-b"])
+    frame._open_workspace_feature(section, feature, device_id="demo-b")
+    retained_key = host.registry.current_key
+    retained_page = host.stack.currentWidget()
+    frame._open_workspace_feature(section, feature, device_id="demo-a")
+    current_key = host.registry.current_key
+    current_page = host.stack.currentWidget()
+    context = frame.left_panel.device_context_snapshot()
+    disconnected = QSignalSpy(frame.left_panel.signals.disconnect_requested)
+    bar = frame._global_device_bar
+    assert [button for button in bar.findChildren(QAbstractButton)
+            if button.isVisibleTo(frame)] == [bar.targets_button]
+    bar.open_picker()
+    picker = bar._picker
+    selection = QSignalSpy(picker.selection_requested)
+    assert picker.close_button.isVisible()
+    assert picker.close_button.text() == host.close_session_button.text()
+
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+
+    assert current_page.dispose_reasons == ["user"]
+    assert retained_page.dispose_reasons == []
+    assert host.registry.get(current_key) is None
+    assert host.registry.get(retained_key) is retained_page
+    assert host.current_feature == "overview"
+    assert frame.left_panel.device_context_snapshot() == context
+    assert selection.count() == disconnected.count() == 0
+    assert not isValid(picker) or not picker.isVisible()
+
+
+def test_screenshot_picker_keeps_clear_results_label(frame, qt_application):
+    host = frame._workspace_feature_hosts["apps"]
+    host._definitions["media"] = replace(
+        host._definitions["media"], factory=_ClosableSessionPage,
+    )
+    frame.show()
+    frame._open_workspace_feature("apps", "media")
+    page = host.stack.currentWidget()
+    key = host.registry.current_key
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker.close_button.isVisible()
+    assert picker.close_button.text() == "清除截图结果"
+    assert picker.close_button.accessibleName() == "清除截图结果"
+
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+
+    assert page.dispose_reasons == ["user"]
+    assert host.registry.get(key) is None
+    assert host.current_feature == "overview"
+    assert not isValid(picker) or not picker.isVisible()
+
+
+@pytest.mark.parametrize("section,feature", [
+    ("apps", "overview"), ("system", "overview"),
+    ("devices", "remote"), ("system", "performance"),
+])
+def test_picker_has_no_close_action_for_features_without_one(
+    frame, qt_application, section, feature,
+):
+    host = frame._workspace_feature_hosts[section]
+    if feature == "performance":
+        host._definitions[feature] = replace(
+            host._definitions[feature], factory=_ClosableSessionPage,
+        )
+    frame.show()
+    frame._on_devices_updated(["demo-a"])
+    frame.left_panel.set_selected_devices(["demo-a"])
+    frame._open_workspace_feature(section, feature)
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker.isVisible()
+    assert host.close_session_button.isHidden()
+    assert not picker.close_button.isVisible()
+    assert picker.clear_button.isVisible()
+
+
+def test_picker_disables_close_until_async_session_disposal_finishes(frame, qt_application):
+    host = frame._workspace_feature_hosts["system"]
+    host._definitions["logcat"] = replace(
+        host._definitions["logcat"], factory=_ClosableSessionPage,
+    )
+    frame.show()
+    frame._on_devices_updated(["demo-a"])
+    frame.left_panel.set_selected_devices(["demo-a"])
+    frame._open_workspace_feature("system", "logcat")
+    page = host.stack.currentWidget()
+    page.dispose_immediately = False
+    key = host.registry.current_key
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+
+    assert page.dispose_reasons == ["user"]
+    assert host.registry.is_disposing(key)
+    assert host.stack.currentWidget() is host.closing_page
+    assert picker.isVisible()
+    assert picker.close_button.text() == "正在关闭"
+    assert not picker.close_button.isEnabled()
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+    picker.close_session_requested.emit()
+    assert page.dispose_reasons == ["user"]
+    page.dispose_ready.emit(page)
+    assert host.registry.get(key) is None
+    assert host.current_feature == "overview"
+    assert not isValid(picker) or not picker.isVisible()
 
 
 @pytest.mark.parametrize("state", ["ready", "empty", "unavailable"])
@@ -602,7 +749,7 @@ def test_device_management_actions_are_routed_from_overview(frame, qt_applicatio
 
 @pytest.mark.parametrize("font_size", [12, 22])
 @pytest.mark.parametrize("width", [500, 1440])
-def test_device_bar_groups_fit_real_window_and_wide_session_shares_row(
+def test_device_bar_and_picker_close_fit_real_window(
     frame, qt_application, monkeypatch, width, font_size
 ):
     monkeypatch.setattr(
@@ -623,20 +770,25 @@ def test_device_bar_groups_fit_real_window_and_wide_session_shares_row(
     frame.resize(width, 900)
     QTest.qWait(300)
     assert frame.width() == width
-    for control in (bar.targets_button, bar.close_button):
+    for control in (bar.targets_button,):
         assert control.isVisibleTo(frame)
         bounds = QRect(control.mapTo(bar, QPoint()), control.size())
         assert bar.rect().contains(bounds), (control.accessibleName(), bounds, bar.rect())
         assert control.height() >= control.fontMetrics().height()
     assert bar.target_row.isVisible()
-    assert mapped_rect(bar.targets_button, bar).top() == mapped_rect(bar.close_button, bar).top()
+    assert [button for button in bar.findChildren(QAbstractButton)
+            if button.isVisibleTo(frame)] == [bar.targets_button]
     assert bar.session_hint.isHidden()
     bar.open_picker()
     picker = bar._picker
     qt_application.processEvents()
-    for control in (picker.device_list, picker.clear_button):
+    for control in (picker.device_list, picker.clear_button, picker.close_button):
         assert control.isVisible()
         assert picker.rect().contains(mapped_rect(control, picker))
+        assert control.height() >= control.fontMetrics().height()
+    assert mapped_rect(picker.close_button, picker).top() > mapped_rect(
+        picker.clear_button, picker,
+    ).bottom()
     assert picker.session_box.isHidden()
     assert picker.select_all_button.isHidden()
 
@@ -712,7 +864,7 @@ def test_large_font_device_status_remains_accessible_in_narrow_bar(
     assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
 
 
-def test_large_font_session_bar_compacts_actions_without_wrapping(qt_application, monkeypatch):
+def test_large_font_session_close_remains_readable_in_picker(qt_application, monkeypatch):
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
@@ -727,14 +879,22 @@ def test_large_font_session_bar_compacts_actions_without_wrapping(qt_application
     bar.set_session_context(source, close)
     bar.show()
     qt_application.processEvents()
-    assert bar.close_button.width() >= bar.close_button.sizeHint().width()
     assert bar.targets_button.isVisible()
-    assert bar.close_button.accessibleName() == "关闭应用管理"
-    assert bar.close_button.text() == ""
-    assert mapped_rect(bar.close_button, bar).top() == mapped_rect(bar.targets_button, bar).top()
-    assert bar.close_button.geometry().right() < bar.session_row.width()
+    assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
     bar.open_picker()
-    assert bar._picker.session_combo.currentData() == "demo-a"
+    picker = bar._picker
+    qt_application.processEvents()
+    assert picker.session_combo.currentData() == "demo-a"
+    assert picker.close_button.isVisible()
+    assert picker.close_button.width() >= picker.close_button.sizeHint().width()
+    assert picker.close_button.height() >= picker.close_button.fontMetrics().height() + 16
+    assert picker.close_button.font().pointSize() == 22
+    assert picker.close_button.accessibleName() == "关闭应用管理"
+    assert picker.close_button.text() == "关闭应用管理"
+    assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+    assert mapped_rect(picker.close_button, picker).top() > mapped_rect(
+        picker.clear_button, picker,
+    ).bottom()
 
 
 def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_application):
@@ -1046,7 +1206,7 @@ def test_window_destruction_releases_hidden_device_coordinator(
 def test_device_picker_respects_short_window_height(
     monkeypatch, qt_application, font_size, count, language,
 ):
-    from gui.i18n import install_translators
+    from gui.i18n import install_translators, tr
 
     translators = install_translators(qt_application, language)
     monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
@@ -1060,6 +1220,8 @@ def test_device_picker_respects_short_window_height(
     window.resize(720, 360)
     window.show()
     bar.set_context([], [f"device-{index}" for index in range(count)], "ready")
+    close = PushButton(tr("关闭应用管理"))
+    bar.set_session_context(None, close)
     qt_application.processEvents()
     try:
         bar.open_picker()
@@ -1069,6 +1231,8 @@ def test_device_picker_respects_short_window_height(
         bounds = bar._popup_bounds(bar.targets_button)
         assert bounds.contains(QRect(popup.pos(), popup.size()))
         assert picker.rect().contains(mapped_rect(picker.clear_button, picker))
+        assert picker.close_button.isVisible()
+        assert picker.rect().contains(mapped_rect(picker.close_button, picker))
         last = picker.device_list.item(count - 1)
         picker.device_list.scrollToItem(last)
         qt_application.processEvents()

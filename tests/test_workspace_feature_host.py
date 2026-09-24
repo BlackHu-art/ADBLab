@@ -280,6 +280,55 @@ def test_small_workspace_state_messages_wrap_without_clipping(qt_application):
         page.hide()
 
 
+@pytest.mark.parametrize("state_name,button_name", [
+    ("no_device_page", "choose_button"), ("closing_page", "back_button"),
+])
+@pytest.mark.parametrize("language", ["zh_CN", "en_US"])
+def test_workspace_state_pages_follow_font_round_trip_and_keep_actions_reachable(
+    qt_application, monkeypatch, state_name, button_name, language,
+):
+    """现有等待页随字号变化，短窗口中的说明与主动作由宿主保持可达。"""
+    from types import SimpleNamespace
+
+    from core.settings_manager import DEFAULTS, AppSettings
+    from gui.i18n import install_translators, tr
+    from gui.styles import BaseStyles
+    from tests.ui_geometry_helpers import assert_scroll_target_reachable, assert_text_fits
+
+    values = dict(DEFAULTS, ui_font_size=12, font_family="Arial")
+    monkeypatch.setattr(
+        AppSettings, "instance", classmethod(lambda _cls: SimpleNamespace(get=values.get)),
+    )
+    BaseStyles.reload_from_settings()
+    translators = install_translators(qt_application, language)
+    host = WorkspaceFeatureHost("apps", "应用", QWidget())
+    host.set_external_device_controls(True)
+    host.feature_selector.hide()
+    page = getattr(host, state_name)
+    page.set_feature_label(tr("应用管理"))
+    button = getattr(page, button_name)
+    host.stack.setCurrentWidget(page)
+    host.resize(452, 240)
+    host.show()
+    try:
+        for size in (12, 22, 12):
+            values["ui_font_size"] = size
+            BaseStyles.reload_from_settings()
+            wait_for_stable_geometry(qt_application, (host, page, button))
+            for control in (page.title_label, page.message_label, button):
+                assert control.font().pointSizeF() == size
+            assert page.message_label.height() >= page.message_label.heightForWidth(
+                page.message_label.width(),
+            )
+            assert_scroll_target_reachable(host.content_scroll, button)
+            assert_text_fits(button)
+        assert host.stack.currentWidget() is page
+    finally:
+        host.close()
+        for translator in translators:
+            qt_application.removeTranslator(translator)
+
+
 def test_small_workspace_scrolls_deep_feature_without_compressing_it(qt_application):
     """深层功能页在短屏上保留完整布局，由宿主提供双向滚动。"""
 

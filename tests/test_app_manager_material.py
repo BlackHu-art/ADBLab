@@ -251,12 +251,14 @@ def app_material_view(qt_application, monkeypatch):
             (f"示例 {row}", f"com.example.app{row}", "Enabled", "User")
             for row in range(3)
         ])
-        if view_name == "icon_list":
-            page._toggle_view()
         host.resize(1040, 800)
         host.show()
+        if view_name == "tree":
+            QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
         qt_application.processEvents()
-        return host, page, getattr(page, view_name)
+        view = getattr(page, view_name)
+        assert view.isVisible()
+        return host, page, view
 
     yield build
     for host in hosts:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt, QThread
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -27,6 +27,7 @@ from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.performance_launcher import (
     CONFIG_HINTS,
     MONKEY_PERCENT_FIELDS,
+    CurrentPackageWorker,
 )
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles
@@ -697,7 +698,7 @@ def test_late_package_callbacks_do_not_mutate_or_unlock_running_configuration(
 
     dialog, _runner = _build_performance_page(package="com.before")
 
-    worker = QThread()
+    worker = CurrentPackageWorker("session-device")
     dialog._package_worker = worker
     try:
         dialog._set_running(True)

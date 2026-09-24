@@ -1046,12 +1046,12 @@ def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_appli
         bar = frame._global_device_bar
         assert bar.target_row.isVisible()
         assert bar.targets_button.isVisible()
-        assert bar.close_button.isHidden()
         assert bar.session_target.isHidden() and bar.session_combo.isHidden()
         bar.open_picker()
         qt_application.processEvents()
         picker = bar._picker
         assert picker is not None and picker.isVisible()
+        assert not picker.close_button.isVisible()
         assert picker.device_list.accessibleName() == "操作设备多选列表"
         assert picker.device_list.count() == 1
         assert picker.device_list.item(0).data(Qt.ItemDataRole.UserRole) == "device-1"
@@ -1342,7 +1342,13 @@ def test_all_embedded_feature_pages_remain_reachable_on_short_workspace(qt_appli
                     assert page._config_scroll.isHidden()
                     assert not page._config_scroll.isVisibleTo(page)
                     assert host.close_session_button.isHidden()
-                    assert frame._global_device_bar.close_button.isHidden()
+                    bar = frame._global_device_bar
+                    bar.open_picker()
+                    qt_application.processEvents()
+                    picker = bar._picker
+                    assert picker is not None and picker.isVisible()
+                    assert not picker.close_button.isVisible()
+                    bar.dismiss_popups()
                     assert page.stop_btn.isVisibleTo(page)
 
                 target = getattr(page, target_name)

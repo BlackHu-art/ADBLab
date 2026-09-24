@@ -5,6 +5,7 @@ from collections import deque
 from typing import cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLayout,
@@ -13,7 +14,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, CaptionLabel, ListWidget, PushButton, TabWidget, TextEdit
+from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
+    ListItemDelegate,
+    ListWidget,
+    PushButton,
+    TabWidget,
+    TextEdit,
+)
 
 from gui.dialogs.app_manager_form import _apply_adaptive_text_heights
 from gui.dialogs.fluent_dialog import FluentMessageBox
@@ -32,6 +41,23 @@ from gui.styles.icon_loader import get_themed_icon
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from models.app_manager_worker import AppManagerWorker
+
+
+class _PermissionItemDelegate(ListItemDelegate):
+    """权限文字跟随页面字号，保留 Fluent 选择和 Qt 复选框绘制。"""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        # PySide6 类型桩缺少这些公开结构字段，实际 Qt 绘制必须同步字号和度量。
+        font = cast(QWidget, self.parent()).font()
+        setattr(option, "font", font)
+        setattr(option, "fontMetrics", QFontMetrics(font))
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        font_height = QFontMetrics(cast(QWidget, self.parent()).font()).height()
+        size.setHeight(max(size.height(), 38, font_height + 16))
+        return size
 
 
 class AppDetailsPage(QWidget):
@@ -154,7 +180,10 @@ class AppDetailsPage(QWidget):
         layout.addWidget(self.tabs)
 
     def _apply_theme(self, _value=None):
-        self.setFont(BaseStyles.font_for_role(FontRole.UI))
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        self.setFont(ui_font)
+        for widget in (self.declared_list, self.requested_list, self.runtime_list):
+            widget.setFont(ui_font)
         mono_font = BaseStyles.font_for_role(FontRole.MONO)
         self.detail_text.setFont(mono_font)
         self.detail_text.document().setDefaultFont(mono_font)
@@ -176,6 +205,7 @@ class AppDetailsPage(QWidget):
             hl.addWidget(sb)
         parent.addLayout(hl)
         lw = ListWidget()
+        lw.setItemDelegate(_PermissionItemDelegate(lw))
         lw.setMinimumHeight(100)
         lw.setSelectionMode(
             ListWidget.SelectionMode.MultiSelection

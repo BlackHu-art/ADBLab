@@ -31,6 +31,8 @@ from qfluentwidgets import (
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.features.contracts import optional_callback
 from gui.i18n import tr
+from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import apply_font_role, apply_label_role
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from gui.widgets.layout_settle import settle_widget_layout
@@ -119,6 +121,15 @@ class _NoDevicePage(QWidget):
         layout.addWidget(self.message_label)
         layout.addWidget(self.choose_button, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch(1)
+        BaseStyles.ui_font_changed.connect(self._refresh_typography)
+        self._refresh_typography()
+
+    def _refresh_typography(self, _config=None) -> None:
+        """等待页沿用当前界面字号，保持原有设备入口和状态。"""
+        apply_label_role(self.title_label, FontRole.UI, bold=True)
+        apply_label_role(self.message_label, FontRole.UI)
+        apply_font_role(self.choose_button, FontRole.UI, ensure_height=True)
+        self.updateGeometry()
 
     def set_feature_label(self, label: str) -> None:
         self.title_label.setText(tr("{label}需要选择设备").format(label=label))
@@ -170,6 +181,15 @@ class _ClosingSessionPage(QWidget):
         layout.addWidget(self.message_label)
         layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch(1)
+        BaseStyles.ui_font_changed.connect(self._refresh_typography)
+        self._refresh_typography()
+
+    def _refresh_typography(self, _config=None) -> None:
+        """关闭提示随界面字号变化，返回动作仍由原会话宿主处理。"""
+        apply_label_role(self.title_label, FontRole.UI, bold=True)
+        apply_label_role(self.message_label, FontRole.UI)
+        apply_font_role(self.back_button, FontRole.UI, ensure_height=True)
+        self.updateGeometry()
 
     def set_feature_label(self, label: str) -> None:
         self.title_label.setText(tr("正在关闭{label}会话").format(label=label))

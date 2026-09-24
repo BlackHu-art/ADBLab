@@ -431,7 +431,6 @@ class PerformanceLauncherForm:
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self._frame._config_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._frame._config_scroll.setMinimumSize(QSize())
         self._frame._config_scroll.setStyleSheet(
             "QScrollArea { border: none; background: transparent; }"
         )

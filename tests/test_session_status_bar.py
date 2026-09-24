@@ -1,11 +1,9 @@
 """功能设备栏保持单行，会话状态通过操作控件说明保留。"""
 
-from itertools import combinations
-
 import pytest
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractButton, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, FluentIcon, InfoBadge, InfoLevel, PushButton
 
 from gui.pages.workspace_features import WorkspaceFeatureHost
@@ -45,14 +43,17 @@ def session_bar(qt_application):
 def test_session_status_updates_without_changing_device_or_close_controls(session_bar):
     _window, bar, combo, close, badge = session_bar
     switched = QSignalSpy(bar.session_requested)
+    badge_owner = badge.parentWidget()
     bar.set_session_context(combo, close, badge)
+    bar.open_picker()
+    picker = bar._picker
     assert bar.session_hint.text() == "在线"
     assert bar.session_hint.level == InfoLevel.SUCCESS
     assert bar.session_hint.accessibleName() == "会话状态"
     assert bar.session_hint.isHidden()
     assert "在线" in bar.session_combo.accessibleDescription()
     assert "当前设备可执行操作" in bar.session_combo.toolTip()
-    assert badge.parentWidget() is not bar.session_row
+    assert badge.parentWidget() is badge_owner
 
     for text, level, description in (
         ("离线", InfoLevel.WARNING, "当前设备已经断开连接"),
@@ -71,41 +72,44 @@ def test_session_status_updates_without_changing_device_or_close_controls(sessio
         assert bar.session_hint.toolTip() == description
         assert bar.session_hint.accessibleDescription() == description
         assert bar.session_hint.isHidden()
-        for control in (bar.session_combo, bar.close_button):
+        for control in (bar.session_combo, picker.close_button):
             assert text in control.accessibleDescription()
             assert description in control.accessibleDescription()
             assert text in control.toolTip()
             assert description in control.toolTip()
         assert bar.session_combo.currentData() == "demo-a"
-        assert bar.close_button.accessibleName() == "关闭应用管理"
+        assert picker.close_button.accessibleName() == "关闭应用管理"
     assert switched.count() == 0
 
 
 def test_session_status_visibility_and_route_clear_do_not_leave_stale_text(session_bar):
     _window, bar, combo, close, badge = session_bar
     bar.set_session_context(None, None, badge)
-    assert bar.session_row.isHidden()
+    bar.open_picker()
     assert bar.session_hint.isHidden()
     assert bar.session_combo.isHidden()
-    assert bar.close_button.isHidden()
+    assert not bar._picker.close_button.isVisible()
 
     badge.hide()
     bar.set_session_context(None, None, badge)
     assert bar.session_hint.isHidden()
     assert bar.session_hint.text() == ""
-    assert bar.session_row.isHidden()
+    assert not bar._picker.close_button.isVisible()
 
     badge.show()
     bar.set_session_context(combo, close, badge)
     assert bar.session_hint.isHidden()
+    assert bar._picker.close_button.isVisible()
     bar.set_session_context(None, None)
-    assert bar.session_row.isHidden()
+    assert bar._picker is None
     assert bar.session_hint.text() == ""
     assert bar.session_hint.toolTip() == ""
     assert bar.session_hint.accessibleDescription() == ""
     assert bar.session_combo.accessibleDescription() == ""
     assert bar.session_combo.toolTip() == ""
-    assert bar.close_button.accessibleDescription() == ""
+    bar.open_picker()
+    assert not bar._picker.close_button.isVisible()
+    assert bar._picker.close_button.accessibleDescription() == ""
 
 
 @pytest.mark.parametrize("width,font_size", [(968, 12), (1000, 12), (1400, 12), (650, 22)])
@@ -124,17 +128,14 @@ def test_device_selection_preserves_bar_rows(
         close.setText(close_text)
     bar._apply_fonts()
     window.resize(width, 680)
-    controls = (bar.targets_button,)
-    if close_text is not None:
-        controls += (bar.close_button,)
     initial = None
     switched = QSignalSpy(bar.session_requested)
     for selected, status in ((True, "在线"), (False, "未选为操作目标"), (True, "在线")):
         bar.set_context(["demo-device-01"] if selected else [], ["demo-device-01"], "ready")
         badge.setText(status)
         bar.set_session_context(combo, close if close_text is not None else None, badge)
-        wait_for_stable_geometry(qt_application, (window, bar, *controls))
-        rows = (bar.height(), *(mapped_rect(control, bar).top() for control in controls))
+        wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button))
+        rows = (bar.height(), mapped_rect(bar.targets_button, bar).top())
         if initial is None:
             initial = rows
         assert rows == initial
@@ -145,21 +146,22 @@ def test_device_selection_preserves_bar_rows(
         assert status in bar.session_combo.accessibleDescription()
         assert status in bar.accessibleDescription()
         assert ("未勾选" in bar.targets_button.accessibleName()) == (not selected)
-        assert all(control.isVisible() for control in controls)
-        assert all(bar.rect().contains(mapped_rect(control, bar)) for control in controls)
-        assert all(
-            not mapped_rect(first, bar).intersects(mapped_rect(second, bar))
-            for first, second in combinations(controls, 2)
-        )
-        assert all(
-            mapped_rect(control, bar).top() == mapped_rect(bar.targets_button, bar).top()
-            for control in controls
-        )
+        assert [control for control in bar.findChildren(QAbstractButton)
+                if control.isVisible()] == [bar.targets_button]
+        assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
+        bar.open_picker()
+        picker = bar._picker
+        wait_for_stable_geometry(qt_application, (picker, picker.close_button))
         if close_text is not None:
-            assert bar.close_button.width() >= bar.close_button.sizeHint().width()
-            assert status in bar.close_button.accessibleDescription()
+            assert picker.close_button.isVisible()
+            assert picker.close_button.width() >= picker.close_button.sizeHint().width()
+            assert status in picker.close_button.accessibleDescription()
+            assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+            assert (mapped_rect(picker.close_button, picker).top()
+                    > mapped_rect(picker.clear_button, picker).bottom())
         else:
-            assert bar.close_button.isHidden()
+            assert not picker.close_button.isVisible()
+        bar.dismiss_popups()
     assert switched.count() == 0
 
 
@@ -173,8 +175,7 @@ def test_long_session_name_does_not_force_a_second_row(session_bar, qt_applicati
     badge.setText("未选为操作目标")
     bar.set_context([], ["demo-a"], "ready")
     bar.set_session_context(combo, close, badge)
-    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button, bar.close_button))
-    assert mapped_rect(bar.targets_button, bar).top() == mapped_rect(bar.close_button, bar).top()
+    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button))
     assert bar.session_combo.currentText() == name
     assert bar.session_combo.currentData() == "demo-a"
     assert bar.session_combo.itemText(0) == name
@@ -186,17 +187,19 @@ def test_long_session_name_does_not_force_a_second_row(session_bar, qt_applicati
     for width in (500, 1048):
         window.resize(width, 680)
         wait_for_stable_geometry(
-            qt_application, (window, bar, bar.targets_button, bar.close_button),
+            qt_application, (window, bar, bar.targets_button),
         )
         assert name in bar.session_combo.accessibleDescription()
         assert "未选为操作目标" in bar.session_combo.accessibleDescription()
         assert name in bar.targets_button.accessibleName()
         assert name in bar.targets_button.toolTip()
         assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
-        target_rect = mapped_rect(bar.targets_button, bar)
-        close_rect = mapped_rect(bar.close_button, bar)
-        assert not target_rect.intersects(close_rect)
-        assert target_rect.top() == close_rect.top()
+        bar.open_picker()
+        picker = bar._picker
+        wait_for_stable_geometry(qt_application, (picker, picker.close_button))
+        assert picker.close_button.isVisible()
+        assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+        bar.dismiss_popups()
 
 
 @pytest.mark.parametrize("width,font_size", [(452, 12), (452, 22), (1120, 22)])
@@ -215,27 +218,25 @@ def test_session_status_and_actions_fit_after_width_and_font_changes(
     bar._apply_fonts()
     bar.set_session_context(combo, close, badge)
     window.resize(width, 680)
-    controls = (bar.targets_button, bar.close_button)
-    wait_for_stable_geometry(qt_application, (window, bar, bar.session_row, *controls))
+    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button))
     assert window.width() == width
-    for control in controls:
-        assert control.isVisible()
-        assert bar.rect().contains(mapped_rect(control, bar))
-        assert control.height() >= control.fontMetrics().height()
-    for first, second in combinations(controls, 2):
-        assert not mapped_rect(first, bar).intersects(mapped_rect(second, bar))
+    assert bar.targets_button.isVisible()
+    assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
+    assert bar.targets_button.height() >= bar.targets_button.fontMetrics().height()
     assert bar.session_hint.isHidden()
     assert bar.session_target.isHidden()
     assert bar.session_combo.isHidden()
-    assert all(
-        mapped_rect(control, bar).top() == mapped_rect(bar.targets_button, bar).top()
-        for control in controls
-    )
-    assert bar.close_button.width() >= bar.close_button.sizeHint().width()
+    bar.open_picker()
+    picker = bar._picker
+    wait_for_stable_geometry(qt_application, (picker, picker.close_button))
+    assert picker.close_button.isVisible()
+    assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+    assert picker.close_button.height() >= picker.close_button.fontMetrics().height()
+    assert picker.close_button.width() >= picker.close_button.sizeHint().width()
     assert status in bar.session_combo.accessibleDescription()
     assert status in bar.accessibleDescription()
-    assert status in bar.close_button.accessibleDescription()
-    assert "关闭应用管理" in bar.close_button.accessibleName()
+    assert status in picker.close_button.accessibleDescription()
+    assert "关闭应用管理" in picker.close_button.accessibleName()
 
 
 def test_external_controls_keep_host_badge_owned_and_project_online_changes(qt_application):
@@ -283,6 +284,8 @@ def test_closing_session_projects_resource_wait_instead_of_operation_permission(
 
     monkeypatch.setattr(page, "request_dispose", postpone_disposal)
     bar = DeviceContextBar()
+    bar.resize(960, 200)
+    bar.show()
     expected = "后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。"
     host.close_current_session()
     assert before_dispose == [(expected, expected)]
@@ -292,9 +295,12 @@ def test_closing_session_projects_resource_wait_instead_of_operation_permission(
             host.open_feature("probe", preferred_device="demo-a")
         assert host.stack.currentWidget() is host.closing_page
         bar.set_session_context(host.device_combo, host.close_session_button, host.session_badge)
-        assert not bar.close_button.isEnabled()
+        if bar._picker is None:
+            bar.open_picker()
+        assert not bar._picker.close_button.isEnabled()
+        assert bar._picker.close_button.accessibleName() == "正在关闭"
         assert bar.session_hint.isHidden()
-        for control in (bar.session_combo, bar.close_button):
+        for control in (bar.session_combo, bar._picker.close_button):
             assert "正在关闭" in control.toolTip()
             assert expected in control.toolTip()
             assert expected in control.accessibleDescription()
@@ -308,6 +314,8 @@ def test_closing_projection_survives_target_and_connection_changes(qt_applicatio
     host.register_feature("probe", "测试会话", FluentIcon.SCROLL, _LifecyclePage)
     host.set_external_device_controls(True)
     bar = DeviceContextBar()
+    bar.resize(960, 200)
+    bar.show()
     connected = ["demo-a", "demo-b"]
 
     def project_controls():
@@ -331,9 +339,12 @@ def test_closing_projection_survives_target_and_connection_changes(qt_applicatio
         assert host.stack.currentWidget() is host.closing_page
         assert host.registry.is_disposing(key)
         assert not host.close_session_button.isEnabled()
-        assert not bar.close_button.isEnabled()
+        if bar._picker is None:
+            bar.open_picker()
+        assert not bar._picker.close_button.isEnabled()
+        assert bar._picker.close_button.accessibleName() == "正在关闭"
         assert host.session_badge.text() == "正在关闭"
-        for control in (bar.session_combo, bar.close_button):
+        for control in (bar.session_combo, bar._picker.close_button):
             assert "正在关闭" in control.toolTip()
             assert expected in control.accessibleDescription()
             assert "当前设备可执行操作" not in control.accessibleDescription()
@@ -364,6 +375,7 @@ def test_closing_projection_survives_target_and_connection_changes(qt_applicatio
     replacement = host.stack.currentWidget()
     assert replacement is not page and replacement is not host.closing_page
     assert replacement.key.generation == key.generation + 1
-    assert bar.close_button.isEnabled()
+    bar.open_picker()
+    assert bar._picker.close_button.isEnabled()
     assert host.session_badge.text() == "在线"
     assert "正在关闭" not in bar.session_combo.accessibleDescription()

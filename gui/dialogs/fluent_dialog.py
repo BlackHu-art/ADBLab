@@ -244,6 +244,12 @@ class FluentInputDialog(MessageBoxBase):
             (self.cancelButton, FontRole.UI),
         ):
             _apply_role_font(widget, role)
+        # MessageBoxBase 的按钮和输入框保留固定像素高度，须按最终字体解除裁切。
+        for widget in (self.lineEdit, self.yesButton, self.cancelButton):
+            widget.setMaximumHeight(16777215)
+            widget.setMinimumHeight(max(
+                32, widget.fontMetrics().height() + 16, widget.minimumSizeHint().height(),
+            ))
         self.lineEdit.setFocus()
 
     @classmethod

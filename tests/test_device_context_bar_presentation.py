@@ -397,14 +397,20 @@ def test_existing_session_bar_can_shrink_after_increasing_font(
     bar._apply_fonts()
     qt_application.processEvents()
     assert window.width() == 500
-    for control in (bar.targets_button, bar.close_button):
-        assert control.isVisible()
-        assert bar.rect().contains(QRect(control.mapTo(bar, QPoint()), control.size()))
-        assert control.mapTo(bar, QPoint()).y() == bar.targets_button.mapTo(bar, QPoint()).y()
+    assert bar.targets_button.isVisible()
+    assert bar.rect().contains(
+        QRect(bar.targets_button.mapTo(bar, QPoint()), bar.targets_button.size())
+    )
     bar.open_picker()
-    assert bar._picker.session_box.isHidden()
-    assert bar._picker.device_list.isVisible()
-    assert bar._picker.select_all_button.isHidden()
+    picker = bar._picker
+    assert picker.session_box.isHidden()
+    assert picker.device_list.isVisible()
+    assert picker.select_all_button.isHidden()
+    assert picker.close_button.isVisible()
+    assert picker.rect().contains(QRect(picker.close_button.mapTo(picker, QPoint()),
+                                       picker.close_button.size()))
+    source.deleteLater()
+    close.deleteLater()
 
 
 def test_global_labels_survive_discovery_reorder_offline_and_selection_changes(bar_window):
@@ -446,30 +452,111 @@ def test_single_page_header_and_picker_show_only_current_operation_target(bar_wi
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
+@pytest.mark.parametrize("with_close", [False, True])
 def test_single_device_popup_keeps_actions_inside_narrow_window(
-    bar_window, qt_application, monkeypatch, font_size,
+    bar_window, qt_application, monkeypatch, font_size, with_close,
 ):
     window, bar = bar_window
     monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
         lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size),
     ))
     bar._apply_fonts()
-    window.resize(500, 680)
-    devices = ["demo-a", "demo-b", "demo-c"]
+    window.resize(500, 500)
+    devices = [f"demo-{index}" for index in range(8)]
     bar.set_context(devices, devices, "ready")
-    source = ComboBox()
+    source = ComboBox(window)
     for device in devices:
         source.addItem(device, userData=device)
-    bar.set_session_context(source, None)
+    close = PushButton("关闭文件管理", window) if with_close else None
+    bar.set_session_context(source, close)
     qt_application.processEvents()
+    assert (window.width(), window.height()) == (500, 500)
     bar.open_picker()
     QTest.qWait(220)
     picker = bar._picker
     bounds = QRect(picker.mapToGlobal(QPoint()), picker.size())
     assert QRect(window.mapToGlobal(QPoint()), window.size()).contains(bounds)
-    for control in (picker.device_list, picker.clear_button):
+    controls = [picker.device_list, picker.clear_button]
+    assert picker.close_button.isVisible() is with_close
+    assert picker.close_section.isVisible() is with_close
+    if with_close:
+        controls.append(picker.close_button)
+    for control in controls:
+        assert control.isVisible()
         assert picker.rect().contains(QRect(control.mapTo(picker, QPoint()), control.size()))
-    source.deleteLater()
+        assert control.height() >= control.fontMetrics().height()
+    picker.device_list.scrollToBottom()
+    last = picker.device_list.item(picker.device_list.count() - 1)
+    assert picker.device_list.viewport().rect().contains(picker.device_list.visualItemRect(last))
+    if with_close:
+        requested = QSignalSpy(bar.close_session_requested)
+        QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+        assert requested.count() == 1
+
+
+def test_picker_close_action_updates_and_hides_with_session_context(bar_window, qt_application):
+    window, bar = bar_window
+    source = ComboBox(window)
+    source.addItem("demo-a", userData="demo-a")
+    bar.set_session_context(source, None)
+    bar.open_picker()
+    picker = bar._picker
+    assert picker.close_section.isHidden()
+    assert not picker.close_button.isVisible()
+
+    close = PushButton("关闭应用管理", window)
+    bar.set_session_context(source, close)
+    qt_application.processEvents()
+    assert picker.close_section.isVisible()
+    assert picker.close_button.isVisible()
+    assert picker.close_button.text() == "关闭应用管理"
+    assert picker.close_button.accessibleName() == "关闭应用管理"
+    assert picker.close_button.isEnabled()
+
+    close.setEnabled(False)
+    bar.set_session_context(source, close)
+    assert picker.close_button.text() == "正在关闭"
+    assert picker.close_button.accessibleName() == "正在关闭"
+    assert not picker.close_button.isEnabled()
+    requested = QSignalSpy(bar.close_session_requested)
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+    assert requested.count() == 0
+
+    bar.set_session_context(None, None)
+    assert picker.close_section.isHidden()
+    assert not picker.close_button.isVisible()
+
+
+def test_picker_close_action_supports_keyboard_and_releases_after_completion(
+    bar_window, qt_application,
+):
+    window, bar = bar_window
+    source = ComboBox(window)
+    source.addItem("demo-a", userData="demo-a")
+    close = PushButton("清除截图结果", window)
+    bar.set_session_context(source, close)
+    bar.open_picker()
+    picker = bar._picker
+    popup = bar._picker_flyout
+    requested = QSignalSpy(bar.close_session_requested)
+    destroyed = QSignalSpy(picker.destroyed)
+    picker.clear_button.setFocus(Qt.FocusReason.TabFocusReason)
+    wait_until(qt_application, picker.clear_button.hasFocus)
+    QTest.keyClick(picker.clear_button, Qt.Key.Key_Tab)
+    assert picker.close_button.hasFocus()
+    QTest.keyClick(picker.close_button, Qt.Key.Key_Space)
+    assert requested.count() == 1
+    assert popup.isVisible()
+    assert picker.close_button.text() == "正在关闭"
+    assert not picker.close_button.isEnabled()
+    QTest.keyClick(picker.close_button, Qt.Key.Key_Space)
+    assert requested.count() == 1
+    bar.set_session_context(None, None)
+    assert not popup.isVisible()
+    assert bar._picker is None and bar._picker_flyout is None
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert destroyed.count() == 1
+    assert not isValid(picker)
 
 
 def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_update(

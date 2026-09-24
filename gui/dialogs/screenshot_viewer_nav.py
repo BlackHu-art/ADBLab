@@ -241,9 +241,16 @@ class ScreenshotViewerNav:
 
     def _set_zoom(self, factor: float, *, fit: bool = False):
         frame = self._frame
-        if frame._disposed or frame._display_pixmap is None:
+        pixmap = frame._display_pixmap
+        if frame._disposed or pixmap is None or pixmap.isNull():
             return
-        frame._zoom_factor = float(factor) if fit else max(MIN_ZOOM, min(MAX_ZOOM, float(factor)))
+        size = frame._view.image_area_size()
+        # 长图适应比例可低于常规下限；保留当前比例也避免扩窗后“缩小”反向放大。
+        minimum = min(
+            MIN_ZOOM, frame._zoom_factor,
+            size.width() / pixmap.width(), size.height() / pixmap.height(),
+        )
+        frame._zoom_factor = float(factor) if fit else max(minimum, min(MAX_ZOOM, float(factor)))
         frame._fit_to_window = fit
         frame._view.reset_pan()
         frame._view.viewport().update()
