@@ -110,6 +110,7 @@ def _self_check_packaging() -> int:
         check("ui:acrylic", False, type(exc).__name__)
 
     from PySide6.QtCore import QCoreApplication, QFile, QTranslator
+    from PySide6.QtGui import QImage
 
     # TLS 插件发现需要 Qt 应用对象；自检只加载后端，不访问更新服务。
     _tls_application = QCoreApplication.instance() or QCoreApplication([])
@@ -135,6 +136,7 @@ def _self_check_packaging() -> int:
         "resources/icons",
         "resources/icons/LICENSE.txt",
         "resources/images/gallery_header.png",
+        "resources/app-icon.png",
         "resources/app_settings.json",
         "resources/connected_devices.yaml",
         "resources/chkbugreport-0.5-215.jar",
@@ -150,6 +152,7 @@ def _self_check_packaging() -> int:
                 else resolved.is_file()
             ),
         )
+    check("image:startup-icon", not QImage(resource_path("resources/app-icon.png")).isNull())
     check(
         "resource:third-party-notices",
         any(
@@ -298,38 +301,74 @@ def _run_gui() -> int:
     # 客户端选择必须在首次解析前注入，否则会先缓存内置/自动结果。
     set_client_preference(settings.get("adb_client", "auto"))
     _configure_gui_scaling(settings.get("ui_scale", "Auto"))
-    _load_fluent_widgets()
-
+    from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
-    from core.log_service import LogService
-    from gui.i18n import install_translators
+    from gui.startup import StartupController
+    from gui.widgets.startup_splash import StartupSplash
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
-    # 翻译器的 Python 引用保留到事件循环退出，并先于页面模块和控件创建。
-    _translators = install_translators(app, settings.get("language", "Auto"))
+    splash = StartupSplash()
+    startup = StartupController(splash, parent=app)
+    # 翻译器引用保持到应用退出；生成器结束不能提前释放 Python 包装对象。
+    translators = []
+    log_service = None
 
-    from gui.main_frame import MainFrame
-    from gui.styles import BaseStyles
+    def initialize():
+        nonlocal log_service
+        _load_fluent_widgets()
+        yield "components", 15
 
-    log_service = LogService()
-    set_error_sink(log_service.log)
-    for level, message in startup_diagnostics:
-        log_service.log(level, message)
-    startup_diagnostics.clear()
+        from core.log_service import LogService
+        from gui.i18n import install_translators
+        from gui.styles import BaseStyles
 
-    # 字体管理器同时更新 QApplication 与各字体角色，保持单一应用入口。
-    BaseStyles.reload_from_settings()
-    BaseStyles.set_accent_color(settings.get("accent_color", "#0F6CBD"))
-    saved_theme = settings.get("theme", "System")
-    BaseStyles.switch_theme(saved_theme)
+        translators.extend(install_translators(app, settings.get("language", "Auto")))
+        log_service = LogService()
+        set_error_sink(log_service.log)
+        for level, message in startup_diagnostics:
+            log_service.log(level, message)
+        startup_diagnostics.clear()
+        BaseStyles.reload_from_settings()
+        BaseStyles.set_accent_color(settings.get("accent_color", "#0F6CBD"))
+        BaseStyles.switch_theme(settings.get("theme", "System"))
+        yield "appearance", 25
 
-    window = MainFrame()
-    window.show()
-    return app.exec()
+        from gui.main_frame import MainFrame
+
+        window = MainFrame(deferred_startup=True)
+        startup.set_window(window)
+        names = {
+            40: "window-base", 45: "apps-overview", 50: "system-overview",
+            55: "remote-overview", 60: "devices-host", 65: "apps-host",
+            70: "workspace", 85: "pages", 95: "navigation",
+        }
+        while (progress := window.advance_startup()) is not None:
+            yield names[progress], progress
+
+    # 排队退出，让中止信号所在轮次的 QObject 延迟释放先收口。
+    startup.failed.connect(lambda _error: QTimer.singleShot(0, app, lambda: app.exit(1)))
+    startup.cancelled.connect(lambda: QTimer.singleShot(0, app, lambda: app.exit(0)))
+    startup.start(initialize())
+    try:
+        exit_code = app.exec()
+    finally:
+        if not startup.is_settled:
+            # 应用在初始化中提前退出时，仍给已有的异步关闭屏障处理事件的机会。
+            cleanup_loop = QEventLoop()
+            startup.settled.connect(cleanup_loop.quit)
+            startup.cancel()
+            if not startup.is_settled:
+                cleanup_loop.exec()
+        splash.finish()
+        if log_service is not None:
+            log_service.shutdown()
+    if startup.error is not None:
+        raise startup.error
+    return exit_code
 
 
 if __name__ == "__main__":

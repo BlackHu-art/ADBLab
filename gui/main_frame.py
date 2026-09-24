@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QIcon, QRegion, QResizeEvent
+from PySide6.QtGui import QCloseEvent, QIcon, QRegion, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -280,6 +280,7 @@ class _ScanThread(QThread):
 
 
 class MainFrame(FluentWindow):
+    startup_aborted = Signal()
     SHUTDOWN_DEADLINE_SECONDS = 6.0
     SHUTDOWN_FINALIZER_RESERVE_SECONDS = 1.0
     DEVICE_SCAN_DEBOUNCE_MS = 300
@@ -295,8 +296,15 @@ class MainFrame(FluentWindow):
         *,
         screen_adapter: ScreenAdapter | None = None,
         mouse_buttons_provider: Callable[[], Qt.MouseButton] | None = None,
+        deferred_startup: bool = False,
     ):
         super().__init__()
+        self._deferred_startup = deferred_startup
+        self._startup_complete = False
+        self._startup_aborting = False
+        self._startup_abort_reported = False
+        self._startup_services_started = False
+        self._startup_failed = False
         self._sync_material_surface_styles()
         self._screen_adapter = screen_adapter or QtScreenAdapter()
         self._mouse_buttons_provider = mouse_buttons_provider or QApplication.mouseButtons
@@ -343,17 +351,11 @@ class MainFrame(FluentWindow):
             self._ensure_current_navigation_item_visible
         )
         self._device_scroll_vertical_maximum = 0
-        self.log_service = LogService()
         self._device_metadata: dict[str, dict[str, str]] = {}
         self._pending_package_device = ""
         self._package_query_invalidated = False
-        set_error_sink(self.log_service.log)
-        # 隐藏协调器必须随主窗销毁，不能在工作区视图释放后继续接收全局样式信号。
-        self.left_panel = SidePanel(self)
-        self.left_panel.hide()
-        self.adb_controller = ADBController(self.log_service)
-        setattr(self.adb_controller, "window_owner", self)
         self.task_supervisor = QtTaskSupervisor()
+        self.task_supervisor.setParent(self)
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
         self._actions = MainFrameActions(self)
@@ -378,15 +380,59 @@ class MainFrame(FluentWindow):
         self._pending_scan_token: tuple[int, int] | None = None
         self._initial_refresh_timer = QTimer(self)
         self._initial_refresh_timer.setSingleShot(True)
-        self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
         self._pending_window_size = None
         self._window_size_save_timer = QTimer(self)
         self._window_size_save_timer.setSingleShot(True)
         self._window_size_save_timer.timeout.connect(self._poll_user_resize_transaction)
         self._always_on_top = False
+        self.navigationInterface.setEnabled(False)
+        self._startup_iterator: Iterator[int] | None = self._startup_steps()
+        if not deferred_startup:
+            try:
+                while self.advance_startup() is not None:
+                    pass
+            except BaseException:
+                self.abort_startup()
+                raise
+
+    def advance_startup(self) -> int | None:
+        """在 GUI 线程推进一个完整阶段；调用之间由外部事件循环交还绘制机会。
+
+        默认构造同步消费同一序列。失败保留原异常，由协调器调用 abort_startup
+        并等待 startup_aborted；就绪、失败或中止后不重复构建和连接信号。
+        """
+        if self._startup_iterator is None or self._startup_failed or self._startup_aborting:
+            return None
+        try:
+            return next(self._startup_iterator)
+        except StopIteration:
+            self._startup_iterator = None
+            return None
+        except BaseException:
+            self._startup_failed = True
+            raise
+
+    def _startup_steps(self) -> Iterator[int]:
+        """按资源归属分段构建隐藏主窗，最后才开放导航和后台启动入口。"""
+        self.log_service = LogService()
+        set_error_sink(self.log_service.log)
+        # 隐藏协调器随主窗销毁，不能在工作区释放后继续接收全局样式信号。
+        self.left_panel = SidePanel(self)
+        self.left_panel.hide()
+        # 页面尚未挂入工作区时也必须有 Qt 父对象，阶段中止不能留下独立顶层滚动区。
+        for widget in (
+            self.left_panel.device_widget,
+            *getattr(self.left_panel, "_tab_scroll_areas", {}).values(),
+        ):
+            if widget.parent() is None:
+                widget.setParent(self.left_panel)
+        self.adb_controller = ADBController(self.log_service)
+        setattr(self.adb_controller, "window_owner", self)
+        self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
 
         self._setup_window()
-        self._init_panels()
+        yield 40
+        yield from self._init_panels_steps()
         self._sync_workspace_restriction(force=True)
         self._setup_shortcuts()
         # FluentWindow 提供窗口外观与导航；该控制器只负责把原生缩放手势映射到
@@ -402,7 +448,56 @@ class MainFrame(FluentWindow):
         if callable(attach_top_level):
             attach_top_level(self)
         self._request_side_panel_reflow(self, ReflowReason.EXPLICIT)
+        self._startup_complete = True
+        self.navigationInterface.setEnabled(True)
+        if not self._deferred_startup:
+            self._start_startup_services()
+        yield 95
+
+    def _start_startup_services(self) -> None:
+        """完成构建后只安排一次设备检测；分步启动在首次显示时才开放此入口。"""
+        if not self._startup_complete or self._closing or self._startup_services_started:
+            return
+        self._startup_services_started = True
+        self._settings_page.start_startup_detection()
         self._bootstrap_adb_async()
+
+    def abort_startup(self) -> None:
+        """幂等中止启动并异步收口已创建资源；完成信号之后才可退出事件循环。"""
+        if self._startup_aborting:
+            return
+        self._startup_aborting = True
+        self._closing = True
+        iterator, self._startup_iterator = self._startup_iterator, None
+        close_iterator = getattr(iterator, "close", None)
+        if callable(close_iterator):
+            close_iterator()
+        self.hide()
+        self.setEnabled(False)
+        self._unbind_window_screen()
+        for timer in self.findChildren(QTimer):
+            timer.stop()
+        if not hasattr(self, "adb_controller"):
+            self._close_ready = True
+            self._finish_startup_abort()
+            return
+        # RunLibrary 构造会启动本地读取，沿用应用关闭屏障在后台等待实际收尾。
+        # closeEvent 内再次调用 close 会被 Qt 的重入保护忽略，直接交给同一屏障。
+        self._close_controller.handle_close_event(QCloseEvent())
+        if self._close_ready:
+            self._finish_startup_abort()
+
+    def _finish_startup_abort(self) -> None:
+        """关闭屏障完成后停止剩余 UI 动画并安排 Qt 对象树释放。"""
+        if self._startup_abort_reported:
+            return
+        self._startup_abort_reported = True
+        for timer in self.findChildren(QTimer):
+            timer.stop()
+        for animation in self.findChildren(QAbstractAnimation):
+            animation.stop()
+        self.deleteLater()
+        self.startup_aborted.emit()
 
     # ── 持续设备扫描 ────────────────────────────────────────────────────
 
@@ -913,6 +1008,11 @@ class MainFrame(FluentWindow):
 
     def _init_panels(self):
         """构建按任务领域拆分的 Fluent 主导航页面。"""
+        for _position in self._init_panels_steps():
+            pass
+
+    def _init_panels_steps(self) -> Iterator[int]:
+        """页面先完成归属再交还事件循环，局部宿主引用由生成器保存。"""
 
         from gui.features.app_manager import AppManagerPage
         from gui.features.file_explorer import FileExplorerPage
@@ -979,8 +1079,11 @@ class MainFrame(FluentWindow):
             )
 
         apps_overview = build_overview(0, "apps")
+        yield 45
         system_overview = build_overview(1, "system")
+        yield 50
         remote_overview = build_overview(2, "remote")
+        yield 55
 
         apps_panel = self.left_panel.app_panel
         system_panel = self.left_panel.system_panel
@@ -1022,6 +1125,7 @@ class MainFrame(FluentWindow):
             ),
         )
         devices_host.register_alias("remote-control", "remote")
+        yield 60
 
         apps_host = WorkspaceFeatureHost(
             "apps",
@@ -1062,6 +1166,7 @@ class MainFrame(FluentWindow):
             defer_payload_while_disposing=True,
             close_label=tr("清除截图结果"),
         )
+        yield 65
 
         system_host = WorkspaceFeatureHost(
             "system",
@@ -1192,6 +1297,7 @@ class MainFrame(FluentWindow):
             "apps": self._apps_page,
             "system": self._system_page,
         }
+        yield 70
 
         self._task_history = TaskHistoryStore()
         self._task_page = TaskCenterPage(
@@ -1199,6 +1305,7 @@ class MainFrame(FluentWindow):
             history_store=self._task_history,
             stop_hook=self._stop_operation_from_task_center,
             run_library=self.run_library,
+            parent=self,
         )
         assert self._task_page.run_results is not None
         self._task_page.run_results.reuse_requested.connect(self._reuse_test_run)
@@ -1210,12 +1317,13 @@ class MainFrame(FluentWindow):
             scroll=False,
             parent=self,
         )
-        self._settings_page = SettingsPage(self, self)
+        self._settings_page = SettingsPage(self, self, defer_startup_detection=True)
         self._app_update = QtAppUpdate(self)
         self._settings_page.about_panel.updateRequested.connect(self._app_update.check)
         self._app_update.changed.connect(self._settings_page.about_panel.set_update_snapshot)
         self._home_page = HomePage(self, self)
         self._sync_material_surface_styles()
+        yield 85
 
         self.navigationInterface.setAcrylicEnabled(True)
         self.addSubInterface(self._home_page, FluentIcon.HOME, tr("首页"))
@@ -1936,6 +2044,8 @@ class MainFrame(FluentWindow):
 
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
         """把业务键映射到对应的 FluentWindow 主页面。"""
+        if not getattr(self, "_startup_complete", True) or getattr(self, "_closing", False):
+            return
 
         if isinstance(key, WorkspaceRoute):
             self._open_workspace_feature(
@@ -2003,6 +2113,8 @@ class MainFrame(FluentWindow):
     ) -> bool:
         """在所属主页面打开内嵌功能，不创建独立业务窗口。"""
 
+        if not getattr(self, "_startup_complete", True) or getattr(self, "_closing", False):
+            return False
         if section == "remote":
             section = "devices"
             feature = "remote" if feature == "overview" else feature
@@ -2754,6 +2866,8 @@ class MainFrame(FluentWindow):
         self._pending_window_size = None
 
     def _flush_pending_layout_state(self) -> None:
+        if getattr(self, "_startup_aborting", False):
+            return
         timer = getattr(self, "_window_size_save_timer", None)
         if timer is not None and timer.isActive():
             timer.stop()
@@ -2817,6 +2931,8 @@ class MainFrame(FluentWindow):
         self._refresh_window_chrome_theme()
         QTimer.singleShot(0, self, self._refresh_window_chrome_theme)
         self._navigation_layout_timer.start(0)
+        if getattr(self, "_startup_complete", False):
+            self._start_startup_services()
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -2844,9 +2960,15 @@ class MainFrame(FluentWindow):
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
+        if not getattr(self, "_startup_complete", True) and not self._startup_aborting:
+            event.ignore()
+            self.abort_startup()
+            return
         (getattr(self, "_close_controller", None) or CloseController(self)).handle_close_event(
             event
         )
+        if getattr(self, "_startup_aborting", False) and self._close_ready:
+            self._finish_startup_abort()
 
     def _register_application_shutdown_tasks(self):
         return (

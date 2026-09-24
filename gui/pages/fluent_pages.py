@@ -914,10 +914,13 @@ class SettingsPage(ScrollArea):
         "Auto": "跟随系统", "zh_CN": "简体中文", "zh_HK": "繁體中文", "en_US": "English",
     }
 
-    def __init__(self, frame, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, frame, parent: QWidget | None = None, *, defer_startup_detection: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._frame = frame
         self._settings = AppSettings.instance()
+        self._startup_detection_scheduled = False
         # 只翻译显示标签；持久化值与路由标识不随界面语言变化。
         self.THEME_LABELS = {mode: tr(label) for mode, label in type(self).THEME_LABELS.items()}
         self.THEME_MODES = {label: mode for mode, label in self.THEME_LABELS.items()}
@@ -1112,10 +1115,8 @@ class SettingsPage(ScrollArea):
         if current_client not in CLIENT_SOURCE_TOKENS:
             self.adb_client_card.set_custom_path(current_client)
         self.adb_client_card.set_selection(current_client)
-        # 空闲时预热一次客户端识别：冷启动的第一次 adb 调用偏慢，提前跑完，
-        # 用户展开卡片时通常已能看到结果（结果按 (路径, mtime, size) 缓存）。
-        # 以卡片作为接收上下文，销毁前尚未投递的预热不能访问已释放的子控件。
-        QTimer.singleShot(0, self.adb_client_card, self.adb_client_card.start_detection)
+        if not defer_startup_detection:
+            self.start_startup_detection()
         self.about_panel = AboutPanel(view)
         self.about_panel.layoutChanged.connect(self._reflow_settings)
 
@@ -1176,6 +1177,18 @@ class SettingsPage(ScrollArea):
         self._refresh_typography()
 
     # ── ADB 页签与客户端选择 ─────────────────────────────────────────────
+
+    def start_startup_detection(self) -> None:
+        """主窗就绪后预热一次客户端识别；卡片销毁会撤销尚未投递的回调。"""
+        if self._startup_detection_scheduled:
+            return
+        self._startup_detection_scheduled = True
+        QTimer.singleShot(0, self.adb_client_card, self._detect_startup_client)
+
+    def _detect_startup_client(self) -> None:
+        """异步预热交付前复核退出状态，避免启动刚取消又派发设备相关查询。"""
+        if not getattr(self._frame, "_closing", False):
+            self.adb_client_card.start_detection()
 
     def _apply_adb_mode(self, mode: str) -> None:
         """切换执行模式：只影响后续命令，不重放在途请求。"""

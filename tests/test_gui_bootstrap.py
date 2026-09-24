@@ -126,20 +126,24 @@ def test_packaging_check_reports_translation_catalog_loadability(
     ("missing_paths", "expected_check"),
     [
         (("resources/images/gallery_header.png",), "resource:resources/images/gallery_header.png"),
+        (("resources/app-icon.png",), "resource:resources/app-icon.png"),
+        (("resources/app-icon.png",), "image:startup-icon"),
         (
             ("resources/images/LICENSE.gallery.txt", "licenses/gallery/LICENSE.gallery.txt"),
             "resource:gallery-license",
         ),
     ],
 )
-def test_packaging_check_reports_missing_gallery_resource(
+def test_packaging_check_reports_missing_visual_resource(
     tmp_path, monkeypatch, capsys, missing_paths, expected_check,
 ):
-    """首页原图和随附许可均为发布资源，缺失时自检必须失败而不是只验证目录存在。"""
+    """首页、启动原图和许可均为发布资源，缺失时不能只检查目录存在。"""
 
     from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
 
     resolve = main.resource_path
+    if expected_check == "image:startup-icon":
+        (tmp_path / "missing").write_text("invalid image", encoding="utf-8")
     monkeypatch.setattr(
         main, "resource_path",
         lambda relative: (
@@ -163,6 +167,102 @@ def test_packaging_check_reports_missing_gallery_resource(
     monkeypatch.setattr(QNetworkAccessManager, "get", forbidden_request)
     assert main._self_check_packaging() == 1
     assert f"FAIL {expected_check}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "mode", ["normal", "fluent-error", "phase-error", "exit-early", "exit-partial"],
+)
+def test_cold_gui_entry_paints_before_fluent_and_cleans_failed_startup(tmp_path, mode):
+    """真实冷 Qt 入口验证首次绘制、失败退出和 CLI 以外的最早导入边界。"""
+    script = r'''
+import json, sys
+from types import SimpleNamespace
+import main
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import QApplication, QWidget
+from gui.widgets import startup_splash
+
+mode = sys.argv[1]
+events = []
+splashes = []
+class Splash(startup_splash.StartupSplash):
+    def __init__(self):
+        super().__init__()
+        splashes.append(self)
+        self.seen = False
+    def paintEvent(self, event):
+        if not self.seen:
+            assert 'qfluentwidgets' not in sys.modules
+            self.seen = True
+            events.append('splash-painted')
+            if mode == 'exit-early':
+                QTimer.singleShot(0, lambda: QApplication.instance().exit(0))
+        super().paintEvent(event)
+startup_splash.StartupSplash = Splash
+load_fluent = main._load_fluent_widgets
+def fluent():
+    assert events == ['splash-painted']
+    events.append('fluent')
+    if mode == 'fluent-error':
+        raise RuntimeError('synthetic-fluent-error')
+    load_fluent()
+main._load_fluent_widgets = fluent
+class Window(QWidget):
+    startup_aborted = Signal()
+    def __init__(self, *, deferred_startup):
+        assert deferred_startup
+        super().__init__()
+        self.phases = iter([40, 70, 85, 95, None])
+    def advance_startup(self):
+        value = next(self.phases)
+        if mode == 'phase-error' and value == 70:
+            raise RuntimeError('synthetic-phase-error')
+        if mode == 'exit-partial' and value == 40:
+            QTimer.singleShot(0, lambda: QApplication.instance().exit(0))
+        return value
+    def abort_startup(self):
+        events.append('abort-started')
+        def complete():
+            events.append('abort-finished')
+            self.deleteLater()
+            self.startup_aborted.emit()
+        QTimer.singleShot(0, complete)
+    def paintEvent(self, event):
+        events.append('window-painted')
+        super().paintEvent(event)
+        QTimer.singleShot(0, lambda: QApplication.instance().exit(27))
+sys.modules['gui.main_frame'] = SimpleNamespace(MainFrame=Window)
+assert 'qfluentwidgets' not in sys.modules
+try:
+    code = main._run_gui()
+except RuntimeError as error:
+    assert mode in ('fluent-error', 'phase-error')
+    assert str(error) == 'synthetic-' + mode
+    code = 1
+assert all(not splash.isVisible() for splash in splashes)
+if mode == 'normal':
+    assert code == 27 and 'window-painted' in events
+elif mode == 'phase-error':
+    assert events[-2:] == ['abort-started', 'abort-finished']
+elif mode == 'exit-partial':
+    assert code == 0 and 'window-painted' not in events
+    assert events[-2:] == ['abort-started', 'abort-finished']
+elif mode == 'exit-early':
+    assert code == 0 and 'window-painted' not in events
+print(json.dumps({'code': code, 'events': events}))
+'''
+    environment = dict(
+        os.environ, LOCALAPPDATA=str(tmp_path), APPDATA=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path), XDG_DATA_HOME=str(tmp_path),
+        QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, mode], env=environment, capture_output=True,
+        text=True, encoding="utf-8", timeout=20, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.splitlines()[-1])
+    assert payload["events"][0] == "splash-painted"
 
 
 @pytest.mark.parametrize("invalid_json", [False, True])
@@ -201,8 +301,33 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
             pass
 
         def exec(self):
+            steps.append("event-loop")
+            steps.append("splash-painted")
+            for _stage in startup.sequence:
+                pass
+            frame.show()
+            startup.is_settled = True
             assert steps.index("translations") < steps.index("window")
             return 23
+
+    class FakeStartup:
+        error = None
+        is_settled = False
+
+        def __init__(self, splash, parent=None):
+            nonlocal startup
+            startup = self
+            self.failed = Mock()
+            self.cancelled = Mock()
+
+        def start(self, sequence):
+            steps.append("splash-shown")
+            self.sequence = sequence
+
+        def set_window(self, window):
+            assert window is frame
+
+    startup = None
 
     def install_translators(app, language):
         assert isinstance(app, FakeApplication)
@@ -221,8 +346,10 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         settings_manager._log_error("INFO", "late-diagnostic")
 
     frame = Mock()
+    frame.advance_startup.side_effect = [40, 70, 85, 95, None]
 
-    def create_frame():
+    def create_frame(*, deferred_startup):
+        assert deferred_startup
         steps.append("window")
         return frame
     styles = SimpleNamespace(
@@ -231,6 +358,10 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     monkeypatch.setattr("PySide6.QtWidgets.QApplication", FakeApplication)
     monkeypatch.setattr("PySide6.QtGui.QIcon", Mock())
     monkeypatch.setattr(main, "setup_qt_search_paths", Mock())
+    monkeypatch.setitem(sys.modules, "gui.startup", SimpleNamespace(StartupController=FakeStartup))
+    monkeypatch.setitem(
+        sys.modules, "gui.widgets.startup_splash", SimpleNamespace(StartupSplash=Mock()),
+    )
     monkeypatch.setitem(sys.modules, "core.log_service", SimpleNamespace(LogService=create_logger))
     monkeypatch.setitem(sys.modules, "gui.main_frame", SimpleNamespace(MainFrame=create_frame))
     monkeypatch.setitem(
@@ -244,7 +375,8 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
 
     assert main._run_gui() == 23
     assert steps == [
-        "settings", "fluent", "application", "translations", "logger", "fonts", "window",
+        "settings", "application", "splash-shown", "event-loop", "splash-painted",
+        "fluent", "translations", "logger", "fonts", "window",
     ]
     frame.show.assert_called_once_with()
     calls = [call.args for call in logger.log.call_args_list]

@@ -28,6 +28,7 @@ RUNTIME_RESOURCE_DATA = (
     ("resources/connected_devices.yaml", "resources"),
     ("resources/chkbugreport-0.5-215.jar", "resources"),
     ("resources/app-icon-helper.jar", "resources"),
+    ("resources/app-icon.png", "resources"),
     ("resources/ZFB.jpg", "resources"),
     ("THIRD_PARTY_NOTICES.md", "licenses"),
     ("mobileperf/LICENSE", "licenses/mobileperf"),

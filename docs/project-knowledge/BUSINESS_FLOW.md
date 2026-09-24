@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-23
+last_verified: 2026-09-24
 related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
 ---
 
@@ -13,8 +13,10 @@ related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
 ## 1. 启动、导航与设备发现
 
 - **触发**：运行 GUI 入口；worker 和打包自检子模式不会创建主窗口。
-- **主流程**：GUI 入口在 QApplication 创建前读取显示缩放，创建应用后先安装 Qt、Fluent 和应用翻译，
-  再应用字体、主题并创建 MainFrame；构建
+- **主流程**：GUI 入口在 QApplication 创建前读取显示缩放，先显示透明瓶子启动图标，再安装
+  Qt、Fluent 和应用翻译、应用字体与主题，并分段创建 MainFrame；液体从左向右显示阶段进度，
+  主窗首帧完成便关闭图标，不额外等待动画或设备连接。调度与中止清理见
+  [启动与组合根](ARCHITECTURE.md#启动与组合根)。构建
   Home、三个业务宿主页、Tasks、Settings 六个物理页面。主左栏直接登记九个业务功能，
   加上首页、任务和设置共十二个一级入口；宽屏显示完整菜单，窄屏显示图标栏并可打开覆盖菜单。
   MainFrame 中宿主和面板的 Pivot/ComboBox 均保持隐藏；独立宿主仍保留原导航接口。复杂功能按路由、
