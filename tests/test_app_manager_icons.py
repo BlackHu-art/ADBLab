@@ -1,7 +1,7 @@
 """应用图标的后台加载、视图缓存和会话生命周期回归。"""
 
 import pytest
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, Signal
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QSignalSpy
 
@@ -121,6 +121,43 @@ def test_icon_requests_follow_viewport_and_filter_instead_of_loading_all_apps(pa
     first.finish()
     wait_until(qt_application, lambda: len(workers) == 2)
     assert workers[1].packages == ["example.app119"]
+
+
+def test_continuous_scroll_starts_icons_for_latest_viewport(page, qt_application, monkeypatch):
+    window, workers = page
+    monkeypatch.setattr(
+        window, "_schedule_visible_detail_load",
+        AppManagerPage._schedule_visible_detail_load.__get__(window),
+    )
+    populate(window, 120)
+    qt_application.processEvents()
+    scrollbar = window.icon_list.verticalScrollBar()
+    assert scrollbar.maximum() > 1
+    tail_packages = set()
+    for offset in (1, 0):
+        scrollbar.setValue(scrollbar.maximum() - offset)
+        tail_packages.update(
+            item.data(0, Qt.ItemDataRole.UserRole)
+            for index in range(window.icon_list.topLevelItemCount())
+            if (item := window.icon_list.topLevelItem(index)) is not None
+            and window.icon_list.viewport().rect().intersects(window.icon_list.visualItemRect(item))
+        )
+    scroll_timer = QTimer(window)
+    scroll_timer.setInterval(20)
+    scroll_timer.timeout.connect(
+        lambda: scrollbar.setValue(
+            scrollbar.maximum() - (scrollbar.value() == scrollbar.maximum())
+        )
+    )
+    scroll_timer.start()
+    try:
+        wait_until(qt_application, lambda: bool(workers), timeout_ms=1000)
+        assert scroll_timer.isActive()
+        assert [worker.operation for worker in workers] == ["load_icon_batch"]
+        assert workers[0].packages
+        assert set(workers[0].packages) <= tail_packages
+    finally:
+        scroll_timer.stop()
 
 
 def test_refresh_discards_old_icon_results_and_requests_new_generation(page, qt_application):

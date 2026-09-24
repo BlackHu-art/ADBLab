@@ -639,6 +639,64 @@ def test_application_checkbox_keyboard_and_delegate_follow_page_font(qt_applicat
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"])
+def test_table_app_labels_render_on_one_line_without_losing_original_text(
+    qt_application, monkeypatch, font_size, separator,
+):
+    """设备标签的段落分隔仅在绘制时压为单行，完整名称和勾选仍按原包归属。"""
+    from models.app_manager_worker import AppManagerWorker
+
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda cls, role, size=None: QFont("Arial", size or font_size)),
+    )
+    page = AppManagerPage()
+    worker = AppManagerWorker("fake-device", "load_details")
+    try:
+        page._populate([
+            ("Alpha", "com.example.alpha", "Enabled", "User"),
+            ("Zulu", "com.example.zulu", "Enabled", "User"),
+        ])
+        page.resize(1000, 850)
+        page.show()
+        QTest.mouseClick(page.view_toggle, Qt.MouseButton.LeftButton)
+        page.model.item(1, 0).setCheckState(Qt.CheckState.Checked)
+        label = separator.join(("Zulu", "Second", "Third"))
+        worker.app_detail_batch.connect(page._on_detail)
+        worker._emit_package_detail(
+            "com.example.zulu", f"nonLocalizedLabel={label}\nversionName=1.0\nversionCode=1",
+        )
+        qt_application.processEvents()
+
+        original = page.model.item(1, 1)
+        assert original.text() == original.toolTip() == label
+        assert page.selected_packages == {"com.example.zulu"}
+        assert page.tree.header().sortIndicatorSection() == 1
+        assert page.tree.header().sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
+        for order, packages in (
+            (Qt.SortOrder.AscendingOrder, ["com.example.alpha", "com.example.zulu"]),
+            (Qt.SortOrder.DescendingOrder, ["com.example.zulu", "com.example.alpha"]),
+        ):
+            page.tree.sortByColumn(1, order)
+            qt_application.processEvents()
+            assert [page.proxy.index(row, 2).data() for row in range(2)] == packages
+            for row in range(2):
+                index = page.proxy.index(row, 1)
+                option = QStyleOptionViewItem()
+                page.tree.itemDelegate().initStyleOption(option, index)
+                assert option.text == ("Zulu Second Third" if index.data() == label else "Alpha")
+                assert option.font.pointSize() == font_size
+                assert page.tree.visualRect(index).height() >= page.tree.sizeHintForRow(row)
+                assert (
+                    page.tree.visualRect(index).height() >= QFontMetrics(option.font).height() + 24
+                )
+            assert page.selected_packages == {"com.example.zulu"}
+        assert original.text() == original.toolTip() == label
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("font_size", [12, 22])
 @pytest.mark.parametrize("icon_mode", [False, True])
 def test_small_workspace_keeps_complete_application_rows(
     qt_application, monkeypatch, font_size, icon_mode

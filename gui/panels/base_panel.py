@@ -233,8 +233,8 @@ class BasePanel(QWidget):
     def _set_button_enabled(self, button: QPushButton | None, enabled: bool):
         if button is None:
             return
+        # Qt 会刷新 :disabled 并记录父控件禁用期间的显式状态；重复同步无需重新抛光样式。
         button.setEnabled(enabled)
-        self._refresh_button_style(button)
 
     def _add_responsive_row(
         self,

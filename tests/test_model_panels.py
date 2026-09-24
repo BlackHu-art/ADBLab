@@ -8,7 +8,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -29,6 +29,7 @@ from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from gui.panels.side_panel_signals import SidePanelSignals
+from gui.styles import BaseStyles
 from utils.adb_targets import normalize_adb_connect_target
 
 
@@ -336,6 +337,74 @@ def test_base_panel_button_factory_rejects_missing_functional_help():
 
     with pytest.raises(ValueError, match="must provide a functional tooltip"):
         base._b("Refresh", "arrows-clockwise.svg")
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("variant", ["", "accent", "ghost", "danger"])
+def test_button_state_sync_uses_native_disabled_style_without_palette_churn(
+    qt_application, theme, variant,
+):
+    """状态同步遵守原生禁用外观和父子状态语义，重复快照不重建按钮调色板。"""
+    BaseStyles.switch_theme(theme)
+    panel = BasePanel(SimpleNamespace())
+    owner = QWidget()
+    owner.resize(240, 160)
+    button, reference = (
+        panel._b("Action", "arrows-clockwise.svg", variant=variant, tooltip="Run action")
+        for _ in range(2)
+    )
+    for index, widget in enumerate((button, reference)):
+        widget.setParent(owner)
+        widget.setGeometry(20, 20 + index * 65, 200, 50)
+        widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    class PaletteEvents(QObject):
+        changes = 0
+
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Type.PaletteChange:
+                self.changes += 1
+            return False
+
+    events = PaletteEvents(button)
+    button.installEventFilter(events)
+    try:
+        owner.show()
+        qt_application.processEvents()
+        enabled_image = button.grab().toImage()
+        for enabled in (False, True):
+            panel._set_button_enabled(button, enabled)
+            reference.setEnabled(enabled)
+            qt_application.processEvents()
+            assert button.grab().toImage() == reference.grab().toImage()
+            if not enabled:
+                assert button.grab().toImage() != enabled_image
+            events.changes = 0
+            for _ in range(10):
+                panel._set_button_enabled(button, enabled)
+            assert events.changes == 0
+
+        # 父禁用时 effective 状态相同，仍须记录显式禁用与恢复请求。
+        owner.setEnabled(False)
+        panel._set_button_enabled(button, False)
+        owner.setEnabled(True)
+        assert not button.isEnabled()
+        owner.setEnabled(False)
+        panel._set_button_enabled(button, True)
+        assert not button.isEnabled()
+        owner.setEnabled(True)
+        assert button.isEnabled()
+        clicks = QSignalSpy(button.clicked)
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert clicks.count() == 1
+        panel._set_button_enabled(button, False)
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert clicks.count() == 1
+    finally:
+        owner.close()
+        owner.deleteLater()
+        panel.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_base_panel_text_factories_apply_panel_fonts():

@@ -48,7 +48,9 @@ class AppManagerIcons(QObject):
     def schedule(self, *_args) -> None:
         """合并切换、筛选和滚动产生的请求，表格视图与后台页面不发起图标 I/O。"""
         if self._allowed():
-            self._timer.start(100)
+            # 到期时读取最新视口，连续滚动不能延长已有请求的等待时间。
+            if not self._timer.isActive():
+                self._timer.start(100)
         else:
             self._timer.stop()
 

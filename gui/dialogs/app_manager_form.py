@@ -84,6 +84,8 @@ class AppManagerItemDelegate(TreeItemDelegate):
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
+        # 名称可能含 Unicode 行分隔符；仅绘制为单行，模型与悬停提示保留完整原文。
+        option.text = " ".join(option.text.splitlines())
         option.font = cast(QWidget, self.parent()).font()
         option.fontMetrics = QFontMetrics(option.font)
 
@@ -296,6 +298,8 @@ class AppManagerForm:
         self._frame.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         self._frame.tree.setAlternatingRowColors(True)
         self._frame.tree.setRootIsDecorated(False)
+        # 表格使用统一字体和单行内容，避免加载时对所有单元格重复测量行高。
+        self._frame.tree.setUniformRowHeights(True)
         self._frame.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._frame.tree.customContextMenuRequested.connect(self._frame._context_menu)
         self._frame.tree.clicked.connect(self._frame._on_row_clicked)
