@@ -120,6 +120,36 @@ def test_animation_only_advances_and_stops_at_the_completed_stage(splash):
     assert splash.grab().toImage() == original
 
 
+def test_stage_progress_paints_continuously_while_waiting_for_the_next_stage(qt_application):
+    from gui.widgets.startup_splash import StartupSplash
+
+    painted = []
+    clock = QElapsedTimer()
+
+    class ObservedSplash(StartupSplash):
+        def paintEvent(self, event):
+            painted.append((clock.elapsed(), self._progress))
+            super().paintEvent(event)
+
+    widget = ObservedSplash()
+    clock.start()
+    try:
+        widget.show()
+        qt_application.processEvents()
+        widget.set_progress(40)
+        QTest.qWait(480)
+        intermediate = [(stamp, progress) for stamp, progress in painted if 0 < progress < 40]
+        assert len({progress for _stamp, progress in intermediate}) >= 12, painted
+        assert intermediate[-1][0] - intermediate[0][0] >= 300, painted
+        assert [progress for _stamp, progress in painted] == sorted(
+            progress for _stamp, progress in painted
+        )
+        assert all(progress <= 40 for _stamp, progress in painted)
+    finally:
+        widget.finish()
+        widget.deleteLater()
+
+
 def test_blocking_startup_stages_paint_intermediate_progress_without_extra_wait(qt_application):
     from gui.startup import StartupController
     from gui.widgets.startup_splash import StartupSplash

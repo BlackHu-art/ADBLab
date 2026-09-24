@@ -202,6 +202,7 @@ _UI_TEST_FILES = frozenset(
         "test_mainframe_startup.py",
         "test_gui_startup.py",
         "test_startup_splash.py",
+        "test_startup_process.py",
         "test_page_scroll_edges.py",
         "test_home_banner.py",
         "test_scrollbar_resize_hit.py",

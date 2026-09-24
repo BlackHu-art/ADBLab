@@ -11,6 +11,7 @@ from PySide6.QtCore import QEvent, QObject, QTimer, Signal
 
 if TYPE_CHECKING:
     from gui.main_frame import MainFrame
+    from gui.startup_process import StartupSplashProcess
     from gui.widgets.startup_splash import StartupSplash
 
 
@@ -26,7 +27,9 @@ class StartupController(QObject):
     cancelled = Signal()
     settled = Signal()
 
-    def __init__(self, splash: StartupSplash, parent: QObject | None = None) -> None:
+    def __init__(
+        self, splash: StartupSplash | StartupSplashProcess, parent: QObject | None = None,
+    ) -> None:
         super().__init__(parent)
         self._splash = splash
         self._window: MainFrame | None = None

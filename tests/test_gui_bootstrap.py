@@ -185,11 +185,15 @@ from gui.widgets import startup_splash
 mode = sys.argv[1]
 events = []
 splashes = []
-class Splash(startup_splash.StartupSplash):
-    def __init__(self):
+class ObservedSplash(startup_splash.StartupSplash):
+    def __init__(self, parent=None):
         super().__init__()
         splashes.append(self)
         self.seen = False
+        self.shutdown_count = 0
+    def shutdown(self):
+        self.shutdown_count += 1
+        self.finish()
     def paintEvent(self, event):
         if not self.seen:
             assert 'qfluentwidgets' not in sys.modules
@@ -198,7 +202,7 @@ class Splash(startup_splash.StartupSplash):
             if mode == 'exit-early':
                 QTimer.singleShot(0, lambda: QApplication.instance().exit(0))
         super().paintEvent(event)
-startup_splash.StartupSplash = Splash
+sys.modules['gui.startup_process'] = SimpleNamespace(StartupSplashProcess=ObservedSplash)
 load_fluent = main._load_fluent_widgets
 def fluent():
     assert events == ['splash-painted']
@@ -239,7 +243,9 @@ except RuntimeError as error:
     assert mode in ('fluent-error', 'phase-error')
     assert str(error) == 'synthetic-' + mode
     code = 1
+assert len(splashes) == 1
 assert all(not splash.isVisible() for splash in splashes)
+assert splashes[0].shutdown_count == 1
 if mode == 'normal':
     assert code == 27 and 'window-painted' in events
 elif mode == 'phase-error':
@@ -359,6 +365,15 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     monkeypatch.setattr("PySide6.QtGui.QIcon", Mock())
     monkeypatch.setattr(main, "setup_qt_search_paths", Mock())
     monkeypatch.setitem(sys.modules, "gui.startup", SimpleNamespace(StartupController=FakeStartup))
+    splash = Mock()
+
+    def create_splash(*, parent):
+        assert isinstance(parent, FakeApplication)
+        return splash
+
+    monkeypatch.setitem(
+        sys.modules, "gui.startup_process", SimpleNamespace(StartupSplashProcess=create_splash),
+    )
     monkeypatch.setitem(
         sys.modules, "gui.widgets.startup_splash", SimpleNamespace(StartupSplash=Mock()),
     )
@@ -379,6 +394,7 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         "fluent", "translations", "logger", "fonts", "window",
     ]
     frame.show.assert_called_once_with()
+    splash.shutdown.assert_called_once_with()
     calls = [call.args for call in logger.log.call_args_list]
     if invalid_json:
         assert calls[0][0] == "WARNING"
@@ -416,6 +432,53 @@ print(json.dumps(calls))
     assert json.loads(result.stdout) == [
         ["worker", ["--config", "synthetic.json"]], ["self-check", ["packaging"]],
     ]
+
+
+def test_startup_splash_cli_bypasses_gui_settings_fluent_and_adb(tmp_path):
+    """启动画面子模式直接进入轻量入口，不执行主应用设置、样式或设备初始化。"""
+    script = """
+import builtins, json, sys
+from types import SimpleNamespace
+import main
+
+blocked = ('core.settings_manager', 'qfluentwidgets', 'gui.main_frame', 'controllers', 'models')
+original_import = builtins.__import__
+def guarded_import(name, *args, **kwargs):
+    if any(name == prefix or name.startswith(prefix + '.') for prefix in blocked):
+        raise AssertionError('splash CLI imported main application dependency: ' + name)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = guarded_import
+def forbidden(*args, **kwargs):
+    raise AssertionError('splash CLI entered main application initialization')
+main._run_gui = forbidden
+main._configure_gui_scaling = forbidden
+main._load_fluent_widgets = forbidden
+main.set_client_preference = forbidden
+main.user_data_root = forbidden
+calls = []
+def run_splash(server_name):
+    calls.append(server_name)
+    return 17
+sys.modules['gui.startup_worker'] = SimpleNamespace(run_startup_splash=run_splash)
+assert main._dispatch_cli(['--startup-splash', 'synthetic-splash-server']) == 17
+assert calls == ['synthetic-splash-server']
+assert not any(
+    name == prefix or name.startswith(prefix + '.')
+    for name in sys.modules for prefix in blocked
+)
+print(json.dumps(calls))
+"""
+    environment = dict(
+        os.environ, LOCALAPPDATA=str(tmp_path), APPDATA=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path), XDG_DATA_HOME=str(tmp_path),
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=environment, capture_output=True,
+        text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == ["synthetic-splash-server"]
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_real_fluent_startup_import_omits_banner_and_preserves_later_output(tmp_path):

@@ -53,10 +53,10 @@ class StartupSplash(QWidget):
         self._liquid = self._liquid_boundary()
         self._progress = 0.0
         self._target = 0.0
-        self._animation_from = 0.0
         self._elapsed = QElapsedTimer()
         self._animation = QTimer(self)
-        self._animation.setInterval(33)
+        self._animation.setTimerType(Qt.TimerType.PreciseTimer)
+        self._animation.setInterval(16)
         self._animation.timeout.connect(self._advance)
         self._first_frame_pending = False
         self._first_frame_delivered = False
@@ -90,13 +90,12 @@ class StartupSplash(QWidget):
         if target < self._target:
             return
         if self._animation.isActive():
-            # 阶段构建可能占满 GUI 线程；先兑现真实经过的时间，再衔接新目标。
+            # 先兑现旧目标已走过的时间，连续到达的阶段不会重置当前位置。
             self._advance()
         if not animate:
             self._animation.stop()
             self._target = self._progress = target
         elif target > self._target:
-            self._animation_from = self._progress
             self._target = target
             self._elapsed.start()
             self._animation.start()
@@ -108,10 +107,11 @@ class StartupSplash(QWidget):
 
     @Slot()
     def _advance(self) -> None:
-        fraction = min(1.0, self._elapsed.elapsed() / 150.0)
-        eased = 1.0 - (1.0 - fraction) ** 3
-        self._progress = self._animation_from + (self._target - self._animation_from) * eased
-        if fraction >= 1.0:
+        # 按实际帧间隔渐近追赶阶段值，避免短缓动迅速冲到终点后长时间停住。
+        # 完成信号不等待此缓动；显示值始终不超过宿主已完成的真实阶段。
+        fraction = -math.expm1(-self._elapsed.restart() / 160.0)
+        self._progress += (self._target - self._progress) * fraction
+        if self._target - self._progress <= 0.05:
             self._progress = self._target
             self._animation.stop()
         self.update()

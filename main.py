@@ -29,6 +29,13 @@ def _dispatch_cli(argv: list[str]) -> int | None:
         return launch(argv[1:])
     if argv[0] == "--mobileperf-worker":
         return _run_mobileperf_worker(argv[1:])
+    if argv[0] == "--startup-splash":
+        parser = argparse.ArgumentParser(description="Run ADBLab startup splash")
+        parser.add_argument("server_name")
+        args = parser.parse_args(argv[1:])
+        from gui.startup_worker import run_startup_splash
+
+        return run_startup_splash(args.server_name)
     if argv[0] == "--self-check":
         return _run_self_check(argv[1:])
     return None
@@ -306,12 +313,12 @@ def _run_gui() -> int:
     from PySide6.QtWidgets import QApplication
 
     from gui.startup import StartupController
-    from gui.widgets.startup_splash import StartupSplash
+    from gui.startup_process import StartupSplashProcess
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
-    splash = StartupSplash()
+    splash = StartupSplashProcess(parent=app)
     startup = StartupController(splash, parent=app)
     # 翻译器引用保持到应用退出；生成器结束不能提前释放 Python 包装对象。
     translators = []
@@ -363,7 +370,7 @@ def _run_gui() -> int:
             startup.cancel()
             if not startup.is_settled:
                 cleanup_loop.exec()
-        splash.finish()
+        splash.shutdown()
         if log_service is not None:
             log_service.shutdown()
     if startup.error is not None:

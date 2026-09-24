@@ -33,17 +33,22 @@ flowchart LR
 ## 启动与组合根
 
 - `main.py::_dispatch_cli()` 分派打包自检、MobilePerf worker 和内部原生工具启动器
-  `--adblab-native-launch`；普通启动进入 `_run_gui()`。
+  `--adblab-native-launch`，以及启动图标显示入口 `--startup-splash`；普通启动进入 `_run_gui()`。
   GUI 在创建 QApplication 前加载设置、应用缩放并缓冲诊断；先显示纯 Qt 的透明启动图标，
   首次绘制后才加载 Fluent、安装翻译器、初始化 LogService、转交诊断并加载主题。翻译器保持到
   事件循环结束，页面始终在翻译、字体和主题就绪后创建。
   自检模式与翻译资源构建见 [构建与运行](../guides/BUILD_AND_RUN.md)。
 - `gui/startup.py::StartupController` 在 GUI 线程逐阶段推进隐藏的 MainFrame，各阶段完成后
-  返回事件循环。瓶内液体按真实阶段从左向右恢复亮度，短缓动不阻塞下一阶段，也不设置最短
+  返回事件循环。瓶内液体按真实阶段从左向右恢复亮度，缓动不阻塞下一阶段，也不设置最短
   展示时间；主窗完成首次绘制后立即交接，ADB 检测和客户端预热不计入启动完成条件。
   `MainFrame(deferred_startup=True)` 使用同一构建序列分步初始化，默认构造仍同步完成。
   分步模式在首显时才调度设备检测；部分构建期间拒绝导航，所有已建控件都有 Qt 父对象。
   失败或提前退出停止后续阶段，并沿用应用关闭屏障等待已建资源收尾，再释放窗口和退出。
+- `gui/startup_process.py::StartupSplashProcess` 拥有独立 Qt 显示进程，通过当前用户可访问的
+  本地 socket 传送真实阶段。子进程只加载启动图标，不加载设置、Fluent 或设备业务；动画不受
+  父进程构建 QWidget 时占用 GUI 线程影响。首帧通知只放行一次，连接断开即关闭子窗口，
+  启动失败、超时或异常退出时回退到本地启动图标。主窗交接时异步关闭并回收显示进程，
+  应用事件循环退出后用有界等待兜底终止；冻结运行复用当前解包环境和缩放配置。
 - `MainFrame` 组合 SidePanel、ADBController、QtTaskSupervisor、RunLibraryController 和页面树。
   六个物理页面为 Home、Devices/Apps/System 三个业务宿主、Tasks、Settings；可见左栏功能通过
   `WorkspaceRoute` 映射到宿主，具体目录只在 [路由表](BUSINESS_FLOW.md#workspace-路由目录)维护。

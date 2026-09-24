@@ -4,7 +4,7 @@ import threading
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QProcess, QTimer
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
@@ -233,12 +233,16 @@ def test_abort_before_queued_client_warmup_prevents_detection(startup, qt_applic
     assert detection.call_count == 0
 
 
-def test_real_startup_controller_hands_splash_to_deferred_mainframe_once(startup, qt_application):
+@pytest.mark.parametrize("independent_splash", [False, True])
+def test_real_startup_controller_hands_splash_to_deferred_mainframe_once(
+    startup, qt_application, independent_splash,
+):
     from gui.startup import StartupController
+    from gui.startup_process import StartupSplashProcess
     from gui.widgets.startup_splash import StartupSplash
 
     create, bootstrap, detection, _controllers = startup
-    splash = StartupSplash()
+    splash = StartupSplashProcess() if independent_splash else StartupSplash()
     coordinator = StartupController(splash)
     ready = []
     coordinator.ready.connect(ready.append)
@@ -258,15 +262,24 @@ def test_real_startup_controller_hands_splash_to_deferred_mainframe_once(startup
         assert positions == list(STARTUP_POSITIONS)
         assert len(ready) == 1
         assert ready[0].isVisible()
-        assert not splash.isVisible()
-        assert not splash._animation.isActive()
+        if independent_splash:
+            wait_until(
+                qt_application,
+                lambda: splash.findChild(QProcess).state() == QProcess.ProcessState.NotRunning,
+            )
+        else:
+            assert not splash.isVisible()
+            assert not splash._animation.isActive()
         assert coordinator.is_settled
         wait_until(qt_application, lambda: detection.call_count == 1)
         assert bootstrap.call_count == 1
         qt_application.processEvents()
         assert len(ready) == bootstrap.call_count == detection.call_count == 1
     finally:
-        splash.finish()
+        if independent_splash:
+            splash.shutdown()
+        else:
+            splash.finish()
         splash.deleteLater()
         coordinator.deleteLater()
 
