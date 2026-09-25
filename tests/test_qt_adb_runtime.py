@@ -535,6 +535,7 @@ def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_ap
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
         set_adb_selection_mode=Mock(),
+        invalidate_wireless_pairing=lambda reason: calls.append(reason),
     )
     page = SettingsPage(frame)
     try:
@@ -542,7 +543,7 @@ def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_ap
 
         assert writes == [("adb_client", source)]
         assert values["adb_client"] == source
-        assert calls[0] == "set_client_preference"
+        assert calls[:2] == ["client_changed", "set_client_preference"]
         assert {
             "invalidate_adb_path_cache", "reset_adb_program_cache", "clear_client_probe_cache",
         } <= set(calls)

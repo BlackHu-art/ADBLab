@@ -486,7 +486,7 @@ def test_empty_states_offer_connection_without_placeholder_devices(qt_applicatio
     assert page.empty_card.isVisible()
     assert not page.cards_container.isVisible()
     assert [button for button in page.findChildren(PushButton) if button.isVisible()] == [
-        page.connect_button
+        page.connect_button, page.disconnect_button,
     ]
     assert page.connect_button.isEnabled() == (state != "scanning")
     assert page.refresh_button.isVisible()
@@ -498,7 +498,7 @@ def test_empty_states_offer_connection_without_placeholder_devices(qt_applicatio
 
 @pytest.mark.parametrize("state", ["ready", "scanning", "unavailable"])
 @pytest.mark.parametrize("selected", [[], ["demo-usb-a", "192.0.2.15:5555"]])
-def test_device_overview_more_menu_preserves_selected_device_disconnect(
+def test_device_overview_toolbar_preserves_selected_device_disconnect(
     qt_application, state, selected,
 ):
     _window, page = _show_page(qt_application)
@@ -507,37 +507,32 @@ def test_device_overview_more_menu_preserves_selected_device_disconnect(
     disconnect = QSignalSpy(page.disconnect_requested)
     selection = QSignalSpy(page.selection_requested)
 
-    assert page.more_button.isVisible()
-    assert page.more_button.accessibleName() == "更多设备操作"
-    assert page.more_button.toolTip() == "断开已勾选设备的 ADB 连接"
-    assert [action.text() for action in page._more_menu.actions()] == [
-        "断开所选设备",
-    ]
-    assert page.disconnect_action.isEnabled() == bool(selected)
-    page.disconnect_action.trigger()
+    assert page.disconnect_button.isVisible()
+    assert page.disconnect_button.text() == "断开"
+    assert page.disconnect_button.accessibleName() == "断开已勾选设备的 ADB 连接"
+    assert page.disconnect_button.toolTip() == "断开已勾选设备的 ADB 连接"
+    assert page.disconnect_button.isEnabled() == bool(selected)
+    page.disconnect_button.click()
     assert disconnect.count() == int(bool(selected))
     assert selection.count() == 0 and page.device_cards == cards
     assert [card.device_id for card in cards if card.selection.isChecked()] == selected
 
     page.set_device_context([], [card.device_id for card in cards], "ready")
-    page.disconnect_action.trigger()
+    page.disconnect_button.click()
     assert disconnect.count() == int(bool(selected))
 
 
-def test_overview_refresh_and_more_keep_separate_single_requests(qt_application):
+def test_overview_refresh_and_disconnect_keep_separate_single_requests(qt_application):
     _window, page = _show_page(qt_application)
     refresh = QSignalSpy(page.refresh_requested)
     disconnect = QSignalSpy(page.disconnect_requested)
     page.refresh_button.click()
     assert (refresh.count(), disconnect.count()) == (1, 0)
-    QTest.mouseClick(page.more_button, Qt.MouseButton.LeftButton)
-    qt_application.processEvents()
-    assert page._more_menu.isVisible()
-    assert (refresh.count(), disconnect.count()) == (1, 0)
+    QTest.mouseClick(page.disconnect_button, Qt.MouseButton.LeftButton)
+    assert (refresh.count(), disconnect.count()) == (1, 1)
     page.hide()
     qt_application.processEvents()
-    assert not page._more_menu.isVisible()
-    assert (refresh.count(), disconnect.count()) == (1, 0)
+    assert (refresh.count(), disconnect.count()) == (1, 1)
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
@@ -559,14 +554,14 @@ def test_device_cards_fit_actual_fonts_and_preserve_keyboard_actions(
     assert window.width() == width
     assert page.width() <= width
     toolbar_bounds = []
-    for control in (page.summary, page.connect_button, page.refresh_button, page.more_button):
+    for control in (page.summary, page.connect_button, page.refresh_button, page.disconnect_button):
         bounds = QRect(control.mapTo(page.toolbar, QPoint()), control.size())
         assert page.toolbar.rect().contains(bounds)
         assert control.height() >= control.fontMetrics().height()
         toolbar_bounds.append(bounds)
     for index, bounds in enumerate(toolbar_bounds):
         assert not any(bounds.intersects(other) for other in toolbar_bounds[index + 1:])
-    assert page.disconnect_action.font().pointSize() == font_size
+    assert page.disconnect_button.font().pointSize() == font_size
     for card in page.device_cards:
         assert card.geometry().right() < page.width()
         assert card.name_label.font().pointSize() == font_size
@@ -621,7 +616,9 @@ def test_device_actions_have_one_entry_per_card_without_a_duplicate_footer(
     }
     assert {
         button for button in page.findChildren(PushButton) if button.isVisible()
-    } == actions | {page.connect_button} | {card.details_button for card in page.device_cards}
+    } == actions | {page.connect_button, page.disconnect_button} | {
+        card.details_button for card in page.device_cards
+    }
     for card in page.device_cards:
         assert card.apps_button.text() == "应用管理"
         assert card.files_button.isEnabled() == (card.device_id in selected)
@@ -680,7 +677,8 @@ def test_existing_rows_shrink_after_font_change_without_expanding_window(
     window.resize(380, 1100)
     _settle_cards(qt_application, page)
     assert window.width() == 380
-    assert page.toolbar.height() <= page.summary.height() + page.connect_button.height() + 12
+    assert page.toolbar.height() <= page.summary.height() + page._toolbar_actions.height() + 12
+    assert page._toolbar_actions.height() <= page.connect_button.height() * 2 + 8
     for card in page.device_cards:
         assert card.width() <= page.width()
         labels = [card.name_label, card.status_label, card.details_label, card.properties_label]

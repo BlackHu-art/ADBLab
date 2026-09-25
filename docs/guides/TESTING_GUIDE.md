@@ -25,6 +25,7 @@
 | 执行、配置与存储 | `test_model_*.py`、`test_settings_persistence.py`、`test_device_store_concurrency.py` | CommandRunner/ProcessRunner、ADB model、设置迁移、原子写与故障恢复 |
 | ADB 执行环境与快速命令 | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_qt_adb_runtime.py`、`test_adb_fast.py` | 客户端候选解析与偏好、只跑 `adb version` 的来源识别与失败分类、能力探测、双后端选择、恢复代次、超时/取消、不重放命令和 Qt 状态投递；业务调用方另选对应 model/service 测试 |
 | 应用更新检查 | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` | 正式版本与链接校验、受控网络响应、超时/限流/关闭、主窗口显式触发和多语言卡片；后两者纳入 `ui` marker，测试不依赖外网 |
+| 无线配对 | `test_adb_pairing.py`、`test_native_command_scope.py`、`test_qt_adb_pairing.py`、`test_device_connection.py`、`test_wireless_connection_history.py`、`test_wireless_pairing_layout.py` | 服务使用脚本化命令与时钟，Qt 使用离屏窗口；覆盖精确身份、秘密、预算、取消/关闭、历史保存及三语言布局，不默认连接真实手机 |
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
 | Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
 | 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_action_result_presentation.py`、`test_diagnostics.py`、`test_console_log_level.py`、`test_console_colors.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、字号与窄窗、诊断容量及原子导出；控制台级别白名单、阈值过滤与颜色探测缓存 |

@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
-    Action,
     BodyLabel,
     CaptionLabel,
     CheckBox,
@@ -24,9 +23,8 @@ from qfluentwidgets import (
     FluentIcon,
     IconWidget,
     PushButton,
-    RoundMenu,
+    TogglePushButton,
     ToolButton,
-    TransparentDropDownToolButton,
     TransparentPushButton,
 )
 
@@ -564,7 +562,9 @@ class DeviceHubPage(QWidget):
         self._state = "empty"
         self._metadata: dict[str, dict[str, object]] = {}
         self._cards: dict[str, _DeviceCard] = {}
+        self._connection_panel: QWidget | None = None
         layout = QVBoxLayout(self)
+        self._page_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -579,28 +579,28 @@ class DeviceHubPage(QWidget):
         self._toolbar_layout.setSpacing(12)
         self._toolbar_layout.addWidget(self.summary, 1)
         self._toolbar_actions = QWidget(self.toolbar)
-        action_layout = QHBoxLayout(self._toolbar_actions)
+        action_layout = FlowLayout(self._toolbar_actions)
+        self._toolbar_action_layout = action_layout
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(8)
-        self.connect_button = PushButton(FluentIcon.CONNECT, tr("连接设备"), self._toolbar_actions)
-        self.connect_button.setToolTip(tr("输入无线调试地址，或使用已保存的连接历史"))
+        action_layout.setHorizontalSpacing(8)
+        action_layout.setVerticalSpacing(8)
+        self.connect_button = TogglePushButton(
+            FluentIcon.CONNECT, tr("连接设备"), self._toolbar_actions,
+        )
+        self.connect_button.setAccessibleName(tr("连接设备"))
+        self.connect_button.setToolTip(tr("展开或收起设备连接区"))
         self.connect_button.clicked.connect(self.connect_requested)
+        self.disconnect_button = PushButton(FluentIcon.CANCEL, tr("断开"), self._toolbar_actions)
+        self.disconnect_button.setToolTip(tr("断开已勾选设备的 ADB 连接"))
+        self.disconnect_button.setAccessibleName(tr("断开已勾选设备的 ADB 连接"))
+        self.disconnect_button.clicked.connect(self.disconnect_requested)
         self.refresh_button = ToolButton(FluentIcon.SYNC, self._toolbar_actions)
         self.refresh_button.setAccessibleName(tr("刷新设备"))
         self.refresh_button.setToolTip(tr("重新扫描 USB 与无线设备的在线状态"))
         self.refresh_button.clicked.connect(self.refresh_requested)
-        self.more_button = TransparentDropDownToolButton(FluentIcon.MORE, self._toolbar_actions)
-        self.more_button.setAccessibleName(tr("更多设备操作"))
-        self.more_button.setToolTip(tr("断开已勾选设备的 ADB 连接"))
-        self._more_menu = RoundMenu(parent=self)
-        self.disconnect_action = Action(FluentIcon.CANCEL, tr("断开所选设备"), self)
-        self.disconnect_action.setToolTip(tr("断开已勾选设备的 ADB 连接"))
-        self.disconnect_action.triggered.connect(self.disconnect_requested)
-        self._more_menu.addAction(self.disconnect_action)
-        self.more_button.setMenu(self._more_menu)
         action_layout.addWidget(self.connect_button)
+        action_layout.addWidget(self.disconnect_button)
         action_layout.addWidget(self.refresh_button)
-        action_layout.addWidget(self.more_button)
         self._toolbar_layout.addWidget(self._toolbar_actions, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.toolbar)
         self.cards_container = QWidget(self)
@@ -628,6 +628,24 @@ class DeviceHubPage(QWidget):
     def device_cards(self) -> tuple[_DeviceCard, ...]:
         """按当前发现顺序返回可见设备卡，不包含仅存在于历史缓存的设备。"""
         return tuple(self._cards[device_id] for device_id in self._connected)
+
+    def set_connection_panel(self, panel: QWidget) -> None:
+        """把唯一连接区放在工具栏与设备内容之间，隐藏时由布局移除其占位。"""
+        if self._connection_panel is panel:
+            return
+        if self._connection_panel is not None:
+            raise ValueError("device connection panel is already attached")
+        self._connection_panel = panel
+        self._page_layout.insertWidget(1, panel)
+
+    def set_connection_expanded(self, expanded: bool) -> None:
+        """以连接区的实际显隐同步入口语义，离页和主动收起使用同一状态。"""
+        self.connect_button.setChecked(expanded)
+        text = tr("收起连接") if expanded else tr("连接设备")
+        self.connect_button.setText(text)
+        self.connect_button.setAccessibleName(text)
+        self.connect_button.setIcon(FluentIcon.UP if expanded else FluentIcon.CONNECT)
+        self._reflow_toolbar()
 
     def set_device_metadata(self, records: Iterable[Mapping[str, object]]) -> None:
         """只接收主窗口提供的内存元数据副本，不加载存储或执行设备查询。"""
@@ -706,8 +724,8 @@ class DeviceHubPage(QWidget):
         }.get(self._state, tr("使用 USB 连接并允许设备上的调试授权，或输入无线调试地址。")))
         self.connect_button.setEnabled(self._state != "scanning")
         self.refresh_button.setEnabled(self._state != "scanning")
-        # 批量管理沿用已选目标，主窗口提交时再读取当前选择，不使用菜单打开时的旧快照。
-        self.disconnect_action.setEnabled(bool(self._selected))
+        # 批量管理沿用已选目标，主窗口提交时再读取当前选择，不缓存旧目标。
+        self.disconnect_button.setEnabled(bool(self._selected))
         self._reflow_toolbar()
         self.updateGeometry()
 
@@ -736,7 +754,7 @@ class DeviceHubPage(QWidget):
         font = BaseStyles.font_for_role(FontRole.UI)
         for widget in (
             self.summary, self.empty_description, self.connect_button, self.refresh_button,
-            self.more_button,
+            self.disconnect_button,
         ):
             widget.setFont(font)
         title_font = BaseStyles.font_for_role(FontRole.UI)
@@ -749,23 +767,33 @@ class DeviceHubPage(QWidget):
         self.refresh_button.setFixedSize(
             self.connect_button.minimumHeight(), self.connect_button.minimumHeight()
         )
-        self.more_button.setMinimumHeight(self.connect_button.minimumHeight())
-        self._more_menu.setFont(font)
-        self._more_menu.view.setFont(font)
-        self._more_menu.setItemHeight(max(32, self.summary.fontMetrics().height() + 14))
-        self.disconnect_action.setFont(font)
-        self._more_menu.view.adjustSize()
-        self._more_menu.adjustSize()
+        self.disconnect_button.setMinimumHeight(self.connect_button.minimumHeight())
+        # 两种状态共用宽度，英文文案变化时也不推动相邻按钮。
+        metrics = self.connect_button.fontMetrics()
+        chrome = self.connect_button.sizeHint().width() - metrics.horizontalAdvance(
+            self.connect_button.text()
+        )
+        self.connect_button.setFixedWidth(chrome + max(
+            metrics.horizontalAdvance(tr("连接设备")), metrics.horizontalAdvance(tr("收起连接")),
+        ))
         for card in self._cards.values():
             card.apply_fonts()
         self._reflow_toolbar()
 
     def _reflow_toolbar(self) -> None:
-        """摘要和设备管理动作按实际字体换行，窄窗保留连接、刷新及更多入口。"""
+        """摘要和设备管理动作按实际字体换行，窄窗仍能完整显示所有按钮。"""
 
+        action_width = sum(
+            max(button.minimumWidth(), button.sizeHint().width())
+            for button in (self.connect_button, self.disconnect_button, self.refresh_button)
+        ) + 17
+        available = max(1, self.width())
+        width = min(available, action_width)
+        self._toolbar_actions.setFixedWidth(width)
+        self._toolbar_actions.setFixedHeight(self._toolbar_action_layout.heightForWidth(width))
         required = (
             self.summary.fontMetrics().horizontalAdvance(self.summary.text())
-            + self._toolbar_actions.sizeHint().width() + 12
+            + action_width + 12
         )
         self._toolbar_layout.setDirection(
             QBoxLayout.Direction.TopToBottom if self.width() < required
@@ -775,8 +803,3 @@ class DeviceHubPage(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reflow_toolbar()
-
-    def hideEvent(self, event) -> None:
-        # 弹出菜单是独立窗口，切换页面时必须主动收起，避免留在后续功能页上。
-        self._more_menu.close()
-        super().hideEvent(event)

@@ -13,14 +13,14 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
-from core.native_process import popen_native, run_native, stop_native_process
+from core.native_process import NativeCommandScope, popen_native, run_native, stop_native_process
 from core.process_utils import kill_process_tree
 from utils import adb_debug
 
@@ -229,26 +229,41 @@ class CommandRunner:
         cancelled: Callable[[], bool] | None = None,
         native_only: bool = False,
         native_tool: bool = False,
+        input_bytes: bytes | None = None,
+        env: Mapping[str, str] | None = None,
+        command_scope: NativeCommandScope | None = None,
     ) -> CommandResult:
-        """执行短命令并归一结果；native_tool 仅声明原生工具隔离，不禁用 ADB 快速通道。"""
+        """执行短命令并归一结果；输入、环境或作用域要求可取消原生路径并拒绝 shell。
+
+        native_tool 仅声明原生工具隔离；未指定新选项时保持已有快速通道和调用契约。
+        """
 
         started_at = _mark_started()
         result: CommandResult
         try:
+            scoped_native = input_bytes is not None or env is not None or command_scope is not None
+            if shell and scoped_native:
+                raise ValueError("input_bytes、env 和 command_scope 不支持 shell=True。")
             resolved_cmd = resolve_command(cmd)
             runtime = _adb_runtime
             raw = None
             if cancelled is not None and cancelled():
                 raw = ExecutionResult(kind="cancelled")
-            elif runtime is not None and not shell and not native_only:
+            elif runtime is not None and not shell and not native_only and not scoped_native:
                 raw = runtime.try_run(resolved_cmd, timeout, cancelled)
             remaining = timeout
-            if runtime is not None or cancelled is not None:
+            if runtime is not None or cancelled is not None or scoped_native:
                 remaining -= perf_counter() - started_at
             if raw is None and remaining <= 0:
                 raw = ExecutionResult(kind="timeout")
-            if raw is None and cancelled is not None and not shell:
-                raw = native_capture(resolved_cmd, remaining, cancelled)
+            if raw is None and not shell and (cancelled is not None or scoped_native):
+                if scoped_native:
+                    raw = native_capture(
+                        resolved_cmd, remaining, cancelled or (lambda: False),
+                        input_bytes=input_bytes, env=env, command_scope=command_scope,
+                    )
+                elif cancelled is not None:
+                    raw = native_capture(resolved_cmd, remaining, cancelled)
             if raw is not None:
                 result = _normalise_result(raw, timeout)
             else:

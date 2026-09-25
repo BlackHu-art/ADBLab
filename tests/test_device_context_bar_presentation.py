@@ -296,7 +296,7 @@ def test_device_popup_escape_dismisses_and_releases_view(bar_window, connection_
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
-def test_overview_more_menu_fully_contains_disconnect_and_accepts_real_clicks(
+def test_overview_toolbar_fully_contains_disconnect_and_accepts_real_clicks(
     bar_window, qt_application, monkeypatch, font_size
 ):
     window, bar = bar_window
@@ -312,21 +312,14 @@ def test_overview_more_menu_fully_contains_disconnect_and_accepts_real_clicks(
     hub._apply_fonts()
     qt_application.processEvents()
     called = QSignalSpy(hub.disconnect_requested)
-    action = hub.disconnect_action
-    QTest.mouseClick(hub.more_button, Qt.MouseButton.LeftButton)
-    QTest.qWait(220)
-    menu = hub._more_menu
-    viewport = menu.view.viewport()
-    assert menu.actions() == [action]
-    assert menu.isVisible() and action.isEnabled()
-    item = menu.view.item(0)
-    bounds = menu.view.visualItemRect(item)
-    assert viewport.rect().contains(bounds)
-    assert bounds.width() >= menu.view.fontMetrics().horizontalAdvance(action.text()) + 40
-    assert bounds.height() >= menu.view.fontMetrics().height() + 14
-    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, pos=bounds.center())
+    button = hub.disconnect_button
+    assert button.isVisible() and button.isEnabled()
+    bounds = QRect(button.mapTo(hub.toolbar, QPoint()), button.size())
+    assert hub.toolbar.rect().contains(bounds)
+    assert button.width() >= button.sizeHint().width()
+    assert button.height() >= button.fontMetrics().height() + 14
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
     assert called.count() == 1
-    assert not menu.isVisible()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

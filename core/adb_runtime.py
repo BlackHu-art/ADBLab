@@ -6,12 +6,17 @@ import os
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 
 from core.adb_transport import CancelCheck, ExecutionResult, capture
-from core.native_process import cancel_and_drain_native, close_native_pipes, popen_native
+from core.native_process import (
+    NativeCommandScope,
+    cancel_and_drain_native,
+    close_native_pipes,
+    popen_native,
+)
 from utils import adb_debug
 
 
@@ -21,25 +26,40 @@ def native_capture(
     cancelled: CancelCheck,
     *,
     stdout_sink: BinaryIO | None = None,
+    input_bytes: bytes | None = None,
+    env: Mapping[str, str] | None = None,
+    command_scope: NativeCommandScope | None = None,
 ) -> ExecutionResult:
-    """执行可取消短命令；结束后最多另用 0.5 秒回收客户端，不停止独立 ADB 服务。"""
+    """执行可取消短命令；输入仅发送一次，环境取副本，不停止独立 ADB 服务。
+
+    结束后最多另用 0.5 秒回收客户端；显式作用域在启动前登记并保留清理失败的句柄。
+    """
     deadline = time.monotonic() + timeout
-    if cancelled():
+    if cancelled() or (command_scope is not None and command_scope._stop_requested()):
         return ExecutionResult(kind="cancelled")
     adb_debug.command(cmd, backend="native_client", timeout=timeout)
+    token = None
     try:
+        if command_scope is not None:
+            token = command_scope._begin_command()
+            if token is None:
+                return ExecutionResult(kind="cancelled")
         proc = popen_native(
             cmd,
             isolate=True,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if input_bytes is None else subprocess.PIPE,
             stdout=stdout_sink if stdout_sink is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **({"env": dict(env)} if env is not None else {}),
         )
+        if command_scope is not None and token is not None:
+            command_scope._attach_process(token, proc)
         completed = False
+        pending_input = input_bytes
         try:
             while True:
-                if cancelled():
+                if cancelled() or (command_scope is not None and command_scope._stop_requested()):
                     adb_debug.command(
                         cmd, backend="native_client", phase="finish", status="cancelled",
                     )
@@ -51,7 +71,11 @@ def native_capture(
                     )
                     return ExecutionResult(kind="timeout")
                 try:
-                    out, err = proc.communicate(timeout=min(0.1, remaining))
+                    payload, pending_input = pending_input, None
+                    out, err = proc.communicate(
+                        timeout=min(0.1, remaining),
+                        **({"input": payload} if payload is not None else {}),
+                    )
                     completed = True
                     if adb_debug.enabled():
                         adb_debug.command(
@@ -74,6 +98,9 @@ def native_capture(
             error_type=type(exc).__name__, errno=exc.errno, winerror=getattr(exc, "winerror", None),
         )
         return ExecutionResult(stderr=b"ADB process failed", kind="transport")
+    finally:
+        if command_scope is not None and token is not None:
+            command_scope._finish_command(token)
 
 
 @dataclass(frozen=True)

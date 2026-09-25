@@ -58,6 +58,9 @@ class CloseController:
     def _register_application_shutdown_tasks(self):
         """按扫描、面板、内嵌会话和 Controller 顺序注册关闭资源。"""
         supervisor = self._frame.task_supervisor.supervisor
+        pairing = getattr(self._frame, "_adb_pairing", None)
+        if pairing is not None:
+            pairing.register_shutdown_tasks(supervisor)
         environment = getattr(self._frame, "_adb_environment", None)
         if environment is not None:
             supervisor.register(
@@ -161,6 +164,12 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        connection = getattr(self._frame, "_connection_panel", None)
+        if connection is not None:
+            connection.prepare_shutdown()
+        pairing = getattr(self._frame, "_adb_pairing", None)
+        if pairing is not None:
+            pairing.prepare_shutdown()
         app_update = getattr(self._frame, "_app_update", None)
         if app_update is not None:
             app_update.prepare_shutdown()

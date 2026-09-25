@@ -11,3 +11,5 @@ PySide6-Fluent-Widgets[full]==1.11.3
 PySideSix-Frameless-Window==0.8.2
 PyYAML==6.0.2
 psutil==7.2.2
+# 无线调试标准 QR：纯 Python，许可文本随包分发。
+segno==1.6.6

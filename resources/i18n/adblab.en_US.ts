@@ -6598,5 +6598,291 @@ Android device management, apps and diagnostics</translation>
             <source>SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。</source>
             <translation>The file specified by SCRCPY_PATH is missing or not executable. Correct or unset this environment variable and retry.</translation>
         </message>
+        <message>
+            <source>连接方式</source>
+            <translation>Connection method</translation>
+        </message>
+        <message>
+            <source>地址与历史</source>
+            <translation>Address and history</translation>
+        </message>
+        <message>
+            <source>扫码配对</source>
+            <translation>Pair with QR code</translation>
+        </message>
+        <message>
+            <source>配对码</source>
+            <translation>Pairing code</translation>
+        </message>
+        <message>
+            <source>关闭</source>
+            <translation>Close</translation>
+        </message>
+        <message>
+            <source>完成</source>
+            <translation>Done</translation>
+        </message>
+        <message>
+            <source>生成二维码</source>
+            <translation>Generate QR code</translation>
+        </message>
+        <message>
+            <source>刷新二维码</source>
+            <translation>Refresh QR code</translation>
+        </message>
+        <message>
+            <source>使用配对码</source>
+            <translation>Use pairing code</translation>
+        </message>
+        <message>
+            <source>取消本次</source>
+            <translation>Cancel attempt</translation>
+        </message>
+        <message>
+            <source>重试停止</source>
+            <translation>Retry stopping</translation>
+        </message>
+        <message>
+            <source>使用手机的无线调试扫描器</source>
+            <translation>Use your phone's wireless debugging scanner</translation>
+        </message>
+        <message>
+            <source>手机与电脑连接同一局域网。</source>
+            <translation>Connect your phone and computer to the same local network.</translation>
+        </message>
+        <message>
+            <source>1  打开“开发者选项 → 无线调试”
+2  选择“使用二维码配对设备”
+3  扫描下方二维码，保持此页面打开</source>
+            <translation>1  Open Developer options → Wireless debugging
+2  Select Pair device with QR code
+3  Scan the code below and keep this page open</translation>
+        </message>
+        <message>
+            <source>无线调试配对二维码</source>
+            <translation>Wireless debugging pairing QR code</translation>
+        </message>
+        <message>
+            <source>在手机“无线调试”中选择“使用配对码配对设备”，填写其中的地址和配对码。</source>
+            <translation>In Wireless debugging on your phone, select Pair device with pairing code. Enter the address and code shown there.</translation>
+        </message>
+        <message>
+            <source>配对地址</source>
+            <translation>Pairing address</translation>
+        </message>
+        <message>
+            <source>这里使用配对弹窗里的端口。</source>
+            <translation>Use the port shown in the pairing dialog.</translation>
+        </message>
+        <message>
+            <source>手机显示的 6 位数字</source>
+            <translation>6 digits shown on your phone</translation>
+        </message>
+        <message>
+            <source>配对并连接</source>
+            <translation>Pair and connect</translation>
+        </message>
+        <message>
+            <source>返回手机“无线调试”首页，填写“IP 地址和端口”。该端口通常与刚才的配对端口不同。</source>
+            <translation>Return to the main Wireless debugging screen on your phone and enter its IP address and port. This port usually differs from the pairing port.</translation>
+        </message>
+        <message>
+            <source>连接地址</source>
+            <translation>Connection address</translation>
+        </message>
+        <message>
+            <source>继续连接</source>
+            <translation>Continue connecting</translation>
+        </message>
+        <message>
+            <source>使用地址连接</source>
+            <translation>Connect by address</translation>
+        </message>
+        <message>
+            <source>正在准备扫码</source>
+            <translation>Preparing QR code</translation>
+        </message>
+        <message>
+            <source>正在检查连接环境</source>
+            <translation>Checking connection environment</translation>
+        </message>
+        <message>
+            <source>等待手机扫码</source>
+            <translation>Waiting for your phone to scan</translation>
+        </message>
+        <message>
+            <source>正在配对</source>
+            <translation>Pairing</translation>
+        </message>
+        <message>
+            <source>已配对，正在确认连接</source>
+            <translation>Paired; checking connection</translation>
+        </message>
+        <message>
+            <source>已配对，连接尚未确认</source>
+            <translation>Paired; connection not confirmed</translation>
+        </message>
+        <message>
+            <source>连接未完成</source>
+            <translation>Connection incomplete</translation>
+        </message>
+        <message>
+            <source>未能确认配对结果，请检查手机。</source>
+            <translation>Pairing result could not be confirmed. Check your phone.</translation>
+        </message>
+        <message>
+            <source>正在停止，请稍候。</source>
+            <translation>Stopping. Please wait.</translation>
+        </message>
+        <message>
+            <source>连接任务尚未结束，暂时无法开始新操作。</source>
+            <translation>The connection task has not stopped. Wait before starting another operation.</translation>
+        </message>
+        <message>
+            <source>本次操作已停止</source>
+            <translation>This attempt has stopped</translation>
+        </message>
+        <message>
+            <source>当前 ADB 客户端不可用，请在设置中检查客户端。</source>
+            <translation>The current ADB client is unavailable. Check the client in Settings.</translation>
+        </message>
+        <message>
+            <source>当前 ADB 不支持无线配对，请在设置中选择较新的客户端。</source>
+            <translation>This ADB client does not support wireless pairing. Select a newer client in Settings.</translation>
+        </message>
+        <message>
+            <source>无法自动发现手机，请尝试使用配对码。</source>
+            <translation>Your phone could not be discovered automatically. Try using a pairing code.</translation>
+        </message>
+        <message>
+            <source>二维码已过期，请重新生成。</source>
+            <translation>The QR code has expired. Generate a new one.</translation>
+        </message>
+        <message>
+            <source>准备超时，请检查连接环境后重试。</source>
+            <translation>Preparation timed out. Check the connection environment and retry.</translation>
+        </message>
+        <message>
+            <source>发现结果存在冲突，请重新生成二维码后再试。</source>
+            <translation>Conflicting discovery results were found. Generate a new QR code and retry.</translation>
+        </message>
+        <message>
+            <source>配对未成功，请检查手机显示的配对码后重新输入。</source>
+            <translation>Pairing failed. Check the code shown on your phone and enter it again.</translation>
+        </message>
+        <message>
+            <source>此连接地址与本次配对设备不一致，请核对地址。</source>
+            <translation>This address belongs to a different device. Check the connection address.</translation>
+        </message>
+        <message>
+            <source>已配对，连接尚未确认。可填写无线调试首页的连接地址继续。</source>
+            <translation>Paired, but the connection is not confirmed. Enter the connection address from the main Wireless debugging screen to continue.</translation>
+        </message>
+        <message>
+            <source>可以使用地址连接继续。</source>
+            <translation>You can continue by connecting with an address.</translation>
+        </message>
+        <message>
+            <source>ADB 连接环境已变更，请重新开始配对。</source>
+            <translation>The ADB connection environment has changed. Start pairing again.</translation>
+        </message>
+        <message>
+            <source>请检查地址与六位配对码。</source>
+            <translation>Check the address and six-digit pairing code.</translation>
+        </message>
+        <message>
+            <source>连接未完成，请检查无线调试与网络后重试。</source>
+            <translation>Connection incomplete. Check wireless debugging and the network, then retry.</translation>
+        </message>
+        <message>
+            <source>连接已确认，可返回设备列表选择操作设备。</source>
+            <translation>Connection confirmed. Return to the device list to select a device.</translation>
+        </message>
+        <message>
+            <source>找不到扫描入口时，可以使用配对码。</source>
+            <translation>If you cannot find the scanner, use a pairing code.</translation>
+        </message>
+        <message>
+            <source>手机可能已保存配对记录，可在无线调试中查看。</source>
+            <translation>Your phone may have saved the pairing. Check Wireless debugging on your phone.</translation>
+        </message>
+        <message>
+            <source>二维码将在 {time} 后过期</source>
+            <translation>QR code expires in {time}</translation>
+        </message>
+        <message>
+            <source>扫码</source>
+            <translation>Scan QR</translation>
+        </message>
+        <message>
+            <source>IP 连接</source>
+            <translation>IP connection</translation>
+        </message>
+        <message>
+            <source>连接已配对的设备</source>
+            <translation>Connect a paired device</translation>
+        </message>
+        <message>
+            <source>填写手机无线调试主页上的 IP 地址和端口。</source>
+            <translation>Enter the IP address and port shown on your phone's Wireless debugging page.</translation>
+        </message>
+        <message>
+            <source>最近连接</source>
+            <translation>Recent connections</translation>
+        </message>
+        <message>
+            <source>暂无连接记录</source>
+            <translation>No recent connections</translation>
+        </message>
+        <message>
+            <source>填入</source>
+            <translation>Fill in</translation>
+        </message>
+        <message>
+            <source>填入 {name} 的连接地址 {address}</source>
+            <translation>Fill in the connection address {address} for {name}</translation>
+        </message>
+        <message>
+            <source>扫码连接新设备</source>
+            <translation>Scan to connect a new device</translation>
+        </message>
+        <message>
+            <source>1  打开手机的“开发者选项 → 无线调试”
+2  选择“使用二维码配对设备”，扫描二维码</source>
+            <translation>1  Open Developer options → Wireless debugging on your phone
+2  Choose Pair device with QR code and scan the code</translation>
+        </message>
+        <message>
+            <source>没有扫码入口？使用配对码</source>
+            <translation>No scanner? Use a pairing code</translation>
+        </message>
+        <message>
+            <source>使用配对码连接</source>
+            <translation>Connect with a pairing code</translation>
+        </message>
+        <message>
+            <source>展开或收起设备连接区</source>
+            <translation>Expand or collapse device connection</translation>
+        </message>
+        <message>
+            <source>断开</source>
+            <translation>Disconnect</translation>
+        </message>
+        <message>
+            <source>收起连接</source>
+            <translation>Hide connection</translation>
+        </message>
+        <message>
+            <source>没有扫码入口？</source>
+            <translation>No scanner?</translation>
+        </message>
+        <message>
+            <source>设备连接历史</source>
+            <translation>Connection history</translation>
+        </message>
+        <message>
+            <source>点击填入地址：{address}</source>
+            <translation>Click to fill in address: {address}</translation>
+        </message>
     </context>
 </TS>

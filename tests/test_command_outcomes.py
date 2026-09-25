@@ -83,3 +83,47 @@ def test_successful_command_text_is_never_classified_as_a_timeout():
     result = execution.CommandResult(True, "ok", "timed out in previous run")
     assert result.outcome == "succeeded"
     assert not result.timed_out
+
+
+@pytest.mark.parametrize("option", ["input_bytes", "env", "command_scope"])
+def test_native_options_cannot_be_consumed_by_fast_backend(monkeypatch, option):
+    from core import native_process
+
+    value = {
+        "input_bytes": b"", "env": {},
+        "command_scope": getattr(native_process, "NativeCommandScope", lambda: object())(),
+    }[option]
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("显式原生命令选项不能走快速通道或同步 run")
+
+    monkeypatch.setattr(execution, "_adb_runtime", SimpleNamespace(try_run=forbidden))
+    monkeypatch.setattr(execution, "run_native", forbidden)
+    observed = []
+
+    def capture(command, timeout, cancelled, **kwargs):
+        observed.append((command, timeout, cancelled(), kwargs))
+        return ExecutionResult(stdout=b"native result")
+
+    monkeypatch.setattr(execution, "native_capture", capture)
+    result = execution.CommandRunner.run(["test-command"], **{option: value})
+
+    assert result.success and result.output == "native result"
+    assert observed[0][0] == ["test-command"]
+    assert 0 < observed[0][1] <= 30
+    assert observed[0][2] is False
+    assert observed[0][3][option] == value
+
+
+@pytest.mark.parametrize(
+    "options", [{"input_bytes": b""}, {"env": {}}, {"command_scope": object()}],
+)
+def test_native_options_reject_shell_before_spawning(monkeypatch, options):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("shell 与原生选项冲突时不能启动进程")
+
+    monkeypatch.setattr(execution, "resolve_command", forbidden)
+    result = execution.CommandRunner.run(["test-command"], shell=True, **options)
+    assert result.outcome == "failed"
+    assert "shell" in result.error

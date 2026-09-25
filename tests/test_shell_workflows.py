@@ -78,14 +78,14 @@ def test_overview_disconnect_uses_current_selection_and_stays_in_device_page(fra
     frame._on_nav_requested("devices")
     frame._on_devices_updated(["demo-a", "demo-b"])
     frame._global_device_bar.selection_requested.emit(["demo-a", "demo-b"])
-    frame._device_hub.disconnect_action.trigger()
+    frame._device_hub.disconnect_button.click()
     assert frame.stackedWidget.currentWidget() is frame._devices_page
     frame.adb_controller.disconnect_devices.assert_called_once_with(["demo-a", "demo-b"])
     frame._global_device_bar.selection_requested.emit(["demo-b"])
-    frame._device_hub.disconnect_action.trigger()
+    frame._device_hub.disconnect_button.click()
     frame.adb_controller.disconnect_devices.assert_called_with(["demo-b"])
     frame._global_device_bar.selection_requested.emit([])
-    frame._device_hub.disconnect_action.trigger()
+    frame._device_hub.disconnect_button.click()
     assert frame.stackedWidget.currentWidget() is frame._devices_page
     assert frame.adb_controller.disconnect_devices.call_count == 2
 

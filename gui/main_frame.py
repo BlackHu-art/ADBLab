@@ -363,6 +363,8 @@ class MainFrame(FluentWindow):
         self.task_supervisor.setParent(self)
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
+        self._adb_pairing = None
+        self._connection_panel = None
         self._actions = MainFrameActions(self)
         self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
@@ -544,12 +546,19 @@ class MainFrame(FluentWindow):
 
     def recheck_adb_environment(self) -> None:
         """重新检测不重启 ADB 服务，也不重复提交用户命令。"""
+        self.invalidate_wireless_pairing("environment_recheck")
         environment = getattr(self, "_adb_environment", None)
         if environment is not None and not self._closing:
             panel = getattr(getattr(self, "left_panel", None), "_scrcpy_tab", None)
             if panel is not None:
                 panel.invalidate_adb_input_sessions()
             environment.recheck()
+
+    def invalidate_wireless_pairing(self, reason: str) -> None:
+        """改变客户端环境前撤销配对与续连资格，普通发现和性能模式不调用。"""
+        pairing = getattr(self, "_adb_pairing", None)
+        if pairing is not None and not self._closing:
+            pairing.invalidate(reason)
 
     def note_adb_server_restarted(self) -> None:
         """本机 ADB 服务重启成功后作废运行时能力并安排一次设备列表刷新。
@@ -2055,12 +2064,34 @@ class MainFrame(FluentWindow):
             self._sync_global_session_controls()
 
     def _show_global_connection(self) -> None:
-        """只从设备概览打开连接表单，使用已加载历史，不额外读取用户存储。"""
+        """仅在概览显式切换连接区；复用组件，每次展开读取当前历史快照。"""
 
-        if not self._device_hub.isVisibleTo(self):
+        if self._closing or not self._device_hub.isVisibleTo(self):
             return
-        history = self.left_panel.connection_history()
-        self._global_device_bar.open_connection(history, anchor=self._device_hub.connect_button)
+        panel = self._connection_panel
+        if panel is not None and panel.is_expanded:
+            panel.collapse()
+            return
+        from adblab.presentation.qt_adb_pairing import QtAdbPairing
+        from gui.widgets.device_connection import DeviceConnectionPanel
+
+        if self._adb_pairing is None:
+            self._adb_pairing = QtAdbPairing(self.task_supervisor, self)
+            self._adb_pairing.connected.connect(self._on_wireless_connected)
+        if panel is None:
+            panel = DeviceConnectionPanel(self._adb_pairing, parent=self._device_hub)
+            self._connection_panel = panel
+            self._device_hub.set_connection_panel(panel)
+            panel.connect_requested.connect(self.left_panel.signals.connect_requested)
+            panel.expanded_changed.connect(self._device_hub.set_connection_expanded)
+        panel.expand(history=self.left_panel.connection_history())
+        self._device_hub.set_connection_expanded(panel.is_expanded)
+
+    def _on_wireless_connected(self, outcome) -> None:
+        """仅接纳当前已核实连接；页内反馈不再重复发送全局完成 Toast。"""
+        pairing = self._adb_pairing
+        if not self._closing and pairing is not None and pairing.accepts_outcome(outcome):
+            self.adb_controller.accept_wireless_connection(outcome)
 
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
         """把业务键映射到对应的 FluentWindow 主页面。"""

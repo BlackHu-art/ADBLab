@@ -31,6 +31,17 @@ ADBLab 直接引用已安装的 `HorizontalFlipView`、`HorizontalPipsPager`、`
 [上游 LICENSE](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/356665d9db87090db43305b98ac6cde2071d8f4d/LICENSE)。
 分发应用或构建产物前，必须选择并遵守适用的 GPL-3.0 或商业许可条款。
 
+## Segno 1.6.6
+
+无线调试配对二维码使用 [Segno 1.6.6](https://pypi.org/project/segno/1.6.6/)，采用
+BSD 3-Clause License。ADBLab 使用 `make_qr()` 生成标准 QR，并在内存输出 PNG；没有复制
+上游实现代码，也没有为二维码新增图像运行依赖。
+
+完整许可文本从该版本 wheel 的 `segno-1.6.6.dist-info/licenses/LICENSE` 原样保存至
+[`resources/licenses/LICENSE.segno.txt`](resources/licenses/LICENSE.segno.txt)，打包收集到
+`licenses/segno/`。固定版本上游文本见
+[LICENSE](https://github.com/heuer/segno/blob/1.6.6/LICENSE)。
+
 ## MobilePerf
 
 `mobileperf/` 是对 Alibaba

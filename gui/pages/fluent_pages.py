@@ -1200,6 +1200,9 @@ class SettingsPage(ScrollArea):
         """应用客户端选择：写配置、清两层路径缓存并重新检测执行环境。"""
 
         text = str(value or "").strip() or CLIENT_PREFERENCE_AUTO
+        invalidate_pairing = getattr(self._frame, "invalidate_wireless_pairing", None)
+        if callable(invalidate_pairing):
+            invalidate_pairing("client_changed")
         set_client_preference(text)
         clear_client_probe_cache()
         invalidate_adb_path_cache()

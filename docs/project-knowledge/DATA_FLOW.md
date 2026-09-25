@@ -12,6 +12,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | --- | --- | --- | --- | --- |
 | 设备标识与状态 | `adb devices`、用户输入的 IP:port | `utils.adb_targets` 校验；`ADBDevice` 只解析 `device` 状态行；SidePanel 统一提交 scanning/ready/empty/unavailable | DeviceManager、全局设备栏、设备概览/工作区上下文、Qt signals；属性缓存于 DeviceStore | 成功扫描才替换在线列表；查询失败保留旧快照；仅 IP 连接元数据跨会话保存 |
 | `CommandResult` | subprocess 返回码/stdout/stderr/timeout | CommandRunner 规范化；model 转 dict；Controller handler 分派 | 日志、UI、批次状态 | 单次命令 |
+| 无线配对请求与续连快照 | 本轮随机二维码口令或用户六位码、已明确配对的 GUID | 固定客户端/环境与请求代次；秘密经 stdin，原始命令输出仅在服务内部解析；UI 只接收状态/原因 | 请求与 PNG 仅在内存；`PairedOnly` 续连快照只有 GUID 和原环境，不含口令 | 工作线程结束释放请求；取消、收起、离页、关窗或环境失效撤销续连；不将二维码、配对码或配对端口写入历史 |
 | AppSettings | 默认值、旧 resources JSON、用户设置及运行时 UI 更新 | 加载按白名单合并；加载/更新共用已知字段规范化；RLock 内更新、500ms 防抖、写锁后取最新快照并原子替换 | 用户配置 `app_settings.json` | 跨会话；批量更新只调度一次保存；运行时未知键不等于可跨重启保留的正式键 |
 | DeviceStore 字典 | 旧 resources YAML、ADB 属性 | 锁内 upsert/快照、筛选 IP 历史后原子写入 | 当前进程缓存与用户配置 `connected_devices.yaml` | IP 历史跨会话，非 IP 属性仅在当前进程 |
 | `WorkspaceRoute` | 首页快捷入口、左侧一级功能导航、设备卡和功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
@@ -72,6 +73,10 @@ sequenceDiagram
 慢设备不阻塞其他设备的显示。批次拥有子查询池，父任务等待子池退出，关闭后排队项不再查询。
 全部查询汇合后仍按原设备顺序写入缓存。
 概览写盘由仅后台使用的写锁串行，并在锁内重查拓扑代次，防止旧查询晚写覆盖新结果。
+无线配对确认后的历史写入复用 Controller 后台执行器和概览写锁：先校验当前配对结果身份，
+取得锁及读取缓存后再校验环境代次与关闭状态。只保存已验证的连接 IP:port，并从当前 transport
+缓存与同端点历史合并有效品牌、型号、系统版本，保留历史别名；不为落盘额外查询 ADB。
+无法获得合法连接端点时只刷新设备列表；历史保存失败记录固定诊断，不撤销已确认的连接。
 DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
 兼容状态源，全局栏提交选择，DeviceHubPage 只显示快照。单设备会话的选择独立于该复选集合。
 DeviceContextBar 在进程内分配固定显示编号，组合根向概览、Monkey、性能列表及 ActionResults

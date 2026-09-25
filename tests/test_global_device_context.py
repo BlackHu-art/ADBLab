@@ -2,6 +2,7 @@
 
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -36,7 +37,18 @@ from tests.ui_geometry_helpers import (
 
 
 @pytest.fixture
-def frame(monkeypatch):
+def frame(monkeypatch, qt_application):
+    from tests.test_device_connection import PairingDouble
+
+    class ConnectedPairingDouble(PairingDouble):
+        connected = Signal(object)
+
+    def create_pairing(_supervisor, parent):
+        pairing = ConnectedPairingDouble()
+        pairing.setParent(parent)
+        return pairing
+
+    monkeypatch.setattr("adblab.presentation.qt_adb_pairing.QtAdbPairing", create_pairing)
     monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
     monkeypatch.setattr(DeviceStore, "get_basic_devices_info", lambda: [])
     monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda devices: [])
@@ -46,6 +58,10 @@ def frame(monkeypatch):
     window._on_nav_requested("apps")
     yield window
     if isValid(window):
+        if window._connection_panel is not None:
+            window._connection_panel.prepare_shutdown()
+            window._connection_panel.collapse()
+        qt_application.processEvents()
         window._unbind_window_screen()
         window._close_ready = True
         window.close()
@@ -540,14 +556,17 @@ def test_device_overview_connects_and_refreshes_without_top_bar(frame, qt_applic
     assert hub.connect_button.isEnabled()
     hub.connect_button.click()
     QTest.qWait(230)
-    form = frame._global_device_bar.findChild(DeviceConnectionForm)
-    assert form is not None and form.isVisible()
-    assert form.mapToGlobal(QPoint()).y() >= hub.connect_button.mapToGlobal(
-        QPoint(0, hub.connect_button.height())
-    ).y()
+    panel = frame._connection_panel
+    assert panel.isVisible() and not panel.isWindow()
+    assert panel.current_page == "qr"
+    assert hub.isAncestorOf(panel)
+    assert hub.connect_button.isChecked()
+    assert frame._adb_pairing.calls == [("qr",)]
     frame._on_nav_requested("settings")
     qt_application.processEvents()
-    assert not isValid(form) or not form.isVisible()
+    assert not panel.isVisible() and not panel.is_expanded
+    assert not hub.connect_button.isChecked()
+    assert frame._adb_pairing.calls[-1] == ("cancel",)
 
 
 def test_device_bar_returns_for_feature_in_same_host_and_hides_on_back(frame, qt_application):
@@ -584,7 +603,7 @@ def test_popup_multiselect_round_trip_keeps_clicked_items_alive(frame, qt_applic
     assert frame.left_panel.selected_devices == []
 
 
-def test_connection_popup_forwards_only_validated_target(frame, qt_application):
+def test_connection_panel_forwards_only_validated_target(frame, qt_application):
     calls = []
     frame.left_panel.signals.connect_requested.connect(calls.append)
     frame.show()
@@ -592,11 +611,18 @@ def test_connection_popup_forwards_only_validated_target(frame, qt_application):
     frame._on_nav_requested("devices")
     qt_application.processEvents()
     frame._device_hub.connect_button.click()
-    form = frame._global_device_bar.findChild(DeviceConnectionForm)
+    panel = frame._connection_panel
+    panel.request_page("address")
+    frame._adb_pairing.finish()
+    form = panel.address_form
     assert form is not None
+    form.address.setText("invalid")
+    form.connect_button.click()
+    assert calls == []
     form.address.setText("192.0.2.10:5555")
     form.connect_button.click()
     assert calls == ["192.0.2.10:5555"]
+    assert panel.isHidden() and not frame._device_hub.connect_button.isChecked()
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])
@@ -613,7 +639,7 @@ def test_top_device_popups_open_below_their_anchor(frame, qt_application, kind):
     else:
         frame._on_nav_requested("devices")
         qt_application.processEvents()
-        frame._show_global_connection()
+        bar.open_connection([], anchor=frame._device_hub.connect_button)
         view = bar.findChild(DeviceConnectionForm)
         anchor = frame._device_hub.connect_button
     QTest.qWait(230)
@@ -699,23 +725,131 @@ def test_picker_row_and_checkbox_clicks_each_toggle_once(qt_application):
     assert spy.count() == 3 and spy.at(2)[0] == ["demo-a"]
 
 
-def test_connection_popup_repeated_open_preserves_pending_input(frame, qt_application):
+def test_connection_panel_repeated_toggle_reuses_view_and_waits_for_cleanup(frame, qt_application):
     frame.show()
     frame._on_nav_requested("devices")
+    frame._on_devices_updated([])
     qt_application.processEvents()
-    bar = frame._global_device_bar
-    anchor = frame._device_hub.connect_button
-    bar.open_connection([], anchor=anchor)
-    first = bar.findChild(DeviceConnectionForm)
-    first.address.setText("192.0.2.10:5555")
-    bar.open_connection([], anchor=anchor)
-    forms = bar.findChildren(DeviceConnectionForm)
-    assert forms == [first]
-    assert first.address.currentText() == "192.0.2.10:5555"
-    first.parentWidget().close()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    bar.open_connection([], anchor=anchor)
-    assert bar.findChild(DeviceConnectionForm) is not first
+    button = frame._device_hub.connect_button
+    assert button.text() == "连接设备"
+    frame._show_global_connection()
+    first = frame._connection_panel
+    pairing = frame._adb_pairing
+    assert button.text() == "收起连接" and button.accessibleName() == "收起连接"
+    first.pairing_code.setText("012345")
+    frame._show_global_connection()
+    assert first.isHidden() and first.pairing_code.text() == ""
+    assert not frame._device_hub.connect_button.isChecked()
+    assert button.text() == "连接设备"
+    assert pairing.calls == [("qr",), ("cancel",)]
+    frame._show_global_connection()
+    assert frame._connection_panel is first
+    assert first.is_expanded and frame._device_hub.connect_button.isChecked()
+    assert button.text() == "收起连接"
+    assert len([call for call in pairing.calls if call == ("qr",)]) == 1
+    pairing.finish()
+    qt_application.processEvents()
+    assert len([call for call in pairing.calls if call == ("qr",)]) == 1
+    frame._show_global_connection()
+    frame._show_global_connection()
+    assert frame._connection_panel is first and first.is_expanded
+    assert len([call for call in pairing.calls if call == ("qr",)]) == 2
+
+
+@pytest.mark.parametrize("route", ["home", "apps", "tasks", "settings", "files"])
+def test_connection_panel_leaving_overview_cancels_and_never_reopens(
+    frame, qt_application, route,
+):
+    frame.show()
+    frame._on_nav_requested("devices")
+    frame._on_devices_updated([])
+    qt_application.processEvents()
+    assert frame._device_hub.connect_button.isEnabled()
+    frame._device_hub.connect_button.click()
+    panel = frame._connection_panel
+    pairing = frame._adb_pairing
+    if route == "files":
+        frame._open_workspace_feature("devices", "files")
+    else:
+        frame._on_nav_requested(route)
+    qt_application.processEvents()
+    assert panel.isHidden() and not panel.is_expanded
+    assert pairing.calls == [("qr",), ("cancel",)]
+    frame._show_global_connection()
+    pairing.finish()
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
+    assert panel.isHidden() and not frame._device_hub.connect_button.isChecked()
+    assert frame._device_hub.connect_button.text() == "连接设备"
+    assert pairing.calls == [("qr",), ("cancel",)]
+
+
+def test_connection_panel_collapsed_restores_cards_and_creates_no_window(frame, qt_application):
+    frame.show()
+    frame._on_nav_requested("devices")
+    frame._on_devices_updated(["demo-a"])
+    hub = frame._device_hub
+    wait_for_stable_geometry(qt_application, (hub, hub.toolbar, hub.cards_container))
+    collapsed_top = hub.cards_container.y()
+    visible_windows = {widget for widget in qt_application.topLevelWidgets() if widget.isVisible()}
+    assert frame._adb_pairing is None
+    hub.connect_button.click()
+    panel = frame._connection_panel
+    wait_for_stable_geometry(qt_application, (hub, panel, hub.cards_container))
+    assert hub.cards_container.y() > collapsed_top
+    assert hub.toolbar.geometry().bottom() < panel.y()
+    assert panel.geometry().bottom() < hub.cards_container.y()
+    assert {widget for widget in qt_application.topLevelWidgets() if widget.isVisible()} == (
+        visible_windows
+    )
+    hub.connect_button.click()
+    wait_for_stable_geometry(qt_application, (hub, hub.toolbar, hub.cards_container))
+    assert hub.cards_container.y() == collapsed_top
+    assert panel.isHidden()
+
+
+def test_connection_panel_pages_align_with_device_card_content(frame, qt_application):
+    frame.show()
+    frame._on_nav_requested("devices")
+    frame._on_devices_updated(["demo-a"])
+    hub = frame._device_hub
+    hub.connect_button.click()
+    panel = frame._connection_panel
+    pairing = frame._adb_pairing
+    pairing.finish("Idle", "")
+    card = hub._cards["demo-a"]
+    for page, content in (
+        ("qr", panel.qr_text),
+        ("manual", panel.pairing_address),
+        ("address", panel.address_form.address),
+    ):
+        panel.request_page(page)
+        wait_for_stable_geometry(qt_application, (panel, content, card))
+        left = card.selection.mapTo(hub, QPoint()).x()
+        assert content.mapTo(hub, QPoint()).x() == left
+        assert panel.stack.currentWidget().mapTo(hub, QPoint()).x() == left
+        assert (
+            panel.stack.currentWidget().mapTo(hub, QPoint()).x()
+            + panel.stack.currentWidget().width()
+            <= card.x() + card.width() - (left - card.x())
+        )
+
+
+def test_pairing_invalidation_precedes_environment_recheck_only(frame):
+    calls = []
+    frame._adb_pairing = SimpleNamespace(invalidate=lambda reason: calls.append(reason))
+    frame._adb_environment = SimpleNamespace(
+        recheck=lambda: calls.append("recheck"),
+        set_selection_mode=lambda mode: calls.append(mode),
+        set_native_only=lambda enabled: calls.append(enabled),
+    )
+    frame.recheck_adb_environment()
+    assert calls == ["environment_recheck", "recheck"]
+    frame.set_adb_selection_mode("native")
+    frame.set_adb_native_only(True)
+    assert calls == ["environment_recheck", "recheck", "native", True]
+    frame._adb_pairing = None
+    frame._adb_environment = None
 
 
 def test_device_management_actions_are_routed_from_overview(frame, qt_application, monkeypatch):
@@ -734,7 +868,7 @@ def test_device_management_actions_are_routed_from_overview(frame, qt_applicatio
     disconnected = QSignalSpy(frame.left_panel.signals.disconnect_requested)
     frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
     frame.left_panel._devices_tab.set_selected_devices(["demo-b"])
-    hub.disconnect_action.trigger()
+    hub.disconnect_button.click()
     assert disconnected.count() == 1
     assert disconnected.at(0)[0] == ["demo-b"]
     frame._on_nav_requested("apps")
@@ -745,6 +879,7 @@ def test_device_management_actions_are_routed_from_overview(frame, qt_applicatio
             if button.isVisibleTo(frame)] == [bar.targets_button]
     frame._show_global_connection()
     assert bar._connection is None
+    assert frame._connection_panel is None and frame._adb_pairing is None
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
@@ -793,34 +928,21 @@ def test_device_bar_and_picker_close_fit_real_window(
     assert picker.select_all_button.isHidden()
 
 
-def test_more_menu_keeps_disconnect_and_selection_enablement(qt_application):
+def test_overview_disconnect_button_keeps_selection_enablement(qt_application):
     bar = DeviceHubPage()
     bar.set_device_context([], ["demo-a"], "ready")
-    assert not bar.disconnect_action.isEnabled()
-    assert bar.disconnect_action.toolTip() == "断开已勾选设备的 ADB 连接"
+    assert not bar.disconnect_button.isEnabled()
+    assert bar.disconnect_button.toolTip() == "断开已勾选设备的 ADB 连接"
+    assert bar.disconnect_button.accessibleName() == "断开已勾选设备的 ADB 连接"
     disconnect = QSignalSpy(bar.disconnect_requested)
     bar.set_device_context(["demo-a"], ["demo-a"], "ready")
-    assert bar.disconnect_action.isEnabled()
+    assert bar.disconnect_button.isEnabled()
     bar.show()
-    QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
-    QTest.qWait(200)
-    assert bar._more_menu.actions() == [bar.disconnect_action]
-    item = bar._more_menu.view.item(0)
-    QTest.mouseClick(
-        bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
-        pos=bar._more_menu.view.visualItemRect(item).center(),
-    )
+    QTest.mouseClick(bar.disconnect_button, Qt.MouseButton.LeftButton)
     assert disconnect.count() == 1
-    assert not bar._more_menu.isVisible()
     bar.set_device_context([], ["demo-a"], "ready")
-    assert not bar.disconnect_action.isEnabled()
-    QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
-    QTest.qWait(200)
-    item = bar._more_menu.view.item(0)
-    QTest.mouseClick(
-        bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
-        pos=bar._more_menu.view.visualItemRect(item).center(),
-    )
+    assert not bar.disconnect_button.isEnabled()
+    QTest.mouseClick(bar.disconnect_button, Qt.MouseButton.LeftButton)
     assert disconnect.count() == 1
 
 

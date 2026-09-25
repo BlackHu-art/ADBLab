@@ -63,6 +63,21 @@ def test_application_catalog_translates_real_text_and_preserves_unknown_entries(
     assert i18n.tr("未收录的测试词条") == "未收录的测试词条"
 
 
+@pytest.mark.parametrize("language,qr,code,paired", [
+    ("zh_CN", "扫码配对", "配对码", "已配对，连接尚未确认"),
+    ("zh_HK", "掃碼配對", "配對碼", "已配對，連線尚未確認"),
+    ("en_US", "Pair with QR code", "Pairing code", "Paired; connection not confirmed"),
+])
+def test_wireless_pairing_states_have_bundled_translations(
+    installed_translators, language, qr, code, paired,
+):
+    """三种语言均区分配对入口与尚未确认连接的中间结果。"""
+    installed_translators(language)
+    assert i18n.tr("扫码配对") == qr
+    assert i18n.tr("配对码") == code
+    assert i18n.tr("已配对，连接尚未确认") == paired
+
+
 @pytest.mark.parametrize("language,show_text,hide_text", [
     ("zh_CN", "显示二维码", "收起二维码"),
     ("en_US", "Show QR code", "Hide QR code"),

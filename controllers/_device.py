@@ -6,6 +6,7 @@ import threading
 from _thread import LockType
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 
@@ -16,6 +17,9 @@ from models.adb_advanced import ADBAdvanced
 from models.adb_device import ADBDevice
 from models.device_store import DeviceStore
 from utils.adb_targets import normalize_adb_connect_target
+
+if TYPE_CHECKING:
+    from services.adb_pairing import PairingOutcome
 
 
 @dataclass
@@ -81,6 +85,91 @@ class ADBDeviceMixin(_ADBControllerBase):
         self.executor.submit(self._save_device_info, ip)
         self.refresh_devices()
         self._emit_operation("connect", True, message)
+
+    def accept_wireless_connection(self, outcome: PairingOutcome) -> None:
+        """只接纳当前配对协调器核实的结果；历史使用缓存，成功反馈归连接窗口。
+
+        在线 transport 与连接端点分别使用；后台写入前重查环境及关闭状态，不为历史
+        追加 ADB 查询。已开始的存储 I/O 自然完成，历史保存失败不撤销已核实连接。
+        """
+        owner = getattr(self, "window_owner", None)
+        pairing = getattr(owner, "_adb_pairing", None)
+        accepts = getattr(pairing, "accepts_outcome", None)
+        if (
+            getattr(self, "_shutting_down", False)
+            or getattr(owner, "_closing", False)
+            or not callable(accepts)
+            or not accepts(outcome)
+        ):
+            return
+        revision = outcome.context_revision
+
+        def _is_current() -> bool:
+            # 后台只读取生命周期代次，不调用 Qt 对象的方法或读取控件。
+            return bool(
+                not getattr(self, "_shutting_down", False)
+                and self.window_owner is owner
+                and not getattr(owner, "_closing", False)
+                and getattr(owner, "_adb_pairing", None) is pairing
+                and getattr(pairing, "context_revision", None) == revision
+            )
+
+        if not _is_current():
+            return
+        self.refresh_devices()
+        endpoint, error = normalize_adb_connect_target(outcome.connection_endpoint)
+        if error:
+            return
+        device_id = outcome.device_id
+        if self._overview_store_lock is None:
+            self._overview_store_lock = threading.Lock()
+        store_lock = self._overview_store_lock
+
+        def _save_history() -> None:
+            if not _is_current():
+                return
+            try:
+                # 与现有概览写入串行，在获得锁后读取最新缓存并再次核对会话。
+                with store_lock:
+                    if not _is_current():
+                        return
+                    records = DeviceStore.get_all()
+                    live = next((
+                        info for _alias, info in records
+                        if isinstance(info, dict) and info.get("ip") == device_id
+                    ), {})
+                    alias, saved = next((
+                        (alias, info) for alias, info in records
+                        if isinstance(info, dict) and normalize_adb_connect_target(
+                            str(info.get("ip", "")),
+                        ) == (endpoint, "")
+                    ), (f"device_{endpoint}", {}))
+
+                    def _field(key: str, default: str) -> str:
+                        for info in (live, saved):
+                            value = info.get(key)
+                            if isinstance(value, str) and value.strip().casefold() not in (
+                                "", "unknown",
+                            ):
+                                return value
+                        return default
+
+                    if not _is_current():
+                        return
+                    DeviceStore.add_device(
+                        alias=alias, ip=endpoint,
+                        brand=_field("Brand", "Unknown"), model=_field("Model", "Unknown"),
+                        android_version=_field("Aversion", ""),
+                    )
+            except Exception:
+                # 存储异常可能包含路径或设备信息，不把异常正文送入诊断或用户提示。
+                self.log_service.log("WARNING", "无线连接已确认，但连接历史保存失败")
+
+        try:
+            self.executor.submit(_save_history)
+        except RuntimeError:
+            if _is_current():
+                self.log_service.log("WARNING", "无线连接已确认，但连接历史未能安排保存")
 
     def _process_device_list(self, devices: list):
         devices = list(dict.fromkeys(devices or []))
@@ -313,6 +402,11 @@ class ADBDeviceMixin(_ADBControllerBase):
             )
 
     def restart_adb(self):
+        """提交重启前撤销无线配对上下文，失败重启也不能继续旧会话。"""
+        owner = getattr(self, "window_owner", None)
+        invalidate = getattr(owner, "invalidate_wireless_pairing", None)
+        if callable(invalidate):
+            invalidate("server_restart")
         self.device_model.restart_adb_async()
 
     def _process_restart_adb_result(self, result: dict):

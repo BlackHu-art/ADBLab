@@ -1,0 +1,333 @@
+"""真实控件在多语言、主题和大字体下保持二维码及连接操作可达。"""
+
+import io
+import os
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+import segno
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from qfluentwidgets import SmoothScrollArea
+
+from gui.i18n import install_translators
+from gui.styles import BaseStyles
+from gui.styles.typography import typography_manager
+from gui.widgets.device_connection import DeviceConnectionPanel
+from tests.test_device_connection import PairingDouble, qr_png
+from tests.ui_geometry_helpers import wait_until
+
+pytestmark = pytest.mark.ui
+
+
+@pytest.fixture
+def history_panel(qt_application):
+    pairing = PairingDouble()
+    host = SmoothScrollArea()
+    host.setWidgetResizable(True)
+    host.resize(960, 800)
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    panel = DeviceConnectionPanel(pairing, parent=content)
+    layout.addWidget(panel)
+    layout.addStretch()
+    host.setWidget(content)
+    host.show()
+    history = [
+        (f"QA phone {index} · 192.0.2.{index}:5555", f"192.0.2.{index}:5555")
+        for index in range(1, 11)
+    ]
+    panel.expand(history)
+    panel.request_page("address")
+    pairing.finish("Idle", "")
+    wait_until(qt_application, lambda: panel.current_page == "address")
+    for _ in range(8):
+        qt_application.processEvents()
+    try:
+        yield panel, pairing, history
+    finally:
+        pairing.busy = False
+        panel.close()
+        host.close()
+        host.deleteLater()
+
+
+def test_connection_history_displays_each_address_once_on_one_line(history_panel):
+    panel, _pairing, history = history_panel
+    row = panel.address_form.history_rows[0]
+    assert row.isVisible()
+    labels = [label for label in row.findChildren(QLabel) if label.isVisible()]
+    displayed_text = " ".join([row.text(), *(label.text() for label in labels)])
+    assert displayed_text.count(history[0][1]) == 1
+    assert "QA phone 1" in displayed_text
+    assert "\n" not in displayed_text
+    if labels:
+        centers = [label.mapTo(row, label.rect().center()).y() for label in labels]
+        assert max(centers) - min(centers) <= 1
+
+
+def test_connection_history_starts_at_top_and_last_row_can_be_filled(
+    history_panel, qt_application
+):
+    panel, pairing, history = history_panel
+    form = panel.address_form
+    viewport = form.history_scroll.viewport()
+    assert form.history_box.mapTo(form, QPoint()).y() <= 1
+    assert form.history_box.rect().contains(form.history_scroll.geometry())
+    for row in form.history_rows[:4]:
+        assert viewport.rect().contains(QRect(row.mapTo(viewport, QPoint()), row.size()))
+        assert form.rect().contains(QRect(row.mapTo(form, QPoint()), row.size()))
+
+    bar = form.history_scroll.verticalScrollBar()
+    assert bar.maximum() > 0
+    bar.setValue(bar.maximum())
+    qt_application.processEvents()
+    last_row = form.history_rows[-1]
+    assert viewport.rect().contains(QRect(last_row.mapTo(viewport, QPoint()), last_row.size()))
+    submitted = QSignalSpy(panel.connect_requested)
+    calls_before = list(pairing.calls)
+    QTest.mouseClick(last_row, Qt.MouseButton.LeftButton, pos=last_row.rect().center())
+    assert form.address.text() == history[-1][1]
+    assert form.address.hasFocus()
+    assert submitted.count() == 0
+    assert pairing.calls == calls_before
+    assert panel.is_expanded
+
+
+@pytest.mark.parametrize(
+    "width,language,font_size",
+    [
+        (800, "zh_CN", 12),
+        (600, "zh_CN", 12),
+        (440, "zh_CN", 12),
+        (800, "en_US", 22),
+        (600, "en_US", 22),
+        (440, "zh_HK", 22),
+    ],
+)
+def test_inline_tabs_share_natural_height_and_reflow_fields(
+    qt_application,
+    width,
+    language,
+    font_size,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    host = SmoothScrollArea()
+    host.setWidgetResizable(True)
+    host.resize(width + 26, 800)
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(12, 12, 12, 12)
+    panel = DeviceConnectionPanel(pairing, parent=content)
+    layout.addWidget(panel)
+    layout.addStretch()
+    host.setWidget(content)
+    host.show()
+    panel.expand([("First phone", "192.0.2.1:5555"), ("Second phone", "192.0.2.2:5555")])
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    try:
+        pairing.qr_ready.emit(1, qr_png(), 29)
+        pairing.publish("WaitingForScan", remaining=120)
+        settle()
+        assert panel.width() == width
+        content_width = panel.stack.currentWidget().width()
+        qr_height = panel.height()
+        if content_width > 440:
+            assert panel.qr_label.mapTo(panel, QPoint()).x() > panel.qr_text.x()
+        else:
+            assert (
+                panel.qr_label.mapTo(panel, QPoint()).y() < panel.qr_text.mapTo(panel, QPoint()).y()
+            )
+        panel.request_page("manual")
+        pairing.finish("Idle", "")
+        settle()
+        assert panel.height() == qr_height
+        if content_width > 580 and font_size == 12:
+            assert (
+                abs(
+                    panel.pairing_address.mapTo(panel, QPoint()).y()
+                    - panel.pairing_code.mapTo(panel, QPoint()).y()
+                )
+                <= 1
+            )
+            assert (
+                abs(
+                    panel.pair_button.mapTo(panel, QPoint()).y()
+                    - panel.pairing_code.mapTo(panel, QPoint()).y()
+                )
+                <= 1
+            )
+        elif content_width > 440 and font_size == 12:
+            assert (
+                abs(
+                    panel.pairing_address.mapTo(panel, QPoint()).y()
+                    - panel.pairing_code.mapTo(panel, QPoint()).y()
+                ) <= 1
+            )
+            assert (
+                panel.pair_button.mapTo(panel, QPoint()).y()
+                > panel.pairing_code.mapTo(panel, QPoint()).y()
+            )
+        if content_width <= 440:
+            assert (
+                panel.pairing_code.mapTo(panel, QPoint()).y()
+                > panel.pairing_address.mapTo(panel, QPoint()).y()
+            )
+        panel.request_page("address")
+        settle()
+        assert panel.height() == qr_height
+        if content_width > 580:
+            assert panel.address_form.history_box.x() > panel.address_form.address.x()
+        else:
+            assert (
+                panel.address_form.history_box.mapTo(panel, QPoint()).y()
+                > panel.address_form.address.mapTo(panel, QPoint()).y()
+            )
+        if width == 800 and font_size == 12:
+            assert qr_height < 350
+        panel.request_page("qr")
+        pairing.qr_ready.emit(2, qr_png(), 29)
+        pairing.publish("WaitingForScan", remaining=120)
+        settle()
+        assert panel.height() == qr_height
+    finally:
+        panel.collapse()
+        host.close()
+        host.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "language,theme,font_size,width,height",
+    [
+        ("zh_CN", "light", 12, 800, 680),
+        ("zh_CN", "dark", 22, 360, 680),
+        ("zh_HK", "dark", 12, 800, 680),
+        ("zh_HK", "light", 22, 360, 680),
+        ("en_US", "light", 12, 800, 680),
+        ("en_US", "dark", 22, 360, 680),
+        ("en_US", "light", 12, 360, 400),
+    ],
+)
+def test_pairing_forms_and_qr_remain_reachable(
+    qt_application,
+    language,
+    theme,
+    font_size,
+    width,
+    height,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    BaseStyles.switch_theme(theme.title())
+    pairing = PairingDouble()
+    host = SmoothScrollArea()
+    host.setWidgetResizable(True)
+    host.resize(width, height)
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(12, 12, 12, 12)
+    window = DeviceConnectionPanel(pairing, parent=content)
+    layout.addWidget(window)
+    layout.addStretch()
+    host.setWidget(content)
+    host.show()
+    window.expand([("QA device", "192.0.2.1:5555")])
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    def reachable(widget):
+        settle()
+        viewport = window.scroll_area.viewport()
+        bar = window.scroll_area.verticalScrollBar()
+        offset = widget.mapTo(viewport, QPoint(0, 0)).y()
+        bar.setValue(bar.value() + offset - max(0, (viewport.height() - widget.height()) // 2))
+        settle()
+        origin = widget.mapTo(viewport, QPoint(0, 0))
+        assert origin.x() >= 0
+        assert origin.x() + widget.width() <= viewport.width()
+        assert origin.y() >= 0
+        assert origin.y() + widget.height() <= viewport.height()
+        assert widget.height() >= widget.fontMetrics().height()
+
+    def snapshot(page):
+        destination = os.environ.get("ADBLAB_QA_OUTPUT")
+        if destination:
+            # 截图等待导航指示条的短动画完成；测试断言仍以实际几何为准。
+            QTest.qWait(250)
+            directory = Path(destination)
+            directory.mkdir(parents=True, exist_ok=True)
+            filename = f"{language}-{theme}-{font_size}-{width}-{height}-{page}.png"
+            assert host.grab().save(str(directory / filename))
+
+    try:
+        settle()
+        assert window.width() <= width
+
+        qr = segno.make_qr("WIFI:T:ADB;S:studio-00000000000000000000;P:XXXXXXXXXXXXXXXXXXXXXXXX;;")
+        buffer = io.BytesIO()
+        qr.save(buffer, kind="png", scale=6, border=4)
+        modules = qr.symbol_size(scale=1, border=4)[0]
+        pairing.qr_ready.emit(1, buffer.getvalue(), modules)
+        wait_until(qt_application, lambda: ("ack", 1) in pairing.calls)
+        pairing.publish("WaitingForScan", remaining=120)
+        settle()
+        pixmap = window.qr_label.pixmap()
+        assert pixmap.width() % modules == 0
+        assert pixmap.width() == pixmap.height()
+        assert pixmap.toImage().pixelColor(0, 0).name() == "#ffffff"
+        # 显示确认发生时就必须可扫码，不能靠测试随后滚动掩盖过早启动倒计时。
+        viewport = window.scroll_area.viewport()
+        qr_top = window.qr_label.mapTo(viewport, QPoint(0, 0))
+        qr_side = pixmap.width() / pixmap.devicePixelRatioF()
+        image_top = qr_top.y() + (window.qr_label.height() - qr_side) / 2
+        assert image_top >= 0
+        assert image_top + qr_side <= viewport.height()
+        snapshot("qr")
+        pairing.finish("Failed", "scan_timeout")
+        window.request_page("address")
+        reachable(window.address_form.address)
+        snapshot("address")
+        window.request_page("manual")
+        settle()
+        reachable(window.pairing_address)
+        reachable(window.pairing_code)
+        snapshot("manual")
+        pairing.continuation = object()
+        pairing.finish("PairedOnly", "connection_timeout")
+        window.connection_address.setText("192.0.2.1:45111")
+        settle()
+        assert window.continue_button.isEnabled()
+        reachable(window.continue_button)
+        snapshot("paired-only")
+        assert not [
+            widget
+            for widget in window.findChildren(QWidget)
+            if widget.isVisible()
+            and widget.window() is host
+            and widget.mapTo(window, QPoint(0, 0)).x() + widget.width() > window.width()
+        ]
+    finally:
+        pairing.busy = False
+        window.close()
+        host.close()
+        host.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()

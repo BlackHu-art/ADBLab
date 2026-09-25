@@ -32,6 +32,111 @@ def _launcher_prefix() -> list[str]:
     return [sys.executable, "--adblab-native-launch"]
 
 
+class NativeCommandScope:
+    """串行原生命令的资源归属；启动中和未确认退出的客户端都阻止下一次准入。
+
+    停止信号永久关闭本作用域，只由命令线程终止、排空正在使用的进程。后台 wait
+    仅在该线程交还残留句柄后接管有界清理，不与 communicate 争用同一进程。
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._stopped = threading.Event()
+        self._token: object | None = None
+        self._process: subprocess.Popen | None = None
+        self._owned = False
+
+    def request_stop(self) -> None:
+        """幂等设置停止信号，不在调用线程等待或操作子进程。"""
+        self._stopped.set()
+        with self._condition:
+            self._condition.notify_all()
+
+    def _stop_requested(self) -> bool:
+        return self._stopped.is_set()
+
+    def _begin_command(self) -> object | None:
+        """在 popen 前登记启动义务；停止后拒绝准入，旧资源未退出时报告失败。"""
+        with self._condition:
+            self._release_exited()
+            if self._token is not None:
+                raise OSError("上一条原生命令尚未确认退出。")
+            if self._stopped.is_set():
+                return None
+            self._token = object()
+            self._owned = True
+            return self._token
+
+    def _attach_process(self, token: object, process: subprocess.Popen) -> None:
+        """接管已登记启动返回的句柄；即使停止已发生，也必须先保留资源归属。"""
+        with self._condition:
+            if self._token is not token:
+                raise RuntimeError("原生命令启动登记已失效。")
+            self._process = process
+
+    def _finish_command(self, token: object) -> None:
+        """执行方结束管道收尾后交还句柄；仅确认退出才解除登记。"""
+        with self._condition:
+            if self._token is token:
+                self._owned = False
+                self._release_exited()
+                self._condition.notify_all()
+
+    def _release_exited(self) -> None:
+        """持锁检查已交还的资源；poll 异常表示无法确认退出，必须保留残留。"""
+        if self._owned or self._token is None:
+            return
+        if self._process is not None:
+            try:
+                if self._process.poll() is None:
+                    return
+            except Exception:
+                return
+        self._process = None
+        self._token = None
+
+    def is_running(self) -> bool:
+        """启动中、执行方尚未交还或客户端退出状态未知时均保守报告运行中。"""
+        with self._condition:
+            self._release_exited()
+            return self._token is not None
+
+    def wait(self, timeout: float) -> bool:
+        """后台有界等待；停止后可接管残留客户端，失败仍持有句柄供监督器报告。"""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            with self._condition:
+                self._release_exited()
+                if self._token is None:
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                process = self._process
+                if self._owned or process is None or not self._stopped.is_set():
+                    self._condition.wait(min(0.05, remaining))
+                    continue
+                # 同一时刻仅一个后台等待者能接管，其他等待者不触碰该进程。
+                self._owned = True
+            try:
+                if isinstance(process, NativeProcess):
+                    process.stop(remaining)
+                elif process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=max(0.0, deadline - time.monotonic()))
+                close_native_pipes(process)
+            except Exception:
+                # 清理失败通过仍为 running/返回 False 暴露，不能误报已停止或丢弃句柄。
+                return False
+            finally:
+                with self._condition:
+                    self._owned = False
+                    self._release_exited()
+                    self._condition.notify_all()
+                    if self._token is not None:
+                        self._condition.wait(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
 class _CancellationEvent:
     """每次启动独占取消事件；保持到入口退出，避免尚未打开事件时丢失控制通道。"""
 

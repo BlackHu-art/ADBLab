@@ -103,6 +103,7 @@ def _self_check_packaging() -> int:
 
     importable("PySide6")
     importable("PySide6.QtNetwork")
+    importable("segno")
     importable("qfluentwidgets")
     importable("mobileperf.android.startup")
     importable("gui.generated.translations_rc")
@@ -162,6 +163,17 @@ def _self_check_packaging() -> int:
             ),
         )
     check("image:startup-icon", not QImage(resource_path("resources/app-icon.png")).isNull())
+    # 用无秘密的样例验证二维码写出器被完整收集，不发起配对或 ADB 连接。
+    try:
+        import io
+
+        import segno
+
+        qr_buffer = io.BytesIO()
+        segno.make_qr("ADBLab packaging check").save(qr_buffer, kind="png", border=4)
+        check("image:pairing-qr", not QImage.fromData(qr_buffer.getvalue()).isNull())
+    except (ImportError, OSError, ValueError) as exc:
+        check("image:pairing-qr", False, type(exc).__name__)
     check(
         "resource:third-party-notices",
         any(
@@ -179,6 +191,16 @@ def _self_check_packaging() -> int:
             for relative_path in (
                 "licenses/gallery/LICENSE.gallery.txt",
                 "resources/images/LICENSE.gallery.txt",
+            )
+        ),
+    )
+    check(
+        "resource:segno-license",
+        any(
+            Path(resource_path(relative_path)).is_file()
+            for relative_path in (
+                "licenses/segno/LICENSE.segno.txt",
+                "resources/licenses/LICENSE.segno.txt",
             )
         ),
     )

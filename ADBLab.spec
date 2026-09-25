@@ -27,9 +27,8 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'tkinter',
-        'unittest',
         'xmlrpc',
-        'pydoc',
+        # SciPy/NumPy 的图像处理运行链需要 unittest 与 pydoc，不能按开发工具排除。
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

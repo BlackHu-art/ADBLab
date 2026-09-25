@@ -24,6 +24,7 @@ RUNTIME_RESOURCE_DATA = (
     ("resources/icons", "resources/icons"),
     ("resources/images/gallery_header.png", "resources/images"),
     ("resources/images/LICENSE.gallery.txt", "licenses/gallery"),
+    ("resources/licenses/LICENSE.segno.txt", "licenses/segno"),
     ("resources/app_settings.json", "resources"),
     ("resources/connected_devices.yaml", "resources"),
     ("resources/chkbugreport-0.5-215.jar", "resources"),
@@ -528,6 +529,55 @@ def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses(monkeypat
     for source, _destination in RUNTIME_RESOURCE_DATA:
         assert Path(source).exists(), f"Missing packaging source: {source}"
     assert SUBMODULE_PACKAGES == ("mobileperf", "qfluentwidgets")
+
+
+@pytest.mark.parametrize("missing", ["", "writer", "license"])
+def test_pairing_packaging_checks_png_writer_and_license_without_adb(
+    qt_application, tmp_path, monkeypatch, capsys, missing,
+):
+    """实际编码二维码并检查许可；外部工具探针隔离，绝不执行 ADB。"""
+    import subprocess
+    from types import SimpleNamespace
+
+    import segno
+    from PySide6.QtNetwork import QSslSocket
+    from qfluentwidgets.components.widgets import acrylic_label
+
+    import main
+
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr("utils.tool_check.check_bundled_tools", lambda: [])
+    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
+        ),
+    )
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
+    if missing == "writer":
+        def unavailable_writer(*args, **kwargs):
+            raise ValueError("missing writer")
+
+        monkeypatch.setattr(segno, "make_qr", unavailable_writer)
+    if missing == "license":
+        resolve = main.resource_path
+        monkeypatch.setattr(
+            main, "resource_path",
+            lambda relative: (
+                str(tmp_path / "missing-license")
+                if relative in {
+                    "licenses/segno/LICENSE.segno.txt", "resources/licenses/LICENSE.segno.txt",
+                }
+                else resolve(relative)
+            ),
+        )
+    assert main._self_check_packaging() == (1 if missing else 0)
+    output = capsys.readouterr().out
+    assert f"{'FAIL' if missing == 'writer' else 'OK'} image:pairing-qr" in output
+    assert f"{'FAIL' if missing == 'license' else 'OK'} resource:segno-license" in output
 
 
 def test_declared_svg_icons_exist_with_exact_case():

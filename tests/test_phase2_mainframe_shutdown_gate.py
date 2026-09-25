@@ -604,6 +604,25 @@ def test_feature_tasks_are_registered_before_host_shutdown():
 
 
 @pytest.mark.ui
+def test_pairing_tasks_are_registered_before_ui_and_coordinator_shutdown(qt_application):
+    events = []
+    frame = _frame(lambda: None, deadline=0.3)
+    frame._adb_pairing = SimpleNamespace(
+        register_shutdown_tasks=lambda supervisor: events.append("register_pairing"),
+        prepare_shutdown=lambda: events.append("stop_pairing"),
+    )
+    frame._connection_panel = SimpleNamespace(
+        prepare_shutdown=lambda: events.append("hide_pairing_secrets"),
+    )
+    settings = Mock()
+    settings._save_timer = None
+    _bind_settings_finalizer(frame, settings)
+    frame.closeEvent(CloseEvent())
+    _drive_until(qt_application, lambda: frame._close_ready, frame=frame)
+    assert events == ["register_pairing", "hide_pairing_secrets", "stop_pairing"]
+
+
+@pytest.mark.ui
 @pytest.mark.parametrize("stage", ["registration", "dispose"])
 def test_feature_shutdown_failure_is_reported_and_other_hosts_still_stop(stage):
     app = QApplication.instance() or QApplication([])

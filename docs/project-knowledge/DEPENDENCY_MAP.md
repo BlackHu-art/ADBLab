@@ -31,6 +31,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | --- | --- | --- |
 | PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`core/log_service.py`、`adblab/presentation/qt_app_update.py` |
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
+| Segno | 内存生成无线 ADB 配对 PNG；固定整数模块尺寸与白色静区，不读写二维码文件 | `services/adb_pairing.py`；版本见运行依赖与约束，BSD-3-Clause 原文随包收集 |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
 | PySide6-Fluent-Widgets (qfluentwidgets) | 窗口、导航、控件、主题和消息 | `requirements.txt`、`gui/`；许可记录见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) |
@@ -87,7 +88,8 @@ service/model 构造。
 
 | 能力组 | 主要入口 | 典型外部接口 | 输入 | 输出 | 校验/保护 |
 | --- | --- | --- | --- | --- | --- |
-| 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 |
+| 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；既有网络 mixin 的 pair 入口保留兼容 |
+| 无线配对 | `services/adb_pairing.py`、`QtAdbPairing` | `adb mdns check/services`、`pair`、`connect`、`devices`、目标 `getprop persist.adb.wifi.guid` | 配对地址、临时口令、精确服务名/GUID | 固定状态与原因、已验证连接地址 | 会话固定客户端与环境；口令仅经 stdin；配对成功不能代替在线身份确认；不向通用连接校验器开放任意服务名 |
 | 设备属性 | `ADBDevice.get_device_overview_info` | `getprop`、`dumpsys`、`wm` | device | 概览属性字典 | 分段解析、指标单位规范化；查询失败回退基础属性 |
 | 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | 校验以各入口实现为准，不能将单一路径的保护推广到全部 model 接口 |
 | 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | Remote 优先已验证直连；原生兼容持久 shell 的成功写入不等于设备执行确认；文本在 ADBApp 中 quote 后执行短命令 |

@@ -39,6 +39,7 @@ pywin32-ctypes==0.2.3
 pyyaml==6.0.2
 ruff==0.16.3
 scipy==1.17.1
+segno==1.6.6
 setuptools==82.0.0
 shiboken6==6.8.1.1
 typing-extensions==4.16.0

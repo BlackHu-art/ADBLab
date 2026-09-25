@@ -13,6 +13,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 
 | 等级 | 未闭环事项 | 当前保护与剩余工作 | 状态 |
 | --- | --- | --- | --- |
+| Medium | 无线配对的手机与局域网兼容矩阵尚未实测 | 服务、Qt 交互及本地客户端生命周期使用离线替身验证；仍需 Android 11+ 实机覆盖扫码入口、六位码、mDNS/防火墙/网络隔离、配对与连接端口变化及取消后的信任记录。实现不能保证所有厂商提供二维码扫描入口 | 待确认 |
 | High | 打包发布会自动删除保留范围外的 tag/Release，且没有独立的历史版本登记 | [Build](../../.github/workflows/Build-exe.yaml) 拒绝覆盖现存同版本，并仅保留最新 5 个版本 tag 及对应 Release；被删除版本的不可复用登记与发布审批仍需项目决策 | Partial |
 | High | PySide6-Fluent-Widgets 的分发许可尚未形成正式项目决策 | 已记录 GPL-3.0/商业许可边界并把第三方说明纳入产物；任何分发前仍需完成法务、开源或商业授权决策 | Open |
 | High | 随包 chkbugreport JAR 的分发许可尚未确认，仓库缺少对应官方许可文本 | MANIFEST 标识 `com.sonyericsson.chkbugreport.Main`；对外分发前核对准确上游版本及许可，并补齐官方许可文本和第三方声明 | Open |
@@ -31,6 +32,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Low | 首次执行本机 `adb.exe` 可能显著偏慢（Windows 加载与安全扫描），客户端识别依赖预热与护栏 | 设置页构建后空闲预热一次识别、单项 3 秒预算、串行探测、15 秒护栏且失败不入缓存；缺少其它机器与真实设备矩阵验证 | 待确认 |
 | Low | 表格的手动列宽与排序分组规则尚未统一 | 文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序；是否统一手动调整及目录置顶属于后续交互决策 | 待确认 |
 | Low | 通知紧凑高度测试存在 Linux 字体度量差异 | [通知测试](../../tests/test_notifications.py) 的 22pt 中文浮条在本机为 67px，超过固定 64px 断言；原 HEAD 同样复现，全文、按钮与窗口边界检查通过。尚需确定跨平台紧凑高度标准；未放宽断言或缩小字号 | 待确认 |
+| Low | Windows 上的 macOS ADB 重检模拟用例存在路径分隔符断言差异 | [重检测试](../../tests/test_qt_adb_runtime.py) 的 `test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches` 比较含正斜杠的模拟 darwin 路径与 WindowsPath 反斜杠字符串而失败；本轮未修改解析器或该节点，需单独校准跨平台断言 | Open |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见
 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。

@@ -23,4 +23,6 @@
 | 实施验收 | [2026-09-08 ADB 执行链](ledgers/2026-09-08-adb-execution-gaps.md) | 已完成的查询取消、能力验证、截图 I/O 与 MobilePerf 采样记录；不作为待执行计划或当前测试快照 |
 | 平台实施 | [2026-09-22 多系统兼容性](ledgers/2026-09-22-cross-platform-compatibility.md) | 保留已实施改动及当时 Linux 验证；Windows/macOS、实机设备等未验收项继续由当前风险账本跟踪 |
 | UI 检查 | [2026-09-24 体验检查与修复](ledgers/2026-09-24-ui-experience-audit.md) | 界面源码扫描、字号与窄窗修复、输入状态及菜单生命周期验证 |
+| 实施验收 | [2026-09-25 无线 ADB 配对](ledgers/2026-09-25-wireless-pairing.md) | 三页连接交互、配对身份与取消、翻译布局、冻结产物验收及实机验证边界 |
+| UI 验收 | [2026-09-25 页内设备连接](ledgers/2026-09-25-inline-device-connection.md) | 紧凑等高页签、工具栏断开、收起与离页取消、三语言和 DPI 增量验证 |
 | 工具迁移 | [2026-09-22 Windows 工具包](ledgers/2026-09-22-windows-tool-bundle-migration.md) | 保留工具目录迁移、清理范围与验证证据；原生 Windows 产物及设备验证仍以风险账本为准 |

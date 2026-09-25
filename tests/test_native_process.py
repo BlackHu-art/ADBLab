@@ -89,6 +89,31 @@ def test_source_process_keeps_binary_streams_and_exit_code():
     assert (result.stdout, result.stderr, result.returncode) == (b"INPUT\0", b"ERR\0", 7)
 
 
+@pytest.mark.parametrize("payload", [b"", b"123456\n"])
+def test_native_capture_preserves_input_environment_and_scope_across_polling(payload):
+    from core.adb_runtime import native_capture
+    from core.native_process import NativeCommandScope
+
+    scope = NativeCommandScope()
+    environment = dict(os.environ, ADBLAB_SYNTHETIC="captured environment")
+    command = [
+        NATIVE_PYTHON, "-c",
+        "import os,sys,time; data=sys.stdin.buffer.read(); time.sleep(0.2);"
+        "sys.stdout.buffer.write(data);"
+        "sys.stderr.write(os.environ['ADBLAB_SYNTHETIC'])",
+    ]
+    result = native_capture(
+        command, 5, lambda: False, input_bytes=payload,
+        env=environment, command_scope=scope,
+    )
+    assert result.kind == "completed"
+    assert result.stdout == payload
+    assert result.stderr == b"captured environment"
+    assert result.returncode == 0
+    assert scope.wait(0) and not scope.is_running()
+    assert "ADBLAB_SYNTHETIC" not in os.environ
+
+
 @pytest.fixture
 def frozen_launcher(monkeypatch):
     if sys.platform != "win32":
