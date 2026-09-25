@@ -246,10 +246,13 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 
 ### 应用图标读取工具
 
-`resources/app-icon-helper.jar` 是随应用携带的 DEX 工具，源码位于
+`resources/app-icon-helper.jar` 是随应用携带的应用元数据与图标 DEX 工具，源码位于
 `tools/app_icons/Main.java`。设备端通过 `app_process` 临时执行，读取当前 Android 用户下的
-应用图标；不安装 APK，不要求 root，主机运行应用时也不需要 Java 或 Android SDK。
-设备不支持相关框架接口时，应用管理保留占位图标并提示刷新重试。
+应用图标，或通过 `--metadata` 模式批量读取应用名称、版本和缓存身份；不安装 APK，
+不要求 root，主机运行应用时也不需要 Java 或 Android SDK。
+设备不支持相关框架接口时，图标保留占位；元数据仅在明确不支持时使用有界兼容查询。
+两种模式共用临时部署和清理边界，协议、取消与缓存行为见
+[应用管理流程](../project-knowledge/BUSINESS_FLOW.md#3-应用管理与安装批次)。
 
 只有修改 Java 源码时才需要重新生成此资源，需要完整 JDK（脚本只校验 `javac`/`java` 是否存在，
 不校验 JDK 版本）、Android SDK platform 33 和 build-tools 33.0.2；工具不会自动下载这些开发组件：

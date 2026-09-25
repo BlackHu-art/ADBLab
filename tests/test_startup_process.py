@@ -179,6 +179,25 @@ def test_worker_start_failure_falls_back_and_preserves_progress(splash, monkeypa
     assert len(cancelled) == 1
 
 
+@pytest.mark.parametrize("failure", ["start", "exit"])
+def test_worker_failure_reports_reason_without_exposing_command(splash, monkeypatch, failure):
+    from gui import startup_process
+
+    command = (["C:/private/missing-splash"] if failure == "start" else
+               [sys.executable, "-c", "raise SystemExit(17)"])
+    monkeypatch.setattr(startup_process, "_worker_command", lambda _name: command)
+    records = []
+    splash.diagnostic.connect(records.append)
+    painted = []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.show()
+    _wait_until(lambda: bool(painted))
+    assert records
+    report = " ".join(records)
+    assert ("FailedToStart" if failure == "start" else "code=17") in report
+    assert "private" not in report and sys.executable not in report
+
+
 def test_worker_crash_after_ready_falls_back_without_duplicate_ready(worker_probe, splash):
     from gui.widgets.startup_splash import StartupSplash
 

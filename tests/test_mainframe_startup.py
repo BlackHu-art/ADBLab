@@ -30,11 +30,12 @@ def startup(qt_application, monkeypatch):
     monkeypatch.setattr("gui.main_frame.LogService", lambda: logger)
     controllers = []
 
-    def controller_factory(_logger):
+    def controller_factory(_logger, *, load_device_history=True):
         controller = Mock()
         controller.signals = Mock()
         controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
         controller.operation_manager.active_snapshot.return_value = ()
+        controller.history_load_requested = load_device_history
         controllers.append(controller)
         return controller
 
@@ -65,6 +66,41 @@ def startup(qt_application, monkeypatch):
 def page_names(frame):
     return [frame.stackedWidget.widget(index).objectName()
             for index in range(frame.stackedWidget.count())]
+
+
+def test_preloaded_history_is_visible_without_requesting_another_load(startup, monkeypatch):
+    from models.device_store import DeviceStore
+
+    monkeypatch.setattr(DeviceStore, "_devices", {
+        "wifi": {"ip": "192.0.2.10:5555", "Brand": "Demo", "Model": "Saved"},
+    })
+    create, _bootstrap, _detection, controllers = startup
+    frame = create(deferred_startup=True, device_history_loaded=True)
+    frame.advance_startup()
+    history = frame.left_panel.connection_history()
+    assert any("192.0.2.10:5555" in str(item) for item in history)
+    assert controllers[0].history_load_requested is False
+
+
+@pytest.mark.parametrize("preloaded", [False, True])
+def test_controller_loads_history_by_default_and_honors_explicit_preload(
+    startup, tmp_path, monkeypatch, preloaded,
+):
+    from controllers import ADBController
+    from models.device_store import DeviceStore
+
+    target = tmp_path / "history.yaml"
+    target.write_text("wifi:\n  ip: 192.0.2.10:5555\n", encoding="utf-8")
+    monkeypatch.setattr(DeviceStore, "_file_path", str(target))
+    monkeypatch.setattr(DeviceStore, "_devices", {})
+    controller = (ADBController(Mock(), load_device_history=False) if preloaded
+                  else ADBController(Mock()))
+    try:
+        assert dict(DeviceStore.get_all()) == (
+            {} if preloaded else {"wifi": {"ip": "192.0.2.10:5555"}}
+        )
+    finally:
+        controller.shutdown()
 
 
 def test_default_constructor_keeps_synchronous_startup_and_deferral_matches_it(
@@ -181,6 +217,64 @@ def test_abort_releases_overview_scroll_areas_before_they_are_mounted(startup, q
     wait_until(qt_application, lambda: aborted.count() == 1)
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert all(not isValid(widget) for widget in unmounted)
+
+
+def test_side_panel_constructor_failure_releases_unmounted_roots(
+    startup, qt_application, monkeypatch,
+):
+    """协调器构造未返回时抛错，已建根控件也必须归主窗释放。"""
+    from gui.panels.side_panel import SidePanel
+
+    create, _bootstrap, _detection, _controllers = startup
+    frame = create(deferred_startup=True)
+    roots = []
+
+    def fail_first_tab(panel, _index):
+        roots.extend([panel.device_widget, *panel._tab_scroll_areas.values()])
+        raise ValueError("synthetic side panel failure")
+
+    monkeypatch.setattr(SidePanel, "_ensure_tab_loaded", fail_first_tab)
+    with pytest.raises(ValueError, match="synthetic side panel failure"):
+        frame.advance_startup()
+    aborted = QSignalSpy(frame.startup_aborted)
+    frame.abort_startup()
+    wait_until(qt_application, lambda: aborted.count() == 1)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert len(roots) == 4
+    assert all(not isValid(widget) for widget in roots)
+
+
+@pytest.mark.parametrize("panel_name", ["apps", "system", "remote"])
+def test_overview_build_failure_releases_root_before_scroll_mount(
+    startup, qt_application, monkeypatch, panel_name,
+):
+    from gui.panels.app_panel import AppPanel
+    from gui.panels.remote_panel_form import RemotePanelForm
+    from gui.panels.system_panel import SystemPanel
+
+    create, _bootstrap, _detection, _controllers = startup
+    frame = create(deferred_startup=True)
+    roots = []
+
+    def broken_header(_panel, layout):
+        roots.append(layout.parentWidget())
+        raise ValueError("synthetic overview failure")
+
+    panel_class, hook = {
+        "apps": (AppPanel, "_build_apps_header"),
+        "system": (SystemPanel, "_build_system_header"),
+        "remote": (RemotePanelForm, "_build_header"),
+    }[panel_name]
+    monkeypatch.setattr(panel_class, hook, broken_header)
+    with pytest.raises(ValueError, match="synthetic overview failure"):
+        while frame.advance_startup() is not None:
+            pass
+    aborted = QSignalSpy(frame.startup_aborted)
+    frame.abort_startup()
+    wait_until(qt_application, lambda: aborted.count() == 1)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert len(roots) == 1
+    assert not isValid(roots[0])
 
 
 def test_partial_workspace_rejects_navigation_until_startup_completes(startup):

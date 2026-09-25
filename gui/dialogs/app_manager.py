@@ -124,9 +124,11 @@ class AppManagerPage(QWidget):
         self.load_state = "idle"
         self._apps_data = []
         self._detail_cache = {}
+        self._loaded_detail_packages = set()
         self._failed_detail_packages = set()
         self._pending_detail_packages = set()
         self._detail_worker_running = False
+        self._detail_worker = None
         self._closing = False
         self._active = False
         self._activated_once = False
@@ -423,6 +425,7 @@ class AppManagerPage(QWidget):
             QTimer.singleShot(0, self._load_apps)
         else:
             self._update_selection_ui()
+            self._schedule_visible_detail_load()
             self._icons_controller.schedule()
         self._maybe_finish_dispose()
 
@@ -482,10 +485,15 @@ class AppManagerPage(QWidget):
             pkg, label, version, itime
         )
 
-    def _on_detail_worker_finished(self, packages=None, request_id=None):
+    def _on_metadata(self, metadata):
+        return (getattr(self, "_views_controller", None) or AppManagerViews(self))._on_metadata(
+            metadata
+        )
+
+    def _on_detail_worker_finished(self, packages=None, request_id=None, worker=None):
         return (
             getattr(self, "_views_controller", None) or AppManagerViews(self)
-        )._on_detail_worker_finished(packages, request_id)
+        )._on_detail_worker_finished(packages, request_id, worker)
 
     def _schedule_visible_detail_load(self, delay_ms=120):
         return (

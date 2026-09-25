@@ -45,6 +45,7 @@ from controllers import ADBController
 from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
+from core.startup_diagnostics import StartupDiagnostics
 from gui.action_feedback import ActionFeedbackPresenter
 from gui.close_controller import CloseController
 from gui.i18n import tr
@@ -297,9 +298,13 @@ class MainFrame(FluentWindow):
         screen_adapter: ScreenAdapter | None = None,
         mouse_buttons_provider: Callable[[], Qt.MouseButton] | None = None,
         deferred_startup: bool = False,
+        device_history_loaded: bool = False,
     ):
         super().__init__()
         self._deferred_startup = deferred_startup
+        self.startup_diagnostics: StartupDiagnostics | None = None
+        # 仅 GUI 启动门禁完成后跳过重复读取；直接构造保留原有同步初始化契约。
+        self._device_history_loaded = device_history_loaded
         self._startup_complete = False
         self._startup_aborting = False
         self._startup_abort_reported = False
@@ -416,9 +421,11 @@ class MainFrame(FluentWindow):
         """按资源归属分段构建隐藏主窗，最后才开放导航和后台启动入口。"""
         self.log_service = LogService()
         set_error_sink(self.log_service.log)
+        started_at = time.perf_counter()
         # 隐藏协调器随主窗销毁，不能在工作区释放后继续接收全局样式信号。
         self.left_panel = SidePanel(self)
         self.left_panel.hide()
+        self._record_startup_stage("side-panel", started_at)
         # 页面尚未挂入工作区时也必须有 Qt 父对象，阶段中止不能留下独立顶层滚动区。
         for widget in (
             self.left_panel.device_widget,
@@ -426,11 +433,18 @@ class MainFrame(FluentWindow):
         ):
             if widget.parent() is None:
                 widget.setParent(self.left_panel)
-        self.adb_controller = ADBController(self.log_service)
+        started_at = time.perf_counter()
+        if self._device_history_loaded:
+            self.adb_controller = ADBController(self.log_service, load_device_history=False)
+        else:
+            self.adb_controller = ADBController(self.log_service)
         setattr(self.adb_controller, "window_owner", self)
         self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
+        self._record_startup_stage("adb-controller", started_at)
 
+        started_at = time.perf_counter()
         self._setup_window()
+        self._record_startup_stage("window-layout", started_at)
         yield 40
         yield from self._init_panels_steps()
         self._sync_workspace_restriction(force=True)
@@ -453,6 +467,12 @@ class MainFrame(FluentWindow):
         if not self._deferred_startup:
             self._start_startup_services()
         yield 95
+
+    def _record_startup_stage(self, name: str, started_at: float) -> None:
+        if self.startup_diagnostics is not None:
+            self.startup_diagnostics.record(
+                name, elapsed_ms=(time.perf_counter() - started_at) * 1000,
+            )
 
     def _start_startup_services(self) -> None:
         """完成构建后只安排一次设备检测；分步启动在首次显示时才开放此入口。"""

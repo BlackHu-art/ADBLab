@@ -31,6 +31,7 @@ class StartupSplashProcess(QObject):
 
     first_painted = Signal()
     cancelled = Signal()
+    diagnostic = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -46,7 +47,7 @@ class StartupSplashProcess(QObject):
         self._process.finished.connect(self._process_finished)
         self._startup_timer = QTimer(self)
         self._startup_timer.setSingleShot(True)
-        self._startup_timer.timeout.connect(self._fallback)
+        self._startup_timer.timeout.connect(lambda: self._fallback("timeout"))
         self._terminate_timer = QTimer(self)
         self._terminate_timer.setSingleShot(True)
         self._terminate_timer.timeout.connect(self._terminate)
@@ -70,7 +71,7 @@ class StartupSplashProcess(QObject):
         self._shown = True
         name = "adblab-startup-" + uuid4().hex
         if not self._server.listen(name):
-            self._fallback()
+            self._fallback("listen-failed")
             return
         command = _worker_command(name)
         self._startup_timer.start(_START_TIMEOUT_MS)
@@ -121,7 +122,7 @@ class StartupSplashProcess(QObject):
             return
         self._buffer.extend(self._socket.readAll().data())
         if len(self._buffer) > _MAX_MESSAGE_BYTES:
-            self._fallback()
+            self._fallback("message-too-large")
             return
         while b"\n" in self._buffer:
             line, _, remainder = self._buffer.partition(b"\n")
@@ -129,10 +130,10 @@ class StartupSplashProcess(QObject):
             try:
                 message = json.loads(line)
             except (ValueError, UnicodeDecodeError):
-                self._fallback()
+                self._fallback("invalid-message")
                 return
             if not isinstance(message, dict):
-                self._fallback()
+                self._fallback("invalid-message")
                 return
             if message.get("type") == "ready":
                 self._startup_timer.stop()
@@ -157,15 +158,19 @@ class StartupSplashProcess(QObject):
     def _disconnected(self) -> None:
         self._worker_lost()
 
-    def _process_error(self, _error: QProcess.ProcessError) -> None:
-        self._worker_lost()
+    def _process_error(self, error: QProcess.ProcessError) -> None:
+        self._worker_lost(f"process-error={error.name}")
 
-    def _process_finished(self, _code: int, _status: QProcess.ExitStatus) -> None:
+    def _process_finished(self, code: int, status: QProcess.ExitStatus) -> None:
         self._terminate_timer.stop()
         self._kill_timer.stop()
-        self._worker_lost()
+        reason = f"exit code={code} status={status.name}"
+        # 断连通知可能先触发降级；退出码仍需保留，便于区分超时回收和自然退出。
+        if not self._closed and self._local is not None:
+            self.diagnostic.emit(reason)
+        self._worker_lost(reason)
 
-    def _worker_lost(self) -> None:
+    def _worker_lost(self, reason: str = "disconnected") -> None:
         """退出通知可早于 socket 通知；先无等待地收取尾包，避免用户取消变成降级。"""
         if self._closed or self._local is not None or self._draining:
             return
@@ -178,12 +183,13 @@ class StartupSplashProcess(QObject):
                 self._read()
         finally:
             self._draining = False
-        self._fallback()
+        self._fallback(reason)
 
-    def _fallback(self) -> None:
+    def _fallback(self, reason: str = "unavailable") -> None:
         if self._closed or self._local is not None:
             return
         logging.getLogger(__name__).warning("启动显示进程不可用，使用本地启动图标")
+        self.diagnostic.emit(f"fallback {reason}")
         self._startup_timer.stop()
         self._local = StartupSplash()
         self._local.first_painted.connect(self._publish_ready)

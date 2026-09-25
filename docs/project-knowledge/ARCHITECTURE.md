@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -44,6 +44,15 @@ flowchart LR
   `MainFrame(deferred_startup=True)` 使用同一构建序列分步初始化，默认构造仍同步完成。
   分步模式在首显时才调度设备检测；部分构建期间拒绝导航，所有已建控件都有 Qt 父对象。
   失败或提前退出停止后续阶段，并沿用应用关闭屏障等待已建资源收尾，再释放窗口和退出。
+- GUI 在主题和 LogService 就绪后，通过 `gui/startup_task.py::StartupTask` 后台加载连接历史，
+  完成信号到达后才创建 MainFrame、设备下拉框和 ADBController，避免 GUI 等待 DeviceStore
+  的读写锁。组合根显式跳过 Controller 的重复加载；直接构造的默认同步契约保持不变。
+  取消会唤醒读取重试、阻止后续快照发布，并等待任务实际退出；已进入的系统 I/O 需自然返回。
+- `core/startup_diagnostics.py` 在设置加载前缓冲有界脱敏摘要，记录入口模块就绪至图标首帧、
+  图标首帧至主窗首帧，以及组件导入、历史加载、侧面板、控制器和页面构建耗时。
+  LogService 就绪后转交现有诊断持久化链；早期失败在退出收尾时独立原子保存最近一次报告，
+  位置及保留规则见 [数据流](DATA_FLOW.md#文件型存储)。显示进程降级记录原因、错误枚举和退出码，
+  不采集原始 stderr 或命令路径。退出收尾逐项尝试清理，并保留原始启动异常。
 - `gui/startup_process.py::StartupSplashProcess` 拥有独立 Qt 显示进程，通过当前用户可访问的
   本地 socket 传送真实阶段。子进程只加载启动图标，不加载设置、Fluent 或设备业务；动画不受
   父进程构建 QWidget 时占用 GUI 线程影响。首帧通知只放行一次，连接断开即关闭子窗口，

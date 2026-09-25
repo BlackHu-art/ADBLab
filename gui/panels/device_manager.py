@@ -49,8 +49,9 @@ class DeviceManager(BasePanel):
         self._layout_controller = DeviceManagerLayout(self)
         self._view_controller = DeviceManagerView(self)
 
-    def build_ui(self) -> QWidget:
-        w = QWidget()
+    def build_ui(self, *, parent: QWidget | None = None) -> QWidget:
+        """构建视图；挂载前保留可独立显示的窗口语义，同时由传入父对象负责释放。"""
+        w = QWidget(parent, Qt.WindowType.Window)
         self.device_widget = w
         w.setObjectName("deviceManager")
         w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

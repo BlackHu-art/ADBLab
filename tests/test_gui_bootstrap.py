@@ -170,7 +170,10 @@ def test_packaging_check_reports_missing_visual_resource(
 
 
 @pytest.mark.parametrize(
-    "mode", ["normal", "fluent-error", "phase-error", "exit-early", "exit-partial"],
+    "mode", [
+        "normal", "fluent-error", "phase-error", "exit-early", "exit-partial",
+        "exit-history", "history-error",
+    ],
 )
 def test_cold_gui_entry_paints_before_fluent_and_cleans_failed_startup(tmp_path, mode):
     """真实冷 Qt 入口验证首次绘制、失败退出和 CLI 以外的最早导入边界。"""
@@ -186,6 +189,7 @@ mode = sys.argv[1]
 events = []
 splashes = []
 class ObservedSplash(startup_splash.StartupSplash):
+    diagnostic = Signal(str)
     def __init__(self, parent=None):
         super().__init__()
         splashes.append(self)
@@ -210,11 +214,27 @@ def fluent():
     if mode == 'fluent-error':
         raise RuntimeError('synthetic-fluent-error')
     load_fluent()
+    if mode in ('exit-history', 'history-error'):
+        from models.device_store import DeviceStore
+        def history(stop):
+            if mode == 'history-error':
+                raise OSError('synthetic history failure')
+            events.append('history-entered')
+            app = QApplication.instance()
+            QTimer.singleShot(0, app, lambda: app.exit(0))
+            assert stop.wait(3)
+            events.append('history-stopped')
+        DeviceStore.load = history
 main._load_fluent_widgets = fluent
 class Window(QWidget):
     startup_aborted = Signal()
-    def __init__(self, *, deferred_startup):
+    def __init__(self, *, deferred_startup, device_history_loaded):
         assert deferred_startup
+        assert device_history_loaded
+        from models.device_store import DeviceStore
+        assert DeviceStore.get_basic_devices_info() == (
+            [] if mode == 'history-error' else [('Demo', 'Saved', '192.0.2.10:5555')]
+        )
         super().__init__()
         self.phases = iter([40, 70, 85, 95, None])
     def advance_startup(self):
@@ -246,7 +266,7 @@ except RuntimeError as error:
 assert len(splashes) == 1
 assert all(not splash.isVisible() for splash in splashes)
 assert splashes[0].shutdown_count == 1
-if mode == 'normal':
+if mode in ('normal', 'history-error'):
     assert code == 27 and 'window-painted' in events
 elif mode == 'phase-error':
     assert events[-2:] == ['abort-started', 'abort-finished']
@@ -255,12 +275,20 @@ elif mode == 'exit-partial':
     assert events[-2:] == ['abort-started', 'abort-finished']
 elif mode == 'exit-early':
     assert code == 0 and 'window-painted' not in events
+elif mode == 'exit-history':
+    assert code == 0 and 'window-painted' not in events
+    assert events[-2:] == ['history-entered', 'history-stopped']
 print(json.dumps({'code': code, 'events': events}))
 '''
     environment = dict(
         os.environ, LOCALAPPDATA=str(tmp_path), APPDATA=str(tmp_path),
         XDG_CONFIG_HOME=str(tmp_path), XDG_DATA_HOME=str(tmp_path),
         QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8",
+    )
+    history_file = tmp_path / "ADBLab" / "config" / "connected_devices.yaml"
+    history_file.parent.mkdir(parents=True)
+    history_file.write_text(
+        "wifi:\n  ip: 192.0.2.10:5555\n  Brand: Demo\n  Model: Saved\n", encoding="utf-8",
     )
     result = subprocess.run(
         [sys.executable, "-c", script, mode], env=environment, capture_output=True,
@@ -269,6 +297,9 @@ print(json.dumps({'code': code, 'events': events}))
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout.splitlines()[-1])
     assert payload["events"][0] == "splash-painted"
+    if mode in ("fluent-error", "phase-error"):
+        report = (tmp_path / "ADBLab" / "logs" / "startup-diagnostics.log").read_text("utf-8")
+        assert "failed" in report and "RuntimeError" in report
 
 
 @pytest.mark.parametrize("invalid_json", [False, True])
@@ -309,8 +340,12 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         def exec(self):
             steps.append("event-loop")
             steps.append("splash-painted")
-            for _stage in startup.sequence:
-                pass
+            from gui.startup_task import StartupTask
+            for stage in startup.sequence:
+                if isinstance(stage, StartupTask):
+                    stage.start_work()
+                    assert stage.wait(3000)
+                    assert stage.error is None
             frame.show()
             startup.is_settled = True
             assert steps.index("translations") < steps.index("window")
@@ -354,8 +389,9 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     frame = Mock()
     frame.advance_startup.side_effect = [40, 70, 85, 95, None]
 
-    def create_frame(*, deferred_startup):
+    def create_frame(*, deferred_startup, device_history_loaded):
         assert deferred_startup
+        assert device_history_loaded
         steps.append("window")
         return frame
     styles = SimpleNamespace(
@@ -364,6 +400,7 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     monkeypatch.setattr("PySide6.QtWidgets.QApplication", FakeApplication)
     monkeypatch.setattr("PySide6.QtGui.QIcon", Mock())
     monkeypatch.setattr(main, "setup_qt_search_paths", Mock())
+    monkeypatch.setattr("models.device_store.DeviceStore.load", lambda _cancel: None)
     monkeypatch.setitem(sys.modules, "gui.startup", SimpleNamespace(StartupController=FakeStartup))
     splash = Mock()
 
@@ -453,7 +490,6 @@ def forbidden(*args, **kwargs):
 main._run_gui = forbidden
 main._configure_gui_scaling = forbidden
 main._load_fluent_widgets = forbidden
-main.set_client_preference = forbidden
 main.user_data_root = forbidden
 calls = []
 def run_splash(server_name):
@@ -462,6 +498,7 @@ def run_splash(server_name):
 sys.modules['gui.startup_worker'] = SimpleNamespace(run_startup_splash=run_splash)
 assert main._dispatch_cli(['--startup-splash', 'synthetic-splash-server']) == 17
 assert calls == ['synthetic-splash-server']
+assert 'utils.adb_resolver' not in sys.modules
 assert not any(
     name == prefix or name.startswith(prefix + '.')
     for name in sys.modules for prefix in blocked

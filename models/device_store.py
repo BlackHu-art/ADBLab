@@ -5,8 +5,9 @@ import os
 import shutil
 import tempfile
 import time
+from concurrent.futures import CancelledError
 from datetime import datetime
-from threading import RLock
+from threading import Event, RLock
 
 import yaml
 
@@ -36,30 +37,48 @@ class DeviceStore:
     _SAVE_RETRY_DELAY_S = 0.2
 
     @classmethod
-    def load(cls):
+    def load(cls, cancel_event: Event | None = None):
         """加载用户设备文件；加载失败保留内存快照并备份损坏文件。
 
         端点防护可能瞬时锁文件或在文件尾部附加扫描块，因此读取失败按瞬态
         错误重试，解析失败先尝试仅取第一个 YAML 文档；所有失败路径都不清
         空已有内存快照，避免打包环境下设备列表被清空。
+        可选取消事件只供启动门禁使用；取消时抛出 CancelledError，跳过后续重试、
+        修复和快照发布。已进入的系统 I/O 必须自然返回，不强杀线程。
         """
         with cls._lock:
+            cls._check_cancelled(cancel_event)
             source_path = cls._file_path
             if not os.path.exists(source_path) and os.path.exists(cls._legacy_file_path):
                 source_path = cls._legacy_file_path
             if not os.path.exists(source_path):
                 return
-            loaded = cls._read_snapshot(source_path)
+            loaded = cls._read_snapshot(source_path, cancel_event)
             if loaded is None:
                 return
             history = cls._connection_snapshot(loaded)
+            cls._check_cancelled(cancel_event)
             if history != loaded or (source_path != cls._file_path and history):
                 try:
-                    cls._persist_snapshot(history)
+                    cls._persist_snapshot(history, cancel_event=cancel_event)
                 except OSError:
                     # 清理或迁移失败仍可使用合法地址，后续保存会再次过滤并重试。
                     LogService().log("WARNING", "连接历史清理未能写入，已过滤显示；下次保存时重试")
+            cls._check_cancelled(cancel_event)
             cls._devices = history
+
+    @staticmethod
+    def _check_cancelled(cancel_event: Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("device history startup load cancelled")
+
+    @classmethod
+    def _retry_delay(cls, delay: float, cancel_event: Event | None) -> None:
+        """默认同步调用保持原重试策略；启动取消可立即唤醒重试等待。"""
+        if cancel_event is None:
+            time.sleep(delay)
+        elif cancel_event.wait(delay):
+            cls._check_cancelled(cancel_event)
 
     @staticmethod
     def _connection_snapshot(snapshot: dict) -> dict:
@@ -74,12 +93,13 @@ class DeviceStore:
         return history
 
     @classmethod
-    def _read_snapshot(cls, source_path: str) -> dict | None:
+    def _read_snapshot(cls, source_path: str, cancel_event: Event | None = None) -> dict | None:
         """读取并解析设备快照；失败返回 None，绝不修改内存快照。"""
-        raw = cls._read_text_with_retry(source_path)
+        raw = cls._read_text_with_retry(source_path, cancel_event)
         if raw is None:
             return None
         try:
+            cls._check_cancelled(cancel_event)
             return cls._parse_snapshot(raw, strict=True)
         except (yaml.YAMLError, ValueError) as exc:
             cls._note_load_failure(type(exc).__name__)
@@ -88,32 +108,35 @@ class DeviceStore:
             except (yaml.YAMLError, ValueError):
                 tolerant = None
             if tolerant is None:
+                cls._check_cancelled(cancel_event)
                 if source_path == cls._file_path and os.path.isfile(source_path):
                     cls._backup_corrupt_file(source_path)
                 return None
             # 文件尾部带监控附加块但首个文档合法：采用数据并回写规范化文件，
             # 不产生 corrupt 备份，避免干扰反复出现时备份文件堆积。
             try:
-                cls._persist_snapshot(copy.deepcopy(tolerant))
+                cls._persist_snapshot(copy.deepcopy(tolerant), cancel_event=cancel_event)
             except OSError:
                 pass
             return tolerant
 
     @classmethod
-    def _read_text_with_retry(cls, path: str) -> str | None:
+    def _read_text_with_retry(cls, path: str, cancel_event: Event | None = None) -> str | None:
         """按瞬态错误重试读取文本；持续失败时备份并记录原因。"""
         last_error: BaseException | None = None
         for attempt in range(cls._LOAD_RETRIES + 1):
+            cls._check_cancelled(cancel_event)
             try:
                 with open(path, encoding="utf-8") as f:
                     return f.read()
             except OSError as exc:
                 last_error = exc
                 if attempt < cls._LOAD_RETRIES:
-                    time.sleep(cls._LOAD_RETRY_DELAY_S)
+                    cls._retry_delay(cls._LOAD_RETRY_DELAY_S, cancel_event)
             except UnicodeDecodeError as exc:
                 last_error = exc
                 break
+        cls._check_cancelled(cancel_event)
         cls._note_load_failure(type(last_error).__name__ if last_error is not None else "Unknown")
         if path == cls._file_path and os.path.isfile(path):
             cls._backup_corrupt_file(path)
@@ -162,16 +185,20 @@ class DeviceStore:
             cls._persist_snapshot(copy.deepcopy(cls._devices))
 
     @classmethod
-    def _persist_snapshot(cls, snapshot: dict) -> None:
+    def _persist_snapshot(cls, snapshot: dict, *, cancel_event: Event | None = None) -> None:
         """所有写入路径只保存 IP 历史；原子写盘重试后仍失败则向调用方抛出。"""
         snapshot = cls._connection_snapshot(snapshot)
         for attempt in range(cls._SAVE_RETRIES + 1):
+            cls._check_cancelled(cancel_event)
             try:
-                cls._write_snapshot_atomic(snapshot)
+                if cancel_event is None:
+                    cls._write_snapshot_atomic(snapshot)
+                else:
+                    cls._write_snapshot_atomic(snapshot, cancel_event=cancel_event)
                 return
             except OSError:
                 if attempt < cls._SAVE_RETRIES:
-                    time.sleep(cls._SAVE_RETRY_DELAY_S)
+                    cls._retry_delay(cls._SAVE_RETRY_DELAY_S, cancel_event)
                 else:
                     raise
 
@@ -181,7 +208,7 @@ class DeviceStore:
             cls._devices = {}
 
     @classmethod
-    def _write_snapshot_atomic(cls, snapshot: dict):
+    def _write_snapshot_atomic(cls, snapshot: dict, *, cancel_event: Event | None = None):
         """写入同目录临时文件并原子替换目标文件，失败时清理临时文件。"""
         directory = os.path.dirname(cls._file_path)
         os.makedirs(directory, exist_ok=True)
@@ -195,6 +222,7 @@ class DeviceStore:
                 yaml.safe_dump(snapshot, f, allow_unicode=True, sort_keys=True)
                 f.flush()
                 os.fsync(f.fileno())
+            cls._check_cancelled(cancel_event)
             os.replace(tmp_path, cls._file_path)
         except Exception:
             if os.path.exists(tmp_path):

@@ -29,8 +29,9 @@ class RemotePanelForm(QObject):
         super().__init__()
         self._frame = frame
 
-    def build_ui(self) -> QWidget:
-        w = QWidget()
+    def build_ui(self, *, parent: QWidget | None = None) -> QWidget:
+        """构建表单；根控件失败时仍由外部所有者释放，正常挂载后归属宿主。"""
+        w = QWidget(parent, Qt.WindowType.Window)
         # RemotePanel 是隐藏的协调对象，可能晚于可见表单释放；全局样式信号必须
         # 归属实际视图，Qt 才能在根控件销毁时断连，避免访问已释放的设备与徽标。
         self.setParent(w)

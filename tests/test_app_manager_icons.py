@@ -12,6 +12,7 @@ from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 class IconWorker(QObject):
     app_icon_loaded = Signal(str, bytes, str)
     app_detail_batch = Signal(str, str, str, str)
+    app_metadata_loaded = Signal(dict)
     log_message = Signal(str)
     finished = Signal()
 
@@ -72,8 +73,14 @@ def page(qt_application, monkeypatch):
     window.close()
 
 
-def populate(window, count=1, prefix="example.app"):
+def populate(window, count=1, prefix="example.app", *, metadata_ready=True):
     window._populate([(f"应用 {i}", f"{prefix}{i}", "Enabled", "User") for i in range(count)])
+    if metadata_ready:
+        for index in range(count):
+            window._on_metadata({
+                "package": f"{prefix}{index}", "label": f"应用 {index}",
+                "version": "1.0", "installed": "", "fingerprint": "user0:1:100:zh",
+            })
 
 
 def test_icon_view_fetches_real_image_and_keeps_selection_and_cache(page, qt_application):
@@ -221,9 +228,15 @@ def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_applicati
     assert item.icon(0).cacheKey() == original
 
 
-def test_visible_icons_finish_before_background_detail_queries(page, qt_application):
+def test_visible_icons_finish_before_background_metadata_queries(page, qt_application):
     window, workers = page
-    populate(window, 3)
+    populate(window, 80, metadata_ready=False)
+    qt_application.processEvents()
+    for package in window._visible_detail_packages():
+        window._on_metadata({
+            "package": package, "label": package, "version": "1.0", "installed": "",
+            "fingerprint": "user0:1:100:zh",
+        })
     wait_until(qt_application, lambda: bool(workers))
     window._load_visible_details()
     assert [worker.operation for worker in workers] == ["load_icon_batch"]
@@ -232,12 +245,12 @@ def test_visible_icons_finish_before_background_detail_queries(page, qt_applicat
     workers[0].finish()
     wait_until(qt_application, lambda: window._icons_controller._worker is None)
     window._load_visible_details()
-    assert [worker.operation for worker in workers] == ["load_icon_batch", "load_detail_batch"]
+    assert [worker.operation for worker in workers] == ["load_icon_batch", "load_metadata_batch"]
 
 
 def test_icon_view_detail_queries_follow_scrolled_viewport(page, qt_application):
     window, _workers = page
-    populate(window, 120)
+    populate(window, 120, metadata_ready=False)
     wait_for_stable_geometry(qt_application, window.icon_list)
     window.icon_list.scrollToItem(window.icon_list.topLevelItem(119))
     wait_for_stable_geometry(qt_application, window.icon_list)

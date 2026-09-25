@@ -7,11 +7,13 @@ import sys
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from time import perf_counter
 
-from utils.adb_resolver import set_client_preference
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
 from utils.resource_path import resource_path, setup_qt_search_paths
 from utils.user_data import user_data_root
+
+_ENTRY_STARTED_AT = perf_counter()
 
 
 def windows_app_user_model_id() -> str:
@@ -293,22 +295,46 @@ def _configure_console_logging(settings) -> None:
 
 
 def _run_gui() -> int:
+    """覆盖设置与 Qt 尚未就绪的失败，原始异常优先于清理及诊断落盘异常。"""
+    from core.startup_diagnostics import StartupDiagnostics
+
+    trace = StartupDiagnostics(started_at=_ENTRY_STARTED_AT)
+    trace.record("entry", detail="frozen" if getattr(sys, "frozen", False) else "source")
+    try:
+        return _run_gui_session(trace)
+    except BaseException as error:
+        trace.record("failed", detail=type(error).__name__)
+        try:
+            trace.save_failure()
+        except Exception as diagnostic_error:
+            error.add_note(f"startup diagnostics write failed: {type(diagnostic_error).__name__}")
+        raise
+
+
+def _run_gui_session(trace) -> int:
     """创建 QApplication、加载主题并进入主界面事件循环。"""
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(windows_app_user_model_id())
 
     from core.settings_manager import AppSettings, set_error_sink
+    from utils.adb_resolver import set_client_preference
 
     # Qt 比例必须先于 QApplication 读取。此时日志服务尚未创建，先完整缓冲
     # 设置加载诊断，再转交正式日志接收器，避免提前加载使迁移/读取失败静默。
     startup_diagnostics: list[tuple[str, str]] = []
-    set_error_sink(lambda level, message: startup_diagnostics.append((level, message)))
+
+    def buffer_setting_diagnostic(level, message):
+        startup_diagnostics.append((level, message))
+        trace.record("settings-diagnostic", detail=f"{level} {message}")
+
+    set_error_sink(buffer_setting_diagnostic)
     settings = AppSettings.instance()
     _configure_console_logging(settings)
     # 客户端选择必须在首次解析前注入，否则会先缓存内置/自动结果。
     set_client_preference(settings.get("adb_client", "auto"))
     _configure_gui_scaling(settings.get("ui_scale", "Auto"))
-    from PySide6.QtCore import QEventLoop, QTimer
+    trace.record("settings")
+    from PySide6.QtCore import QTimer
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
@@ -320,6 +346,8 @@ def _run_gui() -> int:
     setup_qt_search_paths()
     splash = StartupSplashProcess(parent=app)
     startup = StartupController(splash, parent=app)
+    startup.diagnostics = trace
+    splash.diagnostic.connect(lambda message: trace.record("splash-process", detail=message))
     # 翻译器引用保持到应用退出；生成器结束不能提前释放 Python 包装对象。
     translators = []
     log_service = None
@@ -335,6 +363,7 @@ def _run_gui() -> int:
 
         translators.extend(install_translators(app, settings.get("language", "Auto")))
         log_service = LogService()
+        trace.bind(log_service.record_runtime_diagnostic)
         set_error_sink(log_service.log)
         for level, message in startup_diagnostics:
             log_service.log(level, message)
@@ -344,10 +373,31 @@ def _run_gui() -> int:
         BaseStyles.switch_theme(settings.get("theme", "System"))
         yield "appearance", 25
 
+        from gui.startup_task import StartupTask
+        from models.device_store import DeviceStore
+
+        # 先完成独占加载再创建任何读取快照的控件，避免 GUI 等待 DeviceStore 的锁。
+        history = StartupTask("device-history", DeviceStore.load)
+        yield history
+        if history.error is not None:
+            if not isinstance(history.error, Exception):
+                raise history.error
+            log_service.log(
+                "WARNING",
+                f"连接历史启动加载失败：{type(history.error).__name__}，继续使用内存快照",
+            )
+        yield "history-ready", 30
+
+        started_at = perf_counter()
         from gui.main_frame import MainFrame
 
-        window = MainFrame(deferred_startup=True)
+        trace.record("window-import", elapsed_ms=(perf_counter() - started_at) * 1000)
+
+        started_at = perf_counter()
+        window = MainFrame(deferred_startup=True, device_history_loaded=True)
         startup.set_window(window)
+        window.startup_diagnostics = trace
+        trace.record("window-shell", elapsed_ms=(perf_counter() - started_at) * 1000)
         names = {
             40: "window-base", 45: "apps-overview", 50: "system-overview",
             55: "remote-overview", 60: "devices-host", 65: "apps-host",
@@ -359,23 +409,43 @@ def _run_gui() -> int:
     # 排队退出，让中止信号所在轮次的 QObject 延迟释放先收口。
     startup.failed.connect(lambda _error: QTimer.singleShot(0, app, lambda: app.exit(1)))
     startup.cancelled.connect(lambda: QTimer.singleShot(0, app, lambda: app.exit(0)))
-    startup.start(initialize())
     try:
+        startup.start(initialize())
         exit_code = app.exec()
     finally:
+        _finish_gui(startup, splash, log_service, trace)
+    if startup.error is not None:
+        raise startup.error
+    return exit_code
+
+
+def _finish_gui(startup, splash, log_service, trace) -> None:
+    """逐项尝试清理；已有启动异常优先，单独清理失败仍须向调用方报告。"""
+    from PySide6.QtCore import QEventLoop
+
+    primary = sys.exception() or startup.error
+    errors = []
+
+    def settle():
         if not startup.is_settled:
-            # 应用在初始化中提前退出时，仍给已有的异步关闭屏障处理事件的机会。
+            # 提前退出时继续驱动已有关闭屏障，不能把停止请求当作清理完成。
             cleanup_loop = QEventLoop()
             startup.settled.connect(cleanup_loop.quit)
             startup.cancel()
             if not startup.is_settled:
                 cleanup_loop.exec()
-        splash.shutdown()
-        if log_service is not None:
-            log_service.shutdown()
-    if startup.error is not None:
-        raise startup.error
-    return exit_code
+
+    cleanup = [("startup", settle), ("splash", splash.shutdown)]
+    if log_service is not None:
+        cleanup.append(("logger", log_service.shutdown))
+    for name, action in cleanup:
+        try:
+            action()
+        except BaseException as error:
+            errors.append(error)
+            trace.record("cleanup-failed", detail=f"{name} {type(error).__name__}")
+    if errors and primary is None and startup.error is None:
+        raise errors[0]
 
 
 if __name__ == "__main__":

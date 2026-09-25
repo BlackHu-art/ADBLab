@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+
+import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Signal
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
@@ -47,6 +50,92 @@ def _drain_until(predicate):
             return
         QTest.qWait(5)
     assert predicate(), "启动事件没有完成"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_background_gate_keeps_qt_responsive_and_waits_for_exit(qt_application, cancel):
+    """慢磁盘门禁期间不建窗口；取消等待真实退出，晚到完成不能重启阶段。"""
+    from gui.startup import StartupController
+    from gui.startup_task import StartupTask
+
+    entered, release = threading.Event(), threading.Event()
+    events = []
+    splash = _Splash(events)
+    startup = StartupController(splash)
+    window = _Window(events)
+    cancelled = []
+    startup.cancelled.connect(lambda: cancelled.append(True))
+
+    def work(stop):
+        assert threading.current_thread() is not threading.main_thread()
+        entered.set()
+        assert release.wait(3)
+        events.append("worker-exit")
+
+    task = StartupTask("history", work)
+
+    def stages():
+        try:
+            yield task
+            events.append("window-created")
+            startup.set_window(window)
+            yield "window", 95
+        finally:
+            events.append("generator-closed")
+
+    startup.start(stages())
+    splash.first_painted.emit()
+    try:
+        _drain_until(entered.is_set)
+        assert "window-created" not in events
+        if cancel:
+            startup.cancel()
+            startup.cancel()
+            assert not startup.is_settled
+            assert "generator-closed" not in events
+        QTimer.singleShot(0, lambda: (events.append("tick"), release.set()))
+        _drain_until(lambda: startup.is_settled)
+        assert events.index("tick") < events.index("worker-exit")
+        assert not task.isRunning()
+        if cancel:
+            assert cancelled == [True]
+            assert "window-created" not in events
+            assert events.index("worker-exit") < events.index("generator-closed")
+        else:
+            assert events.index("worker-exit") < events.index("window-created")
+    finally:
+        release.set()
+        task.wait(3000)
+        startup.deleteLater()
+
+
+def test_background_failure_resumes_generator_for_explicit_fallback(qt_application):
+    from gui.startup import StartupController
+    from gui.startup_task import StartupTask
+
+    failure = OSError("synthetic read failure")
+
+    def work(_stop):
+        raise failure
+
+    events = []
+    splash = _Splash(events)
+    startup = StartupController(splash)
+    task = StartupTask("history", work)
+
+    def stages():
+        yield task
+        assert task.error is failure
+        raise task.error
+
+    errors = []
+    startup.failed.connect(errors.append)
+    startup.start(stages())
+    splash.first_painted.emit()
+    _drain_until(lambda: startup.is_settled)
+    assert errors == [failure]
+    assert not task.isRunning()
+    startup.deleteLater()
 
 
 def test_stages_wait_for_splash_paint_and_yield_before_window_handoff(qt_application):

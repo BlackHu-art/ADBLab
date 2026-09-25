@@ -74,6 +74,11 @@ class AppManagerViews:
         self._frame._load_in_progress = True
         self._frame._load_result_received = False
         self._frame._last_load_error = ""
+        self._cancel_detail_worker()
+        self._frame._icons_controller.reset(preserve_cache=True)
+        self._frame._loaded_detail_packages.clear()
+        self._frame._pending_detail_packages.clear()
+        self._frame._failed_detail_packages.clear()
         if is_qobject_alive(self._frame._detail_timer):
             self._frame._detail_timer.stop()
         set_state = getattr(self._frame, "_set_load_state", None)
@@ -107,20 +112,31 @@ class AppManagerViews:
             return
         previous_selection = set(getattr(self._frame, "selected_packages", set()))
         self._frame._detail_filter_timer.stop()
-        self._frame._icons_controller.reset()
+        self._cancel_detail_worker()
+        self._frame._icons_controller.reset(preserve_cache=True)
         self._frame._apps_data = apps
-        self._frame._app_labels = {}
-        self._frame._app_versions = {}
-        self._frame._detail_cache.clear()
+        available_packages = {pkg for _name, pkg, _status, _app_type in apps}
+        self._frame._detail_cache = {
+            pkg: detail for pkg, detail in self._frame._detail_cache.items()
+            if pkg in available_packages
+        }
+        self._frame._app_labels = {
+            pkg: detail[0] for pkg, detail in self._frame._detail_cache.items()
+        }
+        self._frame._app_versions = {
+            pkg: detail[1] for pkg, detail in self._frame._detail_cache.items()
+        }
+        self._frame._icons_controller.retain_packages(available_packages)
+        self._frame._loaded_detail_packages.clear()
         self._frame._failed_detail_packages.clear()
         self._frame._pending_detail_packages.clear()
-        self._frame._detail_worker_running = False
         self._frame._detail_row_by_pkg = {}
         self._frame._detail_icon_by_pkg = {}
         self._frame._syncing_selection = True
         self._frame.tree.setSortingEnabled(False)
         self._frame.model.removeRows(0, self._frame.model.rowCount())
         for row, (name, pkg, st, at) in enumerate(apps):
+            name, version, _installed = self._frame._detail_cache.get(pkg, (name, "", ""))
             cb = QStandardItem()
             cb.setCheckable(True)
             self._frame.model.appendRow(
@@ -128,7 +144,7 @@ class AppManagerViews:
                     cb,
                     QStandardItem(name),
                     QStandardItem(pkg),
-                    QStandardItem(""),
+                    QStandardItem(version),
                     QStandardItem(st),
                     QStandardItem(at),
                 ]
@@ -143,12 +159,14 @@ class AppManagerViews:
         try:
             sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
             for name, pkg, st, at in sorted_apps:
+                name, version, _installed = self._frame._detail_cache.get(pkg, (name, "", ""))
                 icon = self._frame._gen_icon(name, at, 48)
                 item = QTreeWidgetItem(["", name, pkg, ""])
                 item.setIcon(0, icon)
                 item.setData(0, Qt.ItemDataRole.UserRole, pkg)
                 item.setData(0, Qt.ItemDataRole.UserRole + 1, at)
                 item.setData(0, STATUS_ROLE, st)
+                item.setData(0, VERSION_ROLE, version)
                 refresh_row_description(item)
                 color = "TEXT_DISABLED" if st == "Disabled" else "TEXT_PRIMARY"
                 item.setForeground(1, BaseStyles.get_color(color))
@@ -156,7 +174,6 @@ class AppManagerViews:
                 self._frame._detail_icon_by_pkg[pkg] = item
         finally:
             self._frame.icon_list.setUpdatesEnabled(True)
-        available_packages = {pkg for _name, pkg, _status, _app_type in apps}
         if not hasattr(self._frame, "selected_packages"):
             self._frame.selected_packages = set()
         self._frame.selected_packages.clear()
@@ -182,20 +199,29 @@ class AppManagerViews:
         self._frame._schedule_visible_detail_load()
         self._frame._icons_controller.schedule()
 
-    def _on_detail(self, pkg, label, version, itime):
+    def _on_metadata(self, metadata):
+        """只接收 worker 的当前代次元数据，指纹用于验证候选图标缓存。"""
+        self._on_detail(
+            metadata["package"], metadata["label"], metadata["version"],
+            metadata["installed"], fingerprint=metadata["fingerprint"],
+        )
+
+    def _on_detail(self, pkg, label, version, itime, *, fingerprint=""):
         sender = getattr(self._frame, "sender", None)
         source = sender() if callable(sender) else None
         source_request_id = getattr(source, "_app_load_request_id", None)
         if self._frame._closing or (
             source_request_id is not None
             and source_request_id != getattr(self._frame, "_active_load_request", 0)
-        ):
+        ) or (source is not None and getattr(source, "_app_detail_cancelled", False)):
             return
         self._frame._pending_detail_packages.discard(pkg)
+        self._frame._loaded_detail_packages.add(pkg)
         self._frame._app_labels[pkg] = label
         self._frame._app_versions[pkg] = version
         self._frame._detail_cache[pkg] = (label, version, itime)
         self._frame._failed_detail_packages.discard(pkg)
+        self._frame._icons_controller.validate_metadata(pkg, fingerprint)
         item = self._frame._detail_icon_by_pkg.get(pkg)
         if item:
             if label:
@@ -210,27 +236,45 @@ class AppManagerViews:
             if label and name_item:
                 name_item.setText(label)
                 name_item.setToolTip(label)
-            if version and version_item:
+            if version_item:
                 version_item.setText(version)
                 version_item.setToolTip(version)
         # 单条详情只更新对应模型行，全列表筛选合并到本轮事件交付之后。
         if not self._frame._detail_filter_timer.isActive():
             self._frame._detail_filter_timer.start(0)
 
-    def _on_detail_worker_finished(self, packages=None, request_id=None):
+    def _cancel_detail_worker(self):
+        """取消只读补全但保留 worker 占位，直到 finished 确认设备清理完成。"""
+        worker = self._frame._detail_worker
+        if worker is not None and not getattr(worker, "_app_detail_cancelled", False):
+            setattr(worker, "_app_detail_cancelled", True)
+            worker.abort()
+
+    def _on_detail_worker_finished(self, packages=None, request_id=None, worker=None):
         """未发布成功详情的包留待刷新重试，避免失败批次在定时器中不断重发。"""
-        if request_id is not None and request_id != getattr(self._frame, "_active_load_request", 0):
+        if worker is not None and worker is not self._frame._detail_worker:
             return
+        if request_id is not None and request_id != getattr(self._frame, "_active_load_request", 0):
+            if worker is not None:
+                self._frame._detail_worker = None
+                self._frame._detail_worker_running = False
+                self._frame._schedule_visible_detail_load()
+            return
+        cancelled = worker is not None and getattr(worker, "_app_detail_cancelled", False)
         if packages:
             self._frame._pending_detail_packages.difference_update(packages)
-            self._frame._failed_detail_packages.update(
-                pkg for pkg in packages if pkg not in self._frame._detail_cache
-            )
+            if not cancelled:
+                failed = set(packages) - self._frame._loaded_detail_packages
+                self._frame._failed_detail_packages.update(failed)
+                for package in failed:
+                    self._frame._icons_controller.validate_metadata(package, "")
+        self._frame._detail_worker = None
         self._frame._detail_worker_running = False
         if self._frame._closing or not is_qobject_alive(self._frame._detail_timer):
             return
         if not self._frame._can_operate():
             return
+        self._frame._icons_controller.schedule()
         if self._frame._has_unloaded_details():
             if not self._frame._detail_timer.isActive():
                 self._frame._schedule_visible_detail_load(delay_ms=80)
@@ -253,14 +297,14 @@ class AppManagerViews:
         ):
             return
         if self._frame._detail_timer.isActive():
-            self._frame._detail_timer.stop()
+            return
         self._frame._detail_timer.start(delay_ms)
 
     def _has_unloaded_details(self) -> bool:
         return any(
             pkg
             for _name, pkg, _status, _app_type in self._frame._apps_data
-            if pkg not in self._frame._detail_cache
+            if pkg not in self._frame._loaded_detail_packages
             and pkg not in self._frame._pending_detail_packages
             and pkg not in self._frame._failed_detail_packages
         )
@@ -269,7 +313,7 @@ class AppManagerViews:
         packages = []
         for _name, pkg, _status, _app_type in self._frame._apps_data:
             if (
-                pkg in self._frame._detail_cache
+                pkg in self._frame._loaded_detail_packages
                 or pkg in self._frame._pending_detail_packages
                 or pkg in self._frame._failed_detail_packages
             ):
@@ -289,7 +333,7 @@ class AppManagerViews:
                 if (
                     item and not item.isHidden() and pkg
                     and viewport.intersects(self._frame.icon_list.visualItemRect(item))
-                    and pkg not in self._frame._detail_cache
+                    and pkg not in self._frame._loaded_detail_packages
                     and pkg not in self._frame._failed_detail_packages
                 ):
                     packages.append(pkg)
@@ -312,7 +356,7 @@ class AppManagerViews:
             item = self._frame.model.item(source_row, 2)
             pkg = item.text() if item else ""
             if (
-                pkg and pkg not in seen and pkg not in self._frame._detail_cache
+                pkg and pkg not in seen and pkg not in self._frame._loaded_detail_packages
                 and pkg not in self._frame._failed_detail_packages
             ):
                 seen.add(pkg)
@@ -326,7 +370,7 @@ class AppManagerViews:
             item = self._frame.model.item(row, 2)
             pkg = item.text() if item else ""
             if (
-                pkg and pkg not in self._frame._detail_cache
+                pkg and pkg not in self._frame._loaded_detail_packages
                 and pkg not in self._frame._failed_detail_packages
             ):
                 packages.append(pkg)
@@ -339,18 +383,33 @@ class AppManagerViews:
             self._frame._closing
             or not getattr(self._frame, "_active", True)
             or not self._frame._can_operate()
-            or self._frame._detail_worker_running
+            or self._frame._load_in_progress
+            or self._frame.load_state == "error"
         ):
             return
-        if self._frame._view_mode and self._frame._icons_controller.prioritize_visible():
+        visible = self._frame._visible_detail_packages()
+        if self._frame._detail_worker_running:
+            worker = self._frame._detail_worker
+            if (
+                visible and set(visible).isdisjoint(self._frame._pending_detail_packages)
+            ) or (
+                worker is not None and getattr(worker, "_app_background_details", False)
+                and self._frame._icons_controller.prioritize_visible()
+            ):
+                self._cancel_detail_worker()
+            return
+        if self._frame._icons_controller.busy:
+            self._frame._icons_controller.schedule()
             return
         packages = [
             pkg
-            for pkg in self._frame._visible_detail_packages()
+            for pkg in visible
             if pkg not in self._frame._pending_detail_packages
             and pkg not in self._frame._failed_detail_packages
         ]
         if not packages:
+            if self._frame._view_mode and self._frame._icons_controller.prioritize_visible():
+                return
             packages = self._frame._next_unloaded_detail_packages()
         if not packages:
             return
@@ -358,15 +417,19 @@ class AppManagerViews:
         self._frame._detail_worker_running = True
         self._frame.status_bar.setText(
             tr("正在读取详情 {value0}/{value1}").format(
-                value0=len(self._frame._detail_cache), value1=len(self._frame._apps_data)
+                value0=len(self._frame._loaded_detail_packages), value1=len(self._frame._apps_data)
             )
         )
         w = _app_manager.AppManagerWorker(
-            self._frame.device_ip, "load_detail_batch", packages=packages
+            self._frame.device_ip, "load_metadata_batch", packages=packages
         )
+        self._frame._detail_worker = w
+        setattr(w, "_app_detail_cancelled", False)
+        setattr(w, "_app_background_details", not bool(visible))
         request_id = getattr(self._frame, "_active_load_request", 0)
         setattr(w, "_app_load_request_id", request_id)
         w.app_detail_batch.connect(self._frame._on_detail)
+        w.app_metadata_loaded.connect(self._frame._on_metadata)
         w.log_message.connect(
             alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
         )
@@ -376,6 +439,7 @@ class AppManagerViews:
                 "_on_detail_worker_finished",
                 packages,
                 request_id,
+                w,
             ),
             Qt.ConnectionType.QueuedConnection,
         )
@@ -397,7 +461,10 @@ class AppManagerViews:
         self._frame.view_toggle.setToolTip(tooltip)
         self._frame.view_toggle.setAccessibleName(tooltip)
         self._frame.refresh_btn.setToolTip(tr("刷新应用列表并重试未读取的图标"))
-        self._frame._icons_controller.schedule()
+        if self._frame._view_mode:
+            self._frame._icons_controller.schedule()
+        else:
+            self._frame._icons_controller.pause()
         self._frame._schedule_visible_detail_load()
 
     def _icon_context_menu(self, pos):

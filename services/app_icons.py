@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import re
 import shlex
 import struct
 import uuid
 import zlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.exec import CommandRunner
@@ -25,6 +27,9 @@ _COMMAND_TIMEOUT = 30
 _MAX_INLINE_HELPER_BYTES = 16 * 1024
 _MAX_ENCODED_BYTES = 4 * ((MAX_PNG_BYTES + 2) // 3)
 _MAX_OUTPUT_BYTES = MAX_BATCH_SIZE * (_MAX_ENCODED_BYTES + 270)
+_MAX_ICON_METADATA_OUTPUT_BYTES = MAX_BATCH_SIZE * (
+    _MAX_ENCODED_BYTES + 4 * ((16 * 1024 + 2) // 3) + 280
+)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _CLEANED = "\n__ADBLAB_ICONS_CLEANED__\n"
 _DEPLOY_FAILED = "__ADBLAB_ICONS_DEPLOY_FAILED__"
@@ -34,6 +39,7 @@ _ERRORS = {
     "RENDER_FAILED": "应用图标渲染失败",
     "TOO_LARGE": "应用图标超过大小限制",
     "USER_CHANGED": "设备用户已切换，请刷新应用列表",
+    "IDENTITY_CHANGED": "应用或设备配置已变化，请刷新应用列表",
 }
 
 
@@ -104,25 +110,45 @@ def _decode_png(encoded: str) -> bytes:
     raise ValueError("图标不完整")
 
 
-def _parse_output(output: str, packages: Sequence[str]) -> dict[str, tuple[bytes, str]]:
+def _parse_output(
+    output: str, packages: Sequence[str], expected_fingerprints: Mapping[str, str] | None = None,
+) -> dict[str, tuple[bytes, str]]:
     """只接受本批包名的一次结果；协议损坏不会退化为任意设备输出展示。"""
     failure = {package: (b"", "设备图标响应无效") for package in packages}
-    if len(output) > _MAX_OUTPUT_BYTES or not output.isascii():
+    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if expected_fingerprints else _MAX_OUTPUT_BYTES
+    if len(output) > limit or not output.isascii():
         return failure
     results: dict[str, tuple[bytes, str]] = {}
     for line in output.splitlines():
         parts = line.split("\t")
-        if len(parts) != 3:
+        if len(parts) not in {3, 4}:
             return failure
-        kind, package, payload = parts
-        if package not in failure or package in results or kind not in {"ICON", "ERROR"}:
+        kind, package = parts[:2]
+        if package not in failure or package in results:
             return failure
         if kind == "ERROR":
-            results[package] = (b"", _ERRORS.get(payload, "应用图标读取失败"))
+            if len(parts) != 3:
+                return failure
+            results[package] = (b"", _ERRORS.get(parts[2], "应用图标读取失败"))
         else:
+            if expected_fingerprints:
+                if kind != "ICON_META" or len(parts) != 4:
+                    return failure
+            elif kind != "ICON" or len(parts) != 3:
+                return failure
             try:
-                results[package] = (_decode_png(payload), "")
-            except (ValueError, binascii.Error, zlib.error, struct.error):
+                if expected_fingerprints:
+                    # 元数据服务复用本模块传输，延迟导入避免模块初始化循环。
+                    from services.app_metadata import _decode_record
+
+                    metadata = _decode_record(package, parts[2])
+                    expected = expected_fingerprints.get(package)
+                    if expected and metadata.fingerprint != expected:
+                        results[package] = (b"", _ERRORS["IDENTITY_CHANGED"])
+                        continue
+                results[package] = (_decode_png(parts[-1]), "")
+            except (ValueError, UnicodeError, binascii.Error, RecursionError,
+                    zlib.error, struct.error):
                 results[package] = (b"", "应用图标数据无效")
     return {package: results.get(package, failure[package]) for package in packages}
 
@@ -132,11 +158,14 @@ def load_app_icons(
     packages: Sequence[str],
     cancelled: Callable[[], bool],
     emit: Callable[[str, bytes, str], None],
+    *,
+    expected_fingerprints: Mapping[str, str] | None = None,
 ) -> None:
     """在 worker 中读取最多 12 个图标，逐包回报结果；取消不再投递，但仍清理远端文件。
 
     传输与渲染支持执行中取消，清理不继承取消。清理使用本次生成的精确路径；未确认清理成功
     时返回失败并写无标识日志，不将原始设备错误、本机路径或设备标识带入界面。
+    有预期指纹时，只有同次渲染元数据身份与预期一致才交付 PNG，避免跨调用用户或版本竞态。
     """
     requested = list(dict.fromkeys(packages))
     if not requested or cancelled():
@@ -160,8 +189,19 @@ def load_app_icons(
     ):
         results = {package: (b"", "设备目标无效") for package in requested}
         safe = []
+    fingerprints = {}
+    for package in safe[:]:
+        value = (expected_fingerprints or {}).get(package)
+        if value is None or value == "":
+            continue
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value):
+            fingerprints[package] = value
+        else:
+            # 非空身份代表调用方要求校验；非法值不能静默降级为无身份图标。
+            results[package] = (b"", "应用缓存身份无效，请刷新应用列表")
+            safe.remove(package)
     if safe and not cancelled():
-        results.update(_load_batch(device_id, safe, cancelled))
+        results.update(_load_batch(device_id, safe, cancelled, fingerprints or None))
     for package in requested:
         if cancelled():
             return
@@ -170,12 +210,44 @@ def load_app_icons(
 
 
 def _load_batch(
-    device_id: str, packages: list[str], cancelled: Callable[[], bool]
+    device_id: str, packages: list[str], cancelled: Callable[[], bool],
+    expected_fingerprints: Mapping[str, str] | None = None,
 ) -> dict[str, tuple[bytes, str]]:
-    failure = {package: (b"", "应用图标读取失败") for package in packages}
+    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if expected_fingerprints else _MAX_OUTPUT_BYTES
+    result = run_app_helper(device_id, packages, cancelled, output_limit=limit,
+                            icon_metadata=bool(expected_fingerprints))
+    if result.error:
+        errors = {
+            "MISSING": "应用图标组件缺失",
+            "DEPLOY_FAILED": "应用图标组件传输失败",
+            "CLEANUP_FAILED": "应用图标临时文件清理失败",
+        }
+        error = errors.get(result.error, "应用图标读取失败")
+        return {package: (b"", error) for package in packages}
+    return _parse_output(result.output, packages, expected_fingerprints)
+
+
+@dataclass(frozen=True)
+class HelperResult:
+    """已确认收尾的 helper 输出；错误仅使用固定分类，不包含设备或路径信息。"""
+
+    output: str = ""
+    error: str = ""
+
+
+def run_app_helper(
+    device_id: str, packages: list[str], cancelled: Callable[[], bool], *,
+    output_limit: int, metadata: bool = False, icon_metadata: bool = False,
+) -> HelperResult:
+    """执行已校验的设备与包名批次；取消仍清理，清理失败不发布任何协议数据。
+
+    图标与元数据共用同一临时组件和传输边界；发送后的失败只补清理，不重放查询。
+    调用方分别校验包数、目标与协议，元数据模式只加入固定开关。
+    """
+    failure = HelperResult(error="READ_FAILED")
     helper = Path(resource_path("resources/app-icon-helper.jar"))
     if not helper.is_file():
-        return {package: (b"", "应用图标组件缺失") for package in packages}
+        return HelperResult(error="MISSING")
     remote = f"/data/local/tmp/adblab-icons-{uuid.uuid4().hex}.jar"
     target = shlex.quote(remote)
     adb = ["adb", "-s", device_id]
@@ -184,27 +256,31 @@ def _load_batch(
             payload = source.read(_MAX_INLINE_HELPER_BYTES + 1)
     except OSError:
         return failure
+    arguments = " ".join(shlex.quote(package) for package in packages)
+    if metadata:
+        arguments = "--metadata " + arguments
+    elif icon_metadata:
+        arguments = "--icons-metadata " + arguments
     if 0 < len(payload) <= _MAX_INLINE_HELPER_BYTES:
-        return _load_inline_batch(adb, target, payload, packages, cancelled)
+        return _run_inline_helper(adb, target, payload, arguments, output_limit, cancelled)
     results = failure
     try:
         deploy = [*adb, "push", str(helper), remote]
         pushed = CommandRunner.run(deploy, timeout=_COMMAND_TIMEOUT, cancelled=cancelled)
         if not pushed.success:
-            results = {package: (b"", "应用图标组件传输失败") for package in packages}
+            results = HelperResult(error="DEPLOY_FAILED")
         elif not cancelled():
-            arguments = " ".join(shlex.quote(package) for package in packages)
             # 设备端先把动态代码改为只读，再截断 stdout，避免主机捕获无界输出。
             script = (
                 f"{{ chmod 400 {target} && CLASSPATH={target} "
                 f"app_process / com.adblab.icons.Main {arguments}; }} "
-                f"2>/dev/null | head -c {_MAX_OUTPUT_BYTES + 1}"
+                f"2>/dev/null | head -c {output_limit + 1}"
             )
             result = CommandRunner.run(
                 [*adb, "shell", script], timeout=_COMMAND_TIMEOUT, cancelled=cancelled
             )
             if result.success and not cancelled():
-                results = _parse_output(result.output, packages)
+                results = HelperResult(output=result.output)
     except Exception:
         # 外部执行边界的异常只传播固定错误；finally 仍处理可能已部分传输的文件。
         results = failure
@@ -217,24 +293,23 @@ def _load_batch(
         except Exception:
             cleaned = False
         if not cleaned:
-            logging.getLogger(__name__).warning("应用图标临时文件清理失败")
-            results = {package: (b"", "应用图标临时文件清理失败") for package in packages}
+            logging.getLogger(__name__).warning("应用查询临时文件清理失败")
+            results = HelperResult(error="CLEANUP_FAILED")
     return results
 
 
-def _load_inline_batch(
-    adb: list[str], target: str, payload: bytes, packages: list[str],
+def _run_inline_helper(
+    adb: list[str], target: str, payload: bytes, arguments: str, output_limit: int,
     cancelled: Callable[[], bool],
-) -> dict[str, tuple[bytes, str]]:
+) -> HelperResult:
     """一次调用部署、渲染并确认清理；异常才补精确路径清理，绝不重放提取。
 
     内置小文件受字节上限约束，原生和快速后端共用相同脚本，减少原生启动次数。
     EXIT trap 在设备上收尾；主机只有收到完整清理标记才省略补偿清理。取消关闭连接
     不等于设备已收尾，因此缺失标记时仍执行独立且有界的必要清理。
     """
-    results = {package: (b"", "应用图标读取失败") for package in packages}
+    results = HelperResult(error="READ_FAILED")
     encoded = base64.b64encode(payload).decode("ascii")
-    arguments = " ".join(shlex.quote(package) for package in packages)
     cleanup = f"rm -f -- {target} && printf {shlex.quote(_CLEANED)}"
     # 部署失败也以零码交付协议，避免执行器丢弃 stdout；业务仍按失败标记返回错误。
     script = (
@@ -243,7 +318,7 @@ def _load_inline_batch(
         f"printf {shlex.quote(_DEPLOY_FAILED)}; exit 0; fi; "
         f"chmod 400 {target} || exit 1; "
         f"{{ CLASSPATH={target} app_process / com.adblab.icons.Main {arguments}; }} "
-        f"2>/dev/null | head -c {_MAX_OUTPUT_BYTES + 1}"
+        f"2>/dev/null | head -c {output_limit + 1}"
     )
     cleaned = False
     try:
@@ -258,12 +333,12 @@ def _load_inline_batch(
         if cleaned:
             output = output[:-len(marker)].rstrip("\r\n")
         if output == _DEPLOY_FAILED:
-            results = {package: (b"", "应用图标组件传输失败") for package in packages}
+            results = HelperResult(error="DEPLOY_FAILED")
         elif result.success and not cancelled():
-            results = _parse_output(output, packages)
+            results = HelperResult(output=output)
     except Exception:
         # 执行器或设备错误只影响本批；界面不暴露底层路径和设备标识。
-        results = {package: (b"", "应用图标读取失败") for package in packages}
+        results = HelperResult(error="READ_FAILED")
     finally:
         if not cleaned:
             try:
@@ -273,6 +348,6 @@ def _load_inline_batch(
             except Exception:
                 cleaned = False
         if not cleaned:
-            logging.getLogger(__name__).warning("应用图标临时文件清理失败")
-            results = {package: (b"", "应用图标临时文件清理失败") for package in packages}
+            logging.getLogger(__name__).warning("应用查询临时文件清理失败")
+            results = HelperResult(error="CLEANUP_FAILED")
     return results

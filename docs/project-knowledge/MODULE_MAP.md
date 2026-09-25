@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-09-25
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -32,7 +32,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_runtime.py`、`core/adb_query.py`、`utils/adb_resolver.py`、`services/adb_clients.py`、`gui/widgets/adb_client_card.py`（客户端卡与执行环境卡）、`adblab/presentation/qt_adb_runtime.py`、`utils/adb_debug.py`、`scripts/adb_fast.py` | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_adb_debug.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
 | 设置、日志与设备存储 | schema 化 JSON 设置、内存/UI 日志、脱敏应用诊断、性能追踪、设备 YAML 原子读写 | `core/settings_manager.py`、`core/log_service.py`、`core/diagnostics.py`、`models/device_store.py`、`utils/console_colors.py` | `test_console_colors.py`、`test_settings_persistence.py`、`test_logging_contract.py`、`test_diagnostics.py`、`test_device_store_concurrency.py` |
 | 应用更新检查 | 设置 About 卡片、公开正式发布解析、异步检查和关闭清理 | `gui/features/about.py`、`services/app_update.py`、`adblab/presentation/qt_app_update.py`、`utils/app_metadata.py` | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` |
-| 应用图标 | 临时设备端 DEX 渲染 Drawable，小组件单次调用部署、提取与清理，可见区优先分批读取与页面缓存 | `services/app_icons.py`、`gui/dialogs/app_manager_icons.py`、`tools/app_icons/Main.java` | `test_app_icons_service.py`、`test_app_icons_inline.py`、`test_app_manager_icons.py` |
+| 应用名称与图标 | 临时 DEX 批量查询 PackageManager 元数据或渲染 Drawable；共用部署与清理边界，可见文字优先、图标按身份增量缓存 | `services/app_metadata.py`、`services/app_icons.py`、`gui/dialogs/app_manager_views.py`、`gui/dialogs/app_manager_icons.py`、`tools/app_icons/Main.java` | `test_app_metadata.py`、`test_app_metadata_worker.py`、`test_app_manager_metadata.py`、`test_app_icons_service.py`、`test_app_icons_inline.py`、`test_app_manager_icons.py` |
 | 文件与 Remote 服务 | 文件命令、页面串行传输、后台图片解码与文本原始字节读写、scrcpy 多设备并发预检与会话启停（含自然退出的进程身份释放）、直连/持久输入和 Remote 生命周期 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer_transfers.py`、`gui/dialogs/file_explorer_preview_tasks.py`、`services/remote/` | `test_file_explorer_service.py`、`test_file_explorer_preview.py`、`test_file_explorer_text.py`、`test_scrcpy_process_release.py`、`test_remote_services.py`、`test_remote_sessions.py`、`test_remote_input_backend.py`、`test_remote_input_shutdown.py` |
 | scrcpy 专用 ADB | 限定协议、独立 CLI、父进程观察、会话端口归属与租约清理 | `core/scrcpy_adb_protocol.py`、`core/scrcpy_session.py`、`scripts/scrcpy_adb_bridge.py`、`utils/scrcpy_bridge.py` | `test_scrcpy_adb_protocol.py`、`test_scrcpy_adb_bridge.py`、`test_scrcpy_session.py`、`test_scrcpy_backend.py` |
 | MobilePerf | GUI 适配层管理隔离子进程；移植内核负责指标采样和报告 | `services/mobileperf_runner.py`、`mobileperf/android/` | `test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` |

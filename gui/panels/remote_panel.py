@@ -1136,8 +1136,11 @@ class RemotePanel(BasePanel):
 
     # ── 控制器委托 ─────────────────────────────────────────────────────
 
-    def build_ui(self):
-        return (getattr(self, "_form_controller", None) or RemotePanelForm(self)).build_ui()
+    def build_ui(self, *, parent: QWidget | None = None):
+        """构建远程视图，并把构造期间的所有权传递给表单根控件。"""
+        return (getattr(self, "_form_controller", None) or RemotePanelForm(self)).build_ui(
+            parent=parent,
+        )
 
     def _build_mirroring(self):
         return (getattr(self, "_form_controller", None) or RemotePanelForm(self))._build_mirroring()

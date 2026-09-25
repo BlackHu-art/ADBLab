@@ -77,10 +77,10 @@ class SidePanel(QWidget):
     def _create_ui(self):
         # SidePanel 只保留跨页面状态与信号协调职责，不再创建可见页签/页面栈。
         # 设备面板与三个功能页由 MainFrame 直接注册为 FluentWindow 子页面。
-        self._devices_tab = DeviceManager(self)
+        self._devices_tab = DeviceManager(self, parent=self)
         self._devices_tab.setParent(self)
         self._devices_tab.hide()
-        self._device_widget = self._devices_tab.build_ui()
+        self._device_widget = self._devices_tab.build_ui(parent=self)
 
         self._apps_tab = None
         self._advanced_tab = None
@@ -100,7 +100,9 @@ class SidePanel(QWidget):
         self._ensure_tab_loaded(0)
 
     def _create_tab_scroll_area(self) -> SmoothScrollArea:
-        scroll = SmoothScrollArea()
+        scroll = SmoothScrollArea(self)
+        # 挂载前仍可独立展示；窗口标志不解除 QObject 所有权，布局接管时会重新设父对象。
+        scroll.setWindowFlag(Qt.WindowType.Window)
         scroll.setWidgetResizable(True)
         # 响应式重排优先；极窄宽度或超大字体下保留可访问的横向兜底。
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -120,12 +122,12 @@ class SidePanel(QWidget):
         tab = getattr(self, attr, None)
         if tab is not None:
             return tab
-        tab = cls(self)
+        tab = cls(self, parent=self)
         # 控制器属于共享状态协调器；可见根控件随后交给工作区宿主。
         # 显式隐藏控制器，销毁协调器时 Qt 自动断开其全局样式连接。
         tab.setParent(self)
         tab.hide()
-        tab_widget = tab.build_ui()
+        tab_widget = tab.build_ui(parent=self)
         prepare_responsive_content(tab_widget)
         tab_widget.setMinimumWidth(0)
         self._tab_scroll_areas[index].setWidget(tab_widget)

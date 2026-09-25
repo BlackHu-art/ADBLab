@@ -197,9 +197,14 @@ def _app_manager_for_unit_tests():
     dialog._app_labels = {}
     dialog._app_versions = {}
     dialog._detail_cache = {}
+    dialog._loaded_detail_packages = set()
     dialog._failed_detail_packages = set()
     dialog._pending_detail_packages = set()
     dialog._detail_worker_running = False
+    dialog._detail_worker = None
+    dialog._load_in_progress = False
+    dialog.load_state = "idle"
+    dialog._active_load_request = 0
     dialog._detail_row_by_pkg = {}
     dialog._detail_icon_by_pkg = {}
     dialog._view_mode = False
@@ -217,7 +222,10 @@ def _app_manager_for_unit_tests():
     dialog._detail_filter_timer.isActive.return_value = False
     dialog._filter = Mock()
     dialog._form_controller = Mock(spec_set=["_update_view_geometry"])
-    dialog._icons_controller = Mock(spec_set=["reset", "decorate", "schedule"])
+    dialog._icons_controller = Mock(spec_set=[
+        "reset", "decorate", "schedule", "retain_packages", "validate_metadata", "busy",
+    ])
+    dialog._icons_controller.busy = False
     dialog.model = Mock()
     dialog.model.rowCount.return_value = 0
     dialog.model.removeRows = Mock()
@@ -232,6 +240,7 @@ def _app_manager_for_unit_tests():
     dialog._sync_selection_views = Mock()
     dialog._gen_icon = AppManagerPage._gen_icon
     dialog._on_detail = lambda *args: AppManagerPage._on_detail(dialog, *args)
+    dialog._on_metadata = lambda data: AppManagerPage._on_metadata(dialog, data)
     dialog._on_detail_worker_finished = lambda packages=None: (
         AppManagerPage._on_detail_worker_finished(dialog, packages)
     )
@@ -294,7 +303,7 @@ def test_app_manager_load_visible_details_starts_small_worker_batch():
 
     worker_cls.assert_called_once_with(
         "device-1",
-        "load_detail_batch",
+        "load_metadata_batch",
         packages=["com.example.one", "com.example.two"],
     )
     assert dialog._pending_detail_packages == {"com.example.one", "com.example.two"}
@@ -347,6 +356,7 @@ def test_app_manager_detail_worker_continues_after_first_visible_page():
         "com.example.one": ("One", "1.0", ""),
         "com.example.two": ("Two", "2.0", ""),
     }
+    dialog._loaded_detail_packages = {"com.example.one", "com.example.two"}
     dialog._pending_detail_packages = {"com.example.two"}
 
     AppManagerPage._on_detail_worker_finished(dialog, ["com.example.two"])
@@ -362,6 +372,7 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
         ("Two", "com.example.two", "Enabled", "User"),
     ]
     dialog._detail_cache = {"com.example.one": ("One", "1.0", "")}
+    dialog._loaded_detail_packages = {"com.example.one"}
     dialog._visible_detail_packages = Mock(return_value=[])
 
     with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
@@ -369,7 +380,7 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
 
     worker_cls.assert_called_once_with(
         "device-1",
-        "load_detail_batch",
+        "load_metadata_batch",
         packages=["com.example.two"],
     )
     assert dialog._pending_detail_packages == {"com.example.two"}
@@ -946,6 +957,7 @@ def test_app_detail_failed_batch_preserves_cache_and_schedules_other_untried_pac
         ("Three", "com.example.three", "Enabled", "User"),
     ]
     dialog._detail_cache = {"com.example.one": ("One", "1.0", "")}
+    dialog._loaded_detail_packages = {"com.example.one"}
     dialog._pending_detail_packages = {"com.example.one", "com.example.two"}
     AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one", "com.example.two"])
     assert dialog._detail_cache == {"com.example.one": ("One", "1.0", "")}
@@ -980,6 +992,7 @@ def test_app_detail_last_batch_finishes_status_despite_pending_scroll_timer(deta
     dialog._detail_timer.isActive.return_value = True
     if detail_succeeded:
         dialog._detail_cache["com.example.one"] = ("One", "1.0", "")
+        dialog._loaded_detail_packages.add("com.example.one")
 
     AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one"])
 

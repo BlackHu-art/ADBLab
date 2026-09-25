@@ -15,6 +15,7 @@ from core.adb_query import query_timeout
 from core.exec import CommandRunner
 from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from services.app_icons import load_app_icons
+from services.app_metadata import load_app_metadata
 from utils.archive import safe_extract_zip
 
 _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
@@ -61,6 +62,7 @@ class AppManagerWorker(QThread):
     apps_loaded = Signal(list)
     app_details_loaded = Signal(dict)
     app_detail_batch = Signal(str, str, str, str)
+    app_metadata_loaded = Signal(dict)
     app_icon_loaded = Signal(str, bytes, str)
     permissions_loaded = Signal(list, list, list)
     backup_progress = Signal(str, str)
@@ -100,12 +102,10 @@ class AppManagerWorker(QThread):
         ops = {
             "load_apps": self._load_apps,
             "load_detail_batch": lambda: self._load_detail_batch(self.kwargs.get("packages", [])),
-            "load_icon_batch": lambda: load_app_icons(
-                self.device_ip,
+            "load_metadata_batch": lambda: self._load_metadata_batch(
                 self.kwargs.get("packages", []),
-                lambda: self._aborted.is_set() or self.isInterruptionRequested(),
-                self.app_icon_loaded.emit,
             ),
+            "load_icon_batch": self._load_icon_batch,
             "app_details": lambda: self._fetch_app_details(self.kwargs.get("package_name")),
             "app_snapshot": lambda: self._fetch_app_snapshot(self.kwargs.get("package_name")),
             "permissions": lambda: self._fetch_permissions(self.kwargs.get("package_name")),
@@ -188,12 +188,52 @@ class AppManagerWorker(QThread):
         except Exception as e:
             self._report_failure(f"Error: {e}")
 
-    def _load_detail_batch(self, packages):
+    def _load_icon_batch(self):
+        """把页面已验证的身份交给服务核对，禁止将另一版本的像素记入当前缓存。"""
+        options = {}
+        if "expected_fingerprints" in self.kwargs:
+            options["expected_fingerprints"] = self.kwargs["expected_fingerprints"]
+        load_app_icons(
+            self.device_ip, self.kwargs.get("packages", []), self._cancelled,
+            self.app_icon_loaded.emit, **options,
+        )
+
+    def _load_metadata_batch(self, packages):
+        """优先读取有界元数据；只有明确不支持 helper 时才在剩余预算内兼容查询。
+
+        缓存身份与文字一同交付，避免界面把旧图标当作当前版本。超时、取消或损坏响应
+        均不重放查询，未返回的包由页面按失败处理，保留用户主动刷新的重试边界。
+        """
+        if not packages or self._cancelled():
+            return
+        deadline = monotonic() + 30.0
+        result = load_app_metadata(self.device_ip, packages, self._cancelled)
+        if self._cancelled():
+            return
+        if result.unsupported and not result.records:
+            if monotonic() < deadline:
+                self._load_detail_batch(packages, deadline=deadline)
+            return
+        for item in result.records.values():
+            if self._cancelled():
+                return
+            self.app_metadata_loaded.emit({
+                "package": item.package,
+                "label": item.label,
+                "version": item.version,
+                "installed": item.installed,
+                "fingerprint": item.fingerprint,
+            })
+        if len(result.records) < len(set(packages)):
+            self.log_message.emit("部分应用信息未读取，请刷新重试。")
+
+    def _load_detail_batch(self, packages, *, deadline: float | None = None):
         """批量及解析兼容查询共用原批次预算，失败不生成可缓存的空详情。"""
         if not packages or self._cancelled():
             return
         command_budget = query_timeout(self.device_ip, 5)
-        deadline = monotonic() + max(command_budget, len(packages) * 2)
+        if deadline is None:
+            deadline = monotonic() + max(command_budget, len(packages) * 2)
         safe_packages = [pkg for pkg in packages if _safe_pkg(pkg)]
         if len(safe_packages) != len(packages):
             self.log_message.emit("Invalid package names skipped while reading details")

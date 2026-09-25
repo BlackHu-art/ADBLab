@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-09-25
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -18,7 +18,8 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | 应用翻译资源 | `resources/i18n/*.qm` 经静态 `translations_rc` 注册 | GUI 启动安装应用翻译器，缺失词条回退源文案 | Qt 资源系统、`QTranslator`、界面显示文案 | 翻译器由 QApplication 持有并保留到事件循环退出；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
-| 应用图标 | 设备端 `app_process` 临时执行内置 DEX helper | service 校验有界 PNG 字节；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；列表刷新使缓存及旧 worker 代次失效；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |
+| 应用列表元数据 | 设备端 `app_process` 临时 helper 的 PackageManager；明确不支持时有限 dumpsys 兼容 | `services/app_metadata.py` 校验有界 Base64/UTF-8 JSON；每批最多 30 包；向 GUI 仅交付名称、版本、安装日期和缓存身份摘要 | 应用管理页面的文字缓存与本轮成功集合；不持久化 | 可见文字先于图标；刷新可暂时显示旧文字，但只有本轮成功响应才能标记已验证；用户、版本、更新时间、路径与资源配置参与缓存身份 |
+| 应用图标 | 同一临时 DEX helper 读取原生 Drawable | service 校验有界 PNG 字节及同次渲染的元数据身份；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；刷新隔离旧代次，元数据验证身份相同才复用图标；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |
 | 截图/录屏 | 设备 screencap/screenrecord | 截图二进制流写同目录临时文件，完整 PNG 解码后原子发布；录屏先拉取到目标同目录临时文件再原子发布，失败保留每设备一份原批次身份供重试（最多 64 份）；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 截图文件持续存在直到用户单张或全部删除，删除失败项保留；设备端录屏只在保存成功后删除，下载失败不删除；重试身份只存在于内存、不跨重启；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
 | MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
@@ -120,6 +121,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；不含本机保存路径，但仍带字体、主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
 | IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<ip>` | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
+| 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
 | 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；结果与方案参数拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 等设备身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor` | 每次运行独立临时目录；模式由后台线程通过同目录临时文件原子发布 | 子进程退出、输出 reader 和模式线程收口后由适配层清理；启动失败也清理；配置包含设备/包/路径，模式不进入用户设置 |

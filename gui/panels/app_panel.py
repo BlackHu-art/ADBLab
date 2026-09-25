@@ -73,13 +73,14 @@ class AppPanel(BasePanel):
 
     monkey_preparation_requested = Signal(list, str, str, object)
 
-    def build_ui(self) -> QWidget:
+    def build_ui(self, *, parent: QWidget | None = None) -> QWidget:
+        """构建应用视图；挂载前由传入父对象收口构造失败时的根控件。"""
         self._monkey_preparation: _MonkeyPreparation | None = None
         self._device_labels: dict[str, str] = {}
         self._monkey_information_signature: tuple | None = None
         self._monkey_closed = False
         self._package_query_pending = False
-        w = QWidget()
+        w = QWidget(parent, Qt.WindowType.Window)
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)

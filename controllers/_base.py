@@ -38,7 +38,8 @@ from models.device_store import DeviceStore
 class _ADBControllerBase:
     """封装 ADBController 共用的模型、信号和处理器分派基础设施。"""
 
-    def __init__(self, log_service: LogService):
+    def __init__(self, log_service: LogService, *, load_device_history: bool = True):
+        """装配控制器；仅已完成历史加载的 GUI 组合根可显式跳过同步读取。"""
         self.signals = ADBControllerSignals()
         self.log_service = log_service
         self.action_results = ActionResults(self.signals.action_result_changed.emit)
@@ -80,12 +81,12 @@ class _ADBControllerBase:
         self._shutting_down = False
         self._build_handler_map()
 
-        try:
-            DeviceStore.load()
-        except Exception as e:
-            # load 失败时 DeviceStore 内部已保留内存快照并记录原因，
-            # 这里只补一条控制器可见日志，不再清空设备列表。
-            self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
+        if load_device_history:
+            try:
+                DeviceStore.load()
+            except Exception as e:
+                # 加载失败保留已有快照，不输出可能携带用户路径的异常正文。
+                self.log_service.log("ERROR", f"Failed to load DeviceStore: {type(e).__name__}")
 
     def _connect_model_signals(self):
         # command_finished 由各 model 在工作线程发出；此处不指定连接类型，

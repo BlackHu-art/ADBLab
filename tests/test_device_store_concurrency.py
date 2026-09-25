@@ -23,6 +23,50 @@ class _DeviceStoreState:
         DeviceStore._devices = self.devices
 
 
+def test_cancelled_load_does_not_replace_memory_or_repair_disk(tmp_path, monkeypatch):
+    from concurrent.futures import CancelledError
+
+    with _DeviceStoreState():
+        target = tmp_path / "history.yaml"
+        raw = "wifi:\n  ip: 192.0.2.10:5555\nusb:\n  ip: synthetic-usb\n"
+        target.write_text(raw, encoding="utf-8")
+        DeviceStore._file_path = str(target)
+        DeviceStore._devices = {"existing": {"ip": "192.0.2.11:5555"}}
+        cancel = threading.Event()
+        parse = DeviceStore._parse_snapshot
+
+        def cancel_after_parse(text, *, strict):
+            result = parse(text, strict=strict)
+            cancel.set()
+            return result
+
+        monkeypatch.setattr(DeviceStore, "_parse_snapshot", cancel_after_parse)
+        with pytest.raises(CancelledError):
+            DeviceStore.load(cancel_event=cancel)
+        assert target.read_text("utf-8") == raw
+        assert dict(DeviceStore.get_all()) == {"existing": {"ip": "192.0.2.11:5555"}}
+
+
+def test_cancelled_read_retry_does_not_wait_or_backup(tmp_path, monkeypatch):
+    from concurrent.futures import CancelledError
+
+    with _DeviceStoreState():
+        target = tmp_path / "history.yaml"
+        target.write_text("{}", encoding="utf-8")
+        DeviceStore._file_path = str(target)
+        cancel = threading.Event()
+
+        def interrupted_open(*_args, **_kwargs):
+            cancel.set()
+            raise OSError("synthetic lock")
+
+        monkeypatch.setattr("models.device_store.open", interrupted_open, raising=False)
+        monkeypatch.setattr(DeviceStore, "_LOAD_RETRY_DELAY_S", 30)
+        with pytest.raises(CancelledError):
+            DeviceStore.load(cancel_event=cancel)
+        assert not list(tmp_path.glob("*.corrupt-*"))
+
+
 def test_history_persists_only_ip_targets_but_keeps_usb_metadata_in_memory(tmp_path):
     with _DeviceStoreState():
         store_path = tmp_path / "connected_devices.yaml"

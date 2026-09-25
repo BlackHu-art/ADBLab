@@ -26,8 +26,9 @@ from gui.widgets.responsive_layout import WidthPolicy
 class SystemPanel(BasePanel):
     """构建系统工具控件，并向统一信号层转发用户操作。"""
 
-    def build_ui(self) -> QWidget:
-        w = QWidget()
+    def build_ui(self, *, parent: QWidget | None = None) -> QWidget:
+        """构建系统视图；挂载前由传入父对象收口构造失败时的根控件。"""
+        w = QWidget(parent, Qt.WindowType.Window)
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)

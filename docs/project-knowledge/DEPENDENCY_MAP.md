@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-09-25
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -62,7 +62,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
-| Android `app_process` + `resources/app-icon-helper.jar` | 在设备端读取应用图标 | `services/app_icons.py`、`tools/app_icons/Main.java` | 保留占位图并提示刷新；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
+| Android `app_process` + `resources/app-icon-helper.jar` | 在设备端批量读取应用名称、版本或图标 | `services/app_metadata.py`、`services/app_icons.py`、`tools/app_icons/Main.java` | 图标保留占位；元数据仅在明确不支持时执行有限兼容查询；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
 | Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |
 | GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 只影响 CI/CD |
 

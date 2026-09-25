@@ -34,7 +34,7 @@
 | 界面语言与材质 | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_navigation_rendering.py` | 词库与格式参数、实际主导航及业务页语言、显示标签与设备参数隔离、共享材质及动画中间帧；这些 Qt 用例纳入 `ui` marker |
 | App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py`、`test_screenshot_io.py` | 应用管理、路径/传输、截图批次、后台解码缓存、删除快照和页面释放 |
 | Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空；采样预算与周期共享见 `test_mobileperf_query_budget.py`、`test_mobileperf_sampling.py`，结果图表见 `test_perf_chart_data.py` |
-| 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`test_gui_startup.py`、`test_mainframe_startup.py`、`test_startup_splash.py`、`test_startup_process.py`、`live_logcat_close_probe.py` | 关闭准入、启动首帧与中止、父 GUI 阻塞时动画刷新、QObject 晚到回调、线程/进程释放；启动相关 Qt 测试归入 `ui` marker |
+| 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`test_gui_startup.py`、`test_mainframe_startup.py`、`test_startup_splash.py`、`test_startup_process.py`、`test_startup_diagnostics.py`、`live_logcat_close_probe.py` | 关闭准入、启动首帧与历史加载门禁、早期失败诊断与清理错误优先级、父 GUI 阻塞时动画刷新、QObject 晚到回调、线程/进程释放；启动相关 Qt 测试归入 `ui` marker |
 | 静态与构建契约 | `test_ci_contracts.py`、`test_comment_language.py`、`test_doc_links.py`、`test_runtime_tools.py` | workflow 权限、注释/文档检查器、资源和打包路径 |
 
 ## 执行命令
