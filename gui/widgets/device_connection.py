@@ -7,7 +7,7 @@ import re
 import time
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QFontMetricsF, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QBoxLayout,
     QGridLayout,
@@ -24,10 +24,11 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     FlowLayout,
+    FluentIcon,
     HyperlinkButton,
+    IconWidget,
     IndeterminateProgressRing,
     LineEdit,
-    PrimaryPushButton,
     PushButton,
     SmoothScrollArea,
     StrongBodyLabel,
@@ -40,6 +41,16 @@ from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_focus_indicator, apply_font_role, apply_label_role
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from utils.adb_targets import normalize_adb_connect_target
+
+
+def _connection_button(icon, text, parent, *, primary=False):
+    """连接区沿用 Fluent 透明按钮，主要操作用主题色并保留键盘焦点反馈。"""
+    button = HyperlinkButton(parent) if primary else TransparentPushButton(parent)
+    button.setText(tr(text))
+    button.setIcon(icon)
+    button.setToolTip(tr(text))
+    apply_focus_indicator(button)
+    return button
 
 
 class _EqualHeightStack(QStackedWidget):
@@ -133,7 +144,7 @@ class _AddressForm(QWidget):
         self.address.setAccessibleName(tr("设备地址"))
         self.address.setPlaceholderText("192.168.1.10:37123")
         label.setBuddy(self.address)
-        self.connect_button = PrimaryPushButton(tr("连接"), entry)
+        self.connect_button = _connection_button(FluentIcon.CONNECT, "连接", entry, primary=True)
         self.connect_button.setToolTip(tr("校验输入地址并连接无线设备"))
         self.entry_row.addWidget(self.address, 1)
         self.entry_row.addWidget(self.connect_button)
@@ -260,6 +271,7 @@ class DeviceConnectionPanel(QWidget):
         self._qr_modules = 0
         self._qr_request = None
         self._qr_acknowledged = False
+        self._qr_expired = False
         self._scan_deadline = 0.0
         self._reflow_pending = False
         self._countdown = QTimer(self)
@@ -300,24 +312,42 @@ class DeviceConnectionPanel(QWidget):
         status.setContentsMargins(0, 0, 0, 0)
         status.setSpacing(6)
         self.status_row = QWidget(self.status_box)
-        status_line = FlowLayout(self.status_row, isTight=True)
+        self.status_line = status_line = QHBoxLayout(self.status_row)
         status_line.setContentsMargins(0, 0, 0, 0)
-        self.progress_ring = IndeterminateProgressRing(self.status_row)
-        self.progress_ring.setFixedSize(20, 20)
-        status_line.addWidget(self.progress_ring)
+        status_line.setSpacing(10)
         self.status_label = StrongBodyLabel("", self.status_row)
         self.status_label.setWordWrap(True)
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         status_line.addWidget(self.status_label)
-        self.countdown_label = BodyLabel("", self.status_row)
+        self.status_indicator = QWidget(self.status_row)
+        indicator = QHBoxLayout(self.status_indicator)
+        indicator.setContentsMargins(0, 0, 0, 0)
+        self.progress_ring = IndeterminateProgressRing(self.status_indicator)
+        self.progress_ring.setFixedSize(20, 20)
+        indicator.addWidget(self.progress_ring, 0, Qt.AlignmentFlag.AlignCenter)
+        self.countdown_label = BodyLabel("", self.status_indicator)
         self.countdown_label.setWordWrap(True)
-        status_line.addWidget(self.countdown_label)
-        self.refresh_button = PushButton(tr("生成二维码"), self.status_row)
-        self.cancel_button = PushButton(tr("停止"), self.status_row)
-        self.retry_stop_button = PushButton(tr("重试停止"), self.status_row)
-        for button in (self.refresh_button, self.cancel_button, self.retry_stop_button):
-            status_line.addWidget(button)
+        indicator.addWidget(self.countdown_label, 0, Qt.AlignmentFlag.AlignCenter)
+        status_line.addWidget(self.status_indicator)
+        status_line.addStretch()
         status.addWidget(self.status_row)
+        self.action_row = QWidget(self.status_box)
+        self.action_layout = QGridLayout(self.action_row)
+        self.action_layout.setContentsMargins(0, 0, 0, 0)
+        self.action_layout.setHorizontalSpacing(10)
+        self.action_layout.setVerticalSpacing(6)
+        self.refresh_slot = QWidget(self.action_row)
+        refresh_layout = QHBoxLayout(self.refresh_slot)
+        refresh_layout.setContentsMargins(0, 0, 0, 0)
+        refresh_layout.setSpacing(0)
+        self.refresh_button = _connection_button(
+            FluentIcon.SYNC, "生成二维码", self.refresh_slot, primary=True,
+        )
+        refresh_layout.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignLeft)
+        refresh_layout.addStretch()
+        self.cancel_button = _connection_button(FluentIcon.CANCEL, "停止", self.action_row)
+        self.retry_stop_button = _connection_button(FluentIcon.CANCEL, "重试停止", self.action_row)
+        status.addWidget(self.action_row)
         self.status_detail = BodyLabel("", self.status_box)
         self.status_detail.setWordWrap(True)
         self.status_detail.setTextFormat(Qt.TextFormat.PlainText)
@@ -430,24 +460,38 @@ class DeviceConnectionPanel(QWidget):
         code_option_layout.setContentsMargins(0, 0, 0, 0)
         self.code_hint = self._label("没有扫码入口？", code_option, code_option_layout)
         self.code_hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.code_button = HyperlinkButton(code_option)
-        self.code_button.setText(tr("使用配对码"))
+        self.code_button = _connection_button(
+            FluentIcon.CODE, "使用配对码", code_option, primary=True,
+        )
         self.code_button.setToolTip(tr("使用配对码连接"))
         self.code_button.setAccessibleDescription(tr("使用配对码连接"))
         apply_focus_indicator(self.code_button)
         self.code_button.clicked.connect(lambda: self.request_page("manual"))
         code_option_layout.addWidget(self.code_button)
+        self.qr_text_layout.addStretch()
         self.qr_text_layout.addWidget(code_option)
         self.qr_status_slot = QWidget(self.qr_page)
         self.qr_status_layout = QVBoxLayout(self.qr_status_slot)
         self.qr_status_layout.setContentsMargins(0, 0, 0, 0)
-        self.qr_text_layout.addStretch()
         self.qr_columns.addWidget(self.qr_text, 0, 0)
         self.qr_label = QLabel(self.qr_page)
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_label.setAccessibleName(tr("无线调试配对二维码"))
         self.qr_label.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.qr_label.setFixedSize(176, 176)
+        placeholder_layout = QVBoxLayout(self.qr_label)
+        placeholder_layout.setContentsMargins(0, 0, 0, 0)
+        self.qr_placeholder = QWidget(self.qr_label)
+        placeholder = QVBoxLayout(self.qr_placeholder)
+        placeholder.setContentsMargins(8, 8, 8, 8)
+        placeholder.setSpacing(12)
+        self.qr_placeholder_icon = IconWidget(FluentIcon.HISTORY, self.qr_placeholder)
+        self.qr_placeholder_icon.setFixedSize(36, 36)
+        placeholder.addWidget(self.qr_placeholder_icon, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.qr_placeholder_label = self._label("二维码已过期", self.qr_placeholder, placeholder)
+        self.qr_placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_layout.addWidget(self.qr_placeholder, 0, Qt.AlignmentFlag.AlignCenter)
+        self.qr_placeholder.hide()
         self.qr_columns.addWidget(
             self.qr_label, 0, 1, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
         )
@@ -489,7 +533,9 @@ class DeviceConnectionPanel(QWidget):
         self.pairing_code.setAccessibleName(tr("配对码"))
         label.setBuddy(self.pairing_code)
         code_layout.addWidget(self.pairing_code)
-        self.pair_button = PrimaryPushButton(tr("配对并连接"), self.manual_page)
+        self.pair_button = _connection_button(
+            FluentIcon.CONNECT, "配对并连接", self.manual_page, primary=True,
+        )
         self.manual_fields.addWidget(self.address_field, 0, 0)
         self.manual_fields.addWidget(self.code_field, 0, 1)
         self.manual_fields.addWidget(self.pair_button, 0, 2, Qt.AlignmentFlag.AlignBottom)
@@ -521,8 +567,12 @@ class DeviceConnectionPanel(QWidget):
         self.connection_address.setAccessibleName(tr("连接地址"))
         label.setBuddy(self.connection_address)
         layout.addWidget(self.connection_address)
-        self.continue_button = PrimaryPushButton(tr("继续连接"), self.continuation_box)
-        self.use_address_button = PushButton(tr("使用地址连接"), self.continuation_box)
+        self.continue_button = _connection_button(
+            FluentIcon.CONNECT, "继续连接", self.continuation_box, primary=True,
+        )
+        self.use_address_button = _connection_button(
+            FluentIcon.CONNECT, "使用地址连接", self.continuation_box,
+        )
         layout.addWidget(self.continue_button, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.use_address_button, 0, Qt.AlignmentFlag.AlignRight)
         self.continue_button.clicked.connect(self._continue)
@@ -550,6 +600,18 @@ class DeviceConnectionPanel(QWidget):
         self.code_hint.setMinimumHeight(
             max(self.code_button.minimumHeight(), self.code_button.sizeHint().height())
         )
+        # 固定操作槽而不拉伸按钮，避免 Fluent 将短文案及图标再次居中。
+        metrics = QFontMetricsF(self.refresh_button.font(), self.refresh_button)
+        padding = self.refresh_button.sizeHint().width() - math.ceil(
+            metrics.horizontalAdvance(self.refresh_button.text())
+        )
+        self.refresh_slot.setFixedWidth(
+            padding + 1 + max(
+                math.ceil(metrics.horizontalAdvance(tr(text)))
+                for text in ("生成二维码", "刷新二维码", "重新生成")
+            )
+        )
+        self.cancel_button.setFixedWidth(self.cancel_button.sizeHint().width())
         self._schedule_reflow()
 
     def _submit_address(self, target):
@@ -649,7 +711,10 @@ class DeviceConnectionPanel(QWidget):
         self._update_controls()
 
     def cancel_current(self):
-        if not self._expanded or self._shutting_down or self._has_pending():
+        if (
+            not self._expanded or self._shutting_down or self._has_pending()
+            or not self.cancel_button.isEnabled()
+        ):
             return
         self._clear_secrets()
         self.coordinator.cancel()
@@ -744,6 +809,15 @@ class DeviceConnectionPanel(QWidget):
         elif state == "Idle" and reason == "cancelled" and self._pair_started:
             detail = tr("手机可能已保存配对记录，可在无线调试中查看。")
         self.status_detail.setText(detail)
+        if self.current_page == "qr" and (
+            self._qr_expired or (state == "Failed" and reason == "scan_timeout")
+        ):
+            self._show_expired_qr()
+        elif (
+            self.current_page == "qr" and state == "Idle" and reason == "cancelled"
+            and not self._has_pending() and not self.coordinator.busy
+        ):
+            self._show_qr_placeholder(tr("已停止"), FluentIcon.CANCEL)
         self.status_label.setAccessibleDescription(self.status_label.text())
         self._update_controls()
         if state == "PairedOnly":
@@ -802,16 +876,27 @@ class DeviceConnectionPanel(QWidget):
             return
         qr = self.current_page == "qr"
         self.refresh_button.setVisible(qr)
-        self.refresh_button.setText(
-            tr("刷新二维码") if state == "WaitingForScan" else tr("生成二维码")
+        refresh_text = "重新生成" if self._qr_expired else (
+            "刷新二维码" if state == "WaitingForScan" else "生成二维码"
         )
+        self.refresh_button.setText(tr(refresh_text))
+        self.refresh_button.setToolTip(tr(refresh_text))
         self.refresh_button.setEnabled(
             not stopping and state not in ("Pairing", "WaitingForConnection")
         )
         self.code_button.setVisible(True)
         self.code_button.setEnabled(not stopping)
-        self.cancel_button.setVisible(busy and not stopping)
+        stopped = (
+            qr and state == "Idle" and self.coordinator.reason == "cancelled"
+            and not busy and not self._has_pending()
+        )
+        self.cancel_button.setVisible(
+            not self._qr_expired and state != "CleanupFailed"
+            and (busy or stopped) and (qr or not stopping)
+        )
+        self.cancel_button.setEnabled(busy and not stopping and not self._qr_expired)
         self.retry_stop_button.setVisible(state == "CleanupFailed")
+        self.action_row.setVisible(qr or busy or state == "CleanupFailed")
         show_progress = (
             qr
             and self.isVisible()
@@ -834,6 +919,7 @@ class DeviceConnectionPanel(QWidget):
             or self._has_pending()
             or self._closed
             or self._shutting_down
+            or self._qr_expired
             or not self.isVisible()
             or self.coordinator.state not in ("Checking", "WaitingForScan")
         ):
@@ -924,8 +1010,26 @@ class DeviceConnectionPanel(QWidget):
         self._qr_image = QImage()
         self._qr_request = None
         self._qr_acknowledged = False
+        self._qr_expired = False
         self.qr_label.clear()
+        self.qr_label.setAccessibleName(tr("无线调试配对二维码"))
+        self.qr_placeholder.hide()
         self.countdown_label.clear()
+
+    def _show_expired_qr(self):
+        """本地计时与后台超时共用终态展示；销毁旧码，只由显式刷新启动下一轮。"""
+        self._clear_qr()
+        self._qr_expired = True
+        self._show_qr_placeholder(tr("二维码已过期"), FluentIcon.HISTORY)
+        self.status_label.setText(tr("等待重新生成"))
+        self.status_label.setAccessibleDescription(self.status_label.text())
+        self.status_detail.clear()
+
+    def _show_qr_placeholder(self, text, icon):
+        self.qr_label.setAccessibleName(text)
+        self.qr_placeholder_label.setText(text)
+        self.qr_placeholder_icon.setIcon(icon)
+        self.qr_placeholder.show()
 
     def _clear_secrets(self):
         self._clear_qr()
@@ -938,7 +1042,8 @@ class DeviceConnectionPanel(QWidget):
             tr("二维码将在 {time} 后过期").format(time=self.countdown_label.text())
         )
         if remaining == 0:
-            self._clear_qr()
+            self._show_expired_qr()
+            self._update_controls()
         self._schedule_reflow()
 
     def _cycle_page(self, step):
@@ -953,53 +1058,95 @@ class DeviceConnectionPanel(QWidget):
 
     def _status_text_size(self, text, width, height):
         metrics = self.status_label.fontMetrics()
-        text_width = min(width, max(1, metrics.horizontalAdvance(text)))
+        precise = QFontMetricsF(self.status_label.font(), self.status_label)
+        text_width = min(width, max(1, math.ceil(precise.horizontalAdvance(text))))
         bounds = metrics.boundingRect(
             QRect(0, 0, text_width, 10000), Qt.TextFlag.TextWordWrap, text
         )
         return QSize(text_width, max(height, bounds.height()))
 
-    def _qr_refresh_width(self):
-        metrics = self.refresh_button.fontMetrics()
-        padding = self.refresh_button.sizeHint().width() - metrics.horizontalAdvance(
-            self.refresh_button.text()
+    def _countdown_width(self):
+        metrics = QFontMetricsF(self.countdown_label.font(), self.countdown_label)
+        return math.ceil(
+            3 * max(metrics.horizontalAdvance(digit) for digit in "0123456789")
+            + metrics.horizontalAdvance(":")
         )
-        return padding + max(
-            metrics.horizontalAdvance(tr(text)) for text in ("生成二维码", "刷新二维码")
+
+    def _qr_refresh_width(self):
+        return self.refresh_slot.width()
+
+    def _qr_status_width(self, width):
+        actions_width = self._qr_refresh_width() + 10 + self.cancel_button.width()
+        if width < actions_width:
+            return min(width, self._qr_refresh_width())
+        return actions_width
+
+    def _qr_status_line_height(self, width, control_height):
+        available = max(1, self._qr_status_width(width) - 12 - self._countdown_width() - 10)
+        return max(
+            self._status_text_size(tr(text), available, control_height).height()
+            for text in (
+                "正在准备扫码", "等待手机扫码", "正在停止，请稍候。",
+                "等待重新生成", "本次操作已停止",
+            )
         )
 
     def _normal_qr_status_height(self, width, control_height):
         """正常扫码提示按实际字体换行；只预留常规操作行，不预留错误或续连表单。"""
-        sizes = (
-            self._status_text_size(tr("等待手机扫码"), width, control_height),
-            QSize(self.countdown_label.fontMetrics().horizontalAdvance("0:00"), control_height),
-            QSize(self._qr_refresh_width(), control_height),
-            QSize(self.cancel_button.sizeHint().width(), control_height),
-        )
-        x, total, row_height = 0, 0, 0
-        for size in sizes:
-            if x and x + size.width() > width - 1:
-                total += row_height + 10
-                x, row_height = 0, 0
-            x += size.width() + 10
-            row_height = max(row_height, size.height())
-        return total + row_height
+        actions = control_height
+        if width < self._qr_refresh_width() + 10 + self.cancel_button.width():
+            actions += control_height + 6
+        return self._qr_status_line_height(width, control_height) + 6 + actions
+
+    def _reflow_actions(self, width, control_height):
+        """按钮独占固定操作行，隐藏停止时保留其槽位；窄窗只按可用宽度换行。"""
+        for button in (self.refresh_slot, self.cancel_button, self.retry_stop_button):
+            self.action_layout.removeWidget(button)
+        qr = self.current_page == "qr"
+        self.refresh_slot.setVisible(qr)
+        self.refresh_slot.setFixedHeight(control_height)
+        policy = self.cancel_button.sizePolicy()
+        policy.setRetainSizeWhenHidden(qr)
+        self.cancel_button.setSizePolicy(policy)
+        self.action_layout.setColumnStretch(0, 1)
+        height = control_height
+        if qr:
+            self.action_layout.addWidget(self.refresh_slot, 0, 1, Qt.AlignmentFlag.AlignRight)
+            if width >= self._qr_refresh_width() + 10 + self.cancel_button.width():
+                self.action_layout.addWidget(self.cancel_button, 0, 2, Qt.AlignmentFlag.AlignRight)
+                retry_row = 1
+                action_columns = 2
+            else:
+                self.action_layout.addWidget(self.cancel_button, 1, 1, Qt.AlignmentFlag.AlignRight)
+                retry_row = 2
+                action_columns = 1
+                height += control_height + 6
+            self.action_layout.addWidget(
+                self.retry_stop_button, retry_row, 1, 1, action_columns,
+                Qt.AlignmentFlag.AlignRight,
+            )
+            if not self.retry_stop_button.isHidden():
+                height += control_height + 6
+        else:
+            self.action_layout.addWidget(self.cancel_button, 0, 1, Qt.AlignmentFlag.AlignRight)
+            self.action_layout.addWidget(self.retry_stop_button, 0, 2, Qt.AlignmentFlag.AlignRight)
+        self.action_row.setFixedHeight(height)
 
     def _reflow_qr(self, width):
         """常规扫码使用三栏；窄窗口、错误及续连表单改用通栏操作区。"""
-        # FlowLayout 以包含右边界的矩形判断换行，保留一像素避免按钮拆成两行。
+        # 状态指示与操作区分别预留宽度，状态内容变化不改变三栏断点。
         side_width = 1 + max(
             self._qr_refresh_width() + 10 + self.cancel_button.sizeHint().width(),
-            self.status_label.fontMetrics().horizontalAdvance(tr("等待手机扫码"))
-            + 10 + self.countdown_label.fontMetrics().horizontalAdvance("0:00"),
+            self._status_text_size(tr("等待手机扫码"), width, 1).width()
+            + 10 + self._countdown_width(),
         )
-        text_width = max(320, self.fontMetrics().horizontalAdvance("开发者选项 → 无线调试") + 48)
+        text_width = max(280, self.fontMetrics().horizontalAdvance("开发者选项 → 无线调试") + 48)
         code_width = self.qr_label.width()
         compact = (
             width <= 440
             or width < code_width + self.fontMetrics().horizontalAdvance("无线调试连接") + 48
         )
-        wide = width >= text_width + code_width + side_width + 48
+        wide = width >= text_width + code_width + side_width + 32
         details = self.current_page == "qr" and (
             bool(self.status_detail.text()) or not self.continuation_box.isHidden()
         )
@@ -1008,8 +1155,10 @@ class DeviceConnectionPanel(QWidget):
         for column in range(3):
             self.qr_columns.setColumnMinimumWidth(column, 0)
             self.qr_columns.setColumnStretch(column, 0)
-        self.qr_columns.setHorizontalSpacing(24 if wide else 16)
+        self.qr_columns.setHorizontalSpacing(16)
         self.qr_columns.setVerticalSpacing(12)
+        # 三页等高的余量留在内容之后，左右操作共用二维码所在行的底线。
+        self.qr_columns.setRowStretch(3, 1)
         self.qr_status_slot.setMinimumWidth(0)
         self.qr_status_slot.setMaximumWidth(16777215)
         code_alignment = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
@@ -1047,13 +1196,38 @@ class DeviceConnectionPanel(QWidget):
         qr_status_width = self._reflow_qr(width)
         normal_status_height = self._normal_qr_status_height(qr_status_width, status_height)
         active_status_width = qr_status_width if self.current_page == "qr" else width
-        label_size = self._status_text_size(
-            self.status_label.text(), active_status_width, status_height
+        compact_status = self.current_page == "qr" and (
+            not self.status_detail.text() and self.continuation_box.isHidden()
         )
+        status_line_width = (
+            self._qr_status_width(active_status_width) if compact_status else active_status_width
+        )
+        # Fluent 图标距按钮边缘 12px；状态文字使用相同内沿，倒计时紧随文字。
+        self.status_line.setContentsMargins(12 if compact_status else 0, 0, 0, 0)
+        self.status_row.setFixedWidth(status_line_width)
+        status_layout = self.status_box.layout()
+        assert status_layout is not None
+        status_layout.setAlignment(self.status_row, Qt.AlignmentFlag.AlignRight)
+        indicator_width = max(20, self._countdown_width())
+        self.status_indicator.setFixedSize(indicator_width, status_height)
+        self.countdown_label.setFixedSize(indicator_width, status_height)
+        text_width = max(
+            1, status_line_width - (12 if compact_status else 0) - indicator_width - 10,
+        )
+        label_size = self._status_text_size(
+            self.status_label.text(), text_width, status_height
+        )
+        if self.current_page == "qr":
+            label_size.setHeight(max(
+                label_size.height(), self._qr_status_line_height(qr_status_width, status_height),
+            ))
         self.status_label.setFixedSize(label_size)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self.countdown_label.setFixedHeight(status_height)
-        self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.status_row.setFixedHeight(label_size.height())
+        self.countdown_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._reflow_actions(active_status_width, status_height)
         self.qr_status_slot.setMinimumHeight(normal_status_height)
         self.qr_status_slot.setMaximumHeight(
             16777215 if self.current_page == "qr" else normal_status_height

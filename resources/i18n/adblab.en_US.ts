@@ -6884,5 +6884,17 @@ Android device management, apps and diagnostics</translation>
             <source>点击填入地址：{address}</source>
             <translation>Click to fill in address: {address}</translation>
         </message>
+        <message>
+            <source>二维码已过期</source>
+            <translation>QR code expired</translation>
+        </message>
+        <message>
+            <source>等待重新生成</source>
+            <translation>Ready to refresh</translation>
+        </message>
+        <message>
+            <source>重新生成</source>
+            <translation>Regenerate</translation>
+        </message>
     </context>
 </TS>

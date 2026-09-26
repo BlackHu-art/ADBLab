@@ -6884,5 +6884,17 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>点击填入地址：{address}</source>
             <translation>点击填入地址：{address}</translation>
         </message>
+        <message>
+            <source>二维码已过期</source>
+            <translation>二维码已过期</translation>
+        </message>
+        <message>
+            <source>等待重新生成</source>
+            <translation>等待重新生成</translation>
+        </message>
+        <message>
+            <source>重新生成</source>
+            <translation>重新生成</translation>
+        </message>
     </context>
 </TS>

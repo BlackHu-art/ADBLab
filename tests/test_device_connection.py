@@ -258,6 +258,40 @@ def test_refresh_waits_for_idle_and_close_overrides_pending_refresh(dialog, qt_a
     assert pairing.calls.count(("qr",)) == 2
 
 
+def test_stop_keeps_action_visible_until_cleanup_then_shows_stopped_placeholder(
+    dialog, qt_application,
+):
+    panel, pairing = dialog
+    panel.refresh_qr()
+    pairing.qr_ready.emit(1, qr_png(), 29)
+    wait_until(qt_application, lambda: ("ack", 1) in pairing.calls)
+    pairing.publish("WaitingForScan", remaining=120)
+    panel.cancel_button.click()
+    qt_application.processEvents()
+    assert panel.qr_label.pixmap().isNull()
+    assert not panel._countdown.isActive()
+    assert panel.cancel_button.isVisible()
+    assert not panel.cancel_button.isEnabled()
+    assert not panel.refresh_button.isEnabled()
+    assert "正在停止" in panel.status_label.text()
+    calls = list(pairing.calls)
+    panel.cancel_button.click()
+    assert pairing.calls == calls
+
+    pairing.finish("Idle", "cancelled")
+    qt_application.processEvents()
+    assert panel.qr_placeholder.isVisible()
+    assert panel.qr_label.accessibleName() == "已停止"
+    assert panel.cancel_button.isVisible()
+    assert not panel.cancel_button.isEnabled()
+    assert panel.refresh_button.isEnabled()
+    assert pairing.calls.count(("qr",)) == 2
+    panel.refresh_button.click()
+    assert pairing.calls.count(("qr",)) == 3
+    assert panel.qr_placeholder.isHidden()
+    assert panel.cancel_button.isEnabled()
+
+
 def test_switch_waits_for_resources_and_cleanup_failure_keeps_window(dialog):
     window, pairing = dialog
     window.refresh_qr()

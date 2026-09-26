@@ -8,11 +8,12 @@ from pathlib import Path
 import pytest
 import segno
 from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QFontMetricsF
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import SmoothScrollArea
 
-from gui.i18n import install_translators
+from gui.i18n import install_translators, tr
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager
 from gui.widgets.device_connection import DeviceConnectionPanel
@@ -96,13 +97,24 @@ def test_connection_history_starts_at_top_and_last_row_can_be_filled(
     assert panel.is_expanded
 
 
-def test_wide_qr_page_places_actions_after_code_and_keeps_tabs_compact(qt_application):
+@pytest.mark.parametrize("width", [748, 900])
+def test_wide_qr_page_places_actions_after_code_and_keeps_tabs_compact(
+    qt_application, monkeypatch, width,
+):
     config = replace(BaseStyles.current_font_config(), ui_size=12)
     BaseStyles._sync_legacy_values(config)
     typography_manager.apply(config)
     pairing = PairingDouble()
     panel = DeviceConnectionPanel(pairing)
-    panel.resize(900, 300)
+    painted_icons = []
+    draw_icon = panel.refresh_button._drawIcon
+
+    def record_icon(icon, painter, rect, *args):
+        painted_icons.append(rect.toRect())
+        return draw_icon(icon, painter, rect, *args)
+
+    monkeypatch.setattr(panel.refresh_button, "_drawIcon", record_icon)
+    panel.resize(width, 300)
     panel.expand([("QA phone", "192.0.2.1:5555")])
     qr = segno.make_qr("WIFI:T:ADB;S:studio-00000000000000000000;P:XXXXXXXXXXXXXXXXXXXXXXXX;;")
     buffer = io.BytesIO()
@@ -120,6 +132,20 @@ def test_wide_qr_page_places_actions_after_code_and_keeps_tabs_compact(qt_applic
         assert panel.qr_text.mapTo(panel, QPoint(panel.qr_text.width(), 0)).x() <= code.left()
         assert code.right() < refresh.left() < stop.left()
         assert abs(refresh.bottom() - stop.bottom()) <= 1
+        alternative = QRect(panel.code_button.mapTo(panel, QPoint()), panel.code_button.size())
+        assert abs(alternative.bottom() - refresh.bottom()) <= 1
+        assert refresh.bottom() <= code.bottom()
+        assert panel.status_label.alignment() & Qt.AlignmentFlag.AlignLeft
+        panel.refresh_button.grab()
+        icon_left = refresh.left() + painted_icons[-1].left()
+        status_left = panel.status_label.mapTo(panel, QPoint()).x()
+        assert abs(status_left - icon_left) <= 1
+        text_end = status_left + QFontMetricsF(
+            panel.status_label.font(), panel.status_label,
+        ).horizontalAdvance(panel.status_label.text())
+        countdown_left = panel.countdown_label.mapTo(panel, QPoint()).x()
+        assert 8 <= countdown_left - text_end <= 12
+        assert panel.countdown_label.alignment() & Qt.AlignmentFlag.AlignLeft
         assert panel.height() <= 250
         pixmap = panel.qr_label.pixmap()
         assert pixmap.width() % modules == 0
@@ -189,6 +215,162 @@ def test_qr_feedback_uses_full_width_and_retry_restores_compact_actions(qt_appli
         panel.prepare_shutdown()
         panel.close()
         panel.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "language,width,font_size",
+    [
+        ("zh_CN", 748, 12), ("zh_CN", 600, 22), ("en_US", 900, 12),
+        ("en_US", 600, 22), ("zh_HK", 360, 22),
+    ],
+)
+def test_qr_action_positions_stay_fixed_through_refresh_and_countdown(
+    qt_application, monkeypatch, language, width, font_size,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(width, 300)
+    panel.expand([("QA phone", "192.0.2.1:5555")])
+    painted_icons = []
+    draw_icon = panel.refresh_button._drawIcon
+
+    def record_icon(icon, painter, rect, *args):
+        painted_icons.append(rect.toRect())
+        return draw_icon(icon, painter, rect, *args)
+
+    monkeypatch.setattr(panel.refresh_button, "_drawIcon", record_icon)
+
+    def actions():
+        panel.refresh_button.grab()
+        return (
+            QRect(panel.refresh_slot.mapTo(panel, QPoint()), panel.refresh_slot.size()),
+            QRect(panel.cancel_button.mapTo(panel, QPoint()), panel.cancel_button.size()),
+            panel.refresh_button.mapTo(panel, painted_icons[-1].topLeft()),
+        )
+
+    try:
+        for _ in range(8):
+            qt_application.processEvents()
+        initial_actions = actions()
+        initial_height = panel.height()
+
+        def assert_stable():
+            for _ in range(8):
+                qt_application.processEvents()
+                assert actions() == initial_actions
+                assert panel.height() == initial_height
+                icon_left = panel.refresh_button.mapTo(panel, painted_icons[-1].topLeft()).x()
+                status_left = panel.status_label.mapTo(panel, QPoint()).x()
+                assert abs(status_left - icon_left) <= 1
+
+        for request_id in (1, 2):
+            pairing.qr_ready.emit(request_id, qr_png(), 29)
+            wait_until(qt_application, lambda: ("ack", request_id) in pairing.calls)
+            for remaining in (120, 119, 60, 59, 9, 1):
+                pairing.publish("WaitingForScan", remaining=remaining)
+                assert_stable()
+            if request_id == 1:
+                QTest.mouseClick(panel.refresh_button, Qt.MouseButton.LeftButton)
+                assert pairing.calls[-1] == ("cancel",)
+                assert not panel.refresh_button.isEnabled()
+                assert_stable()
+                pairing.finish("Idle", "cancelled")
+                assert pairing.calls[-1] == ("qr",)
+                assert_stable()
+        pairing.finish("Failed", "scan_timeout")
+        assert_stable()
+        assert panel.cancel_button.isHidden()
+        assert panel.refresh_button.isEnabled()
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
+
+
+@pytest.mark.parametrize("expiry_source", ["countdown", "worker"])
+@pytest.mark.parametrize(
+    "language,width,font_size",
+    [("zh_CN", 900, 12), ("en_US", 900, 12), ("en_US", 600, 22), ("zh_HK", 360, 22)],
+)
+def test_expired_qr_keeps_layout_and_waits_for_explicit_regeneration(
+    qt_application, expiry_source, language, width, font_size,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(width, 300)
+    panel.expand([("QA phone", "192.0.2.1:5555")])
+    pairing.qr_ready.emit(1, qr_png(), 29)
+    pairing.publish("WaitingForScan", remaining=120)
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    try:
+        wait_until(qt_application, lambda: ("ack", 1) in pairing.calls)
+        settle()
+        initial_height = panel.height()
+        code_rect = panel.qr_label.geometry()
+        refresh_origin = panel.refresh_button.mapTo(panel, QPoint())
+        if expiry_source == "countdown":
+            panel._scan_deadline = 0
+            panel._tick()
+        else:
+            pairing.finish("Failed", "scan_timeout")
+        settle()
+        assert panel.qr_label.accessibleName() == tr("二维码已过期")
+        assert panel.qr_placeholder.isVisible()
+        assert panel.qr_label.rect().contains(panel.qr_placeholder.geometry())
+        assert panel.qr_label.pixmap().isNull()
+        assert not panel._countdown.isActive()
+        assert panel.countdown_label.isHidden()
+        assert panel.cancel_button.isHidden()
+        assert panel.refresh_button.text() == tr("重新生成")
+        assert panel.status_label.text() == tr("等待重新生成")
+        assert panel.status_detail.isHidden()
+        assert panel.height() == initial_height
+        assert panel.qr_label.geometry() == code_rect
+        if width == 900:
+            assert panel.refresh_button.mapTo(panel, QPoint()).y() == refresh_origin.y()
+        assert pairing.calls.count(("qr",)) == 1
+
+        pairing.qr_ready.emit(1, qr_png(), 29)
+        settle()
+        assert panel.qr_label.pixmap().isNull()
+        panel.refresh_button.click()
+        if expiry_source == "countdown":
+            assert pairing.calls.count(("qr",)) == 1
+            assert not panel.refresh_button.isEnabled()
+            panel.refresh_button.click()
+            pairing.finish("Idle", "cancelled")
+        settle()
+        assert pairing.calls.count(("qr",)) == 2
+        pairing.qr_ready.emit(2, qr_png(), 29)
+        pairing.publish("WaitingForScan", remaining=120)
+        wait_until(qt_application, lambda: ("ack", 2) in pairing.calls)
+        settle()
+        assert not panel.qr_label.pixmap().isNull()
+        assert panel.qr_label.accessibleName() == tr("无线调试配对二维码")
+        assert panel.qr_placeholder.isHidden()
+        assert panel.height() == initial_height
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 @pytest.mark.parametrize(

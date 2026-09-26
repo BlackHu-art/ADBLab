@@ -23,13 +23,15 @@ from qfluentwidgets import (
     FluentIcon,
     IconWidget,
     PushButton,
-    TogglePushButton,
-    ToolButton,
     TransparentPushButton,
+    TransparentToolButton,
+    setCustomStyleSheet,
+    themeColor,
 )
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import apply_focus_indicator
 from gui.styles.icon_loader import get_themed_icon
 
 
@@ -584,17 +586,20 @@ class DeviceHubPage(QWidget):
         action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.setHorizontalSpacing(8)
         action_layout.setVerticalSpacing(8)
-        self.connect_button = TogglePushButton(
+        self.connect_button = TransparentPushButton(
             FluentIcon.CONNECT, tr("连接设备"), self._toolbar_actions,
         )
+        self.connect_button.setCheckable(True)
         self.connect_button.setAccessibleName(tr("连接设备"))
         self.connect_button.setToolTip(tr("展开或收起设备连接区"))
         self.connect_button.clicked.connect(self.connect_requested)
-        self.disconnect_button = PushButton(FluentIcon.CANCEL, tr("断开"), self._toolbar_actions)
+        self.disconnect_button = TransparentPushButton(
+            FluentIcon.CANCEL, tr("断开"), self._toolbar_actions,
+        )
         self.disconnect_button.setToolTip(tr("断开已勾选设备的 ADB 连接"))
         self.disconnect_button.setAccessibleName(tr("断开已勾选设备的 ADB 连接"))
         self.disconnect_button.clicked.connect(self.disconnect_requested)
-        self.refresh_button = ToolButton(FluentIcon.SYNC, self._toolbar_actions)
+        self.refresh_button = TransparentToolButton(FluentIcon.SYNC, self._toolbar_actions)
         self.refresh_button.setAccessibleName(tr("刷新设备"))
         self.refresh_button.setToolTip(tr("重新扫描 USB 与无线设备的在线状态"))
         self.refresh_button.clicked.connect(self.refresh_requested)
@@ -621,6 +626,8 @@ class DeviceHubPage(QWidget):
         layout.addWidget(self.empty_card)
         BaseStyles.ui_font_changed.connect(self._apply_fonts)
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.accent_color_changed.connect(self._apply_theme)
+        self._apply_theme()
         self._apply_fonts()
         self.set_device_context([], [], "empty")
 
@@ -644,8 +651,16 @@ class DeviceHubPage(QWidget):
         text = tr("收起连接") if expanded else tr("连接设备")
         self.connect_button.setText(text)
         self.connect_button.setAccessibleName(text)
-        self.connect_button.setIcon(FluentIcon.UP if expanded else FluentIcon.CONNECT)
+        self._sync_connection_icon()
         self._reflow_toolbar()
+
+    def _sync_connection_icon(self) -> None:
+        """展开图标跟随当前 Fluent 强调色，普通状态沿用默认图标颜色。"""
+        if self.connect_button.isChecked():
+            color = themeColor()
+            self.connect_button.setIcon(FluentIcon.UP.colored(color, color))
+        else:
+            self.connect_button.setIcon(FluentIcon.CONNECT)
 
     def set_device_metadata(self, records: Iterable[Mapping[str, object]]) -> None:
         """只接收主窗口提供的内存元数据副本，不加载存储或执行设备查询。"""
@@ -745,6 +760,17 @@ class DeviceHubPage(QWidget):
 
     @Slot()
     def _apply_theme(self) -> None:
+        # 仅连接入口的选中态强调文字，保留 Fluent 透明底色和悬停、按下反馈。
+        selected = "TransparentPushButton:checked:enabled { color: --ThemeColorPrimary; }"
+        focus = "TransparentPushButton:focus { border: 2px solid %s; border-radius: 6px; }"
+        setCustomStyleSheet(
+            self.connect_button,
+            selected + focus % BaseStyles.color_for("Light", "BORDER_FOCUS"),
+            selected + focus % BaseStyles.color_for("Dark", "BORDER_FOCUS"),
+        )
+        self._sync_connection_icon()
+        for button in (self.disconnect_button, self.refresh_button):
+            apply_focus_indicator(button)
         for card in self._cards.values():
             card.icon.setIcon(get_themed_icon("device-mobile.svg"))
             card.update()
