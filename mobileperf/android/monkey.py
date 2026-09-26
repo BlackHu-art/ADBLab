@@ -2,10 +2,12 @@
 
 import math
 import os
+import shlex
 import subprocess
 import threading
 import traceback
 
+from core.monkey_process import MonkeyProcessLease
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
 from mobileperf.common.log import logger
@@ -84,6 +86,8 @@ class Monkey:
         self._log_pipe = None
         self._monkey_thread = None
         self._owns_process = False
+        self._lease = None
+        self._lifecycle_lock = threading.RLock()
         self._failure = None
 
     def start(self, start_time):
@@ -98,6 +102,11 @@ class Monkey:
 
     def start_monkey(self, package, event_count=None, timeout_seconds=None):
         """构造命令并启动 Monkey 进程及日志读取线程。"""
+        with self._lifecycle_lock:
+            self._start_monkey(package, event_count, timeout_seconds)
+
+    def _start_monkey(self, package, event_count=None, timeout_seconds=None):
+        """持有生命周期锁发布远端租约和本地句柄，停止不会遗漏在途启动。"""
         if self.running or (self._monkey_thread is not None and self._monkey_thread.is_alive()):
             logger.warning("Monkey 已在运行，忽略重复启动")
             return
@@ -117,10 +126,12 @@ class Monkey:
             )
         self._stop_event.clear()
         self._failure = None
+        self._lease = MonkeyProcessLease()
+        self._log_pipe = None
         try:
             # Monkey 的失败诊断可能写入 stderr；合并后由同一个 reader 持续排空。
             self._log_pipe = self.device.adb.run_shell_cmd(
-                self.monkey_cmd, sync=False, merge_stderr=True
+                self._lease.command(shlex.split(self.monkey_cmd)), sync=False, merge_stderr=True
             )
             if self._log_pipe is None:
                 raise RuntimeError("Monkey 未返回可读取的进程")
@@ -135,6 +146,8 @@ class Monkey:
             )
             self._monkey_thread.start()
         except Exception as exc:
+            if not self._owns_process:
+                self._lease.discard_unsubmitted()
             self.running = False
             self._failure = MonkeyError("Monkey 启动失败，请检查设备连接和运行日志。")
             try:
@@ -194,7 +207,7 @@ class Monkey:
                 str(max(1, int(event_count))),
             ]
         )
-        return " ".join(args)
+        return shlex.join(args)
 
     @staticmethod
     def _percent(value):
@@ -223,18 +236,27 @@ class Monkey:
 
     def stop_monkey(self):
         """停止本实例启动的 Monkey，并有界等待本地进程和日志 reader。"""
+        self._stop_event.set()
+        with self._lifecycle_lock:
+            self._stop_monkey()
+
+    def _stop_monkey(self):
+        """远端确认失败时仍回收本地 reader，但保留租约和停止义务。"""
         self.running = False
         self._stop_event.set()
         if not self._owns_process:
             return
         failure = None
         try:
+            if self._lease is None or not self._lease.stop(
+                lambda command: self.device.adb.run_shell_cmd(command, timeout=5),
+            ):
+                raise RuntimeError("Monkey 远端退出尚未确认")
+        except Exception as exc:
+            failure = failure or exc
+        try:
             self._reap_local_process()
         except (OSError, subprocess.TimeoutExpired) as exc:
-            failure = exc
-        try:
-            self.device.adb.kill_process("com.android.commands.monkey")
-        except Exception as exc:
             failure = failure or exc
         if self._monkey_thread is not None and self._monkey_thread.is_alive():
             self._monkey_thread.join(timeout=2)

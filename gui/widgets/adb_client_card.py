@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, QTimer, Signal
@@ -138,17 +139,20 @@ class _ProbeTask(QRunnable):
         self._cancelled = cancelled
 
     def run(self) -> None:
+        candidates, probes = [], []
         try:
-            candidates = list_adb_candidates()
+            if not self._cancelled():
+                candidates = list_adb_candidates()
             # 读取命令执行边界的冻结路径，不能用首个版本探测成功的候选推断当前客户端。
             if not self._cancelled():
                 self.signals.effective_path_ready.emit(self._generation, resolve_adb_program())
-            self.signals.candidates_ready.emit(self._generation, candidates)
-            probes = detect_clients(
-                candidates,
-                cancelled=self._cancelled,
-                on_probe=lambda probe: self.signals.progress.emit(self._generation, probe),
-            )
+            if not self._cancelled():
+                self.signals.candidates_ready.emit(self._generation, candidates)
+                probes = detect_clients(
+                    candidates,
+                    cancelled=self._cancelled,
+                    on_probe=lambda probe: self.signals.progress.emit(self._generation, probe),
+                )
         except Exception as exc:  # 识别失败不能影响设置页交互
             self.signals.failed.emit(self._generation, type(exc).__name__)
         else:
@@ -174,6 +178,9 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._selection = CLIENT_PREFERENCE_AUTO
         self._custom_path = ""
         self._generation = 0
+        self._shutdown_requested = threading.Event()
+        # QObject 被父级直接释放时也取消后台工作；回调只持有停止标记。
+        self.destroyed.connect(self._shutdown_requested.set)
         self._busy = False
         self._timed_out_generation: int | None = None
         self._probes: dict[str, ClientProbe] = {}
@@ -401,6 +408,8 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
     def restart_detection(self) -> None:
         """客户端选择变更后废弃旧代回调，并重新读取清缓存后的实际执行路径。"""
 
+        if self._shutdown_requested.is_set():
+            return
         self._generation += 1
         self._cancel_detection_timeout()
         self._timed_out_generation = None
@@ -412,13 +421,16 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
     def start_detection(self) -> None:
         """后台识别候选客户端；展开卡片或点击重新识别时调用。"""
 
-        if self._busy:
+        if self._busy or self._shutdown_requested.is_set():
             return
         self._generation += 1
         generation = self._generation
         self._timed_out_generation = None
         self.set_busy(True)
-        task = _ProbeTask(generation, lambda: generation != self._generation)
+        task = _ProbeTask(
+            generation,
+            lambda: self._shutdown_requested.is_set() or generation != self._generation,
+        )
         task.signals.effective_path_ready.connect(self._on_effective_path_ready)
         task.signals.candidates_ready.connect(self._on_candidates_ready)
         task.signals.progress.connect(self._on_probe_progress)
@@ -620,13 +632,19 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             return label
         return shorten_path(self._effective_path)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt 风格命名
-        """关闭时让在途识别在下一个检查点退出，避免回调落到已销毁的对象。"""
-
+    def prepare_shutdown(self) -> None:
+        """GUI 线程封闭探测准入并作废回调；线程池由应用关闭屏障等待。"""
+        if self._shutdown_requested.is_set():
+            return
+        self._shutdown_requested.set()
         self._generation += 1
         self._timed_out_generation = None
         self._cancel_detection_timeout()
         self.set_busy(False)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt 风格命名
+        """直接关闭卡片与关闭主窗口共用同一探测取消边界。"""
+        self.prepare_shutdown()
         super().closeEvent(event)
 
     def setExpand(self, isExpand: bool) -> None:  # noqa: N802 - Qt 风格命名

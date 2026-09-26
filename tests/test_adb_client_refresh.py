@@ -26,6 +26,81 @@ def isolate_effective_client(monkeypatch):
     monkeypatch.setattr(cards, "resolve_adb_program", lambda: None, raising=False)
 
 
+def test_parent_shutdown_cancels_client_probe_and_rejects_late_restart(
+    monkeypatch, qt_application,
+):
+    from gui.close_controller import CloseController
+
+    tasks = []
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append),
+    )
+
+    class Host(QWidget):
+        def closeEvent(self, event):  # noqa: N802
+            CloseController(self)._prepare_ui_for_shutdown()
+            event.accept()
+
+    host = Host()
+    card = cards.AdbClientSettingCard(host)
+    host._settings_page = SimpleNamespace(adb_client_card=card)
+    host._initial_refresh_timer = Mock()
+    host._scan_refresh_timer = Mock()
+    host._scan_thread = None
+    host._workspace_feature_hosts = {}
+    host.left_panel = SimpleNamespace(shutdown=lambda: None)
+    host.show()
+    card.start_detection()
+    task = tasks[0]
+    host.close()
+    assert task._cancelled()
+    assert not card._detection_timer.isActive()
+    assert not card._slow_timer.isActive()
+    card.start_detection()
+    card.restart_detection()
+    assert len(tasks) == 1
+    original_text = card.card.contentLabel.text()
+    task.signals.effective_path_ready.emit(task._generation, "synthetic-late-client")
+    task.signals.failed.emit(task._generation, "synthetic-error")
+    task.signals.finished.emit(task._generation, [], [])
+    qt_application.processEvents()
+    assert card.card.contentLabel.text() == original_text
+    assert not card._tasks
+
+
+def test_cancelled_queued_probe_does_no_candidate_or_command_work(monkeypatch):
+    calls, terminal = [], []
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: calls.append("enumerate") or [])
+    monkeypatch.setattr(cards, "resolve_adb_program", lambda: calls.append("resolve"))
+    monkeypatch.setattr(cards, "detect_clients", lambda *a, **k: calls.append("detect") or [])
+    task = cards._ProbeTask(1, lambda: True)
+    task.signals.finished.connect(lambda *args: terminal.append(args))
+    task.run()
+    assert not calls
+    assert len(terminal) == 1
+
+
+def test_parent_destruction_cancels_probe_without_child_close_event(
+    monkeypatch, qt_application,
+):
+    tasks, destroyed = [], []
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append),
+    )
+    parent = QWidget()
+    card = cards.AdbClientSettingCard(parent)
+    card.destroyed.connect(lambda: destroyed.append(True))
+    card.start_detection()
+    parent.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert destroyed == [True]
+    assert tasks[0]._cancelled()
+    tasks[0].run()
+    qt_application.processEvents()
+
+
 def test_auto_result_uses_effective_path_instead_of_first_successful_probe(
     monkeypatch, qt_application,
 ):

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 
 from utils import adb_debug
@@ -13,6 +14,8 @@ from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
 
 _adb_path: str | None = None
 _resolved: bool = False
+_cache_lock = threading.RLock()
+_cache_generation = 0
 
 # 用户选定的客户端："auto" 表示按候选顺序自动选择，其余为命名来源或绝对路径。
 CLIENT_PREFERENCE_AUTO = "auto"
@@ -45,15 +48,17 @@ def set_client_preference(value: object) -> str:
 
     global _client_preference
     text = str(value).strip() if value is not None else ""
-    _client_preference = text or CLIENT_PREFERENCE_AUTO
-    invalidate_adb_path_cache()
-    return _client_preference
+    with _cache_lock:
+        _client_preference = text or CLIENT_PREFERENCE_AUTO
+        invalidate_adb_path_cache()
+        return _client_preference
 
 
 def client_preference() -> str:
     """返回当前注入的客户端选择；默认自动。"""
 
-    return _client_preference
+    with _cache_lock:
+        return _client_preference
 
 
 # Windows 下复用无控制台窗口标志，避免每次执行 ADB 时弹出命令行窗口。
@@ -67,9 +72,11 @@ def invalidate_adb_path_cache() -> None:
     结果，启动时未安装的 platform-tools 在用户安装后也不会被识别。
     """
 
-    global _adb_path, _resolved
-    _adb_path = None
-    _resolved = False
+    global _adb_path, _resolved, _cache_generation
+    with _cache_lock:
+        _cache_generation += 1
+        _adb_path = None
+        _resolved = False
 
 
 def _adb_executable_name() -> str:
@@ -192,32 +199,41 @@ def resolve_adb_path() -> str | None:
     """
 
     global _adb_path, _resolved
-    if _resolved:
-        adb_debug.event("resolve_result", selected_adb=_adb_path, cached=True)
-        return _adb_path
+    while True:
+        with _cache_lock:
+            generation = _cache_generation
+            preference = _client_preference
+            cached, selected = _resolved, _adb_path
+        if cached:
+            adb_debug.event("resolve_result", selected_adb=selected, cached=True)
+            return selected
 
-    if adb_debug.enabled():
-        adb_debug.event(
-            "resolve_start", frozen=bool(getattr(sys, "frozen", False)),
-            application=sys.executable, resource_root=resource_path(""),
-        )
-    selected: str | None = None
-    source = "missing"
-    candidates = _candidates()
-    if _client_preference != CLIENT_PREFERENCE_AUTO:
-        candidates = _preferred_candidates(candidates, _client_preference)
-    for name, candidate in candidates:
-        exists = name in _PRE_VALIDATED_SOURCES or bool(candidate) and os.path.isfile(candidate)
-        if exists and name not in _PRE_VALIDATED_SOURCES and sys.platform != "win32":
-            exists = os.access(candidate, os.X_OK)
-        adb_debug.event("resolve_candidate", source=name, candidate=candidate, exists=exists)
-        if exists:
-            selected, source = candidate, name
-            break
-    _adb_path = selected
-    _resolved = True
-    adb_debug.event("resolve_result", selected_adb=selected, source=source, cached=False)
-    return _adb_path
+        if adb_debug.enabled():
+            adb_debug.event(
+                "resolve_start", frozen=bool(getattr(sys, "frozen", False)),
+                application=sys.executable, resource_root=resource_path(""),
+            )
+        selected = None
+        source = "missing"
+        candidates = _candidates()
+        if preference != CLIENT_PREFERENCE_AUTO:
+            candidates = _preferred_candidates(candidates, preference)
+        for name, candidate in candidates:
+            exists = name in _PRE_VALIDATED_SOURCES or bool(candidate) and os.path.isfile(candidate)
+            if exists and name not in _PRE_VALIDATED_SOURCES and sys.platform != "win32":
+                exists = os.access(candidate, os.X_OK)
+            adb_debug.event("resolve_candidate", source=name, candidate=candidate, exists=exists)
+            if exists:
+                selected, source = candidate, name
+                break
+        with _cache_lock:
+            # 候选探测可能阻塞；只提交当前配置代次，旧探测重新读取最新缓存或候选。
+            if generation != _cache_generation:
+                continue
+            _adb_path = selected
+            _resolved = True
+        adb_debug.event("resolve_result", selected_adb=selected, source=source, cached=False)
+        return selected
 
 
 def adb_path() -> str:

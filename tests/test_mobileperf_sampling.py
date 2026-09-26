@@ -274,7 +274,7 @@ def test_other_collector_intervals_are_woken_by_stop(monkeypatch, runtime, kind)
     finally:
         event.set()
         if kind.startswith("fps"):
-            collector.data_queue.put("Stop")
+            collector.stop()
         worker.join(4)
         assert not worker.is_alive()
 

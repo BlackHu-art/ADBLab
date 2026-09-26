@@ -51,7 +51,7 @@ def native_capture(
             stdout=stdout_sink if stdout_sink is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            **({"env": dict(env)} if env is not None else {}),
+            env=dict(env) if env is not None else None,
         )
         if command_scope is not None and token is not None:
             command_scope._attach_process(token, proc)

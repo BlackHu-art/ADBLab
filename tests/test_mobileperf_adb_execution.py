@@ -234,6 +234,7 @@ def test_native_file_transfer_requests_isolated_client(adb, monkeypatch):
     launch.assert_called_once_with(
         ["fake-adb", "-s", "device-test", "pull", "/device/file", "local file"],
         isolate=True,
+        owned_client=False,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

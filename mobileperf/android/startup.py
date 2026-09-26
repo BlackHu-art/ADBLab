@@ -318,7 +318,6 @@ class StartUp:
         self._stop_called = False
         self._exit_event = RuntimeData.exit_event
         monkey_monitor = None
-        self.clear_heapdump()
         # 启动采集前检查目标设备是否可用。
         if not self.serialnum:
             # 未指定设备序列号时，由 ADB 使用当前连接设备。
@@ -409,6 +408,7 @@ class StartUp:
                         RuntimeData.top_dir, "results", self.packages[0], start_time
                     )
                 FileUtils.makedir(RuntimeData.package_save_path)
+                self.clear_heapdump()
                 self.save_device_info()
                 for monitor in self.monitors:
                     if self._collection_finished(endtime):

@@ -24,7 +24,11 @@ def normalize_adb_connect_target(value: str) -> tuple[str, str]:
 
     if not port_text.isdigit():
         return "", "Port must be a number between 1 and 65535"
-    port = int(port_text)
+    try:
+        port = int(port_text)
+    except ValueError:
+        # isdigit 也接受不能转换的上标数字；超长整数同样应走用户输入错误边界。
+        return "", "Port must be a number between 1 and 65535"
     if port < 1 or port > 65535:
         return "", "Port must be between 1 and 65535"
 

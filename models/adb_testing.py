@@ -23,6 +23,7 @@ from PySide6.QtGui import QImageReader
 
 from core.adb_query import query_timeout
 from core.exec import CommandRunner, ProcessRunner, command_outcome
+from core.monkey_process import MonkeyProcessLease
 from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
 from utils.atomic_text import atomic_write_text
@@ -39,6 +40,8 @@ class _MonkeyBatchState:
     batch_id: str
     running: bool = False
     cancelled: bool = False
+    lease: MonkeyProcessLease | None = None
+    finished: bool = False
 
 
 class ADBTesting(ADBModelCore):
@@ -61,9 +64,14 @@ class ADBTesting(ADBModelCore):
             self._aborted_devices.add("*")
             self._abort_condition.notify_all()
         with self._process_lifecycle_lock:
+            for device_ip, state in tuple(self._monkey_batches.items()):
+                self._stop_monkey_lease(device_ip, state)
             self._procs.stop_all()
             with self._abort_condition:
-                self._monkey_batches.clear()
+                self._monkey_batches = {
+                    device: state for device, state in self._monkey_batches.items()
+                    if state.lease is not None or f"{device}_monkey" in self._procs.active_keys
+                }
 
     def prepare_monkey_batch(self, device_ip: str, batch_id: str) -> bool:
         """排队前登记设备批次；关闭或已有批次时拒绝，不等待外部进程。"""
@@ -127,7 +135,46 @@ class ADBTesting(ADBModelCore):
                     state = self._monkey_batches.get(device_ip)
                     if state is None or state.batch_id != batch_id or state.cancelled:
                         raise RuntimeError("Aborted by user")
+                if key.endswith("_monkey"):
+                    if not self._stop_monkey_lease(device_ip, state):
+                        raise RuntimeError("Previous Monkey stop is not confirmed")
+                    lease = MonkeyProcessLease()
+                    cmd = [*cmd[:4], lease.command(cmd[4:])]
+                    try:
+                        proc = self._procs.start(key, cmd, stdout=stdout)
+                    except Exception:
+                        lease.discard_unsubmitted()
+                        raise
+                    state.lease = lease
+                    return proc
             return self._procs.start(key, cmd, stdout=stdout)
+
+    def _stop_monkey_lease(self, device_ip: str, state: _MonkeyBatchState) -> bool:
+        """生命周期锁内停止精确远端身份；失败保留批次，不能放行同设备的新任务。"""
+        if state.lease is None:
+            return True
+
+        def run(command: str) -> str:
+            result = self._run(
+                ["adb", "-s", device_ip, "shell", command], timeout=5, device_ip=device_ip,
+            )
+            return str(result.get("output", "")) if result.get("success") else ""
+
+        try:
+            if not state.lease.stop(run):
+                return False
+        except Exception:
+            logging.getLogger(__name__).warning("Monkey 远端退出尚未确认", exc_info=True)
+            return False
+        state.lease = None
+        return True
+
+    def assert_cleanup_complete(self) -> None:
+        """所有模型命令排空后报告残留；调用方应先完成其余资源清理再调用。"""
+        with self._abort_condition:
+            pending_remote = any(state.lease is not None for state in self._monkey_batches.values())
+        if pending_remote or self._procs.active_keys:
+            raise RuntimeError("Monkey cleanup is not confirmed")
 
     def _wait_for_monkey_abort(self, device_ip: str, timeout: float) -> bool:
         """可中断等待监控间隔，并在停止请求到达时立即唤醒。"""
@@ -561,6 +608,9 @@ class ADBTesting(ADBModelCore):
                         if recovery_count > 5:
                             log("Max recovery (5) reached, stopping test")
                             monkey_proc.terminate()
+                            with self._process_lifecycle_lock:
+                                if not self._stop_monkey_lease(device_ip, owned_state):
+                                    raise RuntimeError("Monkey stop is not confirmed")
                             try:
                                 monkey_proc.wait(timeout=5)
                             except Exception:
@@ -590,6 +640,9 @@ class ADBTesting(ADBModelCore):
                                 f"Heavy recovery #{recovery_count}: "
                                 "killing monkey and restarting..."
                             )
+                            with self._process_lifecycle_lock:
+                                if not self._stop_monkey_lease(device_ip, owned_state):
+                                    raise RuntimeError("Monkey stop is not confirmed")
                             try:
                                 monkey_proc.terminate()
                                 monkey_proc.wait(timeout=5)
@@ -684,11 +737,19 @@ class ADBTesting(ADBModelCore):
                     with self._abort_condition:
                         owns_batch = self._monkey_batches.get(device_ip) is owned_state
                     if owns_batch:
+                        remote_stopped = self._stop_monkey_lease(device_ip, owned_state)
                         self._procs.stop(f"{device_ip}_logcat")
                         self._procs.stop(f"{device_ip}_monkey")
+                        local_stopped = f"{device_ip}_monkey" not in self._procs.active_keys
                         with self._abort_condition:
-                            self._monkey_batches.pop(device_ip, None)
-                            self._aborted_devices.discard(device_ip)
+                            owned_state.finished = True
+                            if remote_stopped and local_stopped:
+                                self._monkey_batches.pop(device_ip, None)
+                                self._aborted_devices.discard(device_ip)
+                            else:
+                                result["success"] = False
+                                result["error"] = result["error"] or "Monkey stop is not confirmed"
+                                result["cleanup_error"] = "Monkey stop is not confirmed"
             for fh in (monkey_fh, logcat_fh):
                 try:
                     if fh:
@@ -727,7 +788,7 @@ class ADBTesting(ADBModelCore):
             with self._process_lifecycle_lock:
                 with self._abort_condition:
                     state = self._monkey_batches.get(device_ip)
-                    if batch_id and (state is None or state.batch_id != batch_id):
+                    if state is None or (batch_id and state.batch_id != batch_id):
                         return {
                             "device_ip": device_ip, "index": index, "batch_id": batch_id,
                             "success": True, "message": "Monkey is not running",
@@ -742,19 +803,20 @@ class ADBTesting(ADBModelCore):
                     local_code = None
                     r = {"success": True, "output": ""}
                 else:
-                    # 停止与下一批进程启动共用同一锁，晚到 pkill 不能落到新批次。
+                    # 只停止批次持有的远端身份；无身份时不扫描同名外部进程。
+                    remote_stopped = self._stop_monkey_lease(device_ip, state)
                     local_code = self._procs.stop(f"{device_ip}_monkey")
-                    r = self._run(
-                        [
-                            "adb", "-s", device_ip, "shell",
-                            "pkill -f com.android.commands.monkey || true",
-                        ],
-                        timeout=10,
-                        device_ip=device_ip,
+                    confirmed = (
+                        remote_stopped and f"{device_ip}_monkey" not in self._procs.active_keys
                     )
+                    if confirmed and state.finished:
+                        with self._abort_condition:
+                            self._monkey_batches.pop(device_ip, None)
+                    r = {"success": confirmed, "error": "" if confirmed
+                         else "Monkey stop is not confirmed"}
             error = (r.get("error") or "").strip()
             already_stopped = local_code is None and not error
-            success = r["success"] or already_stopped or (local_code is not None and not error)
+            success = bool(r["success"])
             if already_stopped:
                 message = "Monkey is not running"
             elif success:

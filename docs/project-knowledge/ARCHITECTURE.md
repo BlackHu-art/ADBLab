@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-25
+last_verified: 2026-09-27
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -130,14 +130,17 @@ flowchart LR
 - `models/adb_model.py::async_command` 将普通命令放入全局 QThreadPool，长任务放入每模型
   `long_pool`。operation 关键字参数转成 `OperationMetadata`，不传入底层方法；owner/generation
   用来拒绝错代或晚到结果。关闭时先封闭新任务准入，尚未执行的方法体返回取消结果。
+  可选的结果上下文固定请求代次和批次单元身份，执行失败、提交失败及排队取消也带回同一身份；
+  调用方按身份幂等结算，旧批次结果不能结束随后启动的新批次。
   明确只读查询通过 `_run_readonly()` 把模型关闭传递到执行器；后台关闭线程等待 Executor
   和模型线程池真正退出，活动短命令也纳入监督，超时保留 residual。
   `pool_attribute` 可为指定方法选择模型拥有的独立池；录屏等待及保存使用 `ADBAdvanced` 的
   双槽 `_record_pool`，由其 `wait_for_commands()` 纳入关闭等待，避免占满通用传输长任务池。
 - 通用操作结果另以 `ActionJob` 固定 request/job/target 身份，`ActionEnvelope` 在原载荷外包装返回；
   它与 `OperationMetadata` 可以同时存在。Controller 先校验结果准入，在原请求作用域内处理业务
-  返回和续发命令，再归并 `ActionResults`；已接入 Operation 的单元以校验后的业务终态为准，
-  不用最后一条批次摘要覆盖单元结果。结果呈现与保留范围见 [操作结果](../guides/OPERATION_RESULTS.md)。
+  返回和续发命令，再归并 `ActionResults`；已接入 Operation 的单元以校验后的业务终态为准。
+  批次摘要只发兼容信号和日志，不记入最后完成设备的 ActionJob，避免整批失败污染成功单元。
+  结果呈现与保留范围见 [操作结果](../guides/OPERATION_RESULTS.md)。
 - `CommandRunner` 返回统一 `CommandResult`，以 `outcome` 明确区分成功、失败、取消、超时和
   过期结果；`success/output/error/returncode/stale` 保持兼容。执行器产生的状态不随诊断文本改变，
   旧构造只在创建时归一；旧适配结果的兼容判断集中在 `command_outcome()`。超时不向调用者抛出
@@ -170,6 +173,9 @@ flowchart LR
 - `adblab/application/monkey_batch.py::MonkeyBatchCoordinator` 集中保存 Monkey 业务批次、参数
   快照、运行终态与停止确认，校验代次并只交付一次归档。Controller 保留参数校验、模型调用和
   信号投递；模型继续拥有取消条件、进程与资源锁，业务协调器不启动或等待外部进程。
+  独立 Monkey 与性能采集的 Monkey 共用 `MonkeyProcessLease`，远端以本次随机目录中的
+  PID/starttime 确认身份，再停止对应任务；不按进程名称终止其他会话。取消先于远端启动到达
+  时保留取消标记，晚到启动不得继续执行；设备不可达或退出未确认时保留归属，不能报告清理成功。
 
 ## 运行时并发模型
 
@@ -190,14 +196,21 @@ flowchart LR
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，自然退出按进程身份解除跟踪，reader 退出时关闭自有流；helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
 | PerformanceResultLoader / 结果读取 QThread | 按运行快照后台发现附件并单次解析 CSV；新图表代次不覆盖旧运行归档，线程退出、实际 join 和 GUI 归档交付均确认后才释放页面义务 |
-| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成 |
+| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成；本机进程结束与远端清理义务分别确认 |
 
-File Explorer 的传输协调器由页面持有，排队项取消也交付生命周期终态。Root 单文件准备前
-调用 `hold_cleanup()` 登记归还义务，清理回调完成后释放；停止监督每次读取动态集合，避免
+File Explorer 的传输协调器由页面持有，文件删除、复制和移动与传输共用单槽队列，排队项取消
+也交付生命周期终态。Root 单文件准备前调用 `hold_cleanup()` 登记归还义务，清理回调完成后
+释放；停止监督每次读取动态集合，避免
 关闭快照遗漏准备结束后才产生的远端清理 worker。GUI 只发停止请求，受监督后台执行等待
 和必要强停；即使业务完成信号已经发出，线程或子进程仍存活也不能注销资源。像素缓存仅由
 页面主线程读写，关闭预览释放控件当前像素，页面关闭再清空缓存；业务新鲜度与下载归属见
 [文件浏览与传输](BUSINESS_FLOW.md#6-文件浏览与传输)。
+
+MobilePerf 的异步 ADB 客户端显式加入本次临时作用域，由轻量 helper 持有直接进程和
+PID/创建时间身份。worker 退出后 helper 仍确认客户端停止，不向独立 ADB 服务扩散终止。
+同步采样沿用短命令预算与取消，不为每次查询创建 helper。未释放的远端 Monkey 租约在同一
+作用域保留标记：本机集合结束后可以交付失败终态，但 `ProcessRunner` 仍保留清理义务及
+临时目录，并拒绝在原 Runner 上覆盖启动；应用关闭不能把它报告为资源归零。
 
 ## 应用关闭
 
@@ -205,6 +218,10 @@ File Explorer 的传输协调器由页面持有，排队项取消也交付生命
 不可变快照。它不创建业务 worker 或外部进程；关闭时在 GUI 阶段停止定时器，先清空请求身份
 再调用 `abort()` 和 `deleteLater()`，同步取消信号及晚到结果均不能更新界面。对象随主窗口
 QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
+
+设置页的 ADB 客户端卡由关闭协调器显式调用 `prepare_shutdown()`，停止探测计时器、作废结果
+代次并封闭再次识别；不能依赖子控件自身的 `closeEvent()`。后台探测在候选枚举和命令探测前
+检查取消，线程池仍由现有 Controller 关闭屏障等待；父对象直接销毁也会设置独立停止标记。
 
 `gui/close_controller.py::CloseController` 实现分阶段异步关闭（停止 → 收尾）：
 

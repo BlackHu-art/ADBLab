@@ -16,8 +16,11 @@ from tests.ui_geometry_helpers import wait_until
 
 @pytest.fixture
 def model(qt_application, monkeypatch):
+    from core.monkey_process import MonkeyProcessLease
+    monkeypatch.setattr(MonkeyProcessLease, "stop", Mock(return_value=True))
     instance = ADBTesting()
     instance._procs = Mock()
+    instance._procs.active_keys = []
     instance._procs.stop.return_value = None
     instance._procs.start.return_value.poll.return_value = 0
     monkeypatch.setattr(instance, "_run", Mock(return_value={"success": True, "output": ""}))

@@ -321,6 +321,7 @@ class ADB:
             process = popen_native(
                 cmdlet,
                 isolate=True,
+                owned_client=is_async,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT if kwds.get("merge_stderr", False) else subprocess.PIPE,

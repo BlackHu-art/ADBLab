@@ -130,13 +130,16 @@ class _ADBControllerBase:
     def _generate_operation_id(self) -> str:
         return str(uuid.uuid4())
 
-    def _emit_operation(self, operation: str, success: bool, message: str):
+    def _emit_operation(
+        self, operation: str, success: bool, message: str, *, record_action: bool = True,
+    ):
+        """发布兼容反馈；批次摘要可只发信号与日志，避免归入最后一台设备的结果。"""
         if getattr(self, "_shutting_down", False):
             return
         level = "INFO" if success else "ERROR"
         if not message.strip():
             return
-        has_result = report_action_message(success, message)
+        has_result = record_action and report_action_message(success, message)
         self._attempt_actions_preserving_first(
             (
                 "operation completion signal",
@@ -184,13 +187,21 @@ class _ADBControllerBase:
                 getattr(self, "_discovery_refresh_pending", 0),
             )
 
-    def _finish_device_discovery(self) -> None:
-        """成功、失败和过期响应都关闭准入区间，并使区间内捕获的扫描失效。"""
+    def _finish_device_discovery(self, request: int | None = None) -> bool:
+        """按请求身份关闭一次准入区间，仅最新请求可以发布；无身份载荷保留旧调用兼容。"""
         with self._device_topology_lock:
+            requests = getattr(self, "_discovery_requests", set())
+            if request is not None and request not in requests:
+                return False
+            if request is None and requests:
+                request = max(requests)
+            if request is not None:
+                requests.discard(request)
             self._discovery_generation = getattr(self, "_discovery_generation", 0) + 1
             self._discovery_refresh_pending = max(
                 0, getattr(self, "_discovery_refresh_pending", 0) - 1,
             )
+            return request is None or request == getattr(self, "_latest_discovery_request", None)
 
     def _handle_async_response(self, method_name: str, result):
         if getattr(self, "_shutting_down", False):
@@ -203,7 +214,10 @@ class _ADBControllerBase:
             payload, _perf = split_perf(payload)
             with self.action_results.scope(job.request_id, job):
                 terminal = self._handle_async_response(method_name, result.payload)
-            if _metadata is not None:
+            if isinstance(terminal, dict):
+                if terminal.get("stale"):
+                    payload = terminal
+            elif _metadata is not None:
                 snapshot = getattr(terminal, "snapshot", terminal)
                 if snapshot is None:
                     snapshot = self.operation_manager.get(
@@ -236,7 +250,11 @@ class _ADBControllerBase:
                 return self._route_operation_response(op_type, result, operation_metadata)
 
             if op_type == "get_connected_devices":
-                self._finish_device_discovery()
+                request = result.get("_discovery_request") if isinstance(result, dict) else None
+                if not self._finish_device_discovery(request):
+                    if isinstance(result, dict):
+                        result.update(success=False, cancelled=True, stale=True)
+                    return result
                 if isinstance(result, dict) and result.get("stale"):
                     # 过期刷新在结果库按取消收尾，不能撤销更新列表建立的发现状态。
                     self.signals.device_refresh_superseded.emit()
@@ -539,4 +557,8 @@ class _ADBControllerBase:
             wait = getattr(model, "wait_for_commands", None)
             if callable(wait):
                 wait()
+        # 等所有模型排空后再核验进程归属，失败不能跳过其它模型的等待与清理。
+        assert_cleanup_complete = getattr(self.testing_model, "assert_cleanup_complete", None)
+        if callable(assert_cleanup_complete):
+            assert_cleanup_complete()
         self.log_service.log("DEBUG", "controller shutdown completed")

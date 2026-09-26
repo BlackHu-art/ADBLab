@@ -21,6 +21,7 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
 from core.native_process import NativeCommandScope, popen_native, run_native, stop_native_process
+from core.owned_process import OwnedWorkerProcess
 from core.process_utils import kill_process_tree
 from utils import adb_debug
 
@@ -489,14 +490,20 @@ class ProcessRunner:
         creationflags: int | None = None,
         env: dict[str, str] | None = None,
         native_tool: bool = False,
+        owned_clients_dir: str | None = None,
     ) -> subprocess.Popen:
         """启动子进程；旧进程未退出或同 key 并发启动冲突时抛出 RuntimeError。
 
         并发失败方只清理自身进程；未能退出的进程保留内部 key，供后续统一清理。
         native_tool 为改名后的原生工具显式请求隔离，默认沿用既有工具识别。
+        owned_clients_dir 仅供业务 worker 显式登记客户端；确认整个集合退出才释放。
         """
 
         resolved_cmd = resolve_command(cmd)
+        if owned_clients_dir is not None:
+            from core.owned_process import SCOPE_ENV
+            env = dict(os.environ if env is None else env)
+            env[SCOPE_ENV] = owned_clients_dir
         self.stop(key)
         with self._lock:
             if key in self._procs:
@@ -516,6 +523,8 @@ class ProcessRunner:
             env=env,
             native_tool=native_tool,
         )
+        if owned_clients_dir is not None:
+            proc = cast(subprocess.Popen, OwnedWorkerProcess(proc, owned_clients_dir))
 
         # spawn 在锁外进行，此处用一次原子 compare-and-swap 决定唯一获胜者：
         # 只有 key 仍为空的一方完成注册并返回新进程；失败方不能把另一调用
@@ -590,7 +599,7 @@ class ProcessRunner:
         if proc is None:
             return code
         try:
-            stopped = proc.poll() is not None or code is not None
+            stopped = self._resources_released(proc) or code is not None
         except Exception:
             stopped = code is not None
         if stopped:
@@ -605,7 +614,7 @@ class ProcessRunner:
 
         此入口不等待进程、不关闭流；读取端由相应 reader 在退出时关闭。
         """
-        if process.poll() is None:
+        if not self._resources_released(process):
             return False
         with self._lock:
             if self._procs.get(key) is not process:
@@ -637,7 +646,7 @@ class ProcessRunner:
         if proc is None:
             return False
         try:
-            if proc.poll() is not None:
+            if self._resources_released(proc):
                 self.stop(key, timeout=0)
                 return False
         except OSError:
@@ -663,7 +672,7 @@ class ProcessRunner:
             except (OSError, subprocess.TimeoutExpired):
                 pass
         try:
-            stopped = proc.poll() is not None
+            stopped = self._resources_released(proc)
         except OSError:
             stopped = False
         if stopped:
@@ -672,6 +681,13 @@ class ProcessRunner:
                     self._procs.pop(key, None)
             self._unregister_global(key, proc)
         return attempted
+
+    @staticmethod
+    def _resources_released(proc: ExecHandle) -> bool:
+        """显式 worker 集合还包含远端义务，不能只凭父进程业务终态释放。"""
+        if isinstance(proc, OwnedWorkerProcess):
+            return proc.resources_released()
+        return proc.poll() is not None
 
     @staticmethod
     def _kill_process_tree_bounded(proc: subprocess.Popen, deadline: float) -> bool:
@@ -748,7 +764,7 @@ class ProcessRunner:
             keys = []
             for k, p in self._procs.items():
                 try:
-                    if p.poll() is None:
+                    if not self._resources_released(p):
                         keys.append(k)
                 except OSError:
                     # 句柄失效视为存活，与 tracked_active_count 的容错保持一致。
@@ -775,7 +791,7 @@ class ProcessRunner:
             except Exception:
                 code = None
             try:
-                stopped = proc.poll() is not None or code is not None
+                stopped = cls._resources_released(proc) or code is not None
             except Exception:
                 stopped = code is not None
             if stopped:
@@ -793,7 +809,7 @@ class ProcessRunner:
         stopped_items = []
         for proc_key, proc in items:
             try:
-                if proc.poll() is None:
+                if not cls._resources_released(proc):
                     active += 1
                 else:
                     stopped_items.append((proc_key, proc))
@@ -816,7 +832,7 @@ class ProcessRunner:
         attempted = False
         for proc_key, proc in items:
             try:
-                if proc.poll() is not None:
+                if cls._resources_released(proc):
                     stopped = True
                 else:
                     native_stopped = stop_native_process(
@@ -834,7 +850,7 @@ class ProcessRunner:
                             proc.wait(timeout=remaining)
                         except (OSError, subprocess.TimeoutExpired):
                             pass
-                    stopped = proc.poll() is not None
+                    stopped = cls._resources_released(proc)
             except OSError:
                 stopped = False
             if stopped:

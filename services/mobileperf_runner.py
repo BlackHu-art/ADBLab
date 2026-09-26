@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
+from core.owned_process import OwnedWorkerProcess
 from utils.console_colors import colorize_console, should_emit
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
@@ -299,6 +300,7 @@ class MobilePerfRunner:
         self._state_lock = threading.RLock()
         self._generation = 0
         self._active_context: _MobilePerfRunContext | None = None
+        self._residual_contexts: list[_MobilePerfRunContext] = []
         self._mode_contexts: list[_MobilePerfRunContext] = []
         self._last_config: MobilePerfRunConfig | None = None
         self._last_exit_code: int | None = None
@@ -343,8 +345,18 @@ class MobilePerfRunner:
         """创建临时配置并启动子进程，同时分别消费业务输出和开发诊断。"""
         with self._state_lock:
             # 已退出进程的旧代写入可独立收尾；新运行使用不同路径，仍由监督接口保留旧资源。
-            if self._proc is not None and self._proc.poll() is None:
+            if self._residual_contexts:
+                raise RuntimeError("Previous Monkey cleanup is not confirmed")
+            current_proc = (
+                self._active_context.proc if self._active_context is not None else self._proc
+            )
+            if current_proc is not None and current_proc.poll() is None:
                 raise RuntimeError("mobileperf is already running")
+            if (
+                isinstance(current_proc, OwnedWorkerProcess)
+                and not current_proc.resources_released()
+            ):
+                raise RuntimeError("Previous Monkey cleanup is not confirmed")
             self._generation += 1
             generation = self._generation
             process_key = f"{self._process_key_prefix}_{generation}"
@@ -382,6 +394,7 @@ class MobilePerfRunner:
                     redaction_values,
                     ensure_ascii=True,
                 )
+                (Path(config_dir.name) / "clients").mkdir()
                 proc = self._process_runner.start(
                     process_key,
                     cmd,
@@ -393,7 +406,10 @@ class MobilePerfRunner:
                     errors="ignore",
                     bufsize=1,
                     env=env,
+                    owned_clients_dir=str(Path(config_dir.name) / "clients"),
                 )
+                if isinstance(proc, OwnedWorkerProcess):
+                    proc.hold_cleanup_owner(config_dir)
             except Exception:
                 config_dir.cleanup()
                 self._config_dir = None
@@ -809,7 +825,11 @@ class MobilePerfRunner:
             context.process_key,
             timeout=0,
         )
-        self._cleanup_run_context(context)
+        if context.process_tracking_released:
+            self._cleanup_run_context(context)
+        else:
+            with self._state_lock:
+                self._residual_contexts.append(context)
         with self._state_lock:
             notify = self._active_context is context
             if notify:
@@ -840,7 +860,11 @@ class MobilePerfRunner:
                 return context.exit_code
             code = self._process_runner.stop(process_key, timeout=timeout)
             if code is None:
-                code = context.proc.poll()
+                if isinstance(context.proc, OwnedWorkerProcess):
+                    if context.proc.resources_released():
+                        code = context.proc.poll()
+                else:
+                    code = context.proc.poll()
             if code is not None:
                 context.exit_code = code
                 context.process_tracking_released = True

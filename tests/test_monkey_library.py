@@ -41,8 +41,11 @@ def apps(qt_application):
 
 @pytest.fixture
 def model(qt_application, monkeypatch):
+    from core.monkey_process import MonkeyProcessLease
+    monkeypatch.setattr(MonkeyProcessLease, "stop", Mock(return_value=True))
     instance = ADBTesting()
     instance._procs = Mock()
+    instance._procs.active_keys = []
     instance._procs.stop.return_value = None
     instance._procs.start.return_value.poll.return_value = 0
     monkeypatch.setattr(instance, "_run", Mock(return_value={"success": True, "output": ""}))
@@ -210,7 +213,10 @@ def test_model_records_actual_seed_and_times_from_started_process(
     )
     expected = 12345 if seed is None else seed
     command = model._procs.start.call_args_list[-1].args[1]
-    assert command[command.index("-s", 4) + 1] == str(expected)
+    import shlex
+    script = shlex.split(command[4])[2]
+    arguments = shlex.split(script.rsplit("exec ", 1)[1])
+    assert arguments[arguments.index("-s") + 1] == str(expected)
     assert result["seed"] == expected
     assert result["success"] and not result["cancelled"]
     assert 0 < result["started_at"] <= result["finished_at"]

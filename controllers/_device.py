@@ -6,7 +6,7 @@ import threading
 from _thread import LockType
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QTimer
 
@@ -202,12 +202,17 @@ class ADBDeviceMixin(_ADBControllerBase):
             self._discovery_generation = getattr(self, "_discovery_generation", 0) + 1
             self._discovery_refresh_pending = getattr(self, "_discovery_refresh_pending", 0) + 1
             generation = self._discovery_generation
+            self._latest_discovery_request = generation
+            if not hasattr(self, "_discovery_requests"):
+                self._discovery_requests = set()
+            self._discovery_requests.add(generation)
         try:
-            self.device_model.get_connected_devices_async()
+            cast(Any, self.device_model).get_connected_devices_async(
+                _result_context={"_discovery_request": generation},
+            )
         except Exception as e:
             # async_command 可能先同步发出失败结果再抛出；同次提交只能收口一次。
-            if self.device_discovery_token()[0] == generation:
-                self._finish_device_discovery()
+            if self._finish_device_discovery(generation):
                 self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
 
     def _async_update_devices(self, devices: list, *, generation: int):

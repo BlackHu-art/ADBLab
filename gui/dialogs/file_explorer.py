@@ -653,7 +653,9 @@ class FileExplorerPage(QWidget):
         if not hasattr(self, "refresh_action"):
             return
         available = self._can_operate()
-        interactive = available and not self._directory_loading
+        interactive = (
+            available and not self._directory_loading and not self._ops_controller.mutating
+        )
         self.path_field.setEnabled(interactive)
         self.root_cb.setEnabled(interactive)
         self.up_btn.setEnabled(interactive)

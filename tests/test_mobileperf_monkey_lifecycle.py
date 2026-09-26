@@ -75,6 +75,11 @@ def monkey_factory(monkeypatch, tmp_path):
         monkeypatch.setattr(
             monkey_module, "AndroidDevice", lambda _device: SimpleNamespace(adb=adb),
         )
+        lease = Mock()
+        from core.monkey_process import MonkeyProcessLease
+        lease.command.side_effect = MonkeyProcessLease().command
+        lease.stop.return_value = True
+        monkeypatch.setattr(monkey_module, "MonkeyProcessLease", Mock(return_value=lease))
         monitor = Monkey("demo-device", "com.example.app", timeout=60)
         instances.append(monitor)
         return monitor, adb
@@ -94,7 +99,8 @@ def test_monkey_start_launches_once_and_stop_reaps_reader(monkey_factory):
 
     adb.run_shell_cmd.assert_called_once()
     command = adb.run_shell_cmd.call_args.args[0]
-    assert command.startswith("monkey -p com.example.app ")
+    import shlex
+    assert "exec monkey -p com.example.app " in shlex.split(command)[2]
     assert adb.run_shell_cmd.call_args.kwargs == {"sync": False, "merge_stderr": True}
     assert monitor.running
     monitor.stop()
@@ -103,7 +109,8 @@ def test_monkey_start_launches_once_and_stop_reaps_reader(monkey_factory):
     assert process.terminated == 1
     assert process.stdout.closed
     assert process.stdin.closed
-    adb.kill_process.assert_called_once_with("com.android.commands.monkey")
+    monitor._lease.stop.assert_called_once()
+    adb.kill_process.assert_not_called()
     monitor.raise_if_failed()
 
 
@@ -262,7 +269,8 @@ def test_monkey_reader_start_failure_reclaims_the_created_process(
     assert not monitor.running
     assert process.terminated == 1
     assert process.stdout.closed and process.stdin.closed
-    adb.kill_process.assert_called_once_with("com.android.commands.monkey")
+    monitor._lease.stop.assert_called_once()
+    adb.kill_process.assert_not_called()
 
 
 def test_monkey_missing_stdout_reclaims_the_created_process(monkey_factory):
@@ -276,7 +284,8 @@ def test_monkey_missing_stdout_reclaims_the_created_process(monkey_factory):
 
     assert not monitor.running
     assert process.terminated == 1 and process.stdin.closed
-    adb.kill_process.assert_called_once_with("com.android.commands.monkey")
+    monitor._lease.stop.assert_called_once()
+    adb.kill_process.assert_not_called()
 
 
 def test_monkey_stop_escalates_a_process_that_ignores_terminate(monkey_factory):
@@ -312,7 +321,8 @@ def test_startup_success_and_user_stop_reap_monkey_and_preserve_report(
     startup.run(time_out=2)
 
     adb.run_shell_cmd.assert_called_once()
-    adb.kill_process.assert_called_once()
+    monitor._lease.stop.assert_called_once()
+    adb.kill_process.assert_not_called()
     assert not monitor._monkey_thread.is_alive()
     for other in other_monitors:
         other.stop.assert_called_once()
@@ -366,7 +376,9 @@ def test_startup_monkey_stop_failure_cleans_other_monitors_and_preserves_report(
     monkey_factory, startup_factory,
 ):
     monitor, adb = monkey_factory(_Process(block=True))
-    adb.kill_process.side_effect = [OSError("simulated device disconnect"), None]
+    monkey_module.MonkeyProcessLease.return_value.stop.side_effect = [
+        OSError("simulated device disconnect"), True,
+    ]
     startup, other_monitors, report = startup_factory(monitor)
 
     with pytest.raises(MonkeyError, match="停止未完成"):
@@ -396,5 +408,6 @@ def test_optional_metric_failure_does_not_abort_requested_monkey(
     optional.start.assert_called_once()
     optional.stop.assert_called_once()
     adb.run_shell_cmd.assert_called_once()
-    adb.kill_process.assert_called_once()
+    monitor._lease.stop.assert_called_once()
+    adb.kill_process.assert_not_called()
     report.assert_called_once()

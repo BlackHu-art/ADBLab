@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-25
+last_verified: 2026-09-27
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -21,7 +21,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | [AppSettings](../../core/settings_manager.py) 已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | [AppManagerWorker](../../models/app_manager_worker.py) 校验关键 CommandResult 和拉取 APK 数量，先暂存再原子发布 ZIP；恢复使用安全解压，取消后不启动后续安装或发布完整成功；页面业务批次串行，仍需完整性元数据和授权恢复测试 | Partial |
 | Low | App Manager 批量元数据与图标补全缺少 Android 版本、厂商和多用户实机耗时矩阵 | [临时 helper](../../tools/app_icons/Main.java) 保留用户校验和退出保护；协议与页面测试覆盖文字优先、精确缓存失效、取消和晚到结果。仍需测量首屏名称/图标时间，并验证设备用户切换、语言变化与应用升级后的刷新 | 待确认 |
-| Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 内核的 Monkey/logcat ADB 客户端由子进程内调用方拥有 | 顶层 MobilePerf worker 已由 ProcessRunner 与 TaskSupervisor 跟踪；内核 `run_shell_cmd(sync=False)` 仍返回 NativeProcess/Popen，由 Monkey/logcat 自行终止、等待和关流。只读查询与采样等待支持取消，关闭超时保留残留；仍需实机验证 worker 强停、设备拔线和平台差异下的子客户端收尾 | Partial |
+| Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；设备离线时远端 Monkey 退出无法自动确认 | MobilePerf 异步客户端使用本次临时作用域及 helper 显式归属，worker 强停后仍监督直接客户端，不终止独立 ADB 服务；远端 Monkey 按 PID/starttime 停止，未确认义务保留为残留，不允许覆盖后重启。只读查询与采样等待支持取消；仍需实机验证 worker 强停、设备拔线后人工处理及平台差异下的收尾 | Partial |
 | Medium | 跨平台真实功能验证与依赖闭包仍不完整 | Build 已配置 macOS x64/arm64 架构校验、三平台 packaging 自检和 Linux xcb GUI 探针；CI 不运行 pytest，测试按测试指南在本地执行。仍需对应平台实际运行、Windows windowed MobilePerf 管道、macOS Finder 启动、授权设备投屏与断线验收，不能把构建或路径模拟通过视为功能验收 | Partial |
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |

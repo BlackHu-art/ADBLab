@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-25
+last_verified: 2026-09-27
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -67,6 +67,8 @@ sequenceDiagram
 经 CommandRunner 返回成功列表后复用同一发布链路；不会把定时扫描已取得的列表再查询一次。
 连续扫描在查询前捕获 Controller 的发现代次，列表与失败状态携带同一代次穿过 Qt 队列与防抖。
 手动刷新起止使旧代次失效，手动刷新在途时拒收连续扫描结果，避免旧快照覆盖较新的刷新。
+每次手动刷新另有唯一请求身份，成功、失败和提交异常都只结算一次；并发手动刷新只允许最新
+请求发布结果，旧请求先返回不能清除新请求的扫描状态。
 单台元数据返回只更新该设备卡片，拓扑和选择上下文不重复广播到全部页面。
 同拓扑并发刷新合并为一个活动任务及一次待处理刷新；概览和兼容补查共用截止时间与关闭信号。
 同一 Controller 的设备概览查询最多三台并行，不同拓扑代次共享并发额度；每台返回即发布，
@@ -129,7 +131,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
 | 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；结果与方案参数拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 等设备身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
-| MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor` | 每次运行独立临时目录；模式由后台线程通过同目录临时文件原子发布 | 子进程退出、输出 reader 和模式线程收口后由适配层清理；启动失败也清理；配置包含设备/包/路径，模式不进入用户设置 |
+| MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` 与 `clients/` 归属记录 | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native；归属记录保存本次进程身份与未释放远端义务 | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor`、`core.owned_process` | 每次运行独立临时目录；模式和客户端记录通过同目录临时文件原子发布 | 进程、reader、模式线程与清理义务确认释放后清理；停止未确认保留目录，详见 [进程归属](ARCHITECTURE.md#运行时并发模型)；配置包含设备/包/路径，模式不进入用户设置 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
 | 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录；默认按第一层条目类型和文件大小校验，scrcpy 桥接使用 `verify_tree` 递归比较大小与 SHA-256 内容摘要；失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
@@ -204,8 +206,8 @@ flowchart TD
   原子写入用户数据目录的 `logs/application-diagnostics.log`（`gui/run_library.py`）。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
-- MobilePerf 启动时，`StartUp.clear_heapdump()` 列取设备 `/data/local/tmp`，对文件名包含第一个
-  目标包名且 `ls -l` 修改时间判定超过 3 天的条目调用删除；时间无法解析时保留。实际筛选不检查
-  `.hprof` 后缀或 ADBLab 产物归属，相关边界见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。
+- MobilePerf 在建立本次结果目录后才调用 `StartUp.clear_heapdump()`，仅处理该目录归属清单中
+  匹配设备及任务命名空间、已成功拉取且超过 3 天的条目。采集收尾同样按清单中的精确路径清理；
+  没有清单、归属不符或尚未成功归档的设备文件保留，不按包名模糊删除历史文件。
 - CI 制品与版本保留规则见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#cicd)。
 - 未决的数据保护与保留要求见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

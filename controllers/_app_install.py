@@ -41,25 +41,44 @@ def _unit_for_device(start: DeviceBatchStart, device_ip: str):
     return None
 
 
-def _record_device_batch_result(controller, operation: str, device_ip: str, success: bool) -> str:
-    """把无 envelope 的遗留批次结果记入 DeviceBatchUseCase，返回进度字符串。
+def _record_device_batch_result(
+    controller, operation: str, device_ip: str, success: bool, result: dict | None = None,
+) -> str | None:
+    """按冻结的批次和单元身份结算，过期或重复结果返回 None 且不发送反馈。
 
-    兼容 Gate C 之前的批次安装路径：结果不携带 operation 信封时，按批次标识在
-    ``_batch_starts`` 中查找已登记的批次；全部单元收口后发射与旧 BatchOperationTracker
-    相同的汇总信号。未登记批次时返回空进度。以模块级函数实现，兼容测试里的
-    unbound 调用与 Mock 控制器。
+    新提交批次必须携带身份，防止旧结果误结算相同设备的新批次。未使用新提交入口的
+    遗留调用仍按设备查找单元；全部单元收口后沿用原汇总信号和进度文案。
     """
     with controller._pending_lock:
         start = controller._batch_starts.get(operation)
+        identities = getattr(controller, "_batch_result_context", {})
+    batch_id = (result or {}).get("_device_batch_id")
+    unit_id = (result or {}).get("_device_batch_unit_id")
     if start is None:
-        return ""
-    unit = _unit_for_device(start, device_ip)
+        return None if batch_id is not None else ""
+    if batch_id is not None or operation in identities:
+        if batch_id != start.operation_id:
+            return None
+        unit = next((item for item in start.units if item.unit_id == unit_id), None)
+        if unit is None or unit.device != device_ip:
+            return None
+        snapshot = controller.operation_manager.get(start.operation_id)
+        if snapshot is None or snapshot.is_terminal or any(
+            item.unit_id == unit_id for item in snapshot.unit_results
+        ):
+            return None
+    else:
+        unit = _unit_for_device(start, device_ip)
     if unit is not None:
         outcome = controller.device_batches.record_unit_result(unit.unit_id, device_ip, success)
         if outcome is not None:
             with controller._pending_lock:
-                controller._batch_starts.pop(operation, None)
-            controller._emit_operation(operation, outcome.success, outcome.message)
+                if controller._batch_starts.get(operation) == start:
+                    controller._batch_starts.pop(operation, None)
+                    identities.pop(operation, None)
+            controller._emit_operation(
+                operation, outcome.success, outcome.message, record_action=False,
+            )
     return controller.device_batches.progress(start.operation_id)
 
 
@@ -639,6 +658,34 @@ class ADBAppInstallMixin(_ADBControllerBase):
             return True
         return False
 
+    def _submit_device_batch_unit(
+        self, operation: str, method_name: str, idx: int, device_ip: str, *args,
+    ) -> None:
+        """冻结批次单元身份；同步提交异常和带身份的异步终态走同一幂等结算入口。"""
+        with self._pending_lock:
+            start = self._batch_starts.get(operation)
+            if start is None:
+                return
+            unit = start.units[idx - 1]
+            if not hasattr(self, "_batch_result_context"):
+                self._batch_result_context = {}
+            self._batch_result_context[operation] = start.operation_id
+        context = {
+            "_device_batch_id": start.operation_id,
+            "_device_batch_unit_id": unit.unit_id,
+            "device_ip": device_ip,
+            "index": idx,
+        }
+        if args:
+            context["package_name"] = args[0]
+        try:
+            getattr(self.app_model, method_name)(device_ip, *args, idx, _result_context=context)
+        except Exception as exc:
+            # 装饰器可能已经同步回发失败；单元身份校验会丢弃第二次结算。
+            self._handle_async_response(method_name, {
+                **context, "success": False, "error": f"任务提交失败：{type(exc).__name__}",
+            })
+
     def uninstall_apk(self, devices: list, package_name: str):
         if not self._require_devices(devices, "uninstall"):
             return
@@ -660,13 +707,17 @@ class ADBAppInstallMixin(_ADBControllerBase):
         self._emit_operation(
             "uninstall", True, f"Start uninstall ({idx}/{total}) {package_name} on {device_ip} ..."
         )
-        self.app_model.uninstall_app_async(device_ip, package_name, idx)
+        self._submit_device_batch_unit(
+            "uninstall", "uninstall_app_async", idx, device_ip, package_name,
+        )
 
     def _process_uninstall_apk_result(self, result: dict):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        progress = _record_device_batch_result(self, "uninstall", str(ip), bool(success))
+        progress = _record_device_batch_result(self, "uninstall", str(ip), bool(success), result)
+        if progress is None:
+            return
         if success:
             self._emit_operation(
                 "uninstall", True, f"✅ uninstall success {progress} {pkg} on {ip}"
@@ -693,13 +744,17 @@ class ADBAppInstallMixin(_ADBControllerBase):
                 True,
                 f"Start clear data ({idx}/{len(devices)}) {package_name} on {device_ip} ...",
             )
-            self.app_model.clear_app_data_async(device_ip, package_name, idx)
+            self._submit_device_batch_unit(
+                "clear_data", "clear_app_data_async", idx, device_ip, package_name,
+            )
 
     def _process_clear_app_data_result(self, result: dict):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        progress = _record_device_batch_result(self, "clear_data", str(ip), bool(success))
+        progress = _record_device_batch_result(self, "clear_data", str(ip), bool(success), result)
+        if progress is None:
+            return
         if success:
             self._emit_operation(
                 "clear_data", True, f"✅ clear data success {progress} {pkg} on {ip}"
@@ -730,14 +785,18 @@ class ADBAppInstallMixin(_ADBControllerBase):
                 True,
                 f"Start restart ({idx}/{len(devices)}) {package_name} on {device_ip} ...",
             )
-            self.app_model.restart_app_async(device_ip, package_name, idx)
+            self._submit_device_batch_unit(
+                "restart_app", "restart_app_async", idx, device_ip, package_name,
+            )
 
     def _process_restart_app_result(self, result: dict):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         output = result.get("output", "").strip()
         success = result.get("success")
-        progress = _record_device_batch_result(self, "restart_app", str(ip), bool(success))
+        progress = _record_device_batch_result(self, "restart_app", str(ip), bool(success), result)
+        if progress is None:
+            return
         if success:
             msg = (
                 f"✅ Restart Success {progress}\n"
@@ -768,7 +827,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
                 True,
                 f"Start activity info ({idx}/{len(devices)}) on {device_ip} ...",
             )
-            self.app_model.get_current_activity_async(device_ip, idx)
+            self._submit_device_batch_unit(
+                "current_activity", "get_current_activity_async", idx, device_ip,
+            )
 
     def _process_get_current_activity_result(self, result: dict):
         device = result.get("device_ip", "unknown")
@@ -777,7 +838,11 @@ class ADBAppInstallMixin(_ADBControllerBase):
         focus = result.get("current_focus", "").strip()
         resumed = result.get("resumed_activity", "").strip()
         error = result.get("error", "").strip()
-        progress = _record_device_batch_result(self, "current_activity", str(device), bool(success))
+        progress = _record_device_batch_result(
+            self, "current_activity", str(device), bool(success), result,
+        )
+        if progress is None:
+            return
         if success:
             msg_lines = [f"📱 ({idx}) {device} {progress} - Activity Info"]
             if focus:

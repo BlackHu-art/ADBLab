@@ -255,9 +255,10 @@ class MemInfoPackageCollector:
         # heapdump 与 dumpsys meminfo 均走 /data/local/tmp（shell 可写）或系统接口，
         # 无需 SELinux permissive；不执行 setenforce 0，避免整机级且不可逆的安全降级。
         first_dump = True
+        first_meminfo = True
         while not self._stop_event.is_set() and time.time() < end_time:
+            before = time.time()
             try:
-                before = time.time()
                 logger.debug(
                     "-----------into _collect_mem_thread loop, thread is : "
                     + str(threading.current_thread().name)
@@ -295,17 +296,18 @@ class MemInfoPackageCollector:
                 if (before - starttime_stamp) > RuntimeData.config_dic[
                     "dumpheap_freq"
                 ] or first_dump:
+                    first_dump = False
+                    starttime_stamp = before
                     # 只清理本次清单中已成功归档的堆转储，失败文件留待收尾重试。
                     self.device.adb.cleanup_owned_heapdumps(
                         RuntimeData.package_save_path, self.packages,
                     )
                     for package in self.packages:
                         self.device.adb.dumpheap(package, RuntimeData.package_save_path)
-                    starttime_stamp = before
                 # dumpsys meminfo 开销较大且可能推高 system_server CPU，因此降低采样频率。
                 dumpsys_mem_times = dumpsys_mem_times + 1
                 # 每十个普通采样周期执行一次整机 dumpsys meminfo。
-                if dumpsys_mem_times % 10 == 0 or first_dump:
+                if dumpsys_mem_times % 10 == 0 or first_meminfo:
                     mem_device_snapshot = self._dumpsys_meminfo()
                     # 正常结果的 totalmem 不应为零，据此识别无效采样。
                     if (
@@ -317,7 +319,7 @@ class MemInfoPackageCollector:
                         # 无有效结果时回退计数，延后下一次整机采样。
                         dumpsys_mem_times = dumpsys_mem_times - 1
                         continue
-                    first_dump = False
+                    first_meminfo = False
                     logger.debug(
                         "current time: "
                         + TimeUtils.getCurrentTime()
@@ -398,16 +400,16 @@ class MemInfoPackageCollector:
                         except RuntimeError as e:
                             logger.error(e)
 
-                after = time.time()
-                time_consume = after - before
-                delta_inter = self._interval - time_consume
-                logger.info("time consume for meminfos: " + str(time_consume))
-                if delta_inter > 0:
-                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
             except Exception:
                 logger.error("an exception hanpend in meminfo thread, reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
+            finally:
+                time_consume = time.time() - before
+                logger.info("time consume for meminfos: " + str(time_consume))
+                remaining = max(0, end_time - time.time())
+                if remaining:
+                    self._stop_event.wait(min(max(0.01, self._interval - time_consume), remaining))
 
         logger.debug("stop event is set or timeout")
 

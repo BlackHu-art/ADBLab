@@ -12,6 +12,8 @@ import uuid
 import weakref
 from typing import Any
 
+from core.owned_process import SCOPE_ENV, OwnedClientProcess, OwnedWorkerProcess
+
 
 def _should_isolate(isolate: bool, shell: bool) -> bool:
     return isolate and not shell and sys.platform == "win32" and bool(getattr(sys, "frozen", False))
@@ -301,14 +303,22 @@ def cancel_and_drain_native(process: subprocess.Popen, *, timeout: float):
 
 def stop_native_process(process: subprocess.Popen, *, timeout: float) -> bool | None:
     """隔离入口走合作取消；普通进程返回 None，继续原有树清理规则。"""
+    if isinstance(process, (OwnedClientProcess, OwnedWorkerProcess)):
+        return process.stop(timeout)
     if not isinstance(process, NativeProcess):
         return None
     return process.stop(timeout)
 
 
-def popen_native(command: list[str], *, isolate: bool = False, **kwargs: Any) -> subprocess.Popen:
-    """隔离显式原生工具的库搜索；应用 worker 保留自身冻结运行环境。"""
+def popen_native(
+    command: list[str], *, isolate: bool = False, owned_client: bool = False, **kwargs: Any,
+) -> subprocess.Popen:
+    """隔离原生工具库搜索；owned_client 仅在业务 worker 的临时作用域中监督客户端。"""
     shell = bool(kwargs.get("shell", False))
+    if owned_client and not shell:
+        directory = os.environ.get(SCOPE_ENV)
+        if directory:
+            return OwnedClientProcess(command, directory, **kwargs)
     if isolate and not shell and sys.platform == "linux" and getattr(sys, "frozen", False):
         environment = kwargs.get("env")
         kwargs["env"] = native_tool_environment(

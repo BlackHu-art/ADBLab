@@ -118,6 +118,9 @@ def launch(argv: list[str]) -> int:
     创建目标前获得且不可继承；仅本 helper 清理 DLL 搜索路径。创建窗口期间的
     取消由创建后的再次检查收敛，只结束直接拥有的客户端，不回收独立 ADB server。
     """
+    if argv and argv[0] == "--owned-client":
+        from core.owned_process import launch_owned_client
+        return launch_owned_client(argv)
     if sys.platform != "win32":
         return _setup_failure()
     child = None
@@ -175,3 +178,7 @@ def launch(argv: list[str]) -> int:
         if child is not None and child.poll() is None:
             child.kill()
             child.wait()
+
+
+if __name__ == "__main__":
+    raise SystemExit(launch(sys.argv[1:]))

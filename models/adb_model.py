@@ -44,6 +44,7 @@ class CommandTask(QRunnable):
         self.method_ref = method_ref
         self.queued_at = queued_at
         self.metadata = metadata
+        self.result_context = dict(kwargs.pop("_result_context", {}) or {})
         self.action_job = capture_action_job(method_ref.__name__, args[0] if args else "")
         self.args = args
         self.kwargs = kwargs
@@ -76,6 +77,7 @@ class CommandTask(QRunnable):
         perf = build_async_perf(
             self.method_ref.__name__, self.queued_at, started_at, finished_at
         )
+        result = self.attach_result_context(result)
         result = attach_operation_metadata(attach_perf(result, perf), self.metadata)
         if self.action_job is not None:
             result = ActionEnvelope(result, self.action_job)
@@ -85,6 +87,14 @@ class CommandTask(QRunnable):
             self.model.command_finished.emit(self.method_ref.__name__, result)
         except RuntimeError:
             pass  # 结果投递期间 Qt 对象可能已经由 C++ 侧删除。
+
+    def attach_result_context(self, result):
+        """把提交时冻结的目标和请求身份带回所有终态，业务结果不能覆盖归属字段。"""
+        if not self.result_context:
+            return result
+        if not isinstance(result, dict):
+            result = {"success": False, "error": "Invalid command result"}
+        return {**result, **self.result_context}
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -109,6 +119,7 @@ def async_command(
 
     long_running=True 时提交到专用长任务池，避免长任务占满全局池导致短命令饥饿。
     pool_attribute 可指定模型拥有的独立线程池；模型必须将其纳入关闭等待。
+    内部可选参数 _result_context 冻结请求身份并附加到每条终态，不传给业务方法。
     """
 
     if method is None:
@@ -118,7 +129,7 @@ def async_command(
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
-        if _model_is_shutting_down(self):
+        if _model_is_shutting_down(self) and not kwargs.get("_result_context"):
             return
         queued_at = perf_counter()
         operation_id = kwargs.pop("_operation_id", None)
@@ -153,6 +164,10 @@ def async_command(
             *args,
             **kwargs,
         )
+        if _model_is_shutting_down(self):
+            # 已登记的请求仍须收到取消终态，避免调用方永久保留活动批次。
+            task.run()
+            return
         try:
             pool = (
                 getattr(self, pool_attribute) if pool_attribute is not None
@@ -161,7 +176,9 @@ def async_command(
             pool.start(task)
         except Exception as exc:
             payload = attach_operation_metadata(
-                {"success": False, "error": f"任务提交失败：{type(exc).__name__}"}, metadata,
+                task.attach_result_context(
+                    {"success": False, "error": f"任务提交失败：{type(exc).__name__}"},
+                ), metadata,
             )
             if task.action_job is not None:
                 payload = ActionEnvelope(payload, task.action_job)

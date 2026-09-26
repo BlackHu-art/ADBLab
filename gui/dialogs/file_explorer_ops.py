@@ -30,6 +30,7 @@ class FileExplorerOps:
     def __init__(self, frame):
         self._frame = frame
         self._last_batch_results = ()
+        self._mutation_batch_active = False
         self._save_worker: TextSaveWorker | None = None
         self._local_save_worker: LocalTextSaveWorker | None = None
 
@@ -37,6 +38,11 @@ class FileExplorerOps:
     def saving(self) -> bool:
         """整个上传、发布和清理期间拒绝重复保存。"""
         return self._save_worker is not None
+
+    @property
+    def mutating(self) -> bool:
+        """文件变更批次从提交到全部终态期间拒绝重复提交。"""
+        return self._mutation_batch_active
 
     def cancel_save(self) -> None:
         """设备失选或离线后停止原请求，保留后台清理与页面监督。"""
@@ -249,11 +255,17 @@ class FileExplorerOps:
 
     def _enqueue_batch(self, direction, items, origin):
         """冻结路径后串行调度整批，保留每项结果，终态只刷新一次原目标。"""
-        if not self._frame._can_operate() or not items:
+        mutation = direction in {"delete", "copy", "move"}
+        if (not self._frame._can_operate() or not items
+                or mutation and self._mutation_batch_active):
             return
         records = []
         remaining = [len(items)]
         device = self._frame.device_ip
+        use_root = self._frame.root_cb.isChecked()
+        if mutation:
+            self._mutation_batch_active = True
+            self._frame._sync_directory_controls()
 
         def finish_item(record):
             if record["result"] is None:
@@ -264,8 +276,12 @@ class FileExplorerOps:
             self._last_batch_results = tuple(
                 (item["name"], *item["result"]) for item in records
             )
+            if mutation:
+                self._mutation_batch_active = False
             if self._frame._closing:
                 return
+            if mutation:
+                self._frame._sync_directory_controls()
             success = sum(item["result"][0] == "succeeded" for item in records)
             failed = sum(item["result"][0] == "failed" for item in records)
             cancelled = len(records) - success - failed
@@ -277,7 +293,8 @@ class FileExplorerOps:
                 f"{labels['cancelled']}: {cancelled}"
             )
             details = "\n".join(
-                f"{name}: {labels[state]}" for name, state, _output in self._last_batch_results
+                f"{name}: {labels[state]}" + (f"\n{output}" if state == "failed" and output else "")
+                for name, state, output in self._last_batch_results
             )
             self._frame.status_bar.setText(summary)
             report_feedback(
@@ -287,28 +304,45 @@ class FileExplorerOps:
             )
             attempted = any(getattr(item["worker"], "_transfer_dispatched", False)
                             for item in records)
-            if (direction == "push" and attempted and self._frame._can_operate()
-                    and self._frame.current_path == origin):
+            if ((direction == "push" or mutation) and attempted and self._frame._can_operate()
+                    and self._frame.device_ip == device and self._frame.current_path == origin
+                    and (not mutation or self._frame.root_cb.isChecked() == use_root)):
                 self._frame._refresh()
 
         for name, source, target in items:
-            worker = self._frame._run_transfer(direction, source, target, _device_ip=device)
-            if worker is None:
-                return
+            if mutation:
+                if direction == "delete":
+                    command = explorer_service.delete_command(source)
+                elif direction == "copy":
+                    command = explorer_service.copy_command(source, target)
+                else:
+                    command = explorer_service.move_command(source, target)
+                worker = self._frame._run_adb(
+                    "shell", explorer_service.root_command(command, use_root),
+                    timeout=30 if direction == "delete" else 120, _device_ip=device,
+                )
+            else:
+                worker = self._frame._run_transfer(direction, source, target, _device_ip=device)
             record = {"name": name, "worker": worker, "result": None}
             records.append(record)
+            if worker is None:
+                continue
 
-            def remember(output, error, _local, record=record):
+            def remember(output, error, *_local, record=record):
                 record["result"] = ("failed" if error else "succeeded", output)
 
             worker.result_ready.connect(remember, Qt.ConnectionType.QueuedConnection)
-            self._frame._connect_worker_ui(
-                worker, worker.progress, lambda message: self._frame.status_bar.setText(message)
-            )
+            if not mutation:
+                self._frame._connect_worker_ui(
+                    worker, worker.progress, lambda message: self._frame.status_bar.setText(message)
+                )
         for record in records:
-            self._frame._transfers.enqueue(
-                record["worker"], on_terminal=lambda record=record: finish_item(record)
-            )
+            if record["worker"] is None:
+                finish_item(record)
+            else:
+                self._frame._transfers.enqueue(
+                    record["worker"], on_terminal=lambda record=record: finish_item(record)
+                )
 
     def _on_transfer_done(self, o, e, msg):
         """下载终态只更新反馈；本地写入不改变远端目录。"""
@@ -416,31 +450,19 @@ class FileExplorerOps:
         w.start()
 
     def _delete_item(self, name: str):
-        if not self._frame._can_operate():
-            return
-        full = self._frame._dpath(self._frame.current_path, name)
-        self._frame.status_bar.setText(tr('Deleting {value0}...').format(value0=name))
-        w = self._frame._run_adb("shell", self._frame._root(explorer_service.delete_command(full)))
-        if w is None:
-            return
-        self._frame._connect_worker_ui(
-            w,
-            w.result_ready,
-            lambda o, e, n=name: self._on_file_op_done(
-                o, e, tr("Deleted {value0}").format(value0=n)
-            ),
-        )
-        w.start()
+        self._request_delete(name)
 
     def _request_delete(self, names: str | list[str]):
         """删除选中条目；不再弹窗确认，删除前仍校验目标并排除 ".."。"""
 
         items = [names] if isinstance(names, str) else list(names)
-        items = [name for name in items if name and name != ".."]
+        items = list(dict.fromkeys(name for name in items if name and name != ".."))
         if not items:
             return
-        for name in items:
-            self._delete_item(name)
+        origin = self._frame.current_path
+        self._enqueue_batch(
+            "delete", [(name, self._frame._dpath(origin, name), "") for name in items], origin,
+        )
 
     def _delete_selected(self):
         rows = set(i.row() for i in self._frame.table.selectedIndexes())
@@ -466,50 +488,22 @@ class FileExplorerOps:
         )
 
     def _paste_items(self):
-        if not self._frame._can_operate():
+        if not self._frame._can_operate() or self.mutating:
             return
         if not self._frame.clipboard:
             return
-        for src in self._frame.clipboard:
-            dst = self._frame._dpath(self._frame.current_path, os.path.basename(src))
+        origin = self._frame.current_path
+        items = []
+        for src in dict.fromkeys(self._frame.clipboard):
+            dst = self._frame._dpath(origin, os.path.basename(src))
             if src == dst:
                 continue
-            if self._frame.copy_mode:
-                w = self._frame._run_adb(
-                    "shell",
-                    self._frame._root(explorer_service.copy_command(src, dst)),
-                    timeout=120,
-                )
-                if w is None:
-                    return
-                self._frame._connect_worker_ui(
-                    w,
-                    w.result_ready,
-                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(
-                        o, e, tr('Pasted {value0}').format(value0=n)
-                    ),
-                )
-                w.start()
-            else:
-                w = self._frame._run_adb(
-                    "shell",
-                    self._frame._root(explorer_service.move_command(src, dst)),
-                    timeout=120,
-                )
-                if w is None:
-                    return
-                self._frame._connect_worker_ui(
-                    w,
-                    w.result_ready,
-                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(
-                        o, e, tr("Moved {value0}").format(value0=n)
-                    ),
-                )
-                w.start()
+            items.append((os.path.basename(src), src, dst))
         self._frame.status_bar.setText(
-            tr("Paste submitted: {value0} item(s)").format(value0=len(self._frame.clipboard))
+            tr("Paste submitted: {value0} item(s)").format(value0=len(items))
         )
         self._frame.clipboard = []
+        self._enqueue_batch("copy" if self._frame.copy_mode else "move", items, origin)
 
     # ── 文件权限（chmod）────────────────────────────────────────────────
 

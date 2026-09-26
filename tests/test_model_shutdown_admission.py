@@ -2,6 +2,8 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from adblab.application.action_results import ActionResults
 from adblab.application.envelope import split_operation_metadata
 from controllers._base import _ADBControllerBase
@@ -219,6 +221,39 @@ def test_controller_closes_every_model_admission_before_model_cleanup():
         ("cleanup", "testing"),
         ("cleanup", "advanced"),
     ]
+
+
+def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model():
+    events = []
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.action_results = ActionResults(lambda _result: None)
+    for name in ("device", "app", "testing", "advanced"):
+        setattr(controller, f"{name}_model", SimpleNamespace(
+            begin_shutdown=lambda name=name: events.append(("fence", name)),
+            shutdown=lambda name=name: events.append(("cleanup", name)),
+            wait_for_commands=lambda name=name: events.append(("wait", name)),
+        ))
+
+    def assert_cleanup_complete():
+        events.append(("verify", "testing"))
+        raise RuntimeError("owned process remains")
+
+    controller.testing_model.assert_cleanup_complete = assert_cleanup_complete
+    controller.log_service = Mock()
+    controller.executor = Mock()
+    with patch("controllers._base.ProcessRunner.stop_all_tracked"):
+        with pytest.raises(RuntimeError, match="owned process remains"):
+            controller.shutdown()
+
+    assert events[-5:] == [
+        ("wait", "device"), ("wait", "app"), ("wait", "testing"), ("wait", "advanced"),
+        ("verify", "testing"),
+    ]
+    assert ("cleanup", "advanced") in events
+    assert not any(
+        "shutdown completed" in item.args[1]
+        for item in controller.log_service.log.call_args_list
+    )
 
 
 def test_controller_shutdown_cancels_screen_record_already_queued_before_fence():

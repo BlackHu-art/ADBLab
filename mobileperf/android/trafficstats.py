@@ -204,6 +204,12 @@ class TrafficCollecor:
             # Android 10 起分别从设备和进程的 /proc/net/dev 读取流量。
             self.get_traffic_with_dev()
 
+    def _wait_for_next_sample(self, delay, end_time):
+        """失败和慢命令也至少短暂等待，并允许停止信号立即打断。"""
+        remaining = max(0, end_time - time.time())
+        if remaining:
+            self._stop_event.wait(min(max(0.01, delay), remaining))
+
     def get_traffic_with_stats(self):
         end_time = time.time() + self._timeout
         uid = TrafficUtils.getUID(self.device, self.packages[0])
@@ -243,7 +249,7 @@ class TrafficCollecor:
                 traffic_snapshot = self._cat_traffic_data(self.packages[0], uid)
 
                 if traffic_snapshot.source == "" or traffic_snapshot.source is None:
-                    self._stop_event.wait(max(0, min(self._interval, end_time - time.time())))
+                    self._wait_for_next_sample(self._interval, end_time)
                     continue
 
                 if self.traffic_init:
@@ -285,18 +291,20 @@ class TrafficCollecor:
                 logger.debug(" -----------traffic timeconsumed: " + str(time_consume))
                 # 扣除命令执行耗时，使采样周期尽量接近配置间隔。
                 delta_inter = self._interval - time_consume
-                if delta_inter > 0:
-                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
+                self._wait_for_next_sample(delta_inter, end_time)
             except RuntimeError as e:
                 logger.error(" trafficstats RuntimeError ")
                 logger.error(e)
+                self._wait_for_next_sample(self._interval, end_time)
             except Exception:
                 logger.error("an exception hanpend in traffic thread , reason unkown! e: ")
                 s = traceback.format_exc()
                 logger.debug(s)
+                self._wait_for_next_sample(self._interval, end_time)
 
     def get_traffic_with_dev(self):
         end_time = time.time() + self._timeout
+        self.traffic_init = True
         traffic_title = [
             "datetime",
             "device_total(KB)",
@@ -314,7 +322,8 @@ class TrafficCollecor:
         except RuntimeError as e:
             logger.error(e)
         self.device_init_net = None
-        self.pck_init_net_list = []
+        # 包名映射同时保存 PID；进程重启后必须重新建立该包的累计流量基线。
+        process_baselines = {}
         while not self._stop_event.is_set() and time.time() < end_time:
             try:
                 before = time.time()
@@ -325,11 +334,12 @@ class TrafficCollecor:
                 device_cur_net = self._cat_traffic_device_dev()
 
                 if device_cur_net.source == "" or device_cur_net.source is None:
-                    self._stop_event.wait(max(0, min(self._interval, end_time - time.time())))
+                    self._wait_for_next_sample(self._interval, end_time)
                     continue
 
                 if self.traffic_init:
                     self.device_init_net = device_cur_net
+                    self.traffic_init = False
                 device_grow = self.get_net_from_begin(self.device_init_net, device_cur_net)
                 collection_time = time.time()
                 logger.debug(" collection time in traffic is : " + str(collection_time))
@@ -340,24 +350,26 @@ class TrafficCollecor:
                     TrafficUtils.byte2kb(device_grow.tx),
                 ]
                 self.total_pck_net = 0
-                for i in range(0, len(self.packages)):
-                    pid = self.device.adb.get_pid_from_pck(self.packages[i])
+                for package in self.packages:
+                    pid = self.device.adb.get_pid_from_pck(package)
                     if pid is None:
-                        logger.error(f"package pid not found {self.packages[i]}:")
+                        logger.error(f"package pid not found {package}:")
+                        net_row.extend([package, "", "", "", ""])
                         continue
                     pck_net_info = self._cat_traffic_pid_dev(pid)
                     if not pck_net_info.source:
-                        logger.error(f"package net dev failed {self.packages[i]}:")
+                        logger.error(f"package net dev failed {package}:")
+                        net_row.extend([package, pid, "", "", ""])
                         continue
-                    if self.traffic_init:
-                        self.pck_init_net_list.append(pck_net_info)
-                        if i == len(self.packages) - 1:
-                            self.traffic_init = False
-                    pck_grow = self.get_net_from_begin(self.pck_init_net_list[i], pck_net_info)
+                    baseline = process_baselines.get(package)
+                    if baseline is None or baseline[0] != pid:
+                        baseline = (pid, pck_net_info)
+                        process_baselines[package] = baseline
+                    pck_grow = self.get_net_from_begin(baseline[1], pck_net_info)
                     self.total_pck_net = self.total_pck_net + pck_grow.total
                     net_row.extend(
                         [
-                            self.packages[i],
+                            package,
                             pid,
                             TrafficUtils.byte2kb(pck_grow.rx),
                             TrafficUtils.byte2kb(pck_grow.tx),
@@ -384,15 +396,16 @@ class TrafficCollecor:
                 logger.debug(" -----------traffic timeconsumed: " + str(time_consume))
                 # 扣除命令执行耗时，使采样周期尽量接近配置间隔。
                 delta_inter = self._interval - time_consume
-                if delta_inter > 0:
-                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
+                self._wait_for_next_sample(delta_inter, end_time)
             except RuntimeError as e:
                 logger.error(" trafficstats RuntimeError ")
                 logger.error(e)
+                self._wait_for_next_sample(self._interval, end_time)
             except Exception:
                 logger.error("an exception hanpend in traffic thread , reason unkown! e: ")
                 s = traceback.format_exc()
                 logger.debug(s)
+                self._wait_for_next_sample(self._interval, end_time)
 
     def get_traffic_init_data(self, traffic_snapshot):
         # 设备返回的是开机累计值，保存首轮快照才能计算本次采集增量。

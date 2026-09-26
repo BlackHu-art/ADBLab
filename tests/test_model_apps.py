@@ -490,6 +490,7 @@ def test_adb_testing_shutdown_stops_managed_processes():
 def test_run_monkey_test_reports_nonzero_exit_as_failure(tmp_path):
     model = ADBTesting()
     model._procs = Mock()
+    model._procs.active_keys = []
     logcat_proc = Mock()
     monkey_proc = Mock(pid=1234)
     monkey_proc.poll.side_effect = [None, 1, 1]
@@ -520,6 +521,7 @@ def test_run_monkey_test_reports_nonzero_exit_as_failure(tmp_path):
 def test_run_monkey_test_reports_repeated_timeouts_as_failure(tmp_path):
     model = ADBTesting()
     model._procs = Mock()
+    model._procs.active_keys = []
     logcat_proc = Mock()
     monkey_proc = Mock(pid=1234)
     monkey_proc.poll.return_value = None
@@ -686,8 +688,7 @@ def test_app_controller_install_submission_uses_metadata_without_early_completio
 
 
 def test_app_controller_direct_async_paths_skip_python_executor():
-    controller = Mock()
-    controller._require_devices.return_value = True
+    controller = ADBAppMixin.__new__(ADBAppMixin)
     controller._pending_lock = threading.Lock()
     controller._batch_starts = {}
     controller.device_batches = DeviceBatchUseCase(OperationManager())
@@ -701,9 +702,22 @@ def test_app_controller_direct_async_paths_skip_python_executor():
     ADBAppMixin.get_current_activity(controller, ["device-1"])
 
     controller.executor.submit.assert_not_called()
-    controller.app_model.clear_app_data_async.assert_called_once_with("device-1", "com.example", 1)
-    controller.app_model.restart_app_async.assert_called_once_with("device-1", "com.example", 1)
-    controller.app_model.get_current_activity_async.assert_called_once_with("device-1", 1)
+    for operation, method, args in (
+        ("clear_data", "clear_app_data_async", ("device-1", "com.example", 1)),
+        ("restart_app", "restart_app_async", ("device-1", "com.example", 1)),
+        ("current_activity", "get_current_activity_async", ("device-1", 1)),
+    ):
+        start = controller._batch_starts[operation]
+        context = {
+            "_device_batch_id": start.operation_id,
+            "_device_batch_unit_id": start.units[0].unit_id,
+            "device_ip": "device-1", "index": 1,
+        }
+        if operation != "current_activity":
+            context["package_name"] = "com.example"
+        getattr(controller.app_model, method).assert_called_once_with(
+            *args, _result_context=context,
+        )
 
 
 def test_reject_concurrent_batch_blocks_second_same_op_start():
@@ -716,8 +730,13 @@ def test_reject_concurrent_batch_blocks_second_same_op_start():
 
     ADBAppMixin.uninstall_apk(controller, ["device-1"], "com.example")
 
+    start = controller._batch_starts["uninstall"]
     controller.app_model.uninstall_app_async.assert_called_once_with(
-        "device-1", "com.example", 1
+        "device-1", "com.example", 1, _result_context={
+            "_device_batch_id": start.operation_id,
+            "_device_batch_unit_id": start.units[0].unit_id,
+            "device_ip": "device-1", "index": 1, "package_name": "com.example",
+        },
     )
     assert "uninstall" in controller._batch_starts
 

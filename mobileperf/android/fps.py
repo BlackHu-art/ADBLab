@@ -32,7 +32,7 @@ class SurfaceStatsCollector:
         self.use_legacy_method = use_legacy
         self.surface_before = 0
         self.last_timestamp = 0
-        self.data_queue = queue.Queue()
+        self.data_queue = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
         self.focus_window = None
         # 该队列用于向上层采集线程报告结果。
@@ -69,7 +69,7 @@ class SurfaceStatsCollector:
             self.collector_thread = None
         # 计算线程依赖采集线程写入的 "Stop" 哨兵退出；采集线程异常或未启动时补发，
         # 避免计算线程在 data_queue.get() 上无限阻塞。
-        self.data_queue.put("Stop")
+        self._put_latest("Stop")
         if hasattr(self, "calculator_thread") and self.calculator_thread:
             self.calculator_thread.join(timeout=2)
             self.calculator_thread = None
@@ -233,6 +233,18 @@ class SurfaceStatsCollector:
 
         self.stop_event.wait(self.frequency)
 
+    def _put_latest(self, data) -> None:
+        """只保留最新采样或停止信号，避免计算线程落后时无限积压。"""
+        while True:
+            try:
+                self.data_queue.put_nowait(data)
+                return
+            except queue.Full:
+                try:
+                    self.data_queue.get_nowait()
+                except queue.Empty:
+                    pass
+
     def _collector_thread(self):
         """循环采集帧数据。
 
@@ -247,7 +259,8 @@ class SurfaceStatsCollector:
                 if self.use_legacy_method:
                     surface_state = self._get_surface_stats_legacy()
                     if surface_state:
-                        self.data_queue.put(surface_state)
+                        self._put_latest(surface_state)
+                    self.stop_event.wait(max(0, self.frequency - (time.time() - before)))
                 else:
                     timestamps = []
                     refresh_period, new_timestamps = self._get_surfaceflinger_frame_data()
@@ -278,7 +291,7 @@ class SurfaceStatsCollector:
                             self._pause_interval()
                             continue
                     logger.debug(timestamps)
-                    self.data_queue.put((refresh_period, timestamps, time.time()))
+                    self._put_latest((refresh_period, timestamps, time.time()))
                     time_consume = time.time() - before
                     delta_inter = self.frequency - time_consume
                     if delta_inter > 0:
@@ -289,7 +302,7 @@ class SurfaceStatsCollector:
                 logger.debug(s)
                 # 畸形帧数据会持续抛异常；没有这次等待就退化成高频空转与日志刷屏。
                 self._pause_interval()
-        self.data_queue.put("Stop")
+        self._put_latest("Stop")
 
     def _clear_surfaceflinger_latency_data(self):
         """清空 SurfaceFlinger 延迟数据，并返回设备是否支持该命令。

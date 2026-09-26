@@ -164,6 +164,10 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        settings = getattr(self._frame, "_settings_page", None)
+        client_card = getattr(settings, "adb_client_card", None)
+        if client_card is not None:
+            client_card.prepare_shutdown()
         connection = getattr(self._frame, "_connection_panel", None)
         if connection is not None:
             connection.prepare_shutdown()
