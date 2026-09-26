@@ -140,7 +140,7 @@ class ToastNotification(InfoBar):
             stack.arrange()
 
     def _adjustText(self) -> None:
-        """单行按实际字体分配宽度，优先保留正文、操作和关闭入口。"""
+        """短提示按全文分配宽度；超长诊断仍保留正文阅读、操作和关闭入口。"""
         if not self._ready:
             return
         owner = self.parentWidget()
@@ -150,29 +150,37 @@ class ToastNotification(InfoBar):
         title_metrics = self.titleLabel.fontMetrics()
         # 整数度量可能向下取整，省略绘制仍用小数宽度，短标题也会因此少一个字。
         title_natural = ceil(QFontMetricsF(self.titleLabel.font()).horizontalAdvance(title))
-        body_natural = self.content_edit.fontMetrics().horizontalAdvance(self.content_edit.text())
+        body_natural = ceil(QFontMetricsF(self.content_edit.font()).horizontalAdvance(
+            self.content_edit.text()
+        )) + 8
         action_natural = 0
         if self.action_button is not None:
-            action_natural = self.action_button.fontMetrics().horizontalAdvance(
+            action_natural = ceil(QFontMetricsF(self.action_button.font()).horizontalAdvance(
                 self._action_text
-            ) + 32
+            )) + 32
         margins = self.hBoxLayout.contentsMargins()
         fixed_width = margins.left() + margins.right() + self.iconWidget.width()
         fixed_width += self.closeButton.width() + 12
         gap = (8 if title else 0) + (8 if self.action_button is not None else 0)
-        natural = fixed_width + gap + title_natural + body_natural + action_natural + 8
+        natural = fixed_width + gap + title_natural + body_natural + action_natural
         width = max(1, min(max(240, natural), 600, owner.width() - 48))
         available = max(1, width - fixed_width - gap)
         action_height = 0
         if self.action_button is not None:
-            action_width = min(action_natural, available // 2)
+            action_width = min(
+                action_natural, max(available // 2, available - title_natural - body_natural)
+            )
             self.action_button.setFixedWidth(action_width)
             self.action_button.setText(self.action_button.fontMetrics().elidedText(
                 self._action_text, Qt.TextElideMode.ElideRight, max(1, action_width - 32),
             ))
             action_height = self.action_button.sizeHint().height()
             available -= action_width
-        title_width = min(title_natural, max(0, (available - 1) // 2))
+        # 全文能放下时不均分文字区，避免短正文旁的四字标题仍被省略。
+        title_width = (
+            title_natural if title_natural + body_natural <= available
+            else min(title_natural, max(0, (available - 1) // 2))
+        )
         self.titleLabel.setVisible(bool(title))
         self.titleLabel.setFixedWidth(title_width)
         self.titleLabel.setFixedHeight(title_metrics.height())

@@ -96,6 +96,101 @@ def test_connection_history_starts_at_top_and_last_row_can_be_filled(
     assert panel.is_expanded
 
 
+def test_wide_qr_page_places_actions_after_code_and_keeps_tabs_compact(qt_application):
+    config = replace(BaseStyles.current_font_config(), ui_size=12)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(900, 300)
+    panel.expand([("QA phone", "192.0.2.1:5555")])
+    qr = segno.make_qr("WIFI:T:ADB;S:studio-00000000000000000000;P:XXXXXXXXXXXXXXXXXXXXXXXX;;")
+    buffer = io.BytesIO()
+    qr.save(buffer, kind="png", scale=6, border=4)
+    modules = qr.symbol_size(scale=1, border=4)[0]
+    pairing.qr_ready.emit(1, buffer.getvalue(), modules)
+    pairing.publish("WaitingForScan", remaining=120)
+    try:
+        wait_until(qt_application, lambda: ("ack", 1) in pairing.calls)
+        for _ in range(8):
+            qt_application.processEvents()
+        code = QRect(panel.qr_label.mapTo(panel, QPoint()), panel.qr_label.size())
+        refresh = QRect(panel.refresh_button.mapTo(panel, QPoint()), panel.refresh_button.size())
+        stop = QRect(panel.cancel_button.mapTo(panel, QPoint()), panel.cancel_button.size())
+        assert panel.qr_text.mapTo(panel, QPoint(panel.qr_text.width(), 0)).x() <= code.left()
+        assert code.right() < refresh.left() < stop.left()
+        assert abs(refresh.bottom() - stop.bottom()) <= 1
+        assert panel.height() <= 250
+        pixmap = panel.qr_label.pixmap()
+        assert pixmap.width() % modules == 0
+        assert pixmap.width() / pixmap.devicePixelRatioF() >= 164
+        height = panel.height()
+        pairing.finish("Idle", "")
+        for page in ("manual", "address"):
+            panel.request_page(page)
+            for _ in range(8):
+                qt_application.processEvents()
+            assert panel.height() == height
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+
+
+def test_qr_feedback_uses_full_width_and_retry_restores_compact_actions(qt_application):
+    config = replace(BaseStyles.current_font_config(), ui_size=12)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(900, 300)
+    panel.expand([("QA phone", "192.0.2.1:5555")])
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    try:
+        pairing.finish("Failed", "mdns_unavailable")
+        settle()
+        assert panel.status_box.width() == panel.qr_page.width()
+        code_bottom = panel.qr_label.mapTo(panel, panel.qr_label.rect().bottomLeft()).y()
+        assert panel.status_box.mapTo(panel, QPoint()).y() > code_bottom
+        assert panel.status_detail.isVisible()
+        assert panel.rect().contains(
+            QRect(panel.status_detail.mapTo(panel, QPoint()), panel.status_detail.size())
+        )
+
+        pairing.continuation = object()
+        pairing.finish("PairedOnly", "connection_timeout")
+        panel.connection_address.setText("192.0.2.1:45111")
+        settle()
+        assert panel.status_box.width() == panel.qr_page.width()
+        assert panel.continue_button.isEnabled()
+        for widget in (panel.connection_address, panel.continue_button, panel.use_address_button):
+            assert panel.rect().contains(QRect(widget.mapTo(panel, QPoint()), widget.size()))
+
+        panel.refresh_button.click()
+        settle()
+        assert panel.height() <= 250
+        code_right = panel.qr_label.mapTo(panel, panel.qr_label.rect().topRight()).x()
+        assert panel.refresh_button.mapTo(panel, QPoint()).x() > code_right
+        for width in (600, 360, 900):
+            panel.resize(width, panel.height())
+            settle()
+            for widget in (
+                panel.qr_label, panel.status_label, panel.refresh_button, panel.cancel_button,
+            ):
+                assert panel.rect().contains(QRect(widget.mapTo(panel, QPoint()), widget.size()))
+        assert panel.height() <= 250
+        code_right = panel.qr_label.mapTo(panel, panel.qr_label.rect().topRight()).x()
+        assert panel.refresh_button.mapTo(panel, QPoint()).x() > code_right
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+
+
 @pytest.mark.parametrize(
     "width,language,font_size",
     [

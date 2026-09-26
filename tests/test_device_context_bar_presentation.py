@@ -2,16 +2,23 @@
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QStyle,
+    QStyleOptionButton,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import ComboBox, PushButton
 from shiboken6 import isValid
 
 from gui.pages.device_hub import DeviceHubPage
 from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceContextBar
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 @pytest.fixture
@@ -418,6 +425,64 @@ def test_global_labels_survive_discovery_reorder_offline_and_selection_changes(b
     assert bar.device_label("demo-c") == "设备 3 · Phone"
     bar.set_context(["demo-c"], ["demo-c"], "ready")
     assert bar._picker.device_list.item(0).text() == "设备 3 · Phone"
+
+
+@pytest.mark.parametrize("width,font_size", [(400, 12), (730, 12), (650, 22)])
+def test_single_device_header_keeps_normal_name_fully_visible(
+    bar_window, qt_application, monkeypatch, width, font_size,
+):
+    """普通型号不应被重复前缀或按钮样式额外省略，完整归属仍可辅助读取。"""
+    window, bar = bar_window
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size),
+    ))
+    bar._apply_fonts()
+    source = ComboBox(window)
+    source.addItem("demo-a", userData="demo-a")
+    bar.set_device_labels({"demo-a": "Redmi 23113RKC6C"})
+    bar.set_session_context(source, None)
+    window.resize(width, 680)
+    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button))
+
+    button = bar.targets_button
+    assert "Redmi 23113RKC6C" in button.text()
+    assert "设备 1" in button.text()
+    assert button.width() >= button.sizeHint().width()
+    assert "当前设备 · 设备 1 · Redmi 23113RKC6C" in button.toolTip()
+    assert "当前设备 · 设备 1 · Redmi 23113RKC6C" == button.accessibleName()
+    assert bar.rect().contains(QRect(button.mapTo(bar, QPoint()), button.size()))
+    assert bar.session_combo.currentData() == "demo-a"
+
+
+@pytest.mark.parametrize("family", ["Microsoft YaHei", "Segoe UI"])
+@pytest.mark.parametrize("font_size", [12, 22])
+@pytest.mark.parametrize("letter_spacing", [0.0, 1 / 32])
+def test_batch_device_header_does_not_elide_text_that_fits(
+    bar_window, qt_application, monkeypatch, family, font_size, letter_spacing,
+):
+    """字体的小数宽度不能被取整截短；常规短名称必须完整交给真实按钮绘制。"""
+    window, bar = bar_window
+    font = QFont(family, font_size)
+    # 原生 DirectWrite 默认返回小数宽度，额外字距让离屏字体也覆盖同一边界。
+    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: font,
+    ))
+    bar._apply_fonts()
+    bar.set_context(["demo-a"], ["demo-a"], "ready")
+    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button))
+
+    button = bar.targets_button
+    expected = "操作设备 · 1 台"
+    assert button.text() == expected
+    option = QStyleOptionButton()
+    button.initStyleOption(option)
+    content_rect = button.style().subElementRect(
+        QStyle.SubElement.SE_PushButtonContents, option, button,
+    )
+    assert content_rect.width() >= QFontMetricsF(button.font()).horizontalAdvance(expected)
+    assert expected in button.toolTip()
+    assert bar.rect().contains(QRect(button.mapTo(bar, QPoint()), button.size()))
 
 
 def test_single_page_header_and_picker_show_only_current_operation_target(bar_window):

@@ -1,10 +1,11 @@
 """验证各页共用 Toast 的阅读范围、交互时序和窗口归属。"""
 
+from math import ceil
 from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QEnterEvent, QFont, QPalette
+from PySide6.QtGui import QEnterEvent, QFont, QFontMetricsF, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition
@@ -77,6 +78,34 @@ def test_long_title_is_readable_inside_bounded_toast(window, qt_application):
     assert notice.content_edit.text() == "文件大小：123 KB"
     assert notice.content_edit.width() > notice.titleLabel.width()
     assert notice.closeButton.isVisibleTo(notice)
+
+
+@pytest.mark.parametrize(
+    "title,content,action,font_size",
+    [
+        ("刷新设备", "已完成", "查看任务", 12),
+        ("刷新设备", "已完成", "查看任务", 22),
+        ("刷新设备", "已完成", None, 12),
+        ("Refresh devices", "Completed", "View task", 12),
+    ],
+)
+def test_short_notice_displays_complete_title_status_and_action(
+    window, qt_application, monkeypatch, title, content, action, font_size,
+):
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role", lambda *_args: QFont("Microsoft YaHei UI", font_size),
+    )
+    notice = show_toast(
+        window, title, content, duration=-1,
+        action_text=action, on_action=lambda: None,
+    )
+    qt_application.processEvents()
+    assert notice.titleLabel.text() == title
+    body_width = ceil(QFontMetricsF(notice.content_edit.font()).horizontalAdvance(content))
+    assert notice.content_edit.width() >= body_width + 6
+    if action:
+        assert notice.action_button.text() == action
+    assert window.rect().contains(notice.geometry())
 
 
 @pytest.mark.parametrize("width,font_size", [(360, 12), (360, 22), (860, 12), (860, 22)])

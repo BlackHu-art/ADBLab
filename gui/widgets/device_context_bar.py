@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from math import ceil
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QMouseEvent
+from PySide6.QtGui import QAction, QColor, QFontMetricsF, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -587,25 +588,31 @@ class DeviceContextBar(QWidget):
         """同一入口明确显示本页作用范围，避免把全局多选数误认为单设备页执行范围。"""
         if self._single_selection:
             device = str(self.session_combo.currentData() or "")
-            self._target_text = tr("当前设备 · {device}").format(
+            full_text = tr("当前设备 · {device}").format(
                 device=self.device_label(device) if device else tr("未选择"),
             )
+            # 按钮保留统一设备序号和名称，作用范围由悬停与辅助名称补全。
+            self._target_text = self.device_label(device) if device else full_text
+            status = ""
             if device and device not in self._connected:
-                self._target_text += " · " + tr("离线")
+                status = " · " + tr("离线")
             elif device and device not in self._selected:
-                self._target_text += " · " + tr("未勾选")
+                status = " · " + tr("未勾选")
+            self._target_text += status
+            full_text += status
             scope = tr("请选择一台操作设备；取消选择仍可查看缓存和停止任务。")
         else:
             self._target_text = (
                 tr("操作设备 · {count} 台").format(count=len(self._selected))
                 if self._selected else tr("操作设备 · 未选择")
             )
+            full_text = self._target_text
             scope = tr("操作会发送到全部已勾选设备；已运行任务保持原目标。")
         description = "\n".join(filter(None, (
-            self._target_text, scope, self.status_label.text(),
+            full_text, scope, self.status_label.text(),
             self._display_device_text(self.session_hint.toolTip()),
         )))
-        self.targets_button.setAccessibleName(self._target_text)
+        self.targets_button.setAccessibleName(full_text)
         self.targets_button.setAccessibleDescription(description)
         self.targets_button.setToolTip(description)
         self._sync_compact_mode()
@@ -871,9 +878,9 @@ class DeviceContextBar(QWidget):
         width = max(0, self.width() - 64)
         # 设备图标和下拉箭头分别占用两端，省略区不能覆盖任一入口提示。
         text_padding = 68
-        natural = (
-            self.targets_button.fontMetrics().horizontalAdvance(self._target_text) + text_padding
-        )
+        # 原生字体含小数宽度；取整舍入后再传给 elidedText 会误删仍放得下的末字。
+        metrics = QFontMetricsF(self.targets_button.font(), self.targets_button)
+        natural = ceil(metrics.horizontalAdvance(self._target_text)) + text_padding
         height = max(32, self.session_combo.fontMetrics().height() + 14)
         title_width = self.page_title.sizeHint().width() + 24
         self.page_title.setVisible(width >= natural + title_width)

@@ -269,7 +269,7 @@ class DeviceConnectionPanel(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 12)
-        self._layout.setSpacing(14)
+        self._layout.setSpacing(10)
         self.navigation = AdaptiveNavigation("connection", accessible_name="连接方式", parent=self)
         for key, text in zip(self.PAGES, ("扫码", "配对码", "IP 连接")):
             self.navigation.add_item(key, tr(text))
@@ -410,13 +410,13 @@ class DeviceConnectionPanel(QWidget):
 
     def _build_qr_page(self):
         self.qr_page = QWidget(self.stack)
-        self.qr_columns = QBoxLayout(QBoxLayout.Direction.LeftToRight, self.qr_page)
+        self.qr_columns = QGridLayout(self.qr_page)
         self.qr_columns.setContentsMargins(0, 0, 0, 0)
         self.qr_columns.setSpacing(24)
         self.qr_text = QWidget(self.qr_page)
         self.qr_text_layout = QVBoxLayout(self.qr_text)
         self.qr_text_layout.setContentsMargins(0, 0, 0, 0)
-        self.qr_text_layout.setSpacing(10)
+        self.qr_text_layout.setSpacing(8)
         self._label("扫码连接新设备", self.qr_text, self.qr_text_layout, strong=True)
         self._label("手机与电脑连接同一局域网。", self.qr_text, self.qr_text_layout)
         self._label(
@@ -425,7 +425,8 @@ class DeviceConnectionPanel(QWidget):
             self.qr_text_layout,
         )
         code_option = QWidget(self.qr_text)
-        code_option_layout = FlowLayout(code_option, isTight=True)
+        # 隐藏页仍参与三页等高测量，换页时保留配对码入口的自然高度。
+        code_option_layout = FlowLayout(code_option)
         code_option_layout.setContentsMargins(0, 0, 0, 0)
         self.code_hint = self._label("没有扫码入口？", code_option, code_option_layout)
         self.code_hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -437,20 +438,20 @@ class DeviceConnectionPanel(QWidget):
         self.code_button.clicked.connect(lambda: self.request_page("manual"))
         code_option_layout.addWidget(self.code_button)
         self.qr_text_layout.addWidget(code_option)
-        self.qr_status_slot = QWidget(self.qr_text)
+        self.qr_status_slot = QWidget(self.qr_page)
         self.qr_status_layout = QVBoxLayout(self.qr_status_slot)
         self.qr_status_layout.setContentsMargins(0, 0, 0, 0)
-        self.qr_text_layout.addWidget(self.qr_status_slot)
         self.qr_text_layout.addStretch()
-        self.qr_columns.addWidget(self.qr_text, 1)
+        self.qr_columns.addWidget(self.qr_text, 0, 0)
         self.qr_label = QLabel(self.qr_page)
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_label.setAccessibleName(tr("无线调试配对二维码"))
         self.qr_label.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.qr_label.setFixedSize(196, 196)
+        self.qr_label.setFixedSize(176, 176)
         self.qr_columns.addWidget(
-            self.qr_label, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+            self.qr_label, 0, 1, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
         )
+        self.qr_columns.addWidget(self.qr_status_slot, 0, 2)
         self.stack.addWidget(self.qr_page)
 
     def _build_manual_page(self):
@@ -869,7 +870,9 @@ class DeviceConnectionPanel(QWidget):
             viewport = area.viewport()
             bar = area.verticalScrollBar()
             offset = self.qr_label.mapTo(viewport, QPoint()).y()
-            bar.setValue(bar.value() + offset - max(0, (viewport.height() - 196) // 2))
+            bar.setValue(
+                bar.value() + offset - max(0, (viewport.height() - self.qr_label.height()) // 2)
+            )
         QTimer.singleShot(0, lambda: self._confirm_qr_visible(request_id, attempts))
 
     def _confirm_qr_visible(self, request_id, attempts):
@@ -903,7 +906,7 @@ class DeviceConnectionPanel(QWidget):
         if self._qr_image.isNull():
             return
         dpr = self.devicePixelRatioF()
-        scale = max(1, int(196 * dpr / self._qr_modules))
+        scale = max(1, int(self.qr_label.width() * dpr / self._qr_modules))
         side = scale * self._qr_modules
         pixmap = QPixmap.fromImage(
             self._qr_image.scaled(
@@ -956,29 +959,82 @@ class DeviceConnectionPanel(QWidget):
         )
         return QSize(text_width, max(height, bounds.height()))
 
-    def _normal_qr_status_height(self, width, control_height):
-        """正常扫码提示按实际字体换行；只预留常规操作行，不预留错误或续连表单。"""
+    def _qr_refresh_width(self):
         metrics = self.refresh_button.fontMetrics()
         padding = self.refresh_button.sizeHint().width() - metrics.horizontalAdvance(
             self.refresh_button.text()
         )
-        refresh_width = padding + max(
+        return padding + max(
             metrics.horizontalAdvance(tr(text)) for text in ("生成二维码", "刷新二维码")
         )
+
+    def _normal_qr_status_height(self, width, control_height):
+        """正常扫码提示按实际字体换行；只预留常规操作行，不预留错误或续连表单。"""
         sizes = (
             self._status_text_size(tr("等待手机扫码"), width, control_height),
             QSize(self.countdown_label.fontMetrics().horizontalAdvance("0:00"), control_height),
-            QSize(refresh_width, control_height),
+            QSize(self._qr_refresh_width(), control_height),
             QSize(self.cancel_button.sizeHint().width(), control_height),
         )
         x, total, row_height = 0, 0, 0
         for size in sizes:
-            if x and x + size.width() > width:
+            if x and x + size.width() > width - 1:
                 total += row_height + 10
                 x, row_height = 0, 0
             x += size.width() + 10
             row_height = max(row_height, size.height())
         return total + row_height
+
+    def _reflow_qr(self, width):
+        """常规扫码使用三栏；窄窗口、错误及续连表单改用通栏操作区。"""
+        # FlowLayout 以包含右边界的矩形判断换行，保留一像素避免按钮拆成两行。
+        side_width = 1 + max(
+            self._qr_refresh_width() + 10 + self.cancel_button.sizeHint().width(),
+            self.status_label.fontMetrics().horizontalAdvance(tr("等待手机扫码"))
+            + 10 + self.countdown_label.fontMetrics().horizontalAdvance("0:00"),
+        )
+        text_width = max(320, self.fontMetrics().horizontalAdvance("开发者选项 → 无线调试") + 48)
+        code_width = self.qr_label.width()
+        compact = (
+            width <= 440
+            or width < code_width + self.fontMetrics().horizontalAdvance("无线调试连接") + 48
+        )
+        wide = width >= text_width + code_width + side_width + 48
+        details = self.current_page == "qr" and (
+            bool(self.status_detail.text()) or not self.continuation_box.isHidden()
+        )
+        for widget in (self.qr_text, self.qr_label, self.qr_status_slot):
+            self.qr_columns.removeWidget(widget)
+        for column in range(3):
+            self.qr_columns.setColumnMinimumWidth(column, 0)
+            self.qr_columns.setColumnStretch(column, 0)
+        self.qr_columns.setHorizontalSpacing(24 if wide else 16)
+        self.qr_columns.setVerticalSpacing(12)
+        self.qr_status_slot.setMinimumWidth(0)
+        self.qr_status_slot.setMaximumWidth(16777215)
+        code_alignment = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        if compact:
+            self.qr_columns.addWidget(self.qr_label, 0, 0, 1, 2, code_alignment)
+            self.qr_columns.addWidget(self.qr_text, 1, 0, 1, 2)
+            self.qr_columns.addWidget(self.qr_status_slot, 2, 0, 1, 2)
+            self.qr_columns.setColumnStretch(0, 1)
+        else:
+            self.qr_columns.addWidget(self.qr_text, 0, 0)
+            self.qr_columns.addWidget(self.qr_label, 0, 1, code_alignment)
+            self.qr_columns.setColumnStretch(0, 1)
+            if wide:
+                self.qr_columns.setColumnMinimumWidth(0, text_width)
+                self.qr_columns.setColumnMinimumWidth(2, side_width)
+                self.qr_columns.setColumnStretch(2, 1)
+            if wide and not details:
+                self.qr_status_slot.setFixedWidth(side_width)
+                self.qr_columns.addWidget(
+                    self.qr_status_slot, 0, 2,
+                    Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight,
+                )
+            else:
+                self.qr_columns.addWidget(self.qr_status_slot, 1, 0, 1, 3 if wide else 2)
+        return side_width if wide and not details else width
 
     def _reflow(self):
         """断点使用实际可用宽度；字号增大时提前换行，三页按自然高度共用空间。"""
@@ -988,13 +1044,9 @@ class DeviceConnectionPanel(QWidget):
         margins = self.stack.contentsMargins()
         width = max(1, self.width() - margins.left() - margins.right())
         status_height = max(32, self.refresh_button.fontMetrics().height() + 16)
-        compact = (
-            width <= 440 or width < 196 + self.fontMetrics().horizontalAdvance("无线调试连接") + 48
-        )
-        qr_spacing = 12 if compact else (16 if width <= 580 else 24)
-        qr_text_width = width if compact else max(1, width - 196 - qr_spacing)
-        normal_status_height = self._normal_qr_status_height(qr_text_width, status_height)
-        active_status_width = qr_text_width if self.current_page == "qr" else width
+        qr_status_width = self._reflow_qr(width)
+        normal_status_height = self._normal_qr_status_height(qr_status_width, status_height)
+        active_status_width = qr_status_width if self.current_page == "qr" else width
         label_size = self._status_text_size(
             self.status_label.text(), active_status_width, status_height
         )
@@ -1010,10 +1062,6 @@ class DeviceConnectionPanel(QWidget):
         self.manual_status_slot.setMaximumHeight(
             16777215 if self.current_page == "manual" else status_height
         )
-        self.qr_columns.setDirection(
-            QBoxLayout.Direction.BottomToTop if compact else QBoxLayout.Direction.LeftToRight
-        )
-        self.qr_columns.setSpacing(qr_spacing)
         for widget in (self.address_field, self.code_field, self.pair_button):
             self.manual_fields.removeWidget(widget)
         for column in range(3):
