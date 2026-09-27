@@ -16,6 +16,7 @@ from core.settings_manager import DEFAULTS, AppSettings
 from gui.dialogs.performance_launcher import PerformancePage
 from gui.pages.workspace_features import WorkspaceFeatureHost
 from gui.styles import BaseStyles
+from tests.ui_geometry_helpers import wait_until
 
 
 @pytest.fixture
@@ -200,7 +201,8 @@ def test_collapsing_state_list_reclaims_space_without_stopping_collectors(host, 
     panel = host.performance_sessions
     expanded_height = panel.height()
     panel.section.toggle_button.click()
-    qt_application.processEvents()
+    # 子表隐藏后，父布局需要事件循环继续投递布局请求才会回收高度。
+    wait_until(qt_application, lambda: panel.table.isHidden() and panel.height() < expanded_height)
     assert panel.table.isHidden()
     assert panel.height() < expanded_height
     assert page._runner.is_running()

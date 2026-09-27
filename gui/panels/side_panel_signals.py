@@ -64,6 +64,7 @@ class SidePanelSignals(QObject):
     # ── 广播与 Activity ──
     send_broadcast_requested = Signal(list, str)  # 参数：设备列表、action
     start_activity_requested = Signal(list, str)  # 参数：设备列表、组件或 action
+    execute_intent_requested = Signal(list, object)  # 参数：设备快照、不可变 Intent 请求
 
     # ── 性能诊断 ──
     dumpsys_meminfo_requested = Signal(list, str)  # 参数：设备列表、包名

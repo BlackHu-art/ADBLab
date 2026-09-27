@@ -181,6 +181,24 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 
 ## MobilePerf 数据生命周期
 
+### 性能运行元数据
+
+`MobilePerfRunner.start()` 深复制本次配置并生成随机 `MOBILEPERF_RUN_ID`，采集 worker 在启动
+各监控器前写入结果目录中的 `performance_metadata_<run_id>.json`。结构化附件使用独立 schema 1，
+包含采集时间、ADBLab 版本、品牌/型号、Android/API/ABI、各目标进程的包版本及采样与 Monkey 参数。
+仅保存白名单字段，不写设备序列号、连接地址、文件路径或原始 dumpsys 输出；旧
+`device_test_info.txt` 的格式和内容边界保留。
+
+查询复用采集执行器，单项最多三秒、总预算十五秒并响应停止，同包多个进程复用一次版本查询。
+缺失字段显式为未知，不阻止正常指标采集；写入使用同目录临时文件、fsync 和原子替换。
+结果发现线程以冻结的运行标识和完成时间验证附件，读取最多 64 KiB + 1 字节并复核 schema 与
+字段，拒绝错配、损坏、过大、未来格式或晚到文件；GUI 只接收验证后的附件和版本摘要。
+
+版本摘要填入现有 `RunRecord.app_version`；单目标未知或摘要超过既有 200 字符上限时保留为空，
+多目标局部未知使用“—”，完整详情仍在附件中。旧记录继续显示未知版本，不迁移或改变
+`test_runs.json` schema。元数据状态与性能报告、进程退出状态分别判断，不能单凭附件存在宣告
+采集成功。
+
 ```mermaid
 flowchart TD
     Form["PerformancePage 表单"] --> Config["MobilePerfRunConfig"]

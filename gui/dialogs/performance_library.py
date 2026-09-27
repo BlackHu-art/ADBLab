@@ -169,13 +169,19 @@ class PerformanceLibrary:
         artifacts = []
         report_file = ""
         artifact_error = False
+        app_version = ""
+        metadata_status = "legacy"
         if artifact_snapshot is not None:
             artifact_error = artifact_snapshot.error
             report_file = artifact_snapshot.report_file
+            app_version = artifact_snapshot.app_version
+            metadata_status = artifact_snapshot.metadata_status
             if artifact_snapshot.result_dir:
                 artifacts.append(RunArtifact(tr("结果目录"), artifact_snapshot.result_dir))
             if report_file:
                 artifacts.append(RunArtifact(tr("性能报告"), report_file))
+            if artifact_snapshot.metadata_file:
+                artifacts.append(RunArtifact(tr("运行元数据"), artifact_snapshot.metadata_file))
         elif start_error is None:
             runner = self._frame._runner
             # 分别探测附件，保留仍可读取的部分；文件系统故障不能中断关闭归档。
@@ -205,12 +211,15 @@ class PerformanceLibrary:
             state, message = "partial", tr("采集已结束，结果可能不完整。")
         else:
             state, message = "failed", tr("采集结束，但未生成可用结果。")
+        if metadata_status not in {"complete", "legacy"}:
+            message += " " + tr("运行元数据不完整，部分版本或设备环境未知。")
         record = RunRecord(
             run_id=active.run_id, kind="performance", package_name=active.package_name,
             started_at=active.started_at, finished_at=max(active.started_at, time.time()),
             state=state,
             parameters=deepcopy(active.parameters), artifacts=tuple(artifacts), message=message,
             device_label=active.device_label,
+            app_version=app_version,
         )
         if self._active is active:
             self._active = None

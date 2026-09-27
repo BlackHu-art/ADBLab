@@ -1,6 +1,7 @@
 """验证独立 Monkey 方案、真实 seed 和终态记录保持同一次运行的身份。"""
 
 import copy
+import json
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +25,7 @@ from tests.test_responsive_panels import (
     _resize_feature_viewport,
     _show_feature_panel,
 )
+from tests.test_settings_persistence import isolated_settings as isolated_settings
 from tests.ui_geometry_helpers import assert_contained, assert_non_overlapping, wait_until
 
 
@@ -146,28 +148,46 @@ def test_named_scheme_round_trip_through_actual_bar_and_shared_library(
         library.deleteLater()
 
 
-def test_prepared_metadata_uses_versions_and_seed_does_not_enter_global_settings(apps, monkeypatch):
-    from core.settings_manager import AppSettings
+def test_prepared_metadata_uses_versions_and_seed_does_not_enter_global_settings(
+    qt_application, isolated_settings, monkeypatch, request,
+):
+    from core import settings_manager
 
-    settings = AppSettings.instance()
-    writes = []
-    monkeypatch.setattr(settings, "set", lambda key, value: writes.append((key, value)))
+    monkeypatch.setattr(settings_manager.AppSettings, "_schedule_save", lambda self: None)
+    warnings = []
+    monkeypatch.setattr(
+        settings_manager, "_log_error", lambda level, message: warnings.append((level, message)),
+    )
+    settings = settings_manager.AppSettings.instance()
+    apps = request.getfixturevalue("apps")
     starts = QSignalSpy(apps.signals.start_monkey_batch_requested)
     apps.apply_run_parameters(_parameters())
+    assert apps.capture_run_parameters()["package_name"] == "com.example.demo"
     apps._on_start_monkey()
     pending = apps._monkey_preparation
     apps.on_monkey_preparation_finished(pending.request_id, _success(pending))
+    assert starts.count() == 1
     parameters = starts.at(0)[1]
+    assert parameters["package_name"] == "com.example.demo"
     assert parameters["seed"] == 42 and parameters["seed_mode"] == "fixed"
     assert parameters["_target_metadata"]["demo-a"]["app_version"] == "1.0 (1)"
-    saved = next(value for key, value in writes if key == "monkey_params")
-    assert not {"seed", "seed_mode", "_target_metadata"} & saved.keys()
+    assert warnings == []
+    assert settings._save_atomic()
+    saved = json.loads(isolated_settings.read_text(encoding="utf-8"))["monkey_params"]
+    settings_manager.AppSettings._instance = None
+    reloaded = settings_manager.AppSettings.instance()
+    assert warnings == []
+    assert reloaded.get("monkey_params") == saved
+    assert saved.keys() == settings_manager.DEFAULTS["monkey_params"].keys()
+    assert (saved["events"], saved["throttle"], saved["ignore_security"]) == (100, 300, False)
+    assert not {"package_name", "seed", "seed_mode", "_target_metadata"} & saved.keys()
 
 
 @pytest.mark.parametrize("font_size,width", [(12, 960), (12, 292), (22, 960), (22, 292)])
 def test_scheme_bar_and_maximum_seed_fit_supported_viewports(
     qt_application, monkeypatch, font_size, width,
 ):
+    """方案行受视口约束，名称可缩略并保留全文提示，动作按钮和 seed 不裁剪。"""
     config = replace(
         BaseStyles.current_font_config(), ui_family="Microsoft YaHei UI", ui_size=font_size,
     )
@@ -188,7 +208,12 @@ def test_scheme_bar_and_maximum_seed_fit_supported_viewports(
         for widget in widgets:
             assert_contained(widget, apps.monkey_preset_bar)
             assert_contained(widget, apps.monkey_parameters_card)
-            assert widget.width() >= widget.minimumSizeHint().width()
+            if widget is apps.monkey_preset_bar.combo:
+                assert widget.width() >= widget.minimumWidth()
+                assert widget.toolTip() == widget.currentText()
+                assert widget.currentText()
+            else:
+                assert widget.width() >= widget.minimumSizeHint().width()
             assert widget.font().pointSize() == font_size
         assert_contained(apps.monkey_preset_bar, apps.monkey_parameters_card)
         assert_non_overlapping((

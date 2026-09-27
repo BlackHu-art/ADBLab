@@ -291,3 +291,50 @@ def test_visible_ui_literals_have_catalog_entries(language):
             ):
                 missing.append((str(path.relative_to(root)), node.lineno, node.args[0].value))
     assert not missing
+
+
+@pytest.mark.parametrize("language,advanced,add_extra,integer_error,metadata", [
+    ("en_US", "Advanced options", "Add broadcast extra",
+     "Integer extras must be 32-bit decimal integers", "Run metadata"),
+    ("zh_HK", "進階參數", "新增廣播參數",
+     "整數 Extra 必須是 32 位十進位整數", "執行中繼資料"),
+    ("zh_CN", "高级参数", "添加广播参数",
+     "整数 Extra 必须是 32 位十进制整数", "运行元数据"),
+])
+def test_intent_controls_and_validation_use_bundled_translations(
+    installed_translators, language, advanced, add_extra, integer_error, metadata,
+):
+    from tests.test_system_panel_categories import _build_system_panel
+
+    installed_translators(language)
+    panel, widget = _build_system_panel()
+    try:
+        panel.connect_signals()
+        form = panel.intent_controls
+        assert form.advanced_toggle.text() == advanced
+        assert form.add_extra.text() == add_extra
+        panel.broadcast_action.setText("demo.ACTION")
+        row = form.add_extra_row()
+        row.key.setText("count")
+        row.value_type.setCurrentIndex(2)
+        row.value.setText("invalid-number")
+        assert form.feedback.text() == integer_error
+        assert i18n.tr("运行元数据") == metadata
+    finally:
+        widget.close()
+        widget.deleteLater()
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("Extra 值不能包含控制字符", "Extra values cannot contain control characters"),
+    ("组件必须是文本", "The component must be text"),
+    ("Flags不能包含控制字符", "Flags cannot contain control characters"),
+    ("Intent 调试", "Intent debugging"),
+    ("运行元数据不完整，部分版本或设备环境未知。",
+     "Run metadata is incomplete; some version or device environment details are unknown."),
+])
+def test_intent_dynamic_errors_and_performance_metadata_have_english_translations(
+    installed_translators, source, expected,
+):
+    installed_translators("en_US")
+    assert i18n.tr(source) == expected

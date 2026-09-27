@@ -644,16 +644,17 @@ class PerformancePage(QWidget):
         self._set_progress(0)
 
     def _apply_monkey_control_widths(self):
+        """按合法最大值设置稳定输入下限，缩窄时保留文字与单位的完整显示。"""
         if not hasattr(self, "monkey_throttle_combo"):
             return
-        metrics = self.fontMetrics()
-        throttle_width = metrics.horizontalAdvance("2000") + 54
-        seed_width = metrics.horizontalAdvance("1000000") + 28
-        percent_width = metrics.horizontalAdvance("100") + 50
-        self.monkey_throttle_combo.setMinimumWidth(max(92, throttle_width))
-        self.monkey_seed_edit.setMinimumWidth(max(98, seed_width))
-        for combo in self.monkey_pct_combos.values():
-            combo.setMinimumWidth(max(72, percent_width))
+        for field in self._all_numeric_inputs():
+            padding = 44 if isinstance(field, StrictIntComboBox) else 28
+            width = field.fontMetrics().horizontalAdvance(str(field.maximum())) + padding
+            field.setMinimumWidth(max(96, width))
+        for field in (
+            self.package_edit, self.save_path_edit, self.exception_edit, self.phone_log_edit,
+        ):
+            field.setMinimumWidth(96)
 
     def _apply_theme(self, _value=None):
         self._max_log_lines = self._configured_log_max_lines()

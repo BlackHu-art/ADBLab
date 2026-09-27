@@ -1651,11 +1651,18 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
                 field_index = percentage_widgets.index(field)
                 label_pos = positions[label_index]
                 field_pos = positions[field_index]
-                # 宽窄布局均保持标签在字段正上方，只改变一行可容纳的字段组数。
-                assert (
-                    label_pos.column == field_pos.column
-                    and field_pos.row == label_pos.row + 1
-                ), (label_pos, field_pos)
+                # 正常宽度把标签放在选项前面，极窄时才退为同列上下排列。
+                if plan.mode.paired:
+                    assert (
+                        field_pos.column == label_pos.column + 1
+                        and field_pos.row == label_pos.row
+                    ), (label_pos, field_pos)
+                else:
+                    assert (
+                        label_pos.column == field_pos.column
+                        and field_pos.row == label_pos.row + 1
+                    ), (label_pos, field_pos)
+                assert label.buddy() is field
 
         before = parameter_binding.applied_plan
         assert before is not None
@@ -1704,7 +1711,7 @@ def test_monkey_fields_stay_visible_at_minimum_panel_width(
         ):
             plan = binding.applied_plan
             assert plan is not None
-            assert plan.mode.name == "stacked"
+            assert plan.mode.columns == 1
             for field in fields:
                 left = field.mapTo(content, field.rect().topLeft()).x()
                 assert 0 <= left < viewport_width, (plan.mode.name, left, viewport_width)
@@ -1742,7 +1749,7 @@ def test_monkey_parameter_and_percentage_fields_stay_readable_across_viewports(
         for field, maximum_text in maximum_texts.items():
             assert bool(field.property(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY))
             assert field.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY) == maximum_text
-            assert field.minimumWidth() >= field.sizeHint().width()
+            assert field.minimumWidth() >= 96
             edit_rect = _combo_edit_field_rect(field, width=field.minimumWidth())
             assert edit_rect.width() >= field.fontMetrics().horizontalAdvance(maximum_text)
         for width in range(180, 901, 16):
@@ -3375,7 +3382,9 @@ def test_system_real_reflow_preserves_all_binding_state_validators_and_one_signa
         assert _validator_signature(system.battery_val)[2:] == (1, 5)
         assert _validator_signature(system.emu_geo_lon)[2:5] == (-180.0, 180.0, 6)
         assert _validator_signature(system.emu_geo_lat)[2:5] == (-90.0, 90.0, 6)
-        assert _validator_signature(system.deep_link_uri)[2] == r"https?://\S+"
+        link_validator = system.deep_link_uri.validator()
+        assert link_validator.validate("demo://screen/detail", 0)[0].name == "Acceptable"
+        assert link_validator.validate("missing-scheme", 0)[0].name != "Acceptable"
         assert system.battery_label.buddy() is system.battery_val
         assert system.emu_label.buddy() is system.emu_sms_sender
 

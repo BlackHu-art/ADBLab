@@ -2641,6 +2641,7 @@ class MainFrame(FluentWindow):
             (LP.force_stop_requested, AC.force_stop),
             (LP.send_broadcast_requested, AC.send_broadcast),
             (LP.start_activity_requested, AC.start_activity),
+            (LP.execute_intent_requested, AC.execute_intent),
             (LP.open_deep_link_requested, AC.open_deep_link),
         ]
 

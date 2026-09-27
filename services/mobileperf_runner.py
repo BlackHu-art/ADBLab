@@ -13,12 +13,15 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
 from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
 from core.owned_process import OwnedWorkerProcess
+from services.performance_metadata import MetadataRead, metadata_filename, read_metadata
 from utils.console_colors import colorize_console, should_emit
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
@@ -51,6 +54,9 @@ class PerformanceArtifacts:
     result_dir: str = ""
     report_file: str = ""
     error: bool = False
+    metadata_file: str = ""
+    app_version: str = ""
+    metadata_status: str = "legacy"
 
 
 @dataclass(frozen=True)
@@ -61,23 +67,32 @@ class PerformanceResultQuery:
     baseline_dirs: tuple[tuple[str, tuple[int, int]], ...]
     baseline_reports: tuple[tuple[str, tuple[int, int]], ...]
     finished_at_ns: int = field(default_factory=time.time_ns)
+    run_id: str = ""
 
     def discover(self) -> PerformanceArtifacts:
         """在后台单次遍历目录及报告，保留可确认的部分结果和错误事实。"""
         directories = dict(self.baseline_dirs)
         reports = dict(self.baseline_reports)
-        found: list[tuple[int, str, str]] = []
+        found: list[tuple[int, str, str, MetadataRead]] = []
         error = False
         try:
             root = Path(self.root)
             if not root.exists():
-                return PerformanceArtifacts()
+                return PerformanceArtifacts(
+                    metadata_status="missing" if self.run_id else "legacy",
+                )
             for folder in root.iterdir():
                 if not folder.is_dir():
                     continue
                 try:
                     folder_stat = folder.stat()
                     signature = folder_stat.st_mtime_ns, folder_stat.st_size
+                    metadata = (
+                        read_metadata(
+                            folder / metadata_filename(self.run_id), expected_run_id=self.run_id,
+                            finished_at_ns=self.finished_at_ns,
+                        ) if self.run_id else MetadataRead(status="legacy")
+                    )
                     current_reports = []
                     for report in folder.glob("summary_*.xlsx"):
                         stat = report.stat()
@@ -88,19 +103,25 @@ class PerformanceResultQuery:
                             current_reports.append((stat.st_mtime_ns, str(report.absolute())))
                     if ((folder_stat.st_mtime_ns <= self.finished_at_ns
                          and signature != directories.get(MobilePerfRunner._path_key(folder)))
-                            or current_reports):
+                            or current_reports or metadata.path):
                         order = (max(current_reports)[0] if current_reports
                                  else folder_stat.st_mtime_ns)
                         found.append((order, str(folder.absolute()),
-                                      max(current_reports)[1] if current_reports else ""))
+                                      max(current_reports)[1] if current_reports else "", metadata))
                 except OSError:
                     error = True
         except OSError:
             error = True
         if not found:
-            return PerformanceArtifacts(error=error)
-        _, folder, report = max(found)
-        return PerformanceArtifacts(folder, report, error)
+            return PerformanceArtifacts(
+                error=error, metadata_status="missing" if self.run_id else "legacy",
+            )
+        # 随机运行标识比目录时间更精确；后续运行即使复用目录也不能抢占旧快照。
+        owned = [item for item in found if item[3].path]
+        _, folder, report, metadata = max(owned or found, key=lambda item: item[:3])
+        return PerformanceArtifacts(
+            folder, report, error, metadata.path, metadata.app_version, metadata.status,
+        )
 
 
 def normalize_local_path(path: str) -> str:
@@ -303,6 +324,7 @@ class MobilePerfRunner:
         self._residual_contexts: list[_MobilePerfRunContext] = []
         self._mode_contexts: list[_MobilePerfRunContext] = []
         self._last_config: MobilePerfRunConfig | None = None
+        self._metadata_run_id = ""
         self._last_exit_code: int | None = None
         self._baseline_package_root = ""
         self._baseline_result_dirs: dict[str, tuple[int, int]] = {}
@@ -343,6 +365,7 @@ class MobilePerfRunner:
         on_finished: Callable[[], None] | None = None,
     ) -> str:
         """创建临时配置并启动子进程，同时分别消费业务输出和开发诊断。"""
+        config = deepcopy(config)
         with self._state_lock:
             # 已退出进程的旧代写入可独立收尾；新运行使用不同路径，仍由监督接口保留旧资源。
             if self._residual_contexts:
@@ -362,6 +385,7 @@ class MobilePerfRunner:
             process_key = f"{self._process_key_prefix}_{generation}"
             self._process_key = process_key
             self._last_config = config
+            self._metadata_run_id = uuid4().hex
             self._last_exit_code = None
             self._capture_result_baseline(config)
             config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
@@ -382,6 +406,7 @@ class MobilePerfRunner:
                 adb_path = self._resolve_adb_path()
                 env["ADB_PATH"] = adb_path
                 env["MOBILEPERF_STOP_FILE"] = self._stop_path
+                env["MOBILEPERF_RUN_ID"] = self._metadata_run_id
                 env["MOBILEPERF_LOG_DIR"] = str(user_data_root() / "logs")
                 redaction_values = tuple(
                     self._sensitive_runtime_values(
@@ -601,6 +626,7 @@ class MobilePerfRunner:
             directories, reports = self._result_baseline_for(root)
             return PerformanceResultQuery(
                 str(root), tuple(directories.items()), tuple(reports.items()),
+                run_id=self._metadata_run_id,
             )
 
     def latest_report_file(

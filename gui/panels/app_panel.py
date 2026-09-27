@@ -4,10 +4,11 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
+    EditableComboBox,
     HeaderCardWidget,
     InfoBadge,
     InfoLevel,
@@ -229,7 +230,7 @@ class AppPanel(BasePanel):
         gm_l.setSpacing(8)
         self.monkey_package_card = QWidget(g_m)
         package_info_layout = QVBoxLayout(self.monkey_package_card)
-        package_info_layout.setContentsMargins(16, 0, 16, 0)
+        package_info_layout.setContentsMargins(0, 0, 0, 0)
         package_info_layout.setSpacing(4)
         self.monkey_target_summary = self._label("")
         self.monkey_target_summary.setTextFormat(Qt.TextFormat.PlainText)
@@ -248,16 +249,26 @@ class AppPanel(BasePanel):
         )
         apply_label_role(self.monkey_package_info, FontRole.UI, color_key="TEXT_SECONDARY")
         self.monkey_get_package_btn = self._b(
-            tr("获取包信息"), "target.svg", tooltip=tr("获取所选设备上的测试包安装状态与版本信息")
+            tr("获取包信息"), "target.svg", variant="ghost",
+            tooltip=tr("获取所选设备上的测试包安装状态与版本信息"),
         )
         self.monkey_cancel_prepare_btn = self._b(
-            tr("取消获取"), "x.svg", tooltip=tr("取消本次包信息查询，不会启动 Monkey")
+            tr("取消获取"), "x.svg", variant="ghost",
+            tooltip=tr("取消本次包信息查询，不会启动 Monkey"),
         )
         self.monkey_prepare_actions = QWidget()
+        # 两种动作共用按较大按钮测量的槽位，查询状态切换不改变摘要的可用宽度。
         prepare_actions_layout = QHBoxLayout(self.monkey_prepare_actions)
         prepare_actions_layout.setContentsMargins(0, 0, 0, 0)
+        prepare_actions_layout.setSpacing(0)
+        prepare_actions_layout.addStretch(1)
+        prepare_slot = QWidget()
+        prepare_slot.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        prepare_actions_layout.addWidget(prepare_slot)
+        self._monkey_prepare_stack = QStackedLayout(prepare_slot)
+        self._monkey_prepare_stack.setContentsMargins(0, 0, 0, 0)
         for button in (self.monkey_get_package_btn, self.monkey_cancel_prepare_btn):
-            prepare_actions_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignRight)
+            self._monkey_prepare_stack.addWidget(button)
         self.monkey_target_header_binding = self._add_responsive_row(
             package_info_layout,
             (self.monkey_target_summary, 1),
@@ -273,7 +284,8 @@ class AppPanel(BasePanel):
         self.monkey_package_overview.setTextFormat(Qt.TextFormat.PlainText)
         apply_label_role(self.monkey_package_overview, FontRole.UI, color_key="TEXT_SECONDARY")
         self.monkey_package_details_btn = self._b(
-            tr("展开设备明细"), "list.svg", tooltip=tr("查看每台设备的安装版本和目标 SDK")
+            tr("展开设备明细"), "list.svg", variant="ghost",
+            tooltip=tr("查看每台设备的安装版本和目标 SDK"),
         )
         self.monkey_package_details_btn.setCheckable(True)
         self.monkey_package_details_btn.toggled.connect(self._toggle_monkey_package_details)
@@ -294,19 +306,24 @@ class AppPanel(BasePanel):
 
         self.monkey_parameters_card = QWidget(g_m)
         parameter_layout = QVBoxLayout(self.monkey_parameters_card)
-        parameter_layout.setContentsMargins(16, 16, 16, 16)
-        parameter_layout.setSpacing(16)
+        # 横向边界由外层分区统一提供，避免普通方案栏与受限响应行重复计算内缩。
+        parameter_layout.setContentsMargins(0, 8, 0, 8)
+        parameter_layout.setSpacing(8)
         self.monkey_parameters_heading = self._monkey_group_heading(tr("运行参数"))
         self.monkey_preset_bar = RunPresetBar(
             "monkey", self.capture_run_parameters, self.apply_run_parameters,
             self.monkey_parameters_card,
         )
-        # 方案栏自己按宽度换行；普通纵向布局保留完整行高，避免第二层网格裁剪按钮。
-        preset_header = QVBoxLayout()
-        preset_header.setSpacing(8)
-        preset_header.addWidget(self.monkey_parameters_heading)
-        preset_header.addWidget(self.monkey_preset_bar)
-        parameter_layout.addLayout(preset_header)
+        # 标题前置于方案，复用字段的视口约束；窄窗保留内部换行需要的自然行高。
+        self.monkey_preset_binding = self._add_responsive_row(
+            parameter_layout, self.monkey_parameters_heading, (self.monkey_preset_bar, 1),
+            compact_columns=1, medium_columns=1, wide_columns=2,
+            policies=(WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE),
+        )
+        self.monkey_preset_bar.installEventFilter(self)
+        preset_row = self.monkey_preset_binding._container_ref()
+        assert preset_row is not None
+        preset_row.installEventFilter(self)
 
         EVENTS_OPTS = ["100", "500", "1000", "5000", "10000", "50000", "100000", "500000"]
         THROTTLE_OPTS = [
@@ -356,6 +373,8 @@ class AppPanel(BasePanel):
         pct_widgets = []
         for label, key in pct_configs:
             lbl = self._label(label)
+            lbl.setWordWrap(False)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             c = _mk_combo(PCT_OPTS)
             self._set_combo_int_validator(c, 0, 100)
             c.currentTextChanged.connect(self._update_pct_total)
@@ -373,6 +392,9 @@ class AppPanel(BasePanel):
             self.monkey_throttle_label,
             self.monkey_throttle,
         )
+        for label in (self.monkey_events_label, self.monkey_throttle_label):
+            label.setWordWrap(False)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.monkey_parameter_binding = self._add_responsive_row(
             parameter_layout,
             *parameter_widgets,
@@ -384,15 +406,21 @@ class AppPanel(BasePanel):
                 WidthPolicy.SHRINKABLE,
             ),
             modes=(
-                self._monkey_field_mode("wide", 2, 0, 2),
-                self._monkey_field_mode("stacked", 1, 1, 2),
+                self._monkey_field_mode("wide", 2, 0),
+                self._monkey_field_mode("stacked", 1, 1),
+                GridMode("vertical", 1, 2),
             ),
         )
         self.monkey_seed_mode_label = self._label(tr("随机种子"))
         self.monkey_seed_mode = self._combo()
         self.monkey_seed_mode.addItem(tr("每次随机"), userData="random")
         self.monkey_seed_mode.addItem(tr("固定种子"), userData="fixed")
+        self.monkey_seed_mode.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+        self._refresh_responsive_widget_minimum(self.monkey_seed_mode)
         self.monkey_seed_label = self._label(tr("种子值"))
+        for label in (self.monkey_seed_mode_label, self.monkey_seed_label):
+            label.setWordWrap(False)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.monkey_seed = _mk_combo(["1", "42", "2026"])
         self._set_combo_int_validator(self.monkey_seed, 0, 2147483647)
         self.monkey_seed.setText("1")
@@ -400,14 +428,20 @@ class AppPanel(BasePanel):
         self.monkey_seed.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
         self.monkey_seed.setProperty(RESPONSIVE_MINIMUM_TEXT_PROPERTY, "2147483647")
         self._refresh_responsive_widget_minimum(self.monkey_seed)
+        self._monkey_inline_labels = (
+            self.monkey_events_label, self.monkey_throttle_label,
+            self.monkey_seed_mode_label, self.monkey_seed_label,
+            *self._monkey_pct_labels.values(),
+        )
         self.monkey_seed_binding = self._add_responsive_row(
             parameter_layout, self.monkey_seed_mode_label, self.monkey_seed_mode,
             self.monkey_seed_label, self.monkey_seed,
             spacing=10,
             policies=(WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE) * 2,
             modes=(
-                self._monkey_field_mode("wide", 2, 0, 2),
-                self._monkey_field_mode("stacked", 1, 1, 2),
+                self._monkey_field_mode("wide", 2, 0),
+                self._monkey_field_mode("stacked", 1, 1),
+                GridMode("vertical", 1, 2),
             ),
         )
         self.monkey_seed_mode.currentIndexChanged.connect(self._update_monkey_seed_state)
@@ -434,16 +468,16 @@ class AppPanel(BasePanel):
                 for policy in (WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE)
             ),
             modes=(
-                self._monkey_field_mode("three", 3, 0, len(pct_configs)),
-                self._monkey_field_mode("two", 2, 1, len(pct_configs)),
-                self._monkey_field_mode("stacked", 1, 2, len(pct_configs)),
+                self._monkey_field_mode("three", 3, 0),
+                self._monkey_field_mode("two", 2, 1),
+                self._monkey_field_mode("stacked", 1, 2),
+                GridMode("vertical", 1, 3),
             ),
         )
         self.monkey_chk_crashes = self._checkbox(tr("忽略崩溃"))
         self.monkey_chk_timeouts = self._checkbox(tr("忽略超时"))
         self.monkey_chk_security = self._checkbox(tr("忽略安全异常"))
         self.monkey_exceptions_heading = self._monkey_group_heading(tr("异常处理"))
-        parameter_layout.addWidget(self.monkey_exceptions_heading)
         self.monkey_exceptions_hint = self._label(tr("勾选后遇到相应异常仍继续测试。"))
         apply_label_role(self.monkey_exceptions_hint, FontRole.UI, color_key="TEXT_SECONDARY")
         self.monkey_exceptions_hint.hide()
@@ -454,13 +488,14 @@ class AppPanel(BasePanel):
             checkbox.setAccessibleDescription(self.monkey_exceptions_hint.text())
         self._add_responsive_row(
             parameter_layout,
+            self.monkey_exceptions_heading,
             self.monkey_chk_crashes,
             self.monkey_chk_timeouts,
             self.monkey_chk_security,
             spacing=8,
             compact_columns=1,
             medium_columns=2,
-            wide_columns=3,
+            wide_columns=4,
         )
         gm_l.addWidget(self.monkey_parameters_card)
 
@@ -468,28 +503,41 @@ class AppPanel(BasePanel):
             tr("开始测试"), "robot.svg", variant="accent", tooltip=tr("按当前配置启动 Monkey 测试")
         )
         self.kill_monkey_btn = self._b(
-            tr("停止测试"), "skull.svg", tooltip=tr("停止正在运行的 Monkey 测试")
+            tr("停止测试"), "stop-circle.svg", variant="ghost",
+            tooltip=tr("停止正在运行的 Monkey 测试"),
         )
         self.monkey_run_status = self._label("")
         self.monkey_run_status.setAccessibleName(tr("Monkey 运行状态"))
         apply_label_role(self.monkey_run_status, FontRole.UI, color_key="TEXT_SECONDARY")
+        action_slots = []
+        for button in (self.kill_monkey_btn, self.start_monkey_btn):
+            slot = QWidget(g_m)
+            slot_layout = QHBoxLayout(slot)
+            slot_layout.setContentsMargins(0, 0, 0, 0)
+            slot_layout.setSpacing(0)
+            slot_layout.addStretch(1)
+            slot_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignRight)
+            action_slots.append(slot)
         self.monkey_footer_binding = self._add_responsive_row(
             gm_l,
             (self.monkey_run_status, 1),
-            self.start_monkey_btn,
-            self.kill_monkey_btn,
-            spacing=16,
-            compact_columns=1,
-            medium_columns=1,
-            wide_columns=3,
+            *action_slots,
+            spacing=8,
+            modes=(
+                GridMode("inline", 3, 0, column_stretches=(1, 0, 0)),
+                GridMode(
+                    "actions", 2, 1,
+                    placements=(
+                        GridPlacement(0, 0, 0, column_span=2),
+                        GridPlacement(1, 1, 0), GridPlacement(2, 1, 1),
+                    ),
+                    column_stretches=(1, 0),
+                ),
+                GridMode("stacked", 1, 2),
+            ),
             policies=(WidthPolicy.WRAPPING, WidthPolicy.NATURAL, WidthPolicy.NATURAL),
         )
         self.monkey_run_actions = self.monkey_footer_binding._container_ref()
-        if (
-            self.monkey_run_actions is not None
-            and (footer_layout := self.monkey_run_actions.layout())
-        ):
-            footer_layout.setContentsMargins(16, 0, 16, 0)
         for button in (
             self.monkey_get_package_btn, self.monkey_cancel_prepare_btn,
             self.start_monkey_btn, self.kill_monkey_btn,
@@ -608,6 +656,51 @@ class AppPanel(BasePanel):
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
+    def refresh_responsive_metrics(self) -> bool:
+        """字段标签共用文字列宽，字体改变后仍让上下行输入起点保持一致。"""
+        labels = getattr(self, "_monkey_inline_labels", ())
+        label_width = max(
+            (label.fontMetrics().horizontalAdvance(label.text()) for label in labels), default=0,
+        )
+        changed = False
+        for label in labels:
+            if label.minimumWidth() != label_width:
+                label.setMinimumWidth(label_width)
+                changed = True
+        fields_changed = super().refresh_responsive_metrics()
+        return changed or fields_changed
+
+    @staticmethod
+    def _refresh_responsive_widget_minimum(widget: QWidget) -> None:
+        """Monkey 数值框按合法上限留足文本区，避免原生通用输入框的默认宽度挤压标签。"""
+        maximum_text = widget.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY)
+        if isinstance(widget, EditableComboBox) and maximum_text:
+            # 44 像素与基类的可编辑下拉框留白一致；字体改变时重新计算，不随输入值跳变。
+            text_width = widget.fontMetrics().horizontalAdvance(str(maximum_text))
+            widget.setMinimumWidth(max(96, text_width + 44))
+            return
+        BasePanel._refresh_responsive_widget_minimum(widget)
+
+    def eventFilter(self, watched, event):
+        """方案行按实际宽度测高，不把父布局临时分配的额外高度记录为最低高度。"""
+        row = self.monkey_preset_binding._container_ref()
+        if (
+            watched is self.monkey_preset_bar and event.type() == QEvent.Type.Resize
+            or watched is row and event.type() == QEvent.Type.LayoutRequest
+        ):
+            plan = self.monkey_preset_binding.applied_plan
+            if row is not None and plan is not None:
+                height = self.monkey_preset_bar.heightForWidth(self.monkey_preset_bar.width())
+                heading = self.monkey_parameters_heading
+                heading_height = heading.heightForWidth(heading.width())
+                if plan.mode.columns == 1:
+                    height += heading_height + plan.spacing
+                else:
+                    height = max(height, heading_height)
+                if row.minimumHeight() != height or row.maximumHeight() != height:
+                    row.setFixedHeight(height)
+        return super().eventFilter(watched, event)
+
     def _monkey_group_heading(self, text: str) -> BodyLabel:
         """沿用页面字体角色，以留白和字重区分 Monkey 内部表单组。"""
 
@@ -632,22 +725,15 @@ class AppPanel(BasePanel):
         )
 
     @staticmethod
-    def _monkey_field_mode(name: str, columns: int, rank: int, count: int) -> GridMode:
-        """标签始终在字段上方；按真实内容下限选择等宽的列数。"""
-
-        placements = []
-        for index in range(count):
-            row = (index // columns) * 2
-            column = index % columns
-            placements.extend((
-                GridPlacement(index * 2, row, column),
-                GridPlacement(index * 2 + 1, row + 1, column),
-            ))
+    def _monkey_field_mode(name: str, columns: int, rank: int) -> GridMode:
+        """标签在字段前面；按内容下限减少同行组数，保持标签和输入列各自对齐。"""
         return GridMode(
-            name, columns, rank,
-            placements=tuple(placements),
-            column_stretches=(1,) * columns,
-            equal_column_groups=(tuple(range(columns)),) if columns > 1 else (),
+            name, columns * 2, rank,
+            paired=True,
+            column_stretches=(0, 1) * columns,
+            equal_column_groups=(
+                tuple(range(0, columns * 2, 2)), tuple(range(1, columns * 2, 2)),
+            ) if columns > 1 else (),
         )
 
     def _update_monkey_presentation(self) -> None:
@@ -661,8 +747,6 @@ class AppPanel(BasePanel):
             if package else tr("未填写包名，将读取各设备前台应用。")
         )
         preparing = self._monkey_preparation is not None
-        self.monkey_get_package_btn.setVisible(not preparing)
-        self.monkey_cancel_prepare_btn.setVisible(preparing)
         if self._monkey_closed:
             status = tr("页面正在关闭")
         elif preparing:
@@ -1164,7 +1248,8 @@ class AppPanel(BasePanel):
 
         # 原全局设置保持既有字段；seed 和命名方案只通过独立测试库存储。
         AppSettings.instance().set("monkey_params", {
-            key: value for key, value in params.items() if key not in ("seed", "seed_mode")
+            key: value for key, value in params.items()
+            if key not in ("package_name", "seed", "seed_mode")
         })
         if metadata:
             params["_target_metadata"] = metadata
@@ -1316,6 +1401,15 @@ class AppPanel(BasePanel):
             self.btn_stop_record.setToolTip(tr("重新下载并保存原批次录屏"))
         monkey_running = bool(getattr(self, "_monkey_running", False))
         preparing = self._monkey_preparation is not None
+        query_enabled = (
+            has_device and not preparing and not monkey_running and not self._monkey_closed
+        )
+        incoming_query = (
+            self.monkey_cancel_prepare_btn if preparing else self.monkey_get_package_btn
+        )
+        # 先让替换按钮承接焦点，再禁用旧按钮，避免 Qt 沿 Tab 链跳到下方并触发滚动。
+        incoming_query.setEnabled(preparing if preparing else query_enabled)
+        self._monkey_prepare_stack.setCurrentWidget(incoming_query)
         self.monkey_parameters_card.setEnabled(
             not (monkey_running or preparing or self._monkey_closed)
         )
@@ -1334,7 +1428,7 @@ class AppPanel(BasePanel):
         )
         self._set_action_enabled(
             "monkey_get_package_btn",
-            has_device and not preparing and not monkey_running and not self._monkey_closed,
+            query_enabled,
             monkey_blocked_reason,
         )
         self._set_action_enabled(

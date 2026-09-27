@@ -46,6 +46,7 @@ ACTION_SIGNALS = {
     "force_stop_requested": _spec("force_stop", "apps.packages", "强行停止应用"),
     "send_broadcast_requested": _spec("send_broadcast", "system.intent", "发送广播"),
     "start_activity_requested": _spec("start_activity", "system.intent", "启动 Activity"),
+    "execute_intent_requested": _spec("execute_intent", "system.intent", "Intent 调试", "text"),
     "open_deep_link_requested": _spec("open_deep_link", "system.intent", "打开链接"),
     "start_monkey_requested": _spec("run_monkey_test", "apps.monkey", "Monkey 测试", "artifact"),
     "start_monkey_batch_requested": _spec(

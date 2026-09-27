@@ -3,10 +3,12 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
+import re
 import shlex
 from decimal import Decimal
 from typing import Any
 
+from services.intent_request import IntentRequest, broadcast_request, intent_arguments, validate_uri
 from utils.adb_values import (
     normalize_android_package,
     normalize_dumpsys_service,
@@ -14,6 +16,29 @@ from utils.adb_values import (
 )
 
 from .adb_model import async_command
+
+_INTENT_FAILURE = re.compile(
+    r"^\s*(?:Error(?:\s+type\s+\d+|:)|Exception(?:\s|:)"
+    r"|[\w.$]*Exception\b|Permission Denial:|Status:\s*(?:timeout|failed|error)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _execute_intent(model: Any, device_ip: str, request: IntentRequest) -> dict:
+    """执行已校验的单次 Intent；am 的错误回显优先于零退出码，保留原始详情供结果页查看。"""
+
+    try:
+        arguments = intent_arguments(request)
+    except ValueError as exc:
+        return {"success": False, "device_ip": device_ip, "error": str(exc)}
+    # am 可把业务失败写入 stderr 却返回零；固定重定向让两种 ADB 后端都能检查完整回显。
+    result = model._run(
+        ["adb", "-s", device_ip, "shell", *arguments, "2>&1"],
+        timeout=15, device_ip=device_ip,
+    )
+    if result.get("success") and _INTENT_FAILURE.search(str(result.get("output", ""))):
+        return {**result, "success": False, "error": "Android 拒绝执行 Intent，请查看结果详情"}
+    return result
 
 
 class ADBSystemMixin:
@@ -78,18 +103,13 @@ class ADBSystemMixin:
 
     @async_command
     def send_broadcast_async(self, device_ip: str, action: str, extras: dict | None = None) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "am", "broadcast", "-a", shlex.quote(action)]
-        if extras:
-            for k, v in extras.items():
-                if isinstance(v, bool):
-                    cmd.extend(["--ez", shlex.quote(str(k)), "true" if v else "false"])
-                elif isinstance(v, int):
-                    cmd.extend(["--ei", shlex.quote(str(k)), str(v)])
-                elif isinstance(v, float):
-                    cmd.extend(["--ef", shlex.quote(str(k)), str(v)])
-                else:
-                    cmd.extend(["--es", shlex.quote(str(k)), shlex.quote(str(v))])
-        return self._run(cmd, timeout=15, device_ip=device_ip)
+        """保留字典型 extras 入口，在 worker 内复核类型与范围后发送广播。"""
+
+        try:
+            request = broadcast_request(action, extras)
+        except ValueError as exc:
+            return {"success": False, "device_ip": device_ip, "error": str(exc)}
+        return _execute_intent(self, device_ip, request)
 
     # Activity 启动
 
@@ -104,29 +124,25 @@ class ADBSystemMixin:
         flags: str = "",
         wait: bool = False,
     ) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "am", "start"]
-        if component:
-            cmd.extend(["-n", shlex.quote(component)])
-        if action:
-            cmd.extend(["-a", shlex.quote(action)])
-        if data_uri:
-            cmd.extend(["-d", shlex.quote(data_uri)])
-        if mime_type:
-            cmd.extend(["-t", shlex.quote(mime_type)])
-        if flags:
-            cmd.extend(["-f", shlex.quote(flags)])
-        if wait:
-            cmd.append("-W")
-        return self._run(cmd, timeout=15, device_ip=device_ip)
+        """按结构化字段启动 Activity；不接收自由命令参数，非法字段不会发起 ADB。"""
+
+        return _execute_intent(self, device_ip, IntentRequest(
+            component=component, action=action, data_uri=data_uri,
+            mime_type=mime_type, flags=flags, wait=wait,
+        ))
 
     @async_command
     def open_deep_link_async(self, device_ip: str, uri: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "am", "start", "-d", shlex.quote(uri)],
-            timeout=15,
-            device_ip=device_ip,
-            uri=uri,
-        )
+        """用 VIEW 打开已校验 URI，保留自定义 scheme 的 Android 分派语义。"""
+
+        try:
+            uri = validate_uri(uri)
+        except ValueError as exc:
+            return {"success": False, "device_ip": device_ip, "error": str(exc)}
+        result = _execute_intent(self, device_ip, IntentRequest(
+            action="android.intent.action.VIEW", data_uri=uri,
+        ))
+        return {**result, "uri": uri}
 
     # 进程管理
 

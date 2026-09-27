@@ -60,7 +60,7 @@ class _PerformanceGrid(QWidget):
         self._columns = 0
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(12)
+        self._grid.setSpacing(8)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._reflow()
@@ -68,6 +68,11 @@ class _PerformanceGrid(QWidget):
     def _reflow(self) -> None:
         if not hasattr(self, "_grid"):
             return
+        fields = [widget for widget in self._widgets if isinstance(widget, _PerformanceField)]
+        label_width = max((field.label.sizeHint().width() for field in fields), default=0)
+        for field in fields:
+            if field.label.minimumWidth() != label_width:
+                field.label.setMinimumWidth(label_width)
         cell_width = max(
             176, self.fontMetrics().horizontalAdvance("0" * 12),
             self.fontMetrics().horizontalAdvance(self._minimum_cell_text),
@@ -77,20 +82,31 @@ class _PerformanceGrid(QWidget):
             for row in widget.findChildren(_PerformanceRow)
             if row._keep_inline
         )
-        cell_width = max([cell_width, *(row.minimumSizeHint().width() for row in unit_rows)])
-        columns = max(1, min(self._maximum_columns, (self.width() + 12) // (cell_width + 12)))
-        if columns == self._columns:
-            return
-        while self._grid.count():
-            self._grid.takeAt(0)
-        for column in range(self._maximum_columns):
-            self._grid.setColumnStretch(column, 1 if column < columns else 0)
-        for index, widget in enumerate(self._widgets):
-            self._grid.addWidget(
-                widget, index // columns, index % columns, Qt.AlignmentFlag.AlignTop
-            )
-        self._columns = columns
-        self.updateGeometry()
+        cell_width = max([
+            cell_width, *(row.minimumSizeHint().width() for row in unit_rows),
+            *(field.inline_minimum_width() for field in fields),
+        ])
+        gap = self._grid.horizontalSpacing()
+        columns = max(1, min(self._maximum_columns, (self.width() + gap) // (cell_width + gap)))
+        if columns != self._columns:
+            while self._grid.count():
+                self._grid.takeAt(0)
+            for column in range(self._maximum_columns):
+                self._grid.setColumnStretch(column, 1 if column < columns else 0)
+            for index, widget in enumerate(self._widgets):
+                self._grid.addWidget(
+                    widget, index // columns, index % columns, Qt.AlignmentFlag.AlignTop
+                )
+            self._columns = columns
+            self.updateGeometry()
+        # 字体同步或隐藏区展开会改变字段行高；即使列数未变也要向外传递高度下限。
+        height = self._grid.minimumSize().height()
+        if self.minimumHeight() != height:
+            self.setMinimumHeight(height)
+            if (parent := self.parentWidget()) is not None:
+                if layout := parent.layout():
+                    layout.invalidate()
+                parent.updateGeometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -101,6 +117,12 @@ class _PerformanceGrid(QWidget):
         if event.type() == QEvent.Type.FontChange:
             self._columns = 0
             self._reflow()
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest:
+            self._reflow()
+        return result
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, super().minimumSizeHint().height())
@@ -127,7 +149,10 @@ class _PerformanceRow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._keep_inline:
+        self._reflow()
+
+    def _reflow(self) -> None:
+        if not hasattr(self, "_box") or self._keep_inline:
             return
         required = sum(
             max(widget.minimumWidth(), widget.sizeHint().width()) for widget in self._widgets
@@ -139,9 +164,62 @@ class _PerformanceRow(QWidget):
             else QBoxLayout.Direction.LeftToRight
         )
 
+    def event(self, event):
+        result = super().event(event)
+        if event.type() in (QEvent.Type.LayoutRequest, QEvent.Type.FontChange):
+            self._reflow()
+        return result
+
     def minimumSizeHint(self) -> QSize:
         size = super().minimumSizeHint()
         return size if self._keep_inline else QSize(0, size.height())
+
+
+class _PerformanceField(QWidget):
+    """标签与选项优先同行，最窄视口整组改成上下排列而不拆开标签文字。"""
+
+    def __init__(self, label: BodyLabel, field: QWidget):
+        super().__init__()
+        self.label, self.field = label, field
+        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._box.setSpacing(8)
+        self._box.addWidget(label)
+        self._box.addWidget(field, 1)
+
+    def _field_minimum_width(self) -> int:
+        return max(96, self.field.minimumWidth(), self.field.minimumSizeHint().width())
+
+    def inline_minimum_width(self) -> int:
+        return (
+            max(self.label.minimumWidth(), self.label.sizeHint().width())
+            + self._box.spacing() + self._field_minimum_width()
+        )
+
+    def _reflow(self) -> None:
+        if not hasattr(self, "_box"):
+            return
+        self._box.setDirection(
+            QBoxLayout.Direction.LeftToRight
+            if self.width() >= self.inline_minimum_width()
+            else QBoxLayout.Direction.TopToBottom
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() in (QEvent.Type.LayoutRequest, QEvent.Type.FontChange):
+            self._reflow()
+        return result
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(
+            max(self.label.sizeHint().width(), self._field_minimum_width()),
+            super().minimumSizeHint().height(),
+        )
 
 
 class _PerformanceResultStack(QStackedWidget):
@@ -173,10 +251,10 @@ class _PerformanceViewToggle(QWidget):
     def addItem(self, route_key: str, text: str) -> None:
         button = TogglePushButton(text, self)
         button.setProperty("routeKey", route_key)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self.items[route_key] = button
         self._group.addButton(button)
-        self._row.addWidget(button, 1)
+        self._row.addWidget(button)
 
     def setCurrentItem(self, route_key: str) -> None:
         if route_key not in self.items or route_key == self._current_route_key:
@@ -201,9 +279,9 @@ class _PerformanceActionCard(QWidget):
         self._progress, self._stop, self._start = progress, stop, start
         self._mode = -1
         self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(16, 12, 16, 12)
+        self._grid.setContentsMargins(0, 4, 0, 4)
         self._grid.setHorizontalSpacing(8)
-        self._grid.setVerticalSpacing(12)
+        self._grid.setVerticalSpacing(8)
         self._grid.setColumnStretch(0, 1)
         for column, widget in enumerate((progress, stop, start)):
             self._grid.addWidget(widget, 0, column)
@@ -214,28 +292,38 @@ class _PerformanceActionCard(QWidget):
         progress.geometry_changed.connect(self._refresh_geometry)
 
     def _layout_mode(self, width: int) -> int:
+        margins = self._grid.contentsMargins()
+        width -= margins.left() + margins.right()
         actions_width = self._stop.sizeHint().width() + self._start.sizeHint().width() + 8
         status_width = max(280, self._progress.fontMetrics().horizontalAdvance("0" * 18))
-        if width - 32 >= status_width + actions_width + 8:
+        if width >= status_width + actions_width + 8:
             return 0
-        return 1 if width - 32 >= actions_width else 2
+        return 1 if width >= actions_width else 2
 
     def heightForWidth(self, width: int) -> int:
-        inner_width = max(1, width - 32)
+        margins = self._grid.contentsMargins()
+        inner_width = max(1, width - margins.left() - margins.right())
+        vertical_margin = margins.top() + margins.bottom()
         mode = self._layout_mode(width)
         button_height = max(self._stop.sizeHint().height(), self._start.sizeHint().height())
         if mode == 0:
             status_width = (
                 inner_width - self._stop.sizeHint().width() - self._start.sizeHint().width() - 16
             )
-            return max(self._progress.heightForWidth(status_width), button_height) + 24
-        return self._progress.heightForWidth(inner_width) + (button_height + 12) * mode + 24
+            return max(self._progress.heightForWidth(status_width), button_height) + vertical_margin
+        return (
+            self._progress.heightForWidth(inner_width)
+            + (button_height + self._grid.verticalSpacing()) * mode + vertical_margin
+        )
 
     def sizeHint(self) -> QSize:
         return QSize(720, self.heightForWidth(720))
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(0, self._progress.minimumSizeHint().height() + 24)
+        margins = self._grid.contentsMargins()
+        return QSize(
+            0, self._progress.minimumSizeHint().height() + margins.top() + margins.bottom()
+        )
 
     def _refresh_geometry(self) -> None:
         if self.isVisible():
@@ -352,7 +440,7 @@ class PerformanceLauncherForm:
         root = QVBoxLayout(self._frame)
         root.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(16)
+        root.setSpacing(12)
         self._frame._root_layout = root
 
         self._frame.header_card = QWidget()
@@ -362,7 +450,7 @@ class PerformanceLauncherForm:
         )
         header = QVBoxLayout(self._frame.header_card)
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(10)
+        header.setSpacing(8)
         self._frame.dialog_title = apply_label_role(
             BodyLabel(tr("性能采集")), FontRole.TITLE, color_key="TITLE_COLOR", bold=True
         )
@@ -394,7 +482,13 @@ class PerformanceLauncherForm:
         self._frame.log_view = self._build_log_view()
         self._frame._chart_toggle, self._frame._chart_stack = self._build_chart_toggle()
         self._frame._chart_stack.addWidget(self._frame.log_view)
-        results.addWidget(self._frame._chart_toggle)
+        result_actions = _PerformanceRow(
+            (self._frame.result_btn, self._frame.perfetto_btn), stretch_first=False
+        )
+        result_tools = _PerformanceRow((self._frame._chart_toggle, result_actions))
+        result_tools._box.setStretch(0, 0)
+        result_tools._box.insertStretch(1, 1)
+        self._section_toolbar(self._frame._results_group, result_tools)
         results.addWidget(self._frame._chart_stack, 1)
         result_hint = apply_label_role(
             BodyLabel(tr("图表在采集结束后生成；运行期间可查看日志。")),
@@ -403,16 +497,11 @@ class PerformanceLauncherForm:
         result_hint.setWordWrap(True)
         result_hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         results.addWidget(result_hint)
-        result_actions = _PerformanceRow(
-            (self._frame.result_btn, self._frame.perfetto_btn), stretch_first=False
-        )
-        result_actions.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        results.addWidget(result_actions)
         self._frame._config_group = QWidget()
         self._frame._config_group.setObjectName("performanceConfig")
         content_layout = QVBoxLayout(self._frame._config_group)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(16)
+        content_layout.setSpacing(12)
         content_layout.addWidget(self._frame.header_card)
         content_layout.addWidget(self._frame._configuration_group)
         content_layout.addWidget(self._frame._results_group, 1)
@@ -442,28 +531,31 @@ class PerformanceLauncherForm:
         card = ContentSection(title)
         card.setObjectName(name)
         card.setMinimumWidth(0)
-        card.headerLayout.setContentsMargins(16, 0, 16, 0)
+        card.headerLayout.setContentsMargins(0, 0, 0, 0)
         card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        card.viewLayout.setContentsMargins(16, 16, 16, 16)
-        card.viewLayout.setSpacing(16)
+        card.viewLayout.setContentsMargins(0, 8, 0, 8)
+        card.viewLayout.setSpacing(8)
         card.viewLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
         card.headerLabel.setProperty("performanceSectionTitle", True)
         apply_label_role(card.headerLabel, FontRole.UI, color_key="TITLE_COLOR", bold=True)
         card.headerLabel.setWordWrap(True)
         return card
 
+    def _section_toolbar(self, section: HeaderCardWidget, controls: QWidget) -> None:
+        """标题与工具共享一行，窄页按自然宽度换行，不重建控件或信号连接。"""
+        section.headerLayout.removeWidget(section.headerLabel)
+        row = _PerformanceRow((section.headerLabel, controls))
+        row._box.setStretch(0, 0)
+        row._box.setStretch(1, 1)
+        section.headerLayout.addWidget(row)
+
     def _field(self, key: str, title: str, field: QWidget, hint: str) -> QWidget:
         title, hint = tr(title), tr(hint)
-        container = QWidget()
-        container.setMinimumWidth(0)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         label = apply_label_role(BodyLabel(title), FontRole.UI)
         label.setObjectName("fieldLabel")
         label.setProperty("configurationKey", key)
-        label.setWordWrap(True)
+        label.setWordWrap(False)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         target = (
             field
             if field.focusPolicy() & Qt.FocusPolicy.TabFocus
@@ -480,9 +572,7 @@ class PerformanceLauncherForm:
             label.setBuddy(target)
             if not target.accessibleName():
                 target.setAccessibleName(title)
-        layout.addWidget(label)
-        field.setMinimumWidth(0)
-        layout.addWidget(field)
+        container = _PerformanceField(label, field)
         if hint:
             # 字段说明归输入目标所有，同一行的辅助按钮保留各自的操作提示。
             self._apply_hint(target if target is not None else field, hint)
@@ -499,25 +589,19 @@ class PerformanceLauncherForm:
         layout = QVBoxLayout(content)
         self._frame._content_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         target = self._section_card(tr("采集计划"), "performanceTarget")
         self._frame._diagnostic_tools = QWidget()
         self._frame._diagnostic_tools.setObjectName("performanceDiagnostics")
         self._frame._diagnostic_tools.setMinimumWidth(0)
         diagnostics = QVBoxLayout(self._frame._diagnostic_tools)
         diagnostics.setContentsMargins(0, 0, 0, 0)
-        diagnostics.setSpacing(12)
-        diagnostic_title = apply_label_role(
-            BodyLabel(tr("诊断选项")), FontRole.UI_SMALL,
-            color_key="TEXT_SECONDARY", bold=True,
-        )
-        diagnostic_title.setObjectName("performanceDiagnosticsTitle")
-        diagnostics.addWidget(diagnostic_title)
+        diagnostics.setSpacing(8)
         monkey = QWidget()
         monkey.setObjectName("performanceMonkey")
         monkey_layout = QVBoxLayout(monkey)
         monkey_layout.setContentsMargins(0, 0, 0, 0)
-        monkey_layout.setSpacing(16)
+        monkey_layout.setSpacing(8)
         layout.addWidget(target)
 
         self._frame.package_edit = LineEdit()
@@ -563,7 +647,7 @@ class PerformanceLauncherForm:
             parent=target,
         )
         self._frame.run_preset_bar.hide()
-        target.viewLayout.insertWidget(0, self._frame.run_preset_bar)
+        self._section_toolbar(target, self._frame.run_preset_bar)
 
         self._frame.frequency_input = StrictIntComboBox(1, 2_147_483_647, 5, presets=(1, 2, 5, 10))
         self._frame.timeout_input = StrictIntComboBox(
@@ -667,7 +751,7 @@ class PerformanceLauncherForm:
         container.setObjectName("performanceMonkeyOptions")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(8)
         self._frame.monkey_throttle_input = StrictIntComboBox(
             1, 2_147_483_647, 500, presets=(100, 200, 300, 500, 1000, 2000)
         )
@@ -932,7 +1016,7 @@ class PerformanceLauncherForm:
         """构建日志/图表切换条与承载栈（P3）：图表视图由页面注入到栈内。"""
 
         segmented = _PerformanceViewToggle()
-        segmented.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        segmented.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         segmented.addItem("log", tr("日志"))
         segmented.addItem("chart", tr("图表"))
         segmented.setCurrentItem("log")
@@ -958,7 +1042,7 @@ class PerformanceLauncherForm:
         if stack.currentIndex() == 1:
             height = max(380, self._frame.fontMetrics().height() * 12)
         else:
-            height = max(320, self._frame.log_view.fontMetrics().height() * 10 + 24)
+            height = max(220, self._frame.log_view.fontMetrics().height() * 8 + 24)
         stack.setMinimumHeight(height)
         stack.setMaximumHeight(16_777_215)
 

@@ -540,6 +540,48 @@ def test_dispatch_copies_and_deduplicates_targets_before_handler(result_frame):
     assert result_frame.adb_controller.action_results.recent()[0].targets == tuple(seen)
 
 
+@pytest.mark.parametrize("payload,state", [
+    ({"success": True, "output": "Status: ok"}, "succeeded"),
+    ({"success": False, "error": "Android rejected Intent"}, "failed"),
+    ({"success": False, "cancelled": True}, "cancelled"),
+])
+def test_intent_signal_uses_result_routing_duplicate_guard_and_close_boundary(
+    result_frame, monkeypatch, payload, state,
+):
+    from services.intent_request import IntentRequest
+
+    frame = result_frame
+    jobs = []
+    received = []
+    notices = []
+
+    def submit(devices, request):
+        received.append((devices, request))
+        jobs.extend(capture_action_job("start_activity_async", target) for target in devices)
+
+    frame.adb_controller.execute_intent.side_effect = submit
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
+    signal = frame.left_panel.signals.execute_intent_requested
+    request = IntentRequest(action="android.settings.SETTINGS", wait=True)
+    targets = ["demo-a", "demo-a", "demo-b"]
+    signal.emit(targets, request)
+    targets.clear()
+    signal.emit(["demo-a"], request)
+    assert received == [(["demo-a", "demo-b"], request)]
+    assert len(jobs) == 2
+    store = frame.adb_controller.action_results
+    assert store.recent()[0].spec.section == "system.intent"
+    assert store.recent()[0].state == "running"
+    for job in jobs:
+        store.complete(job, payload)
+    assert store.recent()[0].state == state
+    assert frame._task_page.action_results._records[jobs[0].request_id].state == state
+
+    frame._closing = True
+    signal.emit(["demo-a"], request)
+    assert len(received) == 1
+
+
 def test_request_level_failure_does_not_claim_all_devices_succeeded(result_frame, monkeypatch):
     from adblab.application.action_results import report_action_message
 

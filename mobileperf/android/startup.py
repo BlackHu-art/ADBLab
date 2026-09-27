@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from configparser import ConfigParser
+from uuid import uuid4
 
 from mobileperf.android.adb_execution import MobilePerfAdbExecutor
 from mobileperf.android.cpu_top import CpuMonitor
@@ -24,6 +25,8 @@ from mobileperf.android.tools.androiddevice import ADB, AndroidDevice
 from mobileperf.android.trafficstats import TrafficMonitor
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
+from services.performance_metadata import capture_metadata, write_metadata
+from utils.app_metadata import APP_VERSION
 
 _CONFIG_BOM_PREFIXES = ("\ufeff", "\xfe\xff", "\xff\xfe", "\xef\xbb\xbf")
 
@@ -398,6 +401,7 @@ class StartUp:
                 start_time = TimeUtils.getCurrentTimeUnderline()
                 RuntimeData.start_time = start_time
                 timeout = time_out if time_out is not None else self.config_dic["timeout"]
+                self._metadata_timeout_seconds = timeout
                 endtime = time.monotonic() + timeout
                 if self.config_dic["save_path"]:
                     RuntimeData.package_save_path = os.path.join(
@@ -559,21 +563,74 @@ class StartUp:
                 self.device.adb.pull_file(src_path, RuntimeData.package_save_path)
 
     def save_device_info(self):
-        """记录本次采集使用的设备和应用版本信息。"""
-        device_file = os.path.join(RuntimeData.package_save_path, "device_test_info.txt")
+        """采样前冻结白名单环境；旧文本沿用格式，结构化附件不含设备身份。
+
+        查询沿用当前采集执行器及停止边界，每项最多三秒、整体最多十五秒。
+        元数据不可用只记录未知状态，不阻止后续可运行的指标采集。
+        """
+        # 调用边界已连接 ADB 并创建结果目录；固定局部值供后续查询闭包使用。
+        adb = self.device.adb
+        directory = RuntimeData.package_save_path
+        assert adb is not None
+        assert isinstance(directory, str)
+        run_id = os.environ.get("MOBILEPERF_RUN_ID", "")
+        if re.fullmatch(r"[a-f0-9]{32}", run_id) is None:
+            run_id = uuid4().hex
+        captured_at = time.time()
+        sampling = {
+            "frequency_seconds": self.frequency,
+            "timeout_seconds": getattr(self, "_metadata_timeout_seconds", self.timeout),
+            "dumpheap_seconds": self.config_dic.get("dumpheap_freq", 3600),
+            "monkey_enabled": self.config_dic.get("monkey") == "true",
+            "monkey_config": self._monkey_options(),
+        }
+        raw_outputs = {}
+        deadline = time.monotonic() + 15
+
+        def cancelled():
+            execution = self._adb_execution
+            return RuntimeData.exit_event.is_set() or (
+                execution is not None and execution.stop_requested()
+            )
+
+        def query(command):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or cancelled():
+                return ""
+            output = adb.run_shell_cmd(
+                command, timeout=min(3, remaining), cancelled=cancelled,
+            )
+            raw_outputs[command] = output
+            return output
+
+        try:
+            metadata = capture_metadata(
+                query=query, run_id=run_id, target_processes=self.packages,
+                sampling=sampling, collector_version=APP_VERSION, captured_at=captured_at,
+            )
+            write_metadata(directory, metadata)
+            if metadata["status"] != "complete":
+                logger.warning("运行元数据不完整，部分版本或设备环境未知")
+        except (OSError, ValueError):
+            logger.warning("运行元数据无法保存，采集结果将保留未知环境状态")
+
+        # 原始包详情仅继续进入既有文本文件，不进入新附件或跨重启结果索引。
+        device_file = os.path.join(directory, "device_test_info.txt")
         with open(device_file, "w+", encoding="utf-8") as writer:
             writer.write("device serialnum:" + self.serialnum + "\n")
             writer.write(
-                "device model:"
-                + self.device.adb.get_phone_brand()
-                + " "
-                + self.device.adb.get_phone_model()
-                + "\n"
+                "device model:" + raw_outputs.get("getprop ro.product.brand", "") + " "
+                + raw_outputs.get("getprop ro.product.model", "") + "\n"
             )
             writer.write("test package:" + self.packages[0] + "\n")
-            writer.write("system version:" + self.device.adb.get_system_version() + "\n")
             writer.write(
-                "test package ver:" + self.device.adb.get_package_ver(self.packages[0]) + "\n"
+                "system version:" + raw_outputs.get("getprop ro.build.version.release", "")
+                + "\n"
+            )
+            writer.write(
+                "test package ver:"
+                + raw_outputs.get(f"dumpsys package {self.packages[0].split(':', 1)[0]}", "")
+                + "\n"
             )
 
     def add_device_info(self, key, value):

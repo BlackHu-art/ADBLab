@@ -191,10 +191,13 @@ def test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner(
             )
             assert all(field.isVisibleTo(dialog) for field in diagnostic_fields)
             assert_non_overlapping(diagnostic_fields, dialog._diagnostic_tools)
-            assert len({
-                mapped_rect(field, dialog._diagnostic_tools).top()
-                for field in diagnostic_fields
-            }) == 1
+            # 标签改为同行后按整组宽度减少列数，不能为保持三列而压缩或换行标签。
+            for label in dialog._diagnostic_tools.findChildren(QLabel, "fieldLabel"):
+                assert not label.wordWrap()
+                title_rect = mapped_rect(label, dialog._diagnostic_tools)
+                field_rect = mapped_rect(label.buddy(), dialog._diagnostic_tools)
+                assert title_rect.right() < field_rect.left()
+                assert abs(title_rect.center().y() - field_rect.center().y()) <= 2
             assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
     finally:
         dialog.close()
@@ -247,7 +250,7 @@ def test_performance_groups_fields_and_results_in_reference_header_cards(qt_appl
             0,
             0,
         )
-        assert dialog.layout().spacing() == 16
+        assert dialog.layout().spacing() == 12
         config_group = dialog.findChild(QWidget, "performanceConfig")
         assert config_group is not None
         assert tuple(section.objectName() for section in dialog._configuration_sections) == (
@@ -257,8 +260,8 @@ def test_performance_groups_fields_and_results_in_reference_header_cards(qt_appl
         for card in config_group.findChildren(HeaderCardWidget):
             assert card.headerLabel.property("fontRole") == "ui"
             assert card.headerLabel.font().bold()
-            assert card.viewLayout.contentsMargins().left() == 16
-            assert card.viewLayout.spacing() == 16
+            assert card.viewLayout.contentsMargins().left() == 0
+            assert card.viewLayout.spacing() == 8
         assert {
             label.property("configurationKey")
             for label in config_group.findChildren(QLabel, "fieldLabel")
@@ -363,7 +366,7 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
                 qt_application.sendEvent(control, QEvent(QEvent.Type.Leave))
                 assert not control.underMouse()
             assert not dialog.log_view.hasFocus()
-            # 页头标签占满宽度，取文字自然宽度以外的空白，避免把字形当成底色。
+            # 页头右侧现在容纳功能按钮，取左上留白验证结构透明，避开按钮和字形。
             plan = dialog._configuration_sections[0]
             results = dialog._results_group
             for section in (plan, results):
@@ -372,10 +375,10 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
                 )
             surfaces = {
                 "actions": (dialog._action_row, QPoint(4, 10)),
-                "plan_header": (plan, QPoint(plan.width() - 4, 10)),
-                "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 10)),
-                "results_header": (results, QPoint(results.width() - 4, 10)),
-                "results_body": (dialog._results_group.view, QPoint(4, 10)),
+                "plan_header": (plan.headerView, QPoint(1, 1)),
+                "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 2)),
+                "results_header": (results.headerView, QPoint(1, 1)),
+                "results_body": (dialog._results_group.view, QPoint(4, 2)),
                 "progress_container": (dialog.progress_display.indicators, QPoint(2, 2)),
             }
             image = host.grab().toImage()
@@ -951,7 +954,7 @@ def test_performance_plan_and_results_stay_full_width_without_shared_height(qt_a
             ))
             plan = dialog._configuration_group.geometry()
             results = dialog._results_group.geometry()
-            assert results.top() == plan.bottom() + 17
+            assert 0 < results.top() - plan.bottom() <= 13
             assert results.left() == plan.left() == 0
             content_width = dialog._config_group.layout().contentsRect().width()
             assert results.width() == plan.width() == content_width
@@ -984,7 +987,7 @@ def test_performance_plan_and_results_stay_full_width_without_shared_height(qt_a
 def test_performance_preset_and_common_fields_follow_one_clear_vertical_order(
     qt_application, monkeypatch, font_size, width,
 ):
-    """方案独占首行，常用参数和保存目录顺序稳定，窄屏仍能完整操作。"""
+    """方案位于计划页头，常用参数和保存目录顺序稳定，窄屏仍能完整操作。"""
 
     monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
     dialog, _runner = _build_performance_page()
@@ -994,16 +997,15 @@ def test_performance_preset_and_common_fields_follow_one_clear_vertical_order(
         dialog.show()
         wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
         card = dialog._configuration_sections[0]
-        preset = mapped_rect(dialog.run_preset_bar, card.view)
+        preset = mapped_rect(dialog.run_preset_bar, card)
         common = (dialog.package_edit, dialog.frequency_input, dialog.timeout_input)
-        rectangles = tuple(mapped_rect(field, card.view) for field in common)
-        save = mapped_rect(dialog.save_path_edit, card.view)
-        margins = card.viewLayout.contentsMargins()
-        assert preset.left() == margins.left()
-        assert preset.right() == card.view.width() - margins.right() - 1
+        rectangles = tuple(mapped_rect(field, card) for field in common)
+        save = mapped_rect(dialog.save_path_edit, card)
+        assert_contained(dialog.run_preset_bar, card.headerView)
+        assert_non_overlapping((card.headerLabel, dialog.run_preset_bar), card.headerView)
         assert preset.bottom() < min(rect.top() for rect in rectangles)
         assert max(rect.bottom() for rect in rectangles) < save.top()
-        assert save.bottom() < mapped_rect(dialog._diagnostic_tools, card.view).top()
+        assert save.bottom() < mapped_rect(dialog._diagnostic_tools, card).top()
         assert_non_overlapping(common, card.view)
         for field in (*common, dialog.save_path_edit):
             assert_contained(field, card.view)
@@ -1297,8 +1299,8 @@ def test_embedded_expanded_performance_keeps_result_content_inside_card(
             wait_for_stable_geometry(qt_application, (workspace, dialog, dialog._config_group))
             assert_contained(dialog._results_group, dialog._config_group)
             assert_contained(dialog._chart_stack, dialog._results_group.view)
-            assert_contained(dialog.result_btn, dialog._results_group.view)
-            assert_contained(dialog.perfetto_btn, dialog._results_group.view)
+            assert_contained(dialog.result_btn, dialog._results_group.headerView)
+            assert_contained(dialog.perfetto_btn, dialog._results_group.headerView)
             assert dialog._chart_stack.height() >= dialog.log_view.fontMetrics().height() * 8
             assert_scroll_target_reachable(workspace, dialog._chart_stack)
             assert_scroll_target_reachable(workspace, dialog.result_btn)

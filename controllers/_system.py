@@ -8,6 +8,12 @@ from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
 from models.adb_advanced import ADBAdvanced
+from services.intent_request import (
+    IntentRequest,
+    intent_extras_dict,
+    validate_intent_request,
+    validate_uri,
+)
 from utils.adb_values import (
     normalize_dumpsys_service,
     normalize_geo_coordinate,
@@ -184,61 +190,97 @@ class ADBSystemControllerMixin(_ADBControllerBase):
 
     # 广播、Activity 和 Deep Link
 
+    def execute_intent(self, devices: list, request: IntentRequest):
+        """在提交异步命令前校验整个请求，复用原方法名与 ActionResults 请求归属。"""
+
+        if not self._require_devices(devices, "execute_intent"):
+            return
+        try:
+            request = validate_intent_request(request)
+        except ValueError as exc:
+            self._emit_operation("execute_intent", False, str(exc))
+            return
+        for ip in devices:
+            if request.kind == "broadcast":
+                self.advanced_model.send_broadcast_async(
+                    ip, request.action, extras=intent_extras_dict(request),
+                )
+            else:
+                self.advanced_model.start_activity_async(
+                    ip, component=request.component, action=request.action,
+                    data_uri=request.data_uri, mime_type=request.mime_type,
+                    flags=request.flags, wait=request.wait,
+                )
+
     def send_broadcast(self, devices: list, action: str):
         if not self._require_devices(devices, "send_broadcast"):
             return
+        try:
+            request = validate_intent_request(IntentRequest(kind="broadcast", action=action))
+        except ValueError as exc:
+            self._emit_operation("send_broadcast", False, str(exc))
+            return
         for ip in devices:
-            self.advanced_model.send_broadcast_async(ip, action)
+            self.advanced_model.send_broadcast_async(ip, request.action)
 
     def _process_send_broadcast_result(self, result: dict):
-        ip = result.get("device_ip", "")
         if result.get("success"):
-            self._emit_operation(
-                "send_broadcast", True, f"Broadcast sent on {ip}:\n{result.get('output', '')}"
-            )
+            self._emit_operation("send_broadcast", True, "Broadcast sent")
         else:
             self._emit_operation(
-                "send_broadcast", False, f"Broadcast failed on {ip}: {result.get('error')}"
+                "send_broadcast", False, "Broadcast failed; see result details",
             )
 
     def start_activity(self, devices: list, component_or_action: str):
         if not self._require_devices(devices, "start_activity"):
             return
-        spec = component_or_action.strip()
+        try:
+            if not isinstance(component_or_action, str):
+                raise ValueError("Activity 参数必须是文本")
+            # 先按 URI scheme 分派，避免把 https:// 与自定义 scheme 中的斜杠当成组件。
+            if ":" in component_or_action:
+                uri = validate_uri(component_or_action)
+                for ip in devices:
+                    self.advanced_model.open_deep_link_async(ip, uri)
+                return
+            request = validate_intent_request(
+                IntentRequest(component=component_or_action)
+                if "/" in component_or_action else IntentRequest(action=component_or_action)
+            )
+        except ValueError as exc:
+            self._emit_operation("start_activity", False, str(exc))
+            return
         for ip in devices:
-            if "/" in spec:
-                self.advanced_model.start_activity_async(ip, component=spec)
-            elif spec.startswith("http"):
-                self.advanced_model.open_deep_link_async(ip, spec)
+            if request.component:
+                self.advanced_model.start_activity_async(ip, component=request.component)
             else:
-                self.advanced_model.start_activity_async(ip, action=spec)
+                self.advanced_model.start_activity_async(ip, action=request.action)
 
     def _process_start_activity_result(self, result: dict):
-        ip = result.get("device_ip", "")
         if result.get("success"):
-            self._emit_operation(
-                "start_activity", True, f"Activity started on {ip}:\n{result.get('output', '')}"
-            )
+            self._emit_operation("start_activity", True, "Activity started")
         else:
             self._emit_operation(
-                "start_activity", False, f"Start activity failed on {ip}: {result.get('error')}"
+                "start_activity", False, "Start activity failed; see result details",
             )
 
     def open_deep_link(self, devices: list, uri: str):
         if not self._require_devices(devices, "deep_link"):
             return
+        try:
+            uri = validate_uri(uri)
+        except ValueError as exc:
+            self._emit_operation("deep_link", False, str(exc))
+            return
         for ip in devices:
             self.advanced_model.open_deep_link_async(ip, uri)
 
     def _process_open_deep_link_result(self, result: dict):
-        ip = result.get("device_ip", "")
         if result.get("success"):
-            self._emit_operation(
-                "deep_link", True, f"Deep link opened on {ip}: {result.get('uri')}"
-            )
+            self._emit_operation("deep_link", True, "Deep link opened")
         else:
             self._emit_operation(
-                "deep_link", False, f"Deep link failed on {ip}: {result.get('error')}"
+                "deep_link", False, "Deep link failed; see result details",
             )
 
     # 输入法

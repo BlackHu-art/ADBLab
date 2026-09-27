@@ -102,7 +102,10 @@ def test_old_generation_archives_own_run_and_chart_failure_keeps_business_succes
     def discover():
         entered.set()
         assert release.wait(3)
-        return PerformanceArtifacts("old-results", "old-report.xlsx")
+        return PerformanceArtifacts(
+            "old-results", "old-report.xlsx", metadata_file="old-metadata.json",
+            app_version="1.0 (1)", metadata_status="complete",
+        )
 
     loader = page._result_loader
     loader.submit(SimpleNamespace(discover=discover), active=previous, exit_code=0)
@@ -111,8 +114,10 @@ def test_old_generation_archives_own_run_and_chart_failure_keeps_business_succes
     controller.begin(MobilePerfRunConfig(package="com.example.new"))
     current = controller._active
     monkeypatch.setattr(module, "load_result_metrics", Mock(side_effect=OSError("bad csv")))
-    loader.submit(SimpleNamespace(discover=lambda: PerformanceArtifacts("new", "new.xlsx")),
-                  active=current, exit_code=0)
+    loader.submit(SimpleNamespace(discover=lambda: PerformanceArtifacts(
+        "new", "new.xlsx", metadata_file="new-metadata.json",
+        app_version="2.0 (2)", metadata_status="complete",
+    )), active=current, exit_code=0)
     try:
         release.set()
         wait_until(qt_application, lambda: not loader.is_running())
@@ -122,6 +127,10 @@ def test_old_generation_archives_own_run_and_chart_failure_keeps_business_succes
         assert {record.package_name for record in records} == {
             "com.example.old", "com.example.new",
         }
+        by_package = {record.package_name: record for record in records}
+        assert by_package["com.example.old"].app_version == "1.0 (1)"
+        assert by_package["com.example.new"].app_version == "2.0 (2)"
+        assert by_package["com.example.old"].artifacts[-1].path == "old-metadata.json"
         assert page._last_result_root == "new"
         assert page.chart_status.text()
         assert not page.chart_view.has_data()

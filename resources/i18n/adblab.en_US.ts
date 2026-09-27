@@ -6896,5 +6896,289 @@ Android device management, apps and diagnostics</translation>
             <source>重新生成</source>
             <translation>Regenerate</translation>
         </message>
+        <message>
+            <source>组件</source>
+            <translation>Component</translation>
+        </message>
+        <message>
+            <source>Action</source>
+            <translation>Action</translation>
+        </message>
+        <message>
+            <source>URI</source>
+            <translation>URI</translation>
+        </message>
+        <message>
+            <source>包名/.Activity</source>
+            <translation>package/.Activity</translation>
+        </message>
+        <message>
+            <source>android.intent.action.VIEW</source>
+            <translation>android.intent.action.VIEW</translation>
+        </message>
+        <message>
+            <source>高级参数</source>
+            <translation>Advanced options</translation>
+        </message>
+        <message>
+            <source>收起高级参数</source>
+            <translation>Hide advanced options</translation>
+        </message>
+        <message>
+            <source>展开或收起 Activity 可选参数</source>
+            <translation>Show or hide optional Activity parameters</translation>
+        </message>
+        <message>
+            <source>Data URI（可选）</source>
+            <translation>Data URI (optional)</translation>
+        </message>
+        <message>
+            <source>MIME（可选，如 text/plain）</source>
+            <translation>MIME (optional, e.g. text/plain)</translation>
+        </message>
+        <message>
+            <source>Flags（可选，十进制或 0x）</source>
+            <translation>Flags (optional, decimal or 0x)</translation>
+        </message>
+        <message>
+            <source>等待启动结果</source>
+            <translation>Wait for launch results</translation>
+        </message>
+        <message>
+            <source>等待 Activity 启动完成并返回耗时信息</source>
+            <translation>Wait for Activity launch completion and return timing information</translation>
+        </message>
+        <message>
+            <source>https://… 或 app://…</source>
+            <translation>https://… or app://…</translation>
+        </message>
+        <message>
+            <source>添加广播参数</source>
+            <translation>Add broadcast extra</translation>
+        </message>
+        <message>
+            <source>添加带类型的广播附加参数，最多十六项</source>
+            <translation>Add a typed broadcast extra, up to sixteen entries</translation>
+        </message>
+        <message>
+            <source>URI 模式使用上方输入的地址</source>
+            <translation>URI mode uses the address entered above</translation>
+        </message>
+        <message>
+            <source>参数名称</source>
+            <translation>Extra name</translation>
+        </message>
+        <message>
+            <source>字符串</source>
+            <translation>String</translation>
+        </message>
+        <message>
+            <source>布尔</source>
+            <translation>Boolean</translation>
+        </message>
+        <message>
+            <source>整数</source>
+            <translation>Integer</translation>
+        </message>
+        <message>
+            <source>小数</source>
+            <translation>Decimal</translation>
+        </message>
+        <message>
+            <source>参数值</source>
+            <translation>Extra value</translation>
+        </message>
+        <message>
+            <source>移除</source>
+            <translation>Remove</translation>
+        </message>
+        <message>
+            <source>移除此广播参数</source>
+            <translation>Remove this broadcast extra</translation>
+        </message>
+        <message>
+            <source>true 或 false</source>
+            <translation>true or false</translation>
+        </message>
+        <message>
+            <source>整数，如 3</source>
+            <translation>Integer, e.g. 3</translation>
+        </message>
+        <message>
+            <source>小数，如 0.5</source>
+            <translation>Decimal, e.g. 0.5</translation>
+        </message>
+        <message>
+            <source>请填写当前模式对应的组件、Action 或 URI。</source>
+            <translation>Enter the component, Action or URI for the selected mode.</translation>
+        </message>
+        <message>
+            <source>链接需包含协议，如 https:// 或 app://，且不能包含空白。</source>
+            <translation>Enter a URI with a scheme, such as https:// or app://, without whitespace.</translation>
+        </message>
+        <message>
+            <source>Intent 调试</source>
+            <translation>Intent debugging</translation>
+        </message>
+        <message>
+            <source>URI 必须包含合法 scheme，且内容非空、空格已编码</source>
+            <translation>The URI must include a valid scheme, nonempty content and encoded spaces</translation>
+        </message>
+        <message>
+            <source>Flags 必须是十进制整数或 0x 十六进制整数</source>
+            <translation>Flags must be a decimal integer or a hexadecimal integer prefixed with 0x</translation>
+        </message>
+        <message>
+            <source>Flags 必须在 32 位整数范围内</source>
+            <translation>Flags must be within the 32-bit integer range</translation>
+        </message>
+        <message>
+            <source>extras 必须包含结构化类型与值</source>
+            <translation>Extras must contain structured types and values</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能为空</source>
+            <translation>Extra names cannot be empty</translation>
+        </message>
+        <message>
+            <source>布尔 Extra 必须是 true 或 false</source>
+            <translation>Boolean extras must be true or false</translation>
+        </message>
+        <message>
+            <source>整数 Extra 必须是 32 位十进制整数</source>
+            <translation>Integer extras must be 32-bit decimal integers</translation>
+        </message>
+        <message>
+            <source>小数 Extra 必须是有限数字</source>
+            <translation>Decimal extras must be finite numbers</translation>
+        </message>
+        <message>
+            <source>小数 Extra 超出 Android float 范围</source>
+            <translation>The decimal extra exceeds the Android float range</translation>
+        </message>
+        <message>
+            <source>Extra 类型必须是 str、bool、int 或 float</source>
+            <translation>Extra types must be str, bool, int or float</translation>
+        </message>
+        <message>
+            <source>Intent 请求类型无效</source>
+            <translation>Invalid Intent request type</translation>
+        </message>
+        <message>
+            <source>组件必须使用包名/Activity 类名格式</source>
+            <translation>Use package/Activity class format for the component</translation>
+        </message>
+        <message>
+            <source>Action 格式无效</source>
+            <translation>Invalid Action format</translation>
+        </message>
+        <message>
+            <source>MIME 必须使用类型/子类型格式</source>
+            <translation>MIME must use type/subtype format</translation>
+        </message>
+        <message>
+            <source>等待启动结果必须是布尔值</source>
+            <translation>Wait for launch results must be a Boolean value</translation>
+        </message>
+        <message>
+            <source>extras 必须是不可变元组</source>
+            <translation>Extras must be an immutable tuple</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能重复</source>
+            <translation>Extra names cannot be duplicated</translation>
+        </message>
+        <message>
+            <source>广播 Action 不能为空</source>
+            <translation>The broadcast Action cannot be empty</translation>
+        </message>
+        <message>
+            <source>广播仅支持 Action 和 extras</source>
+            <translation>Broadcasts support only Action and extras</translation>
+        </message>
+        <message>
+            <source>请填写组件、Action 或 URI</source>
+            <translation>Enter a component, Action or URI</translation>
+        </message>
+        <message>
+            <source>Activity 暂不支持 extras</source>
+            <translation>Activity extras are not supported yet</translation>
+        </message>
+        <message>
+            <source>extras 必须是名称与值字典</source>
+            <translation>Extras must be a dictionary of names and values</translation>
+        </message>
+        <message>
+            <source>Extra 值仅支持字符串、布尔、整数与小数</source>
+            <translation>Extra values support only strings, Booleans, integers and decimals</translation>
+        </message>
+        <message>
+            <source>运行元数据</source>
+            <translation>Run metadata</translation>
+        </message>
+        <message>
+            <source>运行元数据不完整，部分版本或设备环境未知。</source>
+            <translation>Run metadata is incomplete; some version or device environment details are unknown.</translation>
+        </message>
+        <message>
+            <source>多目标版本见运行元数据</source>
+            <translation>See run metadata for versions of multiple targets</translation>
+        </message>
+        <message>
+            <source>URI必须是文本</source>
+            <translation>The URI must be text</translation>
+        </message>
+        <message>
+            <source>URI不能包含控制字符</source>
+            <translation>The URI cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>Flags必须是文本</source>
+            <translation>Flags must be text</translation>
+        </message>
+        <message>
+            <source>Flags不能包含控制字符</source>
+            <translation>Flags cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>Extra 名称必须是文本</source>
+            <translation>Extra names must be text</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能包含控制字符</source>
+            <translation>Extra names cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>Extra 值必须是文本</source>
+            <translation>Extra values must be text</translation>
+        </message>
+        <message>
+            <source>Extra 值不能包含控制字符</source>
+            <translation>Extra values cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>组件必须是文本</source>
+            <translation>The component must be text</translation>
+        </message>
+        <message>
+            <source>组件不能包含控制字符</source>
+            <translation>The component cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>Action必须是文本</source>
+            <translation>Action must be text</translation>
+        </message>
+        <message>
+            <source>Action不能包含控制字符</source>
+            <translation>Action cannot contain control characters</translation>
+        </message>
+        <message>
+            <source>MIME必须是文本</source>
+            <translation>MIME must be text</translation>
+        </message>
+        <message>
+            <source>MIME不能包含控制字符</source>
+            <translation>MIME cannot contain control characters</translation>
+        </message>
     </context>
 </TS>

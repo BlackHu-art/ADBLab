@@ -96,6 +96,53 @@ def _finish(page, tmp_path, *, exit_code=0, report=True, result=True):
     return page._library_controller._library.records
 
 
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_metadata_snapshot_archives_version_and_attachment_without_gui_io(
+    page, monkeypatch, cancelled,
+):
+    from services.mobileperf_runner import MobilePerfRunConfig, PerformanceArtifacts
+
+    controller = page._library_controller
+    controller.begin(MobilePerfRunConfig(package="com.example.original"))
+    previous = controller._active
+    if cancelled:
+        controller.request_cancel()
+    controller.begin(MobilePerfRunConfig(package="com.example.next"))
+    current = controller._active
+    metadata_path = str(Path(page.save_path_edit.text()) / "metadata.json")
+    snapshot = PerformanceArtifacts(
+        "result", "report.xlsx", metadata_file=metadata_path,
+        app_version="1.2 (12)", metadata_status="complete",
+    )
+    monkeypatch.setattr("builtins.open", lambda *_args, **_kwargs: pytest.fail("GUI file read"))
+
+    controller.finish(artifact_snapshot=snapshot, active=previous, exit_code=0)
+
+    record, = controller._library.records
+    assert record.package_name == "com.example.original"
+    assert record.app_version == "1.2 (12)"
+    assert record.state == ("cancelled" if cancelled else "succeeded")
+    assert metadata_path in [artifact.path for artifact in record.artifacts]
+    assert "device" not in record.parameters and "app_version" not in record.parameters
+    assert controller._active is current
+
+
+@pytest.mark.parametrize("status", ["missing", "partial", "invalid", "unavailable", "unsupported"])
+def test_metadata_unavailable_does_not_turn_successful_collection_into_failure(page, status):
+    from services.mobileperf_runner import MobilePerfRunConfig, PerformanceArtifacts
+
+    controller = page._library_controller
+    controller.begin(MobilePerfRunConfig(package="com.example.app"))
+    controller.finish(
+        artifact_snapshot=PerformanceArtifacts("result", "report.xlsx", metadata_status=status),
+        exit_code=0,
+    )
+
+    record, = controller._library.records
+    assert record.state == "succeeded" and record.app_version == ""
+    assert "元数据" in record.message and "未知" in record.message
+
+
 def test_performance_parameters_round_trip_without_device_binding_or_start(page):
     page.monkey_check.setChecked(True)
     page.frequency_input.setValue(7)

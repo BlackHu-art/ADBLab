@@ -2,8 +2,8 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QRegularExpression, QSize, Qt
-from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
@@ -17,6 +17,7 @@ from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
 from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
+from gui.panels.system_intent import SystemIntentControls
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
 from gui.widgets.category_stack import AdaptiveCategoryStack
@@ -82,41 +83,15 @@ class SystemPanel(BasePanel):
         self.btn_broadcast = self._b(
             tr("发送广播"), "broadcast.svg", tooltip=tr("发送输入的 Android 广播")
         )
-        self._add_responsive_row(
-            glb,
-            (self.broadcast_action, 2),
-            (self.btn_broadcast, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=2,
-        )
         self.activity_spec = self._in(tr("组件（包名/.Activity）或 Action"))
         self.btn_start_activity = self._b(
             tr("启动 Activity"), "play.svg", tooltip=tr("启动输入的 Activity 或 Intent")
         )
-        self._add_responsive_row(
-            glb,
-            (self.activity_spec, 2),
-            (self.btn_start_activity, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=2,
-        )
         self.deep_link_uri = self._in(tr("输入深层链接 URL"))
-        self.deep_link_uri.setValidator(
-            QRegularExpressionValidator(QRegularExpression(r"https?://\S+"), self.deep_link_uri)
-        )
         self.btn_deep_link = self._b(
             tr("打开链接"), "link.svg", tooltip=tr("在所选设备上打开输入的 URL")
         )
-        self._add_responsive_row(
-            glb,
-            (self.deep_link_uri, 2),
-            (self.btn_deep_link, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=2,
-        )
+        self.intent_controls = SystemIntentControls(self, glb)
         g3 = self._card_group(tr("端口转发"))
         gl3 = g3.viewLayout
         gl3.setSpacing(2)
@@ -613,25 +588,12 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_broadcast.clicked.connect(
-            lambda: self._emit_device_action(
-                LP.send_broadcast_requested, self.broadcast_action.text().strip(),
-                fields=(self.broadcast_action,),
-            )
+            lambda: self.intent_controls.submit("broadcast")
         )
         self.btn_start_activity.clicked.connect(
-            lambda: self._emit_device_action(
-                LP.start_activity_requested, self.activity_spec.text().strip(),
-                fields=(self.activity_spec,),
-            )
+            lambda: self.intent_controls.submit("activity")
         )
-        self.btn_deep_link.clicked.connect(
-            lambda: self._submit_device_action(
-                (self.deep_link_uri,),
-                lambda devices: LP.open_deep_link_requested.emit(
-                    devices, self.deep_link_uri.text().strip()
-                ),
-            )
-        )
+        self.btn_deep_link.clicked.connect(self.intent_controls.submit_link)
         self.btn_forward.clicked.connect(
             lambda: self._submit_device_action(
                 (self.fwd_local, self.fwd_remote),
@@ -806,6 +768,7 @@ class SystemPanel(BasePanel):
                 for field in fields
             )
             self._set_button_enabled(button, has_device and valid)
+        self.intent_controls.update_state()
         for button, reason, hint in (
             (self.btn_forward, tr("正向转发使用本机共享端口，请只选择一台设备"),
              tr("将本机端口转发到当前设备；端口已占用时先移除原规则")),

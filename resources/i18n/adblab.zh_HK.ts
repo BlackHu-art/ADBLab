@@ -6896,5 +6896,289 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>重新生成</source>
             <translation>重新產生</translation>
         </message>
+        <message>
+            <source>组件</source>
+            <translation>元件</translation>
+        </message>
+        <message>
+            <source>Action</source>
+            <translation>Action</translation>
+        </message>
+        <message>
+            <source>URI</source>
+            <translation>URI</translation>
+        </message>
+        <message>
+            <source>包名/.Activity</source>
+            <translation>套件名稱/.Activity</translation>
+        </message>
+        <message>
+            <source>android.intent.action.VIEW</source>
+            <translation>android.intent.action.VIEW</translation>
+        </message>
+        <message>
+            <source>高级参数</source>
+            <translation>進階參數</translation>
+        </message>
+        <message>
+            <source>收起高级参数</source>
+            <translation>收起進階參數</translation>
+        </message>
+        <message>
+            <source>展开或收起 Activity 可选参数</source>
+            <translation>展開或收起 Activity 選填參數</translation>
+        </message>
+        <message>
+            <source>Data URI（可选）</source>
+            <translation>Data URI（選填）</translation>
+        </message>
+        <message>
+            <source>MIME（可选，如 text/plain）</source>
+            <translation>MIME（選填，例如 text/plain）</translation>
+        </message>
+        <message>
+            <source>Flags（可选，十进制或 0x）</source>
+            <translation>Flags（選填，十進位或 0x）</translation>
+        </message>
+        <message>
+            <source>等待启动结果</source>
+            <translation>等待啟動結果</translation>
+        </message>
+        <message>
+            <source>等待 Activity 启动完成并返回耗时信息</source>
+            <translation>等待 Activity 啟動完成並傳回耗時資訊</translation>
+        </message>
+        <message>
+            <source>https://… 或 app://…</source>
+            <translation>https://… 或 app://…</translation>
+        </message>
+        <message>
+            <source>添加广播参数</source>
+            <translation>新增廣播參數</translation>
+        </message>
+        <message>
+            <source>添加带类型的广播附加参数，最多十六项</source>
+            <translation>新增帶類型的廣播附加參數，最多十六項</translation>
+        </message>
+        <message>
+            <source>URI 模式使用上方输入的地址</source>
+            <translation>URI 模式使用上方輸入的位址</translation>
+        </message>
+        <message>
+            <source>参数名称</source>
+            <translation>參數名稱</translation>
+        </message>
+        <message>
+            <source>字符串</source>
+            <translation>字串</translation>
+        </message>
+        <message>
+            <source>布尔</source>
+            <translation>布林</translation>
+        </message>
+        <message>
+            <source>整数</source>
+            <translation>整數</translation>
+        </message>
+        <message>
+            <source>小数</source>
+            <translation>小數</translation>
+        </message>
+        <message>
+            <source>参数值</source>
+            <translation>參數值</translation>
+        </message>
+        <message>
+            <source>移除</source>
+            <translation>移除</translation>
+        </message>
+        <message>
+            <source>移除此广播参数</source>
+            <translation>移除此廣播參數</translation>
+        </message>
+        <message>
+            <source>true 或 false</source>
+            <translation>true 或 false</translation>
+        </message>
+        <message>
+            <source>整数，如 3</source>
+            <translation>整數，例如 3</translation>
+        </message>
+        <message>
+            <source>小数，如 0.5</source>
+            <translation>小數，例如 0.5</translation>
+        </message>
+        <message>
+            <source>请填写当前模式对应的组件、Action 或 URI。</source>
+            <translation>請填寫目前模式對應的元件、Action 或 URI。</translation>
+        </message>
+        <message>
+            <source>链接需包含协议，如 https:// 或 app://，且不能包含空白。</source>
+            <translation>連結須包含通訊協定，例如 https:// 或 app://，且不能包含空白。</translation>
+        </message>
+        <message>
+            <source>Intent 调试</source>
+            <translation>Intent 偵錯</translation>
+        </message>
+        <message>
+            <source>URI 必须包含合法 scheme，且内容非空、空格已编码</source>
+            <translation>URI 必須包含有效 scheme，且內容非空、空格已編碼</translation>
+        </message>
+        <message>
+            <source>Flags 必须是十进制整数或 0x 十六进制整数</source>
+            <translation>Flags 必須是十進位整數或 0x 十六進位整數</translation>
+        </message>
+        <message>
+            <source>Flags 必须在 32 位整数范围内</source>
+            <translation>Flags 必須在 32 位整數範圍內</translation>
+        </message>
+        <message>
+            <source>extras 必须包含结构化类型与值</source>
+            <translation>extras 必須包含結構化類型與值</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能为空</source>
+            <translation>Extra 名稱不能為空</translation>
+        </message>
+        <message>
+            <source>布尔 Extra 必须是 true 或 false</source>
+            <translation>布林 Extra 必須是 true 或 false</translation>
+        </message>
+        <message>
+            <source>整数 Extra 必须是 32 位十进制整数</source>
+            <translation>整數 Extra 必須是 32 位十進位整數</translation>
+        </message>
+        <message>
+            <source>小数 Extra 必须是有限数字</source>
+            <translation>小數 Extra 必須是有限數字</translation>
+        </message>
+        <message>
+            <source>小数 Extra 超出 Android float 范围</source>
+            <translation>小數 Extra 超出 Android float 範圍</translation>
+        </message>
+        <message>
+            <source>Extra 类型必须是 str、bool、int 或 float</source>
+            <translation>Extra 類型必須是 str、bool、int 或 float</translation>
+        </message>
+        <message>
+            <source>Intent 请求类型无效</source>
+            <translation>Intent 請求類型無效</translation>
+        </message>
+        <message>
+            <source>组件必须使用包名/Activity 类名格式</source>
+            <translation>元件必須使用套件名稱/Activity 類別名稱格式</translation>
+        </message>
+        <message>
+            <source>Action 格式无效</source>
+            <translation>Action 格式無效</translation>
+        </message>
+        <message>
+            <source>MIME 必须使用类型/子类型格式</source>
+            <translation>MIME 必須使用類型/子類型格式</translation>
+        </message>
+        <message>
+            <source>等待启动结果必须是布尔值</source>
+            <translation>等待啟動結果必須是布林值</translation>
+        </message>
+        <message>
+            <source>extras 必须是不可变元组</source>
+            <translation>extras 必須是不可變元組</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能重复</source>
+            <translation>Extra 名稱不能重複</translation>
+        </message>
+        <message>
+            <source>广播 Action 不能为空</source>
+            <translation>廣播 Action 不能為空</translation>
+        </message>
+        <message>
+            <source>广播仅支持 Action 和 extras</source>
+            <translation>廣播僅支援 Action 和 extras</translation>
+        </message>
+        <message>
+            <source>请填写组件、Action 或 URI</source>
+            <translation>請填寫元件、Action 或 URI</translation>
+        </message>
+        <message>
+            <source>Activity 暂不支持 extras</source>
+            <translation>Activity 暫不支援 extras</translation>
+        </message>
+        <message>
+            <source>extras 必须是名称与值字典</source>
+            <translation>extras 必須是名稱與值字典</translation>
+        </message>
+        <message>
+            <source>Extra 值仅支持字符串、布尔、整数与小数</source>
+            <translation>Extra 值僅支援字串、布林、整數與小數</translation>
+        </message>
+        <message>
+            <source>运行元数据</source>
+            <translation>執行中繼資料</translation>
+        </message>
+        <message>
+            <source>运行元数据不完整，部分版本或设备环境未知。</source>
+            <translation>執行中繼資料不完整，部分版本或裝置環境未知。</translation>
+        </message>
+        <message>
+            <source>多目标版本见运行元数据</source>
+            <translation>多目標版本請參閱執行中繼資料</translation>
+        </message>
+        <message>
+            <source>URI必须是文本</source>
+            <translation>URI必須是文字</translation>
+        </message>
+        <message>
+            <source>URI不能包含控制字符</source>
+            <translation>URI不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>Flags必须是文本</source>
+            <translation>Flags必須是文字</translation>
+        </message>
+        <message>
+            <source>Flags不能包含控制字符</source>
+            <translation>Flags不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>Extra 名称必须是文本</source>
+            <translation>Extra 名稱必須是文字</translation>
+        </message>
+        <message>
+            <source>Extra 名称不能包含控制字符</source>
+            <translation>Extra 名稱不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>Extra 值必须是文本</source>
+            <translation>Extra 值必須是文字</translation>
+        </message>
+        <message>
+            <source>Extra 值不能包含控制字符</source>
+            <translation>Extra 值不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>组件必须是文本</source>
+            <translation>元件必須是文字</translation>
+        </message>
+        <message>
+            <source>组件不能包含控制字符</source>
+            <translation>元件不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>Action必须是文本</source>
+            <translation>Action必須是文字</translation>
+        </message>
+        <message>
+            <source>Action不能包含控制字符</source>
+            <translation>Action不能包含控制字元</translation>
+        </message>
+        <message>
+            <source>MIME必须是文本</source>
+            <translation>MIME必須是文字</translation>
+        </message>
+        <message>
+            <source>MIME不能包含控制字符</source>
+            <translation>MIME不能包含控制字元</translation>
+        </message>
     </context>
 </TS>

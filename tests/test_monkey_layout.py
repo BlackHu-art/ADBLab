@@ -126,18 +126,26 @@ def test_monkey_sections_and_visible_query_actions_fit(
         )
         assert_non_overlapping(parameter_blocks, apps.monkey_parameters_card)
         for block in parameter_blocks:
-            assert mapped_rect(block, apps.monkey_parameters_card).left() == 16
+            assert mapped_rect(block, apps.monkey_section).left() == 0
         assert_non_overlapping(
             (apps.monkey_run_status, apps.start_monkey_btn, apps.kill_monkey_btn),
             apps.monkey_run_actions,
         )
         for binding in (apps.monkey_parameter_binding, apps.monkey_percentage_binding):
             widgets = binding.widgets()
+            plan = binding.applied_plan
+            assert plan is not None
+            assert_non_overlapping(widgets, apps.monkey_parameters_card)
             for label, field in zip(widgets[::2], widgets[1::2]):
                 label_rect = mapped_rect(label, apps.monkey_parameters_card)
                 field_rect = mapped_rect(field, apps.monkey_parameters_card)
-                assert label_rect.left() == field_rect.left()
-                assert label_rect.bottom() < field_rect.top()
+                if plan.mode.paired:
+                    assert label_rect.right() < field_rect.left()
+                    assert abs(label_rect.center().y() - field_rect.center().y()) <= 2
+                else:
+                    assert label_rect.left() == field_rect.left()
+                    assert label_rect.bottom() < field_rect.top()
+                assert label.buddy() is field
             assert max(field.width() for field in widgets[1::2]) - min(
                 field.width() for field in widgets[1::2]
             ) <= 1
