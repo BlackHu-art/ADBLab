@@ -172,13 +172,13 @@ def test_packaging_check_reports_missing_visual_resource(
 @pytest.mark.parametrize(
     "mode", [
         "normal", "fluent-error", "phase-error", "exit-early", "exit-partial",
-        "exit-history", "history-error",
+        "exit-history", "history-error", "writeback", "writeback-error", "exit-writeback",
     ],
 )
 def test_cold_gui_entry_paints_before_fluent_and_cleans_failed_startup(tmp_path, mode):
     """真实冷 Qt 入口验证首次绘制、失败退出和 CLI 以外的最早导入边界。"""
     script = r'''
-import json, sys
+import json, sys, threading
 from types import SimpleNamespace
 import main
 from PySide6.QtCore import QTimer, Signal
@@ -256,6 +256,27 @@ class Window(QWidget):
         super().paintEvent(event)
         QTimer.singleShot(0, lambda: QApplication.instance().exit(27))
 sys.modules['gui.main_frame'] = SimpleNamespace(MainFrame=Window)
+if mode in ('writeback', 'writeback-error', 'exit-writeback'):
+    from core.settings_manager import AppSettings
+    original_save = AppSettings._save_atomic
+    def save_settings(self, *args, **kwargs):
+        assert 'splash-painted' in events, 'settings written before splash paint'
+        assert threading.current_thread() is not threading.main_thread()
+        events.append('settings-writeback')
+        if mode == 'writeback-error':
+            return False
+        if mode == 'exit-writeback':
+            release = threading.Event()
+            app = QApplication.instance()
+            def exit_during_writeback():
+                events.append('exit-requested')
+                app.exit(0)
+                QTimer.singleShot(0, app, release.set)
+            QTimer.singleShot(0, app, exit_during_writeback)
+            assert release.wait(3), 'cleanup did not keep the Qt event loop alive'
+            events.append('writeback-finished')
+        return original_save(self, *args, **kwargs)
+    AppSettings._save_atomic = save_settings
 assert 'qfluentwidgets' not in sys.modules
 try:
     code = main._run_gui()
@@ -266,8 +287,11 @@ except RuntimeError as error:
 assert len(splashes) == 1
 assert all(not splash.isVisible() for splash in splashes)
 assert splashes[0].shutdown_count == 1
-if mode in ('normal', 'history-error'):
+if mode in ('normal', 'history-error', 'writeback', 'writeback-error'):
     assert code == 27 and 'window-painted' in events
+    if mode in ('writeback', 'writeback-error'):
+        assert events.index('fluent') < events.index('settings-writeback')
+        assert events.index('settings-writeback') < events.index('window-painted')
 elif mode == 'phase-error':
     assert events[-2:] == ['abort-started', 'abort-finished']
 elif mode == 'exit-partial':
@@ -278,6 +302,9 @@ elif mode == 'exit-early':
 elif mode == 'exit-history':
     assert code == 0 and 'window-painted' not in events
     assert events[-2:] == ['history-entered', 'history-stopped']
+elif mode == 'exit-writeback':
+    assert code == 0 and 'window-painted' not in events
+    assert events[-2:] == ['exit-requested', 'writeback-finished']
 print(json.dumps({'code': code, 'events': events}))
 '''
     environment = dict(
@@ -290,6 +317,10 @@ print(json.dumps({'code': code, 'events': events}))
     history_file.write_text(
         "wifi:\n  ip: 192.0.2.10:5555\n  Brand: Demo\n  Model: Saved\n", encoding="utf-8",
     )
+    if mode in ('writeback', 'writeback-error', 'exit-writeback'):
+        (history_file.parent / "app_settings.json").write_text(
+            json.dumps({"schema_version": 1, "ui_scale": 1.5}), encoding="utf-8",
+        )
     result = subprocess.run(
         [sys.executable, "-c", script, mode], env=environment, capture_output=True,
         text=True, encoding="utf-8", timeout=20, check=False,
@@ -322,9 +353,10 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     steps = []
     original_instance = settings_manager.AppSettings.instance
 
-    def load_settings():
+    def load_settings(**kwargs):
         steps.append("settings")
-        return original_instance()
+        assert kwargs == {"defer_migration_save": True}
+        return original_instance(**kwargs)
 
     monkeypatch.setattr(settings_manager.AppSettings, "instance", staticmethod(load_settings))
     monkeypatch.setattr(main, "_load_fluent_widgets", lambda: steps.append("fluent"))

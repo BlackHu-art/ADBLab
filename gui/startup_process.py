@@ -16,6 +16,7 @@ from gui.widgets.startup_splash import StartupSplash
 
 _START_TIMEOUT_MS = 5000
 _MAX_MESSAGE_BYTES = 4096
+_CANCEL_EXIT_CODE = 42
 
 
 def _worker_command(server_name: str) -> list[str]:
@@ -54,6 +55,9 @@ class StartupSplashProcess(QObject):
         self._kill_timer = QTimer(self)
         self._kill_timer.setSingleShot(True)
         self._kill_timer.timeout.connect(self._kill)
+        self._disconnect_timer = QTimer(self)
+        self._disconnect_timer.setSingleShot(True)
+        self._disconnect_timer.timeout.connect(self._worker_lost)
         self._local: StartupSplash | None = None
         self._buffer = bytearray()
         self._shown = False
@@ -76,6 +80,7 @@ class StartupSplashProcess(QObject):
         command = _worker_command(name)
         self._startup_timer.start(_START_TIMEOUT_MS)
         # 继承冻结环境，使 onefile 子进程复用现有资源，不重复解包。
+        self.diagnostic.emit("launch")
         self._process.start(command[0], command[1:])
 
     def set_progress(self, value: float, *, animate: bool = True) -> None:
@@ -115,6 +120,7 @@ class StartupSplashProcess(QObject):
         socket.readyRead.connect(self._read)
         socket.disconnected.connect(self._disconnected)
         self._server.close()
+        self.diagnostic.emit("connected")
         self._read()
 
     def _read(self) -> None:
@@ -138,6 +144,8 @@ class StartupSplashProcess(QObject):
             if message.get("type") == "ready":
                 self._startup_timer.stop()
                 self._send_progress()
+                if not self._ready:
+                    self.diagnostic.emit("ready")
                 self._publish_ready()
             elif message.get("type") == "cancelled":
                 self._publish_cancelled()
@@ -156,7 +164,9 @@ class StartupSplashProcess(QObject):
         self.cancelled.emit()
 
     def _disconnected(self) -> None:
-        self._worker_lost()
+        # 断连通知可能早于 QProcess.finished；短暂等待专用取消退出码。
+        if not self._closed:
+            self._disconnect_timer.start(500)
 
     def _process_error(self, error: QProcess.ProcessError) -> None:
         self._worker_lost(f"process-error={error.name}")
@@ -164,6 +174,11 @@ class StartupSplashProcess(QObject):
     def _process_finished(self, code: int, status: QProcess.ExitStatus) -> None:
         self._terminate_timer.stop()
         self._kill_timer.stop()
+        self._disconnect_timer.stop()
+        if (code == _CANCEL_EXIT_CODE
+                and status == QProcess.ExitStatus.NormalExit and not self._closed):
+            self._publish_cancelled()
+            return
         reason = f"exit code={code} status={status.name}"
         # 断连通知可能先触发降级；退出码仍需保留，便于区分超时回收和自然退出。
         if not self._closed and self._local is not None:
@@ -225,6 +240,7 @@ class StartupSplashProcess(QObject):
             return
         self._closed = True
         self._startup_timer.stop()
+        self._disconnect_timer.stop()
         if self._local is not None:
             self._local.finish()
             self._local.deleteLater()

@@ -61,9 +61,10 @@ def test_gui_failure_before_application_is_persisted(tmp_path, monkeypatch):
 
     failure = ValueError("token=private-error")
 
-    def fail():
+    def fail(*, defer_migration_save=False):
         from core.settings_manager import _log_error
 
+        assert defer_migration_save
         _log_error("WARNING", "synthetic settings warning token=hidden")
         raise failure
 
@@ -87,7 +88,8 @@ def test_failure_report_write_error_does_not_mask_startup_error(monkeypatch):
 
     failure = ValueError("original settings failure")
 
-    def fail_settings():
+    def fail_settings(*, defer_migration_save=False):
+        assert defer_migration_save
         raise failure
 
     def fail_report(_trace):

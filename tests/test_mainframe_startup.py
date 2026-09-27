@@ -15,7 +15,7 @@ from gui.main_frame import MainFrame
 from tests.test_main_window_layout import _MainFrameSettings
 from tests.ui_geometry_helpers import wait_until
 
-STARTUP_POSITIONS = (40, 45, 50, 55, 60, 65, 70, 85, 95)
+STARTUP_POSITIONS = (40, 45, 50, 55, 60, 65, 70, 75, 78, 82, 85, 95)
 
 
 @pytest.fixture
@@ -183,7 +183,7 @@ def test_stage_failure_preserves_exception_and_cleans_partial_children(
         raise ValueError("synthetic settings failure")
 
     monkeypatch.setattr("gui.main_frame.SettingsPage", broken_settings)
-    for position in STARTUP_POSITIONS[:-2]:
+    for position in (position for position in STARTUP_POSITIONS if position < 82):
         assert frame.advance_startup() == position
     with pytest.raises(ValueError, match="synthetic settings failure"):
         frame.advance_startup()
@@ -204,6 +204,35 @@ def test_close_during_partial_startup_uses_abort_barrier(startup, qt_application
     wait_until(qt_application, lambda: aborted.count() == 1)
     controllers[0].shutdown.assert_called_once_with()
     assert bootstrap.call_count == 0
+
+
+def test_auxiliary_pages_yield_between_construction_and_allow_cancellation(
+    startup, qt_application, monkeypatch,
+):
+    """任务内容、外壳、设置和首页分别让出事件循环，后续页面不会抢先创建。"""
+    import gui.main_frame as module
+
+    events = []
+    for name in ("TaskCenterPage", "GalleryPage", "SettingsPage", "HomePage"):
+        original = getattr(module, name)
+
+        def construct(*args, _name=name, _original=original, **kwargs):
+            events.append(_name)
+            QTimer.singleShot(0, lambda: events.append(f"after-{_name}"))
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, construct)
+    create, bootstrap, detection, _controllers = startup
+    frame = create(deferred_startup=True)
+    while frame.advance_startup() != 70:
+        pass
+    for name in ("TaskCenterPage", "GalleryPage", "SettingsPage", "HomePage"):
+        frame.advance_startup()
+        assert events[-1] == name
+        wait_until(qt_application, lambda: events[-1] == f"after-{name}")
+    assert not frame._layout_ready
+    assert not frame.navigationInterface.isEnabled()
+    assert bootstrap.call_count == detection.call_count == 0
 
 
 def test_abort_releases_overview_scroll_areas_before_they_are_mounted(startup, qt_application):
@@ -331,13 +360,17 @@ def test_abort_before_queued_client_warmup_prevents_detection(startup, qt_applic
 def test_real_startup_controller_hands_splash_to_deferred_mainframe_once(
     startup, qt_application, independent_splash,
 ):
+    from core.startup_diagnostics import StartupDiagnostics
     from gui.startup import StartupController
     from gui.startup_process import StartupSplashProcess
+    from gui.startup_stages import WindowStartupStage
     from gui.widgets.startup_splash import StartupSplash
 
     create, bootstrap, detection, _controllers = startup
     splash = StartupSplashProcess() if independent_splash else StartupSplash()
     coordinator = StartupController(splash)
+    trace = StartupDiagnostics()
+    coordinator.diagnostics = trace
     ready = []
     coordinator.ready.connect(ready.append)
     positions = []
@@ -348,12 +381,17 @@ def test_real_startup_controller_hands_splash_to_deferred_mainframe_once(
         while (position := frame.advance_startup()) is not None:
             positions.append(position)
             assert bootstrap.call_count == detection.call_count == 0
-            yield f"mainframe-{position}", position
+            yield WindowStartupStage(position).diagnostic_name, position
 
     try:
         coordinator.start(stages())
         wait_until(qt_application, lambda: bool(ready))
         assert positions == list(STARTUP_POSITIONS)
+        for position in positions:
+            name = WindowStartupStage(position).diagnostic_name
+            entries = [line for line in trace.text().splitlines() if f"startup {name} " in line]
+            assert len(entries) == 1
+            assert "elapsed_ms=" in entries[0]
         assert len(ready) == 1
         assert ready[0].isVisible()
         if independent_splash:
@@ -383,7 +421,7 @@ def test_task_page_is_owned_when_its_gallery_constructor_fails(
 ):
     create, _bootstrap, _detection, _controllers = startup
     frame = create(deferred_startup=True)
-    while frame.advance_startup() != 70:
+    while frame.advance_startup() != 75:
         pass
     unmounted = []
 

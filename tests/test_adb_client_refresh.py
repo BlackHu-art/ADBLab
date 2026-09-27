@@ -1,6 +1,8 @@
 """ADB 设置重置和候选刷新回归。"""
 
 import platform
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -24,6 +26,81 @@ pytestmark = pytest.mark.ui
 def isolate_effective_client(monkeypatch):
     # 卡片探测测试不能初始化真实执行路径缓存或读取本机客户端。
     monkeypatch.setattr(cards, "resolve_adb_program", lambda: None, raising=False)
+
+
+def test_card_builds_static_choices_before_background_candidate_enumeration(
+    monkeypatch, qt_application,
+):
+    gui_thread = threading.get_ident()
+    enumerated_on = []
+    candidates = [AdbCandidate("PATH", "C:/fixture/path/adb.exe")]
+
+    def enumerate_candidates():
+        enumerated_on.append(threading.get_ident())
+        return candidates
+
+    tasks = []
+    monkeypatch.setattr(cards, "list_adb_candidates", enumerate_candidates)
+    monkeypatch.setattr(cards, "detect_clients", lambda _items, **_kwargs: [
+        ClientProbe("PATH", candidates[0].path, True, True, "1.0.41"),
+    ])
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append),
+    )
+    card = cards.AdbClientSettingCard()
+    try:
+        selected = []
+        card.client_selected.connect(selected.append)
+        assert enumerated_on == []
+        assert card.client_button("auto").isChecked()
+        assert card.client_button("PATH") is None
+        assert card.client_button("custom") is not None
+
+        card.set_selection("PATH")
+        missing = card.client_button("PATH")
+        assert missing.isChecked() and not missing.isEnabled()
+        assert selected == []
+
+        card.start_detection()
+        assert len(tasks) == 1
+        worker = threading.Thread(target=tasks[0].run)
+        worker.start()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        deadline = time.monotonic() + 5
+        while not enumerated_on or not card.client_button("PATH").isEnabled():
+            qt_application.processEvents()
+            assert time.monotonic() < deadline, "后台候选未交付到 GUI 线程"
+        assert enumerated_on == [worker.ident]
+        assert worker.ident != gui_thread
+        assert card.client_button("PATH") is missing
+        assert card.selection() == "PATH"
+        assert selected == []
+    finally:
+        card.close()
+
+
+def test_deferred_settings_page_keeps_saved_client_without_enumerating(
+    monkeypatch, qt_application,
+):
+    values = dict(DEFAULTS, adb_client="PATH")
+    writes = []
+    settings = SimpleNamespace(get=values.get, set=lambda key, value: writes.append((key, value)))
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: pytest.fail(
+        "设置页构造不应枚举本地 ADB 候选"
+    ))
+    frame = Mock()
+    frame._always_on_top = False
+    page = SettingsPage(frame, defer_startup_detection=True)
+    try:
+        card = page.adb_client_card
+        assert card.selection() == "PATH"
+        assert card.client_button("PATH").isChecked()
+        assert not card.client_button("PATH").isEnabled()
+        assert writes == []
+    finally:
+        page.close()
 
 
 def test_parent_shutdown_cancels_client_probe_and_rejects_late_restart(
@@ -61,11 +138,15 @@ def test_parent_shutdown_cancels_client_probe_and_rejects_late_restart(
     card.restart_detection()
     assert len(tasks) == 1
     original_text = card.card.contentLabel.text()
+    task.signals.candidates_ready.emit(
+        task._generation, [AdbCandidate("PATH", "C:/late/adb.exe")],
+    )
     task.signals.effective_path_ready.emit(task._generation, "synthetic-late-client")
     task.signals.failed.emit(task._generation, "synthetic-error")
     task.signals.finished.emit(task._generation, [], [])
     qt_application.processEvents()
     assert card.card.contentLabel.text() == original_text
+    assert card.client_button("PATH") is None
     assert not card._tasks
 
 
@@ -278,6 +359,7 @@ def test_host_label_preserves_manual_selection_and_busy_status(monkeypatch, qt_a
     selected = []
     card.client_selected.connect(selected.append)
     try:
+        card.set_candidates(candidates)
         card.apply_probes([ClientProbe("PATH", candidates[0].path, True, True, "1.0.41")])
         card.set_selection("PATH")
         assert card.card.contentLabel.text() == "系统 PATH · 1.0.41"

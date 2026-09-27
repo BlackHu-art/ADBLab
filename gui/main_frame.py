@@ -64,6 +64,7 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.panels.side_panel import SidePanel
 from gui.run_library import RunLibraryController
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
+from gui.startup_stages import WindowStartupStage
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.device_context_bar import DeviceContextBar
 from gui.widgets.frameless_resize import FramelessResizeController
@@ -447,7 +448,7 @@ class MainFrame(FluentWindow):
         started_at = time.perf_counter()
         self._setup_window()
         self._record_startup_stage("window-layout", started_at)
-        yield 40
+        yield WindowStartupStage.WINDOW_BASE
         yield from self._init_panels_steps()
         self._sync_workspace_restriction(force=True)
         self._setup_shortcuts()
@@ -468,7 +469,7 @@ class MainFrame(FluentWindow):
         self.navigationInterface.setEnabled(True)
         if not self._deferred_startup:
             self._start_startup_services()
-        yield 95
+        yield WindowStartupStage.NAVIGATION
 
     def _record_startup_stage(self, name: str, started_at: float) -> None:
         if self.startup_diagnostics is not None:
@@ -1108,11 +1109,11 @@ class MainFrame(FluentWindow):
             )
 
         apps_overview = build_overview(0, "apps")
-        yield 45
+        yield WindowStartupStage.APPS_OVERVIEW
         system_overview = build_overview(1, "system")
-        yield 50
+        yield WindowStartupStage.SYSTEM_OVERVIEW
         remote_overview = build_overview(2, "remote")
-        yield 55
+        yield WindowStartupStage.REMOTE_OVERVIEW
 
         apps_panel = self.left_panel.app_panel
         system_panel = self.left_panel.system_panel
@@ -1154,7 +1155,7 @@ class MainFrame(FluentWindow):
             ),
         )
         devices_host.register_alias("remote-control", "remote")
-        yield 60
+        yield WindowStartupStage.DEVICES_HOST
 
         apps_host = WorkspaceFeatureHost(
             "apps",
@@ -1195,7 +1196,7 @@ class MainFrame(FluentWindow):
             defer_payload_while_disposing=True,
             close_label=tr("清除截图结果"),
         )
-        yield 65
+        yield WindowStartupStage.APPS_HOST
 
         system_host = WorkspaceFeatureHost(
             "system",
@@ -1326,7 +1327,7 @@ class MainFrame(FluentWindow):
             "apps": self._apps_page,
             "system": self._system_page,
         }
-        yield 70
+        yield WindowStartupStage.WORKSPACE
 
         self._task_history = TaskHistoryStore()
         self._task_page = TaskCenterPage(
@@ -1338,6 +1339,8 @@ class MainFrame(FluentWindow):
         )
         assert self._task_page.run_results is not None
         self._task_page.run_results.reuse_requested.connect(self._reuse_test_run)
+        yield WindowStartupStage.TASK_CENTER
+
         self._tasks_page = GalleryPage(
             "tasksPage",
             tr("任务中心"),
@@ -1346,13 +1349,17 @@ class MainFrame(FluentWindow):
             scroll=False,
             parent=self,
         )
+        yield WindowStartupStage.TASKS_PAGE
+
         self._settings_page = SettingsPage(self, self, defer_startup_detection=True)
         self._app_update = QtAppUpdate(self)
         self._settings_page.about_panel.updateRequested.connect(self._app_update.check)
         self._app_update.changed.connect(self._settings_page.about_panel.set_update_snapshot)
+        yield WindowStartupStage.SETTINGS_PAGE
+
         self._home_page = HomePage(self, self)
         self._sync_material_surface_styles()
-        yield 85
+        yield WindowStartupStage.HOME_PAGE
 
         self.navigationInterface.setAcrylicEnabled(True)
         self.addSubInterface(self._home_page, FluentIcon.HOME, tr("首页"))

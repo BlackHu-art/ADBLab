@@ -46,7 +46,14 @@ class DeviceStore:
         可选取消事件只供启动门禁使用；取消时抛出 CancelledError，跳过后续重试、
         修复和快照发布。已进入的系统 I/O 必须自然返回，不强杀线程。
         """
-        with cls._lock:
+        if cancel_event is None:
+            cls._lock.acquire()
+        else:
+            # 仅启动加载采用有界等锁，关闭时无需等待其他设备操作释放锁。
+            cls._check_cancelled(cancel_event)
+            while not cls._lock.acquire(timeout=0.05):
+                cls._check_cancelled(cancel_event)
+        try:
             cls._check_cancelled(cancel_event)
             source_path = cls._file_path
             if not os.path.exists(source_path) and os.path.exists(cls._legacy_file_path):
@@ -66,6 +73,8 @@ class DeviceStore:
                     LogService().log("WARNING", "连接历史清理未能写入，已过滤显示；下次保存时重试")
             cls._check_cancelled(cancel_event)
             cls._devices = history
+        finally:
+            cls._lock.release()
 
     @staticmethod
     def _check_cancelled(cancel_event: Event | None) -> None:

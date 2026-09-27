@@ -350,7 +350,7 @@ def _run_gui_session(trace) -> int:
         trace.record("settings-diagnostic", detail=f"{level} {message}")
 
     set_error_sink(buffer_setting_diagnostic)
-    settings = AppSettings.instance()
+    settings = AppSettings.instance(defer_migration_save=True)
     _configure_console_logging(settings)
     # 客户端选择必须在首次解析前注入，否则会先缓存内置/自动结果。
     set_client_preference(settings.get("adb_client", "auto"))
@@ -398,6 +398,20 @@ def _run_gui_session(trace) -> int:
         from gui.startup_task import StartupTask
         from models.device_store import DeviceStore
 
+        def persist_settings(_cancel):
+            # 只推迟迁移回写，缩放和主题仍使用 QApplication 创建前的规范化快照。
+            if not settings.flush_deferred_save():
+                raise OSError("deferred settings writeback failed")
+
+        writeback = StartupTask("settings-writeback", persist_settings)
+        yield writeback
+        if writeback.error is not None:
+            if not isinstance(writeback.error, Exception):
+                raise writeback.error
+            log_service.log(
+                "WARNING", "启动设置回写失败，继续使用内存设置并在后续保存时重试",
+            )
+
         # 先完成独占加载再创建任何读取快照的控件，避免 GUI 等待 DeviceStore 的锁。
         history = StartupTask("device-history", DeviceStore.load)
         yield history
@@ -412,6 +426,7 @@ def _run_gui_session(trace) -> int:
 
         started_at = perf_counter()
         from gui.main_frame import MainFrame
+        from gui.startup_stages import WindowStartupStage
 
         trace.record("window-import", elapsed_ms=(perf_counter() - started_at) * 1000)
 
@@ -420,13 +435,8 @@ def _run_gui_session(trace) -> int:
         startup.set_window(window)
         window.startup_diagnostics = trace
         trace.record("window-shell", elapsed_ms=(perf_counter() - started_at) * 1000)
-        names = {
-            40: "window-base", 45: "apps-overview", 50: "system-overview",
-            55: "remote-overview", 60: "devices-host", 65: "apps-host",
-            70: "workspace", 85: "pages", 95: "navigation",
-        }
         while (progress := window.advance_startup()) is not None:
-            yield names[progress], progress
+            yield WindowStartupStage(progress).diagnostic_name, progress
 
     # 排队退出，让中止信号所在轮次的 QObject 延迟释放先收口。
     startup.failed.connect(lambda _error: QTimer.singleShot(0, app, lambda: app.exit(1)))

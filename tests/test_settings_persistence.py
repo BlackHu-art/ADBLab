@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -33,6 +34,110 @@ def isolated_settings(tmp_path, monkeypatch):
             if timer is not None:
                 timer.cancel()
         settings_manager.AppSettings._instance = previous_instance
+
+
+def test_deferred_migration_loads_values_before_writing_and_flushes_latest_update(
+    isolated_settings, monkeypatch,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    source = '{"theme": "Dark", "ui_scale": 1.5}'
+    isolated_settings.write_text(source, encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance(defer_migration_save=True)
+    assert settings.get("theme") == "Dark"
+    assert settings.get("ui_scale") == 1.5
+    assert isolated_settings.read_text(encoding="utf-8") == source
+
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    settings.set("theme", "Light")
+    assert settings.flush_deferred_save() is True
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["theme"] == "Light"
+    assert stored["ui_scale"] == 1.5
+    assert stored["schema_version"] == settings_manager.CURRENT_SCHEMA_VERSION
+    assert settings.flush_deferred_save() is True
+
+
+def test_deferred_legacy_copy_retries_after_save_failure(
+    isolated_settings, monkeypatch,
+):
+    legacy_file = isolated_settings.parent.parent / "legacy" / "app_settings.json"
+    legacy_file.parent.mkdir(parents=True)
+    legacy_file.write_text('{"theme": "Dark"}', encoding="utf-8")
+    settings = settings_manager.AppSettings.instance(defer_migration_save=True)
+    assert settings.get("theme") == "Dark"
+    assert not isolated_settings.exists()
+
+    errors = Mock()
+    with monkeypatch.context() as failure:
+        failure.setattr(settings_manager, "_log_error", errors)
+        failure.setattr(
+            settings_manager.os, "replace", Mock(side_effect=PermissionError("private")),
+        )
+        assert settings.flush_deferred_save() is False
+    errors.assert_called_once_with("ERROR", "Failed to save settings: PermissionError")
+    assert not isolated_settings.exists()
+    assert settings.flush_deferred_save() is True
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "Dark"
+
+
+def test_deferred_load_without_file_does_not_create_settings(isolated_settings):
+    settings = settings_manager.AppSettings.instance(defer_migration_save=True)
+    assert settings.flush_deferred_save() is True
+    assert not isolated_settings.exists()
+
+
+def test_defer_option_on_existing_instance_does_not_change_default_migration(
+    isolated_settings,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text('{"theme": "Dark"}', encoding="utf-8")
+    settings = settings_manager.AppSettings.instance()
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["schema_version"] == 3
+    assert settings_manager.AppSettings.instance(defer_migration_save=True) is settings
+    assert settings.flush_deferred_save() is True
+
+
+def test_regular_save_clears_deferred_migration_without_duplicate_flush(
+    isolated_settings, monkeypatch,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text('{"theme": "Dark"}', encoding="utf-8")
+    settings = settings_manager.AppSettings.instance(defer_migration_save=True)
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    settings.set("theme", "Light")
+    assert settings._save_atomic() is True
+    with monkeypatch.context() as blocked:
+        blocked.setattr(
+            settings_manager.os, "replace", Mock(side_effect=AssertionError("duplicate write")),
+        )
+        assert settings.flush_deferred_save() is True
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "Light"
+
+
+def test_deferred_flush_reads_latest_snapshot_after_contending_save(
+    isolated_settings, monkeypatch,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text('{"theme": "Dark"}', encoding="utf-8")
+    settings = settings_manager.AppSettings.instance(defer_migration_save=True)
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    entered = threading.Event()
+    result = []
+
+    def flush():
+        entered.set()
+        result.append(settings.flush_deferred_save())
+
+    with settings._write_lock:
+        worker = threading.Thread(target=flush)
+        worker.start()
+        assert entered.wait(2)
+        settings.set("theme", "Light")
+    worker.join(5)
+    assert not worker.is_alive()
+    assert result == [True]
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "Light"
 
 
 def test_scrcpy_settings_round_trip_across_app_settings_rebuild(isolated_settings):

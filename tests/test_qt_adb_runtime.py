@@ -470,6 +470,7 @@ def test_adb_client_card_detection_finishes_and_unlocks_actions(qt_application, 
     monkeypatch.setattr("gui.widgets.adb_client_card.host_system_name", lambda: "Windows")
     card = AdbClientSettingCard()
     try:
+        card.set_candidates([AdbCandidate("bundled", "C:/bundle/adb.exe")])
         card.set_busy(True)
         assert "正在识别" in card.card.contentLabel.text()
 

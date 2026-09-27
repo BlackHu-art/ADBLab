@@ -47,6 +47,48 @@ def test_cancelled_load_does_not_replace_memory_or_repair_disk(tmp_path, monkeyp
         assert dict(DeviceStore.get_all()) == {"existing": {"ip": "192.0.2.11:5555"}}
 
 
+def test_cancelled_load_exits_while_another_thread_still_holds_store_lock():
+    from concurrent.futures import CancelledError
+
+    holding = threading.Event()
+    release = threading.Event()
+    entering = threading.Event()
+    exited = threading.Event()
+    cancel = threading.Event()
+    outcomes = []
+
+    def holder():
+        with DeviceStore._lock:
+            holding.set()
+            release.wait(5)
+
+    def waiter():
+        entering.set()
+        try:
+            DeviceStore.load(cancel_event=cancel)
+        except CancelledError:
+            outcomes.append("cancelled")
+        finally:
+            exited.set()
+
+    holding_thread = threading.Thread(target=holder)
+    waiting_thread = threading.Thread(target=waiter)
+    try:
+        holding_thread.start()
+        assert holding.wait(2)
+        waiting_thread.start()
+        assert entering.wait(2)
+        cancel.set()
+        assert exited.wait(1), "cancelled load must leave lock wait before the holder releases"
+        assert holding_thread.is_alive()
+        assert outcomes == ["cancelled"]
+    finally:
+        release.set()
+        holding_thread.join(5)
+        if waiting_thread.ident is not None:
+            waiting_thread.join(5)
+
+
 def test_cancelled_read_retry_does_not_wait_or_backup(tmp_path, monkeypatch):
     from concurrent.futures import CancelledError
 

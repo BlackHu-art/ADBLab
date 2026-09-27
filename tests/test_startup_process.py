@@ -121,6 +121,16 @@ def test_worker_reports_first_paint_and_receives_real_progress(worker_probe, spl
     assert not cancelled
 
 
+def test_parent_reports_launch_connection_and_ready_milestones(worker_probe, splash):
+    records = []
+    splash.diagnostic.connect(records.append)
+    splash.show()
+    _wait_until(lambda: "ready" in records)
+    assert records[:3] == ["launch", "connected", "ready"]
+    splash.finish()
+    _wait_until(lambda: splash.findChild(QProcess).state() == QProcess.ProcessState.NotRunning)
+
+
 def test_worker_keeps_painting_while_parent_gui_is_blocked(worker_probe, splash):
     painted = []
     splash.first_painted.connect(lambda: painted.append(True))
@@ -259,6 +269,71 @@ def test_worker_cancel_is_distinct_from_finish(worker_probe, splash):
     _wait_until(lambda: splash.findChild(QProcess).state() == QProcess.ProcessState.NotRunning)
     splash.finish()
     assert cancelled == [True]
+
+
+@pytest.mark.parametrize("force_drain_timeout", [False, True], ids=["normal", "drain-timeout"])
+def test_early_cancel_survives_parent_event_loop_stall(worker_probe, splash, force_drain_timeout):
+    from gui.widgets.startup_splash import StartupSplash
+
+    _cancel_worker_after_first_frame(worker_probe)
+    helper = worker_probe.parent / "worker.py"
+    worker_done = worker_probe.parent / "worker-done"
+    source = helper.read_text(encoding="utf-8")
+    if force_drain_timeout:
+        # 丢弃取消消息并阻止正常断连，只有真实排空计时器能结束子进程事件循环。
+        source = source.replace(
+            "from gui.startup_worker import run_startup_splash\n",
+            "from gui import startup_worker\n"
+            "class DrainTimeoutSession(startup_worker._SplashSession):\n"
+            "    def __init__(self, *args):\n"
+            "        super().__init__(*args)\n"
+            "        self._socket.disconnectFromServer = lambda: None\n"
+            "    def _send(self, kind):\n"
+            "        if kind == 'cancelled':\n"
+            "            record(kind='cancel-message-dropped')\n"
+            "        else:\n"
+            "            super()._send(kind)\n"
+            "    def _finish_cancel(self):\n"
+            "        if not self._closed:\n"
+            "            record(kind='cancel-finish',\n"
+            "                   timer_active=self._cancel_timeout.isActive())\n"
+            "        super()._finish_cancel()\n"
+            "startup_worker._SplashSession = DrainTimeoutSession\n"
+            "from gui.startup_worker import run_startup_splash\n",
+        )
+    source = source.replace(
+        "raise SystemExit(run_startup_splash(sys.argv[1]))\n",
+        "exit_code = run_startup_splash(sys.argv[1])\n"
+        "from pathlib import Path\n"
+        f"Path({str(worker_done)!r}).touch()\n"
+        "raise SystemExit(exit_code)\n",
+    )
+    helper.write_text(source, encoding="utf-8")
+    painted, cancelled, diagnostics = [], [], []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.cancelled.connect(lambda: cancelled.append(True))
+    splash.diagnostic.connect(diagnostics.append)
+    splash.show()
+    # 按子进程完成标记等待，期间不泵送父 Qt 事件，确保首次读取发生在取消之后。
+    deadline = time.monotonic() + 5
+    while not worker_done.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert worker_done.exists(), _records(worker_probe)
+    assert diagnostics == ["launch"] and not painted and not cancelled
+    records = _records(worker_probe)
+    assert any(row["kind"] == "paint" for row in records)
+    if force_drain_timeout:
+        assert any(row["kind"] == "cancel-message-dropped" for row in records)
+        assert [row["timer_active"] for row in records if row["kind"] == "cancel-finish"] == [False]
+    _wait_until(lambda: splash.findChild(QProcess).state() == QProcess.ProcessState.NotRunning)
+    _wait_until(lambda: bool(cancelled))
+    assert splash.findChild(QProcess).exitCode() == 42
+    assert cancelled == [True]
+    assert not any(isinstance(widget, StartupSplash) and widget.isVisible()
+                   for widget in QApplication.topLevelWidgets())
+    splash.finish()
+    assert cancelled == [True]
+    assert not any(record.startswith("fallback") for record in diagnostics)
 
 
 def test_worker_exit_before_socket_callback_preserves_user_cancel(worker_probe, splash):

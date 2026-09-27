@@ -209,7 +209,8 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._group.buttonClicked.connect(self._on_radio_clicked)
         self._custom_button.clicked.connect(self.custom_requested.emit)
         self._action_button.clicked.connect(self.rescan_requested.emit)
-        self.set_candidates()
+        # 构造时只建立静态行；路径扫描与 onefile 工具准备由后台探测任务完成。
+        self.set_candidates([])
         self.set_selection(CLIENT_PREFERENCE_AUTO)
 
     # ── 行构建 ────────────────────────────────────────────────────────
@@ -376,6 +377,16 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
 
         text = str(value or "").strip() or CLIENT_PREFERENCE_AUTO
         self._selection = text
+        if (
+            text != CLIENT_PREFERENCE_AUTO
+            and text in CLIENT_SOURCE_TOKENS
+            and text not in self._rows
+            and not self._candidate_sources
+        ):
+            # 后台候选尚未交付时，先显示已保存但尚不可用的来源。
+            self._sync_candidates([])
+            self._render_probe_rows()
+            return
         key = self._key_for(text)
         for button in self._group.buttons():
             button.setChecked(str(button.property("adbKey") or "") == key)

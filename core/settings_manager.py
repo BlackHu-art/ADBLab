@@ -370,8 +370,9 @@ class AppSettings:
     _data: dict
     _save_timer: threading.Timer | None
     _seen_version: int
+    _deferred_save_pending: bool
 
-    def __new__(cls):
+    def __new__(cls, *, defer_migration_save: bool = False):
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -382,22 +383,27 @@ class AppSettings:
                     instance._save_timer = None
                     instance._seen_version = CURRENT_SCHEMA_VERSION
                     instance._future_extra = {}
+                    instance._deferred_save_pending = False
                     cls._instance = instance
-                    instance._load()
+                    instance._load(defer_migration_save=defer_migration_save)
         return cls._instance
 
+    def __init__(self, *, defer_migration_save: bool = False) -> None:
+        """仅首次构造时使用迁移回写选项；已有单例不会重新加载。"""
+
     @classmethod
-    def instance(cls):
-        """返回应用设置单例。"""
+    def instance(cls, *, defer_migration_save: bool = False):
+        """返回单例；首次创建可延后迁移回写，供启动后台阶段显式完成。"""
 
-        return cls()
+        return cls(defer_migration_save=defer_migration_save)
 
-    def _load(self) -> None:
+    def _load(self, *, defer_migration_save: bool = False) -> None:
         """加载用户设置；不存在时尝试迁移旧安装目录中的设置。
 
         按 ADR-0006 的迁移链补齐结构：无 ``schema_version`` 的文件视为 v1，
         逐版本迁移到 ``CURRENT_SCHEMA_VERSION`` 后剔除未知键；来自旧版本文件的
-        迁移结果立即落盘。版本高于当前支持范围的文件只读已知键、不清理不迁移。
+        迁移结果默认立即落盘；启动阶段可仅延后回写，读取及内存规范化保持同步。
+        版本高于当前支持范围的文件只读已知键、不清理不迁移。
         """
 
         paths = [SETTINGS_FILE]
@@ -444,9 +450,18 @@ class AppSettings:
             needs_immediate_save
             or (loaded_from != SETTINGS_FILE and not os.path.exists(SETTINGS_FILE))
         ):
-            self._save_atomic()
+            if defer_migration_save:
+                with self._lock:
+                    self._deferred_save_pending = True
+            else:
+                self._save_atomic()
 
-    def _save_atomic(self) -> bool:
+    def flush_deferred_save(self) -> bool:
+        """由启动后台任务回写待迁移设置；失败保留待写状态供后续重试。"""
+
+        return self._save_atomic(deferred_only=True)
+
+    def _save_atomic(self, *, deferred_only: bool = False) -> bool:
         """原子保存并返回成功状态；失败保留原文件和内存值，供下次更新或关闭重试。"""
 
         temporary_path = ""
@@ -455,6 +470,8 @@ class AppSettings:
             # 并在取得写锁后再生成快照，避免旧快照最后覆盖新设置。
             with self._write_lock:
                 with self._lock:
+                    if deferred_only and not self._deferred_save_pending:
+                        return True
                     snapshot = deepcopy(self._data)
                     # 版本号由加载/保存流程托管：来自更高版本的只读文件保留其
                     # 版本号，避免降级安装把新文件改写回旧版本。
@@ -473,6 +490,8 @@ class AppSettings:
                     json.dump(snapshot, file, indent=2, ensure_ascii=False)
                 os.replace(temporary_path, target)
                 temporary_path = ""
+                with self._lock:
+                    self._deferred_save_pending = False
             return True
         except Exception as error:
             if temporary_path and os.path.exists(temporary_path):
