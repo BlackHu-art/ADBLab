@@ -216,6 +216,142 @@ def test_controller_supervision_retains_unfinished_native_short_command(monkeypa
         worker.join(2)
 
 
+@pytest.mark.parametrize("operation", ["connect", "disconnect"])
+@pytest.mark.parametrize("client_state", ["running", "spawn_pending", "refuses_exit"])
+def test_close_accounts_for_inflight_device_connection_client(
+    qt_application, monkeypatch, operation, client_state,
+):
+    import io
+    import subprocess
+
+    from PySide6.QtCore import QThreadPool
+
+    from controllers._base import _ADBControllerBase
+    from core import adb_runtime as runtime_module
+    from core import exec as execution
+    from models.adb_device import ADBDevice
+
+    entered = threading.Event()
+    release = threading.Event()
+    spawn_release = threading.Event()
+    completed = threading.Event()
+    commands, results, clients = [], [], []
+
+    class Client:
+        def __init__(self, command, **_kwargs):
+            self.returncode = None
+            self.stdin = None
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.stops = 0
+            self.exit_on_kill = client_state != "refuses_exit"
+            commands.append(command)
+            clients.append(self)
+            entered.set()
+            if client_state == "spawn_pending":
+                assert spawn_release.wait(1), "测试必须释放关闭期间晚到的客户端句柄"
+
+        def communicate(self, timeout=None):
+            if not release.wait(timeout):
+                raise subprocess.TimeoutExpired("synthetic-client", timeout)
+            return b"", b""
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.stops += 1
+            if self.exit_on_kill:
+                self.returncode = -9
+                release.set()
+
+        def wait(self, timeout=None):
+            if not release.wait(timeout):
+                raise subprocess.TimeoutExpired("synthetic-client", timeout)
+            return self.returncode
+
+    def uncancellable_native(command, **_kwargs):
+        commands.append(command)
+        entered.set()
+        assert release.wait(2), "测试清理必须释放尚未接入取消的原生调用"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "run_native", uncancellable_native)
+    monkeypatch.setattr(runtime_module, "popen_native", Client)
+    model = ADBDevice()
+    model.thread_pool = QThreadPool(model)
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.device_model = model
+    controller.app_model = SimpleNamespace()
+    controller.testing_model = SimpleNamespace()
+    controller.advanced_model = SimpleNamespace()
+    controller.action_results = Mock()
+    controller.log_service = Mock()
+    controller.executor = Mock()
+
+    def finished(_method, result):
+        results.append(result)
+        completed.set()
+
+    model.command_finished.connect(finished, Qt.ConnectionType.DirectConnection)
+    frame = _frame(controller.shutdown, deadline=2 if client_state == "refuses_exit" else 0.5)
+    settings = Mock()
+    settings._save_timer = None
+    _bind_settings_finalizer(frame, settings)
+    try:
+        getattr(model, f"{operation}_device_async")("192.0.2.1:5555")
+        assert entered.wait(1)
+        assert execution.CommandRunner.active_count() == 1
+
+        frame.closeEvent(CloseEvent())
+        if client_state == "spawn_pending":
+            _drive_until(qt_application, model.is_shutting_down, frame=frame)
+            assert model.is_shutting_down() and not frame._close_ready
+            assert execution.CommandRunner.active_count() == 1
+            assert clients[0].poll() is None and clients[0].stops == 0
+            spawn_release.set()
+        _drive_until(qt_application, lambda: frame._close_ready, frame=frame)
+
+        assert frame._close_ready
+        if client_state == "refuses_exit":
+            controller_result = next(
+                item for item in frame._shutdown_results if item.task_id.endswith("-controller")
+            )
+            assert controller_result.disposition == StopDisposition.FAILED
+            assert any(item.kind == "controller_shutdown" for item in frame._shutdown_residual)
+            assert frame.task_supervisor.supervisor.active_count == 1
+            assert clients[0].poll() is None and clients[0].stops >= 1
+        else:
+            assert not any(item.kind == "controller_shutdown" for item in frame._shutdown_residual)
+            assert frame.task_supervisor.supervisor.active_count == 0
+            assert len(clients) == 1 and clients[0].stops == 1
+            assert clients[0].poll() is not None
+        assert execution.CommandRunner.active_count() == 0
+        assert model.thread_pool.activeThreadCount() == 0
+        assert all(not handle.is_running() for handle in frame._shutdown_handles)
+        assert commands == [["adb", operation, "192.0.2.1:5555"]]
+        assert len(clients) == 1
+        assert completed.is_set() and len(results) == 1 and results[0]["success"] is False
+        assert model.is_shutting_down()
+    finally:
+        spawn_release.set()
+        for client in clients:
+            if client.poll() is None:
+                client.exit_on_kill = True
+                client.kill()
+        release.set()
+        model.begin_shutdown()
+        assert model.thread_pool.waitForDone(1000)
+        for handle in frame._shutdown_handles:
+            assert handle.wait(1)
+        model.wait_for_commands()
+        assert all(client.poll() is not None for client in clients)
+        frame.task_supervisor._pool.waitForDone(1000)
+        model.deleteLater()
+
+
 def test_application_stop_uses_one_wall_clock_deadline_for_many_slow_tasks():
     supervisor = TaskSupervisor()
     for index in range(5):

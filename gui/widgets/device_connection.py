@@ -347,6 +347,10 @@ class DeviceConnectionPanel(QWidget):
         refresh_layout.addStretch()
         self.cancel_button = _connection_button(FluentIcon.CANCEL, "停止", self.action_row)
         self.retry_stop_button = _connection_button(FluentIcon.CANCEL, "重试停止", self.action_row)
+        self.recovery_code_button = _connection_button(
+            FluentIcon.CODE, "使用配对码", self.action_row,
+        )
+        self.recovery_code_button.clicked.connect(lambda: self.request_page("manual"))
         status.addWidget(self.action_row)
         self.status_detail = BodyLabel("", self.status_box)
         self.status_detail.setWordWrap(True)
@@ -454,7 +458,7 @@ class DeviceConnectionPanel(QWidget):
             self.qr_text,
             self.qr_text_layout,
         )
-        code_option = QWidget(self.qr_text)
+        self.code_option = code_option = QWidget(self.qr_text)
         # 隐藏页仍参与三页等高测量，换页时保留配对码入口的自然高度。
         code_option_layout = FlowLayout(code_option)
         code_option_layout.setContentsMargins(0, 0, 0, 0)
@@ -605,11 +609,15 @@ class DeviceConnectionPanel(QWidget):
         padding = self.refresh_button.sizeHint().width() - math.ceil(
             metrics.horizontalAdvance(self.refresh_button.text())
         )
-        self.refresh_slot.setFixedWidth(
+        self._qr_refresh_slot_width = (
             padding + 1 + max(
                 math.ceil(metrics.horizontalAdvance(tr(text)))
                 for text in ("生成二维码", "刷新二维码", "重新生成")
             )
+        )
+        self.refresh_slot.setFixedWidth(
+            self.refresh_button.sizeHint().width()
+            if self._qr_failed() else self._qr_refresh_slot_width
         )
         self.cancel_button.setFixedWidth(self.cancel_button.sizeHint().width())
         self._schedule_reflow()
@@ -784,8 +792,8 @@ class DeviceConnectionPanel(QWidget):
             "adb_unavailable": tr("当前 ADB 客户端不可用，请在设置中检查客户端。"),
             "unsupported_client": tr("当前 ADB 不支持无线配对，请在设置中选择较新的客户端。"),
             "mdns_unavailable": tr("无法自动发现手机，请尝试使用配对码。"),
-            "mdns_timeout": tr("无法自动发现手机，请尝试使用配对码。"),
-            "mdns_unrecognized": tr("无法自动发现手机，请尝试使用配对码。"),
+            "mdns_timeout": tr("自动发现响应超时，请重试或使用配对码。"),
+            "mdns_unrecognized": tr("无法识别自动发现结果，请重试或使用配对码。"),
             "scan_timeout": tr("二维码已过期，请重新生成。"),
             "prepare_timeout": tr("准备超时，请检查连接环境后重试。"),
             "service_conflict": tr("发现结果存在冲突，请重新生成二维码后再试。"),
@@ -876,22 +884,35 @@ class DeviceConnectionPanel(QWidget):
             return
         qr = self.current_page == "qr"
         self.refresh_button.setVisible(qr)
-        refresh_text = "重新生成" if self._qr_expired else (
-            "刷新二维码" if state == "WaitingForScan" else "生成二维码"
+        failed = self._qr_failed()
+        refresh_text = "重试" if failed else (
+            "重新生成" if self._qr_expired else (
+                "刷新二维码" if state == "WaitingForScan" else "生成二维码"
+            )
         )
         self.refresh_button.setText(tr(refresh_text))
         self.refresh_button.setToolTip(tr(refresh_text))
+        self.refresh_slot.setFixedWidth(
+            self.refresh_button.sizeHint().width() if failed else self._qr_refresh_slot_width
+        )
         self.refresh_button.setEnabled(
             not stopping and state not in ("Pairing", "WaitingForConnection")
         )
         self.code_button.setVisible(True)
         self.code_button.setEnabled(not stopping)
+        self.code_option.setVisible(not failed)
+        self.recovery_code_button.setVisible(failed)
+        self.recovery_code_button.setEnabled(not stopping)
+        status_layout = self.status_box.layout()
+        assert isinstance(status_layout, QVBoxLayout)
+        status_layout.removeWidget(self.status_detail)
+        status_layout.insertWidget(1 if failed else 2, self.status_detail)
         stopped = (
             qr and state == "Idle" and self.coordinator.reason == "cancelled"
             and not busy and not self._has_pending()
         )
         self.cancel_button.setVisible(
-            not self._qr_expired and state != "CleanupFailed"
+            not failed and not self._qr_expired and state != "CleanupFailed"
             and (busy or stopped) and (qr or not stopping)
         )
         self.cancel_button.setEnabled(busy and not stopping and not self._qr_expired)
@@ -907,7 +928,7 @@ class DeviceConnectionPanel(QWidget):
             self.progress_ring.start()
         else:
             self.progress_ring.stop()
-        self.qr_label.setVisible(True)
+        self.qr_label.setVisible(not failed)
         self.address_form.setEnabled(not busy and not stopping and not self._submitted_address)
         self.status_detail.setVisible(bool(self.status_detail.text()))
         self.countdown_label.setVisible(bool(self.countdown_label.text()))
@@ -1098,19 +1119,46 @@ class DeviceConnectionPanel(QWidget):
             actions += control_height + 6
         return self._qr_status_line_height(width, control_height) + 6 + actions
 
+    def _qr_failed(self):
+        """一般失败释放扫码占位；过期状态继续保留原位重新生成入口。"""
+        return (
+            self.current_page == "qr" and self.coordinator.state == "Failed"
+            and not self._qr_expired
+        )
+
     def _reflow_actions(self, width, control_height):
-        """按钮独占固定操作行，隐藏停止时保留其槽位；窄窗只按可用宽度换行。"""
-        for button in (self.refresh_slot, self.cancel_button, self.retry_stop_button):
+        """扫码期间保留操作槽；失败后的恢复动作靠近原因，窄窗按自然宽度换行。"""
+        for button in (
+            self.refresh_slot, self.cancel_button, self.retry_stop_button,
+            self.recovery_code_button,
+        ):
             self.action_layout.removeWidget(button)
         qr = self.current_page == "qr"
+        failed = self._qr_failed()
         self.refresh_slot.setVisible(qr)
         self.refresh_slot.setFixedHeight(control_height)
         policy = self.cancel_button.sizePolicy()
-        policy.setRetainSizeWhenHidden(qr)
+        policy.setRetainSizeWhenHidden(qr and not failed)
         self.cancel_button.setSizePolicy(policy)
-        self.action_layout.setColumnStretch(0, 1)
+        for column in range(3):
+            self.action_layout.setColumnStretch(column, 0)
         height = control_height
-        if qr:
+        if failed:
+            self.action_layout.addWidget(self.refresh_slot, 0, 0, Qt.AlignmentFlag.AlignLeft)
+            recovery_width = self.recovery_code_button.sizeHint().width()
+            if width >= self._qr_refresh_width() + 10 + recovery_width:
+                self.action_layout.addWidget(
+                    self.recovery_code_button, 0, 1, Qt.AlignmentFlag.AlignLeft,
+                )
+                self.action_layout.setColumnStretch(2, 1)
+            else:
+                self.action_layout.addWidget(
+                    self.recovery_code_button, 1, 0, Qt.AlignmentFlag.AlignLeft,
+                )
+                self.action_layout.setColumnStretch(1, 1)
+                height += control_height + 6
+        elif qr:
+            self.action_layout.setColumnStretch(0, 1)
             self.action_layout.addWidget(self.refresh_slot, 0, 1, Qt.AlignmentFlag.AlignRight)
             if width >= self._qr_refresh_width() + 10 + self.cancel_button.width():
                 self.action_layout.addWidget(self.cancel_button, 0, 2, Qt.AlignmentFlag.AlignRight)
@@ -1128,6 +1176,7 @@ class DeviceConnectionPanel(QWidget):
             if not self.retry_stop_button.isHidden():
                 height += control_height + 6
         else:
+            self.action_layout.setColumnStretch(0, 1)
             self.action_layout.addWidget(self.cancel_button, 0, 1, Qt.AlignmentFlag.AlignRight)
             self.action_layout.addWidget(self.retry_stop_button, 0, 2, Qt.AlignmentFlag.AlignRight)
         self.action_row.setFixedHeight(height)
@@ -1162,6 +1211,11 @@ class DeviceConnectionPanel(QWidget):
         self.qr_status_slot.setMinimumWidth(0)
         self.qr_status_slot.setMaximumWidth(16777215)
         code_alignment = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        if self._qr_failed():
+            self.qr_columns.addWidget(self.qr_text, 0, 0, 1, 3)
+            self.qr_columns.addWidget(self.qr_status_slot, 1, 0, 1, 3)
+            self.qr_columns.setColumnStretch(0, 1)
+            return width
         if compact:
             self.qr_columns.addWidget(self.qr_label, 0, 0, 1, 2, code_alignment)
             self.qr_columns.addWidget(self.qr_text, 1, 0, 1, 2)
@@ -1171,7 +1225,7 @@ class DeviceConnectionPanel(QWidget):
             self.qr_columns.addWidget(self.qr_text, 0, 0)
             self.qr_columns.addWidget(self.qr_label, 0, 1, code_alignment)
             self.qr_columns.setColumnStretch(0, 1)
-            if wide:
+            if wide and not details:
                 self.qr_columns.setColumnMinimumWidth(0, text_width)
                 self.qr_columns.setColumnMinimumWidth(2, side_width)
                 self.qr_columns.setColumnStretch(2, 1)

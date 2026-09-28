@@ -6751,6 +6751,14 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>当前 ADB 不支持无线配对，请在设置中选择较新的客户端。</translation>
         </message>
         <message>
+            <source>自动发现响应超时，请重试或使用配对码。</source>
+            <translation>自动发现响应超时，请重试或使用配对码。</translation>
+        </message>
+        <message>
+            <source>无法识别自动发现结果，请重试或使用配对码。</source>
+            <translation>无法识别自动发现结果，请重试或使用配对码。</translation>
+        </message>
+        <message>
             <source>无法自动发现手机，请尝试使用配对码。</source>
             <translation>无法自动发现手机，请尝试使用配对码。</translation>
         </message>

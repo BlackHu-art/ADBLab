@@ -68,7 +68,10 @@ def flow(qt_application, monkeypatch, tmp_path):
 
         def command(argv, **kwargs):
             assert argv[0] == path
-            assert kwargs["shell"] is False and kwargs["native_only"] is True
+            assert kwargs["shell"] is False
+            assert kwargs["native_only"] is (
+                argv[1:] not in (["mdns", "check"], ["mdns", "services"])
+            )
             assert kwargs["env"] == environment
             assert kwargs["command_scope"] in scopes
             calls.append(tuple(argv[1:]))

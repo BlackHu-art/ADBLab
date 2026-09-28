@@ -968,6 +968,71 @@ class AdbRuntime:
             return "shell", args[1:], serial
         return None
 
+    def try_run_mdns(
+        self,
+        cmd: list[str],
+        timeout: float,
+        cancelled: CancelCheck | None = None,
+        *,
+        env: Mapping[str, str],
+    ) -> ExecutionResult | None:
+        """对已选客户端的默认本地服务执行有限只读查询，不依赖或更新设备能力。
+
+        环境取会话快照，每次准入读取当前原生模式；每次直连最多一秒。失败后只在
+        取消和整条预算均允许时返回 None，由调用方在剩余预算内执行原生查询。
+        """
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            event = self._request_stop
+            if self._closed or self._draining or event.is_set() or (cancelled and cancelled()):
+                return ExecutionResult(kind="cancelled")
+            if time.monotonic() >= deadline:
+                return ExecutionResult(kind="timeout")
+            if (
+                not self._path or not cmd
+                or cmd[1:] not in (["mdns", "check"], ["mdns", "services"])
+                or os.path.normcase(os.path.abspath(cmd[0]))
+                != os.path.normcase(os.path.abspath(self._path))
+                or self._native_only
+                or any(key.upper() in {
+                    "ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS", "ANDROID_ADB_SERVER_PORT",
+                } for key in env)
+            ):
+                return None
+            self._active += 1
+            selection_mode = self._mode
+        try:
+            remaining = deadline - time.monotonic()
+            if event.is_set() or (cancelled and cancelled()):
+                return ExecutionResult(kind="cancelled")
+            if remaining <= 0:
+                return ExecutionResult(kind="timeout")
+            adb_debug.command(
+                cmd, backend="server_direct", selection_mode=selection_mode,
+                endpoint="127.0.0.1:5037", client_spawned=False,
+            )
+            result = capture(
+                "mdns", cmd[2:], serial=None, timeout=min(self.SOCKET_TIMEOUT, remaining),
+                cancelled=lambda: event.is_set() or bool(cancelled and cancelled()),
+            )
+            if adb_debug.enabled():
+                adb_debug.command(
+                    cmd, backend="server_direct", phase="finish", status=result.kind,
+                    returncode=result.returncode, client_spawned=False,
+                )
+            # capture 已关闭本次连接；停止或总预算耗尽时不能再创建原生客户端。
+            if event.is_set() or (cancelled and cancelled()) or result.kind == "cancelled":
+                return ExecutionResult(kind="cancelled")
+            if time.monotonic() >= deadline:
+                return ExecutionResult(kind="timeout")
+            if result.kind == "completed" and result.returncode == 0:
+                return result
+            return None
+        finally:
+            with self._condition:
+                self._active -= 1
+                self._condition.notify_all()
+
     def try_run(
         self,
         cmd: list[str],

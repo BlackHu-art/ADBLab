@@ -70,6 +70,17 @@ def paired(guid=GUID):
     return ok(f"Enter pairing code: Successfully paired to {PAIR_ENDPOINT}{suffix}")
 
 
+def complete_after(clock, seconds, result):
+    def execute(kwargs):
+        timeout = kwargs["timeout"]
+        clock.now += min(seconds, timeout)
+        if seconds > timeout:
+            return CommandResult(False, outcome="timed_out")
+        return result
+
+    return execute
+
+
 @pytest.fixture
 def context(tmp_path):
     return PairingContext(
@@ -233,12 +244,109 @@ def test_qr_exact_service_to_guid_identity_chain_uses_stdin_and_frozen_context(c
     assert pair_call[1]["input_bytes"] == (request.secret + "\n").encode("ascii")
     for argv, kwargs in calls:
         assert argv[0] == context.adb_path
-        assert kwargs["native_only"] is True and kwargs["shell"] is False
+        assert kwargs["native_only"] is (argv[1:] not in (["mdns", "check"], ["mdns", "services"]))
+        assert kwargs["shell"] is False
         assert kwargs["env"] == {"ADB_SERVER_SOCKET": "tcp:example:5037"}
         assert request.secret not in " ".join(argv)
     assert request.secret not in repr(events) + repr(outcome) + repr(context)
     assert images[0][1].startswith(b"\x89PNG\r\n\x1a\n")
     assert images[0][2] >= 29
+
+
+@pytest.mark.parametrize(
+    "slow_query, elapsed",
+    [
+        (("mdns", "check"), 6.3),
+        (("mdns", "services"), 12.6),
+        (("devices",), 6.3),
+        (("-s", CONNECT_ENDPOINT, "shell", "getprop", "persist.adb.wifi.guid"), 6.3),
+        (None, 31.5),
+    ],
+    ids=["prepare", "discovery", "devices", "identity", "all-queries"],
+)
+def test_slow_native_queries_can_complete_qr_pairing_within_stage_budgets(
+    context, slow_query, elapsed,
+):
+    clock = Clock()
+    request = create_qr_request(16)
+    responses = {
+        ("mdns", "check"): ok("mdns daemon version [adb discovery 0.0.0]"),
+        ("mdns", "services"): ok(
+            f"{HEADER}\n{request.service_name} _adb-tls-pairing._tcp. {PAIR_ENDPOINT}\n"
+            f"{GUID} _adb-tls-connect._tcp. {CONNECT_ENDPOINT}"
+        ),
+        ("pair", PAIR_ENDPOINT): paired(),
+        ("devices",): ok(f"List of devices attached\n{CONNECT_ENDPOINT}\tdevice"),
+        ("-s", CONNECT_ENDPOINT, "shell", "getprop", "persist.adb.wifi.guid"): ok(GUID),
+        ("connect", TRANSPORT): ok("connected"),
+    }
+    calls, events, images = [], [], []
+
+    def command(argv, **kwargs):
+        args = tuple(argv[1:])
+        calls.append((args, kwargs))
+        query = args[0] not in {"pair", "connect"}
+        seconds = 6.3 if query and (slow_query is None or args == slow_query) else 0
+        return complete_after(clock, seconds, responses[args])(kwargs)
+
+    def display(_request_id, png, _module_count, _timeout):
+        images.append(png)
+        return True
+
+    outcome = PairingService(command_runner=command, clock=clock, wait=clock.wait).run(
+        request, context, threading.Event(), Scope(), events.append, display,
+    )
+
+    assert outcome.connected and outcome.device_id == CONNECT_ENDPOINT
+    assert outcome.guid == GUID
+    assert len(images) == 1 and images[0].startswith(b"\x89PNG\r\n\x1a\n")
+    scan = next(event for event in events if event.state == "WaitingForScan")
+    assert scan.remaining_seconds == 120
+    assert sum(args[0] == "pair" for args, _ in calls) == 1
+    assert next(kwargs["timeout"] for args, kwargs in calls if args[0] == "pair") == 15
+    assert not any(args[0] == "connect" for args, _ in calls)
+    assert clock.now == pytest.approx(elapsed)
+
+
+@pytest.mark.parametrize("phase", ["prepare", "discovery"])
+def test_mdns_query_exceeding_native_budget_stops_without_pairing(context, phase):
+    clock = Clock()
+    check = ok("mdns daemon version [adb discovery 0.0.0]")
+    rows = [
+        (["mdns", "check"], complete_after(clock, 16, check) if phase == "prepare" else check),
+    ]
+    if phase == "discovery":
+        rows.append((["mdns", "services"], complete_after(clock, 16, ok(HEADER))))
+
+    outcome, calls, _, images, _ = run(rows, context, create_qr_request(17), clock=clock)
+
+    assert outcome.state == "Failed" and outcome.reason == "mdns_timeout"
+    assert clock.now == 15
+    assert len(calls) == (1 if phase == "prepare" else 2)
+    assert bool(images) is (phase == "discovery")
+
+
+def test_slow_queries_keep_connection_confirmation_within_remaining_stage_budget(context):
+    clock = Clock()
+    listing = ok("List of devices attached")
+    outcome, calls, _, _, _ = run(
+        [
+            (["pair", PAIR_ENDPOINT], paired()),
+            (["devices"], complete_after(clock, 14, listing)),
+            (["mdns", "services"], complete_after(clock, 14, ok(HEADER))),
+            (
+                ["devices"],
+                complete_after(clock, 2, ok(f"List of devices attached\n{TRANSPORT}\tdevice")),
+            ),
+        ],
+        context,
+        clock=clock,
+    )
+
+    assert outcome.state == "PairedOnly" and outcome.reason == "connection_timeout"
+    assert not outcome.connected and outcome.continuation is not None
+    assert clock.now == 30
+    assert len(calls) == 4 and calls[-1][1]["timeout"] == 1
 
 
 def test_qr_conflicting_matching_services_never_pair(context):
@@ -408,7 +516,7 @@ def test_scan_budget_begins_after_qr_display_ack(context):
     assert outcome.reason == "scan_timeout" and clock.now == 130
     scan = next(event for event in events if event.state == "WaitingForScan")
     assert scan.remaining_seconds == 120
-    assert calls[-1][1]["timeout"] <= 5
+    assert calls[-1][1]["timeout"] <= 15
 
 
 def test_qr_not_displayed_never_starts_discovery(context):
@@ -537,8 +645,8 @@ def test_total_budget_caps_connection_after_long_prepare_scan_and_pair(context):
     outcome, calls, _, _, _ = run(rows, context, request, clock=clock, on_qr=display)
     assert outcome.state == "PairedOnly"
     assert clock.now <= 180
-    assert all(kwargs["timeout"] <= 5 for argv, kwargs in calls if argv[1] in ("devices", "mdns"))
-    assert calls[-1][1]["timeout"] < 5
+    assert all(kwargs["timeout"] <= 15 for argv, kwargs in calls if argv[1] in ("devices", "mdns"))
+    assert calls[-1][1]["timeout"] == 6
 
 
 def test_expired_qr_display_ack_cannot_start_scan(context):

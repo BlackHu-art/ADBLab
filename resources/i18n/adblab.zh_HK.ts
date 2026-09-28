@@ -6751,6 +6751,14 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>目前 ADB 不支援無線配對，請在設定中選擇較新的用戶端。</translation>
         </message>
         <message>
+            <source>自动发现响应超时，请重试或使用配对码。</source>
+            <translation>自動探索回應逾時，請重試或使用配對碼。</translation>
+        </message>
+        <message>
+            <source>无法识别自动发现结果，请重试或使用配对码。</source>
+            <translation>無法識別自動探索結果，請重試或使用配對碼。</translation>
+        </message>
+        <message>
             <source>无法自动发现手机，请尝试使用配对码。</source>
             <translation>無法自動找到手機，請嘗試使用配對碼。</translation>
         </message>

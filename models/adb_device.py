@@ -4,10 +4,12 @@
 """
 
 import re
+import threading
 import time
 from collections.abc import Callable
 
 from core.exec import CommandResult, CommandRunner
+from core.native_process import NativeCommandScope
 
 from .adb_model import ADBModelCore, async_command
 
@@ -108,15 +110,62 @@ def _read_info_command(
 class ADBDevice(ADBModelCore):
     """封装设备连接、断开、重启和信息查询。"""
 
+    def __init__(self):
+        super().__init__()
+        self._connection_lock = threading.Lock()
+        self._connection_scopes: set[NativeCommandScope] = set()
+
+    def _run_connection(self, action: str, endpoint: str) -> CommandResult:
+        """每个连接操作独占客户端作用域；命令返回不代表清理失败的客户端已退出。"""
+        scope = NativeCommandScope()
+        with self._connection_lock:
+            if self.is_shutting_down():
+                return CommandResult(False, error="Cancelled", outcome="cancelled")
+            self._connection_scopes.add(scope)
+        try:
+            return CommandRunner.run(
+                ["adb", action, endpoint], native_only=True,
+                cancelled=self.is_shutting_down, command_scope=scope,
+            )
+        finally:
+            # 正在启动的调用仍由模型线程池监督；失败句柄必须留下供关闭阶段再次回收。
+            scope.request_stop()
+            with self._connection_lock:
+                if not scope.is_running():
+                    self._connection_scopes.discard(scope)
+
+    def wait_for_commands(self) -> None:
+        """后台先排空命令，再共享半秒预算回收连接客户端；残留核验留到所有模型等待后。"""
+        super().wait_for_commands()
+        deadline = time.monotonic() + 0.5
+        with self._connection_lock:
+            scopes = tuple(self._connection_scopes)
+        for scope in scopes:
+            scope.wait(max(0.0, deadline - time.monotonic()))
+        with self._connection_lock:
+            self._connection_scopes = {
+                scope for scope in self._connection_scopes if scope.is_running()
+            }
+
+    def assert_cleanup_complete(self) -> None:
+        """在控制器完成各模型清理后核验；未知客户端退出状态不能算作关闭成功。"""
+        with self._connection_lock:
+            if any(scope.is_running() for scope in self._connection_scopes):
+                raise RuntimeError("连接客户端尚未确认退出")
+
     @async_command
     def connect_device_async(self, ip_address: str) -> dict:
-        r = self._run(["adb", "connect", ip_address])
-        return {
-            "success": r.get("success", False),
+        """关闭时停止自有连接客户端；服务端可能已接受请求，不重放或回滚。"""
+        r = self._run_connection("connect", ip_address)
+        result = {
+            "success": r.success,
             "device_ip": ip_address,
-            "output": r.get("output", ""),
-            "error": r.get("error", ""),
+            "output": r.output if r.success else "",
+            "error": "" if r.success else r.error,
         }
+        if r.cancelled:
+            result["cancelled"] = True
+        return result
 
     @async_command
     def get_connected_devices_async(self) -> dict:
@@ -133,12 +182,16 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def disconnect_device_async(self, device: str) -> dict:
-        r = self._run(["adb", "disconnect", device], device=device)
-        return {
+        """断开客户端响应模型关闭；取消只结束本次等待，不追加服务端操作。"""
+        r = self._run_connection("disconnect", device)
+        result = {
             "device_ip": device,
-            "raw_result": r.get("output", r.get("error", "")),
-            "success": "disconnected" in r.get("output", "").lower(),
+            "raw_result": r.output if r.success else r.error,
+            "success": r.success and "disconnected" in r.output.lower(),
         }
+        if r.cancelled:
+            result["cancelled"] = True
+        return result
 
     @async_command
     def restart_device_async(self, device: str) -> dict:

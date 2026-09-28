@@ -363,6 +363,26 @@ def test_manual_code_rejects_non_ascii_or_wrong_length(dialog, code):
     assert not window.pair_button.isEnabled()
 
 
+@pytest.mark.parametrize(
+    "reason,expected",
+    [
+        ("mdns_timeout", "自动发现响应超时，请重试或使用配对码。"),
+        ("mdns_unrecognized", "无法识别自动发现结果，请重试或使用配对码。"),
+        ("mdns_unavailable", "无法自动发现手机，请尝试使用配对码。"),
+    ],
+)
+def test_qr_discovery_failure_explains_reason_and_allows_retry(dialog, reason, expected):
+    window, pairing = dialog
+    pairing.finish("Failed", reason)
+    assert window.status_detail.text() == expected
+    assert window.refresh_button.isEnabled()
+    before = pairing.calls.count(("qr",))
+    window.refresh_button.click()
+    assert pairing.calls.count(("qr",)) == before + 1
+    assert window.status_detail.text() == ""
+    assert window.qr_label.isVisible()
+
+
 def test_qr_failure_does_not_ask_for_a_code_in_a_form_that_is_not_shown(dialog):
     window, pairing = dialog
     window.request_page("qr")
@@ -370,6 +390,23 @@ def test_qr_failure_does_not_ask_for_a_code_in_a_form_that_is_not_shown(dialog):
     assert window.status_detail.text() == "连接未完成，请检查无线调试与网络后重试。"
     assert window.refresh_button.isEnabled()
     assert window.code_button.isEnabled()
+
+
+def test_qr_failure_recovery_waits_for_resources_without_a_floating_stop_button(dialog):
+    window, pairing = dialog
+    window.refresh_button.click()
+    pairing.publish("Failed", "mdns_timeout")
+    assert pairing.busy
+    assert not window.cancel_button.isVisible()
+    assert window.recovery_code_button.isEnabled()
+    window.recovery_code_button.click()
+    assert window.current_page == "qr"
+    assert pairing.calls[-1] == ("cancel",)
+    assert not window.navigation.isEnabled()
+    pairing.finish("Idle", "cancelled")
+    assert window.current_page == "manual"
+    assert window.status_detail.text() == ""
+    assert window.navigation.isEnabled()
 
 
 def test_manual_and_continuation_submit_by_return_without_hidden_form(dialog, qt_application):

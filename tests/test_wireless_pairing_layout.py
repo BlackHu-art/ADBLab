@@ -180,8 +180,8 @@ def test_qr_feedback_uses_full_width_and_retry_restores_compact_actions(qt_appli
         pairing.finish("Failed", "mdns_unavailable")
         settle()
         assert panel.status_box.width() == panel.qr_page.width()
-        code_bottom = panel.qr_label.mapTo(panel, panel.qr_label.rect().bottomLeft()).y()
-        assert panel.status_box.mapTo(panel, QPoint()).y() > code_bottom
+        assert not panel.qr_label.isVisible()
+        assert panel.qr_text.width() == panel.qr_page.width()
         assert panel.status_detail.isVisible()
         assert panel.rect().contains(
             QRect(panel.status_detail.mapTo(panel, QPoint()), panel.status_detail.size())
@@ -215,6 +215,70 @@ def test_qr_feedback_uses_full_width_and_retry_restores_compact_actions(qt_appli
         panel.prepare_shutdown()
         panel.close()
         panel.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "language,font_size,width",
+    [
+        ("zh_CN", 12, 748), ("zh_CN", 20, 360),
+        ("en_US", 12, 748), ("en_US", 20, 360),
+        ("zh_HK", 12, 900), ("zh_HK", 20, 360),
+    ],
+)
+def test_qr_failure_groups_reason_and_recovery_without_empty_code_space(
+    qt_application, language, font_size, width,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(width, 300)
+    panel.expand()
+    try:
+        pairing.qr_ready.emit(1, qr_png(), 29)
+        pairing.publish("WaitingForScan", remaining=120)
+        pairing.finish("Failed", "mdns_timeout")
+        for _ in range(8):
+            qt_application.processEvents()
+        assert not panel.qr_label.isVisible()
+        assert panel.qr_label.pixmap().isNull()
+        assert not panel.code_button.isVisible()
+        assert panel.qr_text.width() == panel.qr_page.width()
+        widgets = (
+            panel.status_label, panel.status_detail,
+            panel.refresh_button, panel.recovery_code_button,
+        )
+        rectangles = [QRect(widget.mapTo(panel, QPoint()), widget.size()) for widget in widgets]
+        title, detail, retry, alternative = rectangles
+        for widget, rectangle in zip(widgets, rectangles):
+            assert widget.isVisible()
+            assert panel.rect().contains(rectangle)
+            assert widget.visibleRegion().boundingRect().contains(widget.rect())
+        assert title.bottom() < detail.top() < detail.bottom() < retry.top()
+        assert retry.top() - detail.bottom() <= 12
+        assert abs(retry.left() - detail.left()) <= 2
+        assert not retry.intersects(alternative)
+        if alternative.top() > retry.bottom():
+            assert alternative.top() - retry.bottom() <= 12
+            assert abs(alternative.left() - retry.left()) <= 2
+        else:
+            assert abs(alternative.top() - retry.top()) <= 2
+            assert alternative.left() - retry.right() <= 12
+        panel.recovery_code_button.setFocus()
+        assert panel.recovery_code_button.hasFocus()
+        QTest.keyClick(panel.recovery_code_button, Qt.Key.Key_Space)
+        assert panel.current_page == "manual"
+        assert panel.status_detail.text() == ""
+        assert not panel.recovery_code_button.isVisible()
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 @pytest.mark.parametrize(

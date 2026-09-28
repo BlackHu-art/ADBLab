@@ -6751,6 +6751,14 @@ Android device management, apps and diagnostics</translation>
             <translation>This ADB client does not support wireless pairing. Select a newer client in Settings.</translation>
         </message>
         <message>
+            <source>自动发现响应超时，请重试或使用配对码。</source>
+            <translation>Automatic discovery timed out. Retry or use a pairing code.</translation>
+        </message>
+        <message>
+            <source>无法识别自动发现结果，请重试或使用配对码。</source>
+            <translation>The automatic discovery response was not recognized. Retry or use a pairing code.</translation>
+        </message>
+        <message>
             <source>无法自动发现手机，请尝试使用配对码。</source>
             <translation>Your phone could not be discovered automatically. Try using a pairing code.</translation>
         </message>

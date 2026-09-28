@@ -558,7 +558,10 @@ class _ADBControllerBase:
             if callable(wait):
                 wait()
         # 等所有模型排空后再核验进程归属，失败不能跳过其它模型的等待与清理。
-        assert_cleanup_complete = getattr(self.testing_model, "assert_cleanup_complete", None)
-        if callable(assert_cleanup_complete):
-            assert_cleanup_complete()
+        cleanup_checks = []
+        for model in (self.device_model, self.testing_model):
+            assert_cleanup_complete = getattr(model, "assert_cleanup_complete", None)
+            if callable(assert_cleanup_complete):
+                cleanup_checks.append(("model cleanup verification", assert_cleanup_complete))
+        self._attempt_actions_preserving_first(*cleanup_checks)
         self.log_service.log("DEBUG", "controller shutdown completed")

@@ -9,8 +9,56 @@ from adblab.application.envelope import split_operation_metadata
 from controllers._base import _ADBControllerBase
 from core.perf_trace import split_perf
 from models.adb_advanced import ADBAdvanced
+from models.adb_device import ADBDevice
 from models.adb_model import ADBModelCore, async_command
 from models.adb_testing import ADBTesting
+
+
+@pytest.mark.parametrize("operation", ["connect", "disconnect"])
+@pytest.mark.parametrize("outcome", ["success", "failed", "cancelled"])
+def test_ip_connection_command_preserves_results_and_observes_model_shutdown(
+    monkeypatch, operation, outcome,
+):
+    from core import exec as execution
+    from core.adb_transport import ExecutionResult
+
+    model = ADBDevice()
+    endpoint = "192.0.2.1:5555"
+    calls = []
+
+    def capture(command, timeout, cancelled, **kwargs):
+        calls.append(command)
+        assert timeout <= 30
+        assert kwargs["command_scope"] is not None
+        assert not cancelled()
+        if outcome == "cancelled":
+            model.begin_shutdown()
+            assert cancelled()
+            return ExecutionResult(kind="cancelled")
+        if outcome == "failed":
+            return ExecutionResult(stderr=b"connection failed", returncode=1)
+        return ExecutionResult(f"{operation}ed {endpoint}".encode())
+
+    def unexpected_native(*_args, **_kwargs):
+        pytest.fail("连接客户端必须能响应模型关闭，不能进入不可取消的执行路径")
+
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "adb")
+    monkeypatch.setattr(execution, "native_capture", capture)
+    monkeypatch.setattr(execution, "run_native", unexpected_native)
+    method = getattr(ADBDevice, f"{operation}_device_async")
+
+    result = method.__wrapped__(model, endpoint)
+
+    assert calls == [["adb", operation, endpoint]]
+    assert result["device_ip"] == endpoint
+    assert result["success"] is (outcome == "success")
+    assert result.get("cancelled", False) is (outcome == "cancelled")
+    if outcome == "success":
+        assert result.get("output", result.get("raw_result")) == f"{operation}ed {endpoint}"
+    elif outcome == "failed":
+        assert result.get("error", result.get("raw_result")) == "connection failed"
+    assert execution.CommandRunner.active_count() == 0
 
 
 def test_native_readonly_query_cancels_in_flight_but_write_keeps_default(monkeypatch):
@@ -223,7 +271,8 @@ def test_controller_closes_every_model_admission_before_model_cleanup():
     ]
 
 
-def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model():
+@pytest.mark.parametrize("failing_model", ["device", "testing"])
+def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model(failing_model):
     events = []
     controller = _ADBControllerBase.__new__(_ADBControllerBase)
     controller.action_results = ActionResults(lambda _result: None)
@@ -235,10 +284,10 @@ def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model()
         ))
 
     def assert_cleanup_complete():
-        events.append(("verify", "testing"))
+        events.append(("verify", failing_model))
         raise RuntimeError("owned process remains")
 
-    controller.testing_model.assert_cleanup_complete = assert_cleanup_complete
+    getattr(controller, f"{failing_model}_model").assert_cleanup_complete = assert_cleanup_complete
     controller.log_service = Mock()
     controller.executor = Mock()
     with patch("controllers._base.ProcessRunner.stop_all_tracked"):
@@ -247,7 +296,7 @@ def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model()
 
     assert events[-5:] == [
         ("wait", "device"), ("wait", "app"), ("wait", "testing"), ("wait", "advanced"),
-        ("verify", "testing"),
+        ("verify", failing_model),
     ]
     assert ("cleanup", "advanced") in events
     assert not any(

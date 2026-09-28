@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-27
+last_verified: 2026-09-28
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -160,8 +160,9 @@ flowchart LR
   超时后共用最多 2 秒清理预算，用于确认自有客户端退出和排空管道；
   无法确认客户端退出时返回执行失败。独立服务后代持有输出管道不能让调用无限等待；Windows
   正在读取的线程暂时持有流，待写端关闭后自行释放，不为取得 EOF 终止独立 ADB 服务。
-  可选 `input_bytes`、`env` 和 `command_scope` 强制使用原生命令路径并拒绝 shell 模式，默认调用
-  保持原路由。`NativeCommandScope` 在 spawn 前登记资源义务，只拥有本次客户端；停止请求
+  可选 `input_bytes`、`env` 和 `command_scope` 保留原生命令路径并拒绝 shell 模式；唯一只读例外是
+  显式允许快速执行、无输入且携带冻结环境的两种 mDNS 查询，边界见 [ADB 自动适配](../guides/ADB_FAST.md)。
+  默认调用保持原路由。`NativeCommandScope` 在 spawn 前登记资源义务，只拥有本次客户端；停止请求
   不阻塞调用线程，后台等待覆盖启动竞态与未确认退出的句柄。输入只在首次 communicate 发送，
   轮询、超时与取消不会重放。
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
@@ -239,6 +240,9 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
    会话逐页隔离注册和释放异常，全部尝试后汇总；关闭准备失败进入最终停止结果，不能误报
    全部资源已停止，也不阻断其他宿主的停止请求。
 2. TaskSupervisor 在共享 deadline 内后台等待，保留超时或失败资源快照；GUI 不串行阻塞等待。
+   IP 连接与断开每条命令独占 `NativeCommandScope`；设备模型保留清理失败的客户端，线程池
+   排空后共用 0.5 秒预算补充回收。Controller 等所有模型完成等待后统一核验连接与测试进程，
+   未确认退出时记录关闭失败，不能仅凭短命令已返回就报告资源归零。
 3. 停止阶段返回后在 GUI 线程尝试补交 Monkey/性能终态，保留资源残留及单页归档失败事实；
    `LogService.shutdown()` 在 GUI 线程刷新诊断并冻结字符串快照，再由后台 finalizer 保存应用设置。
    设置保存返回明确结果；失败保留原文件和内存值，并向尚未关闭的诊断队列补交无隐私的失败摘要。

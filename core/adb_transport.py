@@ -204,10 +204,28 @@ def execute(
     cancelled: CancelCheck | None = None,
 ) -> int:
     """执行已验证参数并流式返回输出和远端退出码；不接收 stdin 或分配终端。"""
+    if command == "mdns" and (serial is not None or args not in (["check"], ["services"])):
+        raise AdbError("Unsupported mDNS query.")
     connection = Connection(timeout, cancelled)
     try:
-        if command not in {"devices", "shell"}:
+        if command not in {"devices", "shell", "mdns"}:
             raise AdbError("Unsupported command.")
+        if command == "mdns":
+            connection.request("host:mdns:" + args[0])
+            payload = connection.read_string()
+            try:
+                payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise AdbError("Invalid mDNS response encoding.") from exc
+            # 服务只返回正文；保持原生 CLI 的标题契约，完整响应前不发布部分结果。
+            if args == ["services"]:
+                payload = b"List of discovered mdns services\n" + payload
+            try:
+                stdout.write(payload)
+                stdout.flush()
+            except OSError as exc:
+                raise OutputError("Unable to write ADB output.") from exc
+            return 0
         if command == "devices":
             connection.request("host:devices-l" if args else "host:devices")
             stdout.write(b"List of devices attached\n" + connection.read_string() + b"\n")
@@ -251,7 +269,7 @@ def capture(
     cancelled: CancelCheck | None = None,
     stdout_sink: BinaryIO | None = None,
 ) -> ExecutionResult:
-    """捕获双流或流式写入调用方拥有的输出；仅连接被拒绝允许发送前回退。"""
+    """捕获双流或流式写入调用方输出；是否允许只读回退由上层明确决定。"""
     stdout = stdout_sink if stdout_sink is not None else io.BytesIO()
     stderr = io.BytesIO()
     try:

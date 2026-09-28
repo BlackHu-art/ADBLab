@@ -43,6 +43,8 @@ _UNSUPPORTED_PAIR = re.compile(
     re.I | re.M,
 )
 _PREPARE_SECONDS = 15.0
+# 原生客户端启动也消耗查询预算；每条命令仍受阶段和整轮截止时间约束。
+_NATIVE_QUERY_SECONDS = 15.0
 _SCAN_SECONDS = 120.0
 _PAIR_SECONDS = 15.0
 _CONNECT_SECONDS = 30.0
@@ -347,7 +349,7 @@ class _PairingSession:
         self,
         args: list[str],
         *,
-        seconds: float = 5.0,
+        seconds: float = _NATIVE_QUERY_SECONDS,
         input_bytes: bytes | None = None,
     ) -> CommandResult:
         self.check_budget()
@@ -356,7 +358,8 @@ class _PairingSession:
                 [self.context.adb_path, *args],
                 timeout=min(seconds, self.remaining()),
                 shell=False,
-                native_only=True,
+                # 仅两种 mDNS 只读查询允许执行层直连；配对写入及身份核验仍使用冻结客户端。
+                native_only=args not in (["mdns", "check"], ["mdns", "services"]),
                 cancelled=self.cancelled.is_set,
                 input_bytes=input_bytes,
                 env=dict(self.context.env),

@@ -234,9 +234,10 @@ class CommandRunner:
         env: Mapping[str, str] | None = None,
         command_scope: NativeCommandScope | None = None,
     ) -> CommandResult:
-        """执行短命令并归一结果；输入、环境或作用域要求可取消原生路径并拒绝 shell。
+        """执行短命令并归一结果；输入、环境或作用域要求可取消路径并拒绝 shell。
 
-        native_tool 仅声明原生工具隔离；未指定新选项时保持已有快速通道和调用契约。
+        带环境的 mDNS 白名单只读查询可直连，其余显式作用域仍走原生；native_tool
+        仅声明原生工具隔离，未指定新选项时保持已有快速通道和调用契约。
         """
 
         started_at = _mark_started()
@@ -250,6 +251,19 @@ class CommandRunner:
             raw = None
             if cancelled is not None and cancelled():
                 raw = ExecutionResult(kind="cancelled")
+            elif (
+                runtime is not None and not shell and not native_only
+                and input_bytes is None and env is not None
+                and resolved_cmd[1:] in (["mdns", "check"], ["mdns", "services"])
+                and (command_scope is None or not command_scope.is_running())
+            ):
+                raw = runtime.try_run_mdns(
+                    resolved_cmd, max(0.0, timeout - (perf_counter() - started_at)),
+                    lambda: bool(cancelled and cancelled()) or bool(
+                        command_scope is not None and command_scope._stop_requested()
+                    ),
+                    env=env,
+                )
             elif runtime is not None and not shell and not native_only and not scoped_native:
                 raw = runtime.try_run(resolved_cmd, timeout, cancelled)
             remaining = timeout
