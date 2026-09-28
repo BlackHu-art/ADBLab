@@ -181,6 +181,16 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 
 ## MobilePerf 数据生命周期
 
+### 性能指标口径
+
+- `meminfo.csv` 的进程 PSS 从 `dumpsys meminfo` 的 `Total PSS by process` 区段读取，
+  不使用同一输出中的 RSS；单数值和双数值记录均取 PSS 字段。Excel 的 PSS 曲线沿用该列。
+- Android 10 及以上的 `traffic.csv` 保留设备接口的接收、发送和总流量增量。
+  `/proc/<pid>/net/dev` 表示所属网络命名空间的接口统计，不能作为进程独有流量；因此保留
+  原有 CSV 列结构，`pid_rx(KB)`、`pid_tx(KB)`、`pid_total(KB)` 及多目标的
+  `total_proc_traffic(kB)` 留空，表示不可用而非零流量。Android 10 以下继续使用 UID 统计。
+  页面流量图只读取 `device_*` 列，不依赖进程流量列。
+
 ### 性能运行元数据
 
 `MobilePerfRunner.start()` 深复制本次配置并生成随机 `MOBILEPERF_RUN_ID`，采集 worker 在启动

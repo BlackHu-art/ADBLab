@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-27
+last_verified: 2026-09-28
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -20,6 +20,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | 少数公共 model 入口依赖 Controller 的业务参数校验 | 主 UI 的 forward/reverse TCP 端口与 geo 经纬度已有校验；直接调用 `ADBNetworkMixin.forward_port_async/reverse_port_async` 或 `ADBSystemMixin.emu_geo_fix_async` 时未重复完整约束。是否收紧直接调用契约需确认；已 quote 的 URI、组件、设置值和文本不再笼统列为注入缺口 | Partial |
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | [AppSettings](../../core/settings_manager.py) 已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | [AppManagerWorker](../../models/app_manager_worker.py) 校验关键 CommandResult 和拉取 APK 数量，先暂存再原子发布 ZIP；恢复使用安全解压，取消后不启动后续安装或发布完整成功；页面业务批次串行，仍需完整性元数据和授权恢复测试 | Partial |
+| Medium | 文件重命名与设备侧外部程序并发改写目标之间没有原子无覆盖保证 | [重命名命令](../../services/file_explorer.py) 拒绝检查时已有文件、目录和链接，并用 `mv -nT` 及后置检查防止常规覆盖、移入目录和跳过误报；Toybox 的检查与 rename 之间仍有竞争窗口。本地 GNU mv 测试不能替代 Android 工具版本及并发场景实测；不支持选项时明确失败，不回退到可覆盖命令 | Partial |
 | Low | App Manager 批量元数据与图标补全缺少 Android 版本、厂商和多用户实机耗时矩阵 | [临时 helper](../../tools/app_icons/Main.java) 保留用户校验和退出保护；协议与页面测试覆盖文字优先、精确缓存失效、取消和晚到结果。仍需测量首屏名称/图标时间，并验证设备用户切换、语言变化与应用升级后的刷新 | 待确认 |
 | Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；设备离线时远端 Monkey 退出无法自动确认 | MobilePerf 异步客户端使用本次临时作用域及 helper 显式归属，worker 强停后仍监督直接客户端，不终止独立 ADB 服务；远端 Monkey 按 PID/starttime 停止，未确认义务保留为残留，不允许覆盖后重启。只读查询与采样等待支持取消；仍需实机验证 worker 强停、设备拔线后人工处理及平台差异下的收尾 | Partial |
 | Medium | 跨平台真实功能验证与依赖闭包仍不完整 | Build 已配置 macOS x64/arm64 架构校验、三平台 packaging 自检和 Linux xcb GUI 探针；CI 不运行 pytest，测试按测试指南在本地执行。仍需对应平台实际运行、Windows windowed MobilePerf 管道、macOS Finder 启动、授权设备投屏与断线验收，不能把构建或路径模拟通过视为功能验收 | Partial |
@@ -33,6 +34,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Low | 表格的手动列宽与排序分组规则尚未统一 | 文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序；是否统一手动调整及目录置顶属于后续交互决策 | 待确认 |
 | Low | 通知紧凑高度测试存在 Linux 字体度量差异 | [通知测试](../../tests/test_notifications.py) 的 22pt 中文浮条在本机为 67px，超过固定 64px 断言；原 HEAD 同样复现，全文、按钮与窗口边界检查通过。尚需确定跨平台紧凑高度标准；未放宽断言或缩小字号 | 待确认 |
 | Low | Windows 上的 macOS ADB 重检模拟用例存在路径分隔符断言差异 | [重检测试](../../tests/test_qt_adb_runtime.py) 的 `test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches` 比较含正斜杠的模拟 darwin 路径与 WindowsPath 反斜杠字符串而失败；本轮未修改解析器或该节点，需单独校准跨平台断言 | Open |
+| Low | 任务中心运行命令按钮的文字断言在当前离屏环境失败 | [操作反馈测试](../../tests/test_action_feedback.py) 的 `test_task_center_exposes_running_plain_commands_without_native_operation` 要求按钮文本含数量，但实际被裁为 `查看执…`；该 Bugreport 入口使用原始或当前分派逻辑均复现，需单独核实窄宽布局和断言契约，未放宽断言 | 待确认 |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见
 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。

@@ -1311,6 +1311,21 @@ def test_emu_sms_validation_rejects_newlines_before_adb():
     model._run.assert_not_called()
 
 
+@pytest.mark.parametrize("success", [True, False])
+def test_emu_call_uses_gsm_console_command_and_preserves_result(success):
+    outcome = {"success": success, "output": "OK" if success else "KO: unavailable"}
+    model = SimpleNamespace(_run=Mock(return_value=outcome))
+
+    result = ADBSystemMixin.emu_call_async.__wrapped__(model, "emulator-5554", "5551234")
+
+    model._run.assert_called_once_with(
+        ["adb", "-s", "emulator-5554", "emu", "gsm", "call", "5551234"],
+        device_ip="emulator-5554",
+        number="5551234",
+    )
+    assert result == outcome
+
+
 def test_emu_call_validation_rejects_newlines_before_adb():
     model = SimpleNamespace(_run=Mock(return_value={"success": True}))
 

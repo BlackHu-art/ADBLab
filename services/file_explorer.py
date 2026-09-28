@@ -410,6 +410,22 @@ def move_command(src: str, dst: str) -> str:
     return f"mv {shell_quote(src)} {shell_quote(dst)}"
 
 
+def rename_command(src: str, dst: str) -> str:
+    """拒绝检查时已存在的目标；命令跳过或未完成移动均明确返回失败。"""
+    source, target = shell_quote(src), shell_quote(dst)
+    # -L 单独覆盖悬空链接；-T 禁止把执行前才出现的目录解释成目标容器。
+    # -n 可能在跳过时返回零，因此还须确认源已消失且新路径确实存在。
+    # 检查后的设备侧并发改写受 mv 实现约束，不承诺原子无覆盖。
+    return (
+        f"if [ -e {target} ] || [ -L {target} ]; then "
+        "printf '%s\\n' 'Destination already exists; choose a different name.' >&2; exit 1; fi; "
+        f"mv -nT -- {source} {target} || exit $?; "
+        f"if [ ! -e {source} ] && [ ! -L {source} ] && "
+        f"{{ [ -e {target} ] || [ -L {target} ]; }}; then :; else "
+        "printf '%s\\n' 'Rename was not completed; refresh and try again.' >&2; exit 1; fi"
+    )
+
+
 def delete_command(path: str) -> str:
     return f"rm -rf {shell_quote(path)}"
 

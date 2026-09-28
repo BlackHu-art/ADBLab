@@ -84,6 +84,11 @@ class MemInfoDevice:
     RE_TOTAL_MEMORY = re.compile(r"Total RAM:\s+([\d,]+)")
     RE_FREE_MEMORY = re.compile(r" Free RAM:\s+([\d,]+)")
     RE_USED_MEMORY = re.compile(r" Used RAM:\s+([\d,]+)")
+    RE_PROCESS_MEMORY = re.compile(
+        r"^\s*(?P<pss>[\d,]+)\s*(?:K|kB):\s+"
+        r"(?:[\d,]+\s*(?:K|kB):\s+)?"
+        r"(?P<process>\S+)\s+\(pid\s+(?P<pid>\d+)(?:\s|\))"
+    )
 
     def __init__(self, dump, packages=[]):
         self.totalmem = 0
@@ -116,29 +121,29 @@ class MemInfoDevice:
             + ", free mem: "
             + str(self.freemem)
         )
+        lines = self.dump.splitlines()
+        # 新版先输出 RSS；存在分类标题时只接纳进程 PSS 段，旧版无标题片段仍可解析。
+        in_process_pss = not any(
+            line.strip().startswith(("Total RSS by ", "Total PSS by ")) for line in lines
+        )
+        process_samples = {}
+        for line in lines:
+            if line.strip().endswith(":"):
+                in_process_pss = line.strip() == "Total PSS by process:"
+            if not in_process_pss:
+                continue
+            match = self.RE_PROCESS_MEMORY.match(line)
+            if match:
+                # 从行首读取第一列 PSS，避免双数值格式中的第二列抢先匹配。
+                process_samples.setdefault(match.group("process"), match)
         for package in self.packages:
             # 子进程可能尚未启动，先填充空值以保持输出结构一致。
             mem_dic = {"package": package, "pid": "", "pss": ""}
-            RE_PROCESS_MEMORY = re.compile(r"([\d,]+)\s*(K|kB):\s+" + package + r"\s+\(pid\s+(\d+)")
-            # 兼容的虚构输出示例：252,370K: <PACKAGE_NAME> (pid 12345 / activities)
-            # 兼容的虚构输出示例：111920 kB: <PACKAGE_NAME> (pid 12345 / activities)
-            RE_PROCESS_MEMORY_2 = re.compile(
-                r"([\d,]+)\s+kB:\s+\d+\s+kB:\s+" + package + r"\s+\(pid\s+(\d+)"
-            )
-            # 双数值格式示例：243786 kB: 0 kB: <PACKAGE_NAME> (pid 12345 / activities)
-            for line in self.dump.splitlines():
-                match = RE_PROCESS_MEMORY.search(line)
-                match2 = RE_PROCESS_MEMORY_2.search(line)
-                if match:
-                    pss = round(float(match.group(1).replace(",", "")) / 1024, 2)
-                    mem_dic = {"package": package, "pid": match.group(3), "pss": str(pss)}
-                    self.total_pss = self.total_pss + pss
-                    break
-                elif match2:
-                    pss = round(float(match2.group(1).replace(",", "")) / 1024, 2)
-                    mem_dic = {"package": package, "pid": match2.group(2), "pss": str(pss)}
-                    self.total_pss = self.total_pss + pss
-                    break
+            match = process_samples.get(package)
+            if match:
+                pss = round(float(match.group("pss").replace(",", "")) / 1024, 2)
+                mem_dic = {"package": package, "pid": match.group("pid"), "pss": str(pss)}
+                self.total_pss = self.total_pss + pss
             self.package_pid_pss_list.append(mem_dic)
             logger.debug(mem_dic)
 

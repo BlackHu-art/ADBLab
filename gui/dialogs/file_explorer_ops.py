@@ -436,7 +436,7 @@ class FileExplorerOps:
         old = self._frame._dpath(self._frame.current_path, name)
         new_p = self._frame._dpath(self._frame.current_path, new)
         w = self._frame._run_adb(
-            "shell", self._frame._root(explorer_service.move_command(old, new_p))
+            "shell", self._frame._root(explorer_service.rename_command(old, new_p))
         )
         if w is None:
             return

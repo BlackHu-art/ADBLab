@@ -1,4 +1,4 @@
-"""采集并解析应用 UID、设备和进程维度的网络流量。"""
+"""采集应用 UID 或设备网络流量，无法可靠归属的进程指标保留为空。"""
 
 import csv
 import os
@@ -191,17 +191,12 @@ class TrafficCollecor:
         out = out.replace("\r", "")
         return NetDevInfo(out)
 
-    def _cat_traffic_pid_dev(self, pid):
-        out = self.device.adb.run_shell_cmd(f"cat /proc/{pid:d}/net/dev")
-        out = out.replace("\r", "")
-        return NetDevInfo(out)
-
     def _collect_traffic_thread(self, start_time):
         # Android 10 之前从 /proc/net/xt_qtaguid/stats 读取 UID 流量。
         if self.sdk_version < 29:
             self.get_traffic_with_stats()
         else:
-            # Android 10 起分别从设备和进程的 /proc/net/dev 读取流量。
+            # Android 10 起只从 /proc/net/dev 读取设备流量，进程流量标记为不可用。
             self.get_traffic_with_dev()
 
     def _wait_for_next_sample(self, delay, end_time):
@@ -303,6 +298,7 @@ class TrafficCollecor:
                 self._wait_for_next_sample(self._interval, end_time)
 
     def get_traffic_with_dev(self):
+        """采集设备流量；保留 CSV 进程列，但无法可靠归属的字节数写空值。"""
         end_time = time.time() + self._timeout
         self.traffic_init = True
         traffic_title = [
@@ -322,8 +318,6 @@ class TrafficCollecor:
         except RuntimeError as e:
             logger.error(e)
         self.device_init_net = None
-        # 包名映射同时保存 PID；进程重启后必须重新建立该包的累计流量基线。
-        process_baselines = {}
         while not self._stop_event.is_set() and time.time() < end_time:
             try:
                 before = time.time()
@@ -349,36 +343,15 @@ class TrafficCollecor:
                     TrafficUtils.byte2kb(device_grow.rx),
                     TrafficUtils.byte2kb(device_grow.tx),
                 ]
-                self.total_pck_net = 0
                 for package in self.packages:
                     pid = self.device.adb.get_pid_from_pck(package)
                     if pid is None:
                         logger.error(f"package pid not found {package}:")
-                        net_row.extend([package, "", "", "", ""])
-                        continue
-                    pck_net_info = self._cat_traffic_pid_dev(pid)
-                    if not pck_net_info.source:
-                        logger.error(f"package net dev failed {package}:")
-                        net_row.extend([package, pid, "", "", ""])
-                        continue
-                    baseline = process_baselines.get(package)
-                    if baseline is None or baseline[0] != pid:
-                        baseline = (pid, pck_net_info)
-                        process_baselines[package] = baseline
-                    pck_grow = self.get_net_from_begin(baseline[1], pck_net_info)
-                    self.total_pck_net = self.total_pck_net + pck_grow.total
-                    net_row.extend(
-                        [
-                            package,
-                            pid,
-                            TrafficUtils.byte2kb(pck_grow.rx),
-                            TrafficUtils.byte2kb(pck_grow.tx),
-                            TrafficUtils.byte2kb(pck_grow.total),
-                        ]
-                    )
+                    # /proc/<pid>/net/dev 属于网络命名空间，不能作为该进程的流量。
+                    net_row.extend([package, pid if pid is not None else "", "", "", ""])
 
                 if len(self.packages) > 1:
-                    net_row.append(TrafficUtils.byte2kb(self.total_pck_net))
+                    net_row.append("")
 
                 if self.traffic_queue:
                     self.traffic_queue.put(net_row)

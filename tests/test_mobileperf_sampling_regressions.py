@@ -97,7 +97,7 @@ def test_legacy_fps_waits_each_cycle_and_limits_backlog():
     assert collector.data_queue.get_nowait() == "Stop"
 
 
-def test_traffic_missing_pid_keeps_package_columns_and_restarts_baseline(monkeypatch, runtime):
+def test_traffic_missing_pid_keeps_package_columns_across_process_restart(monkeypatch, runtime):
     from mobileperf.android import trafficstats
 
     clock = [0.0]
@@ -121,14 +121,6 @@ def test_traffic_missing_pid_keeps_package_columns_and_restarts_baseline(monkeyp
     collector._cat_traffic_device_dev = lambda: SimpleNamespace(
         source="ok", total=100, rx=50, tx=50,
     )
-    values = {42: [(100, 50, 50), (1100, 550, 550)],
-              77: [(9000, 4500, 4500), (10000, 5000, 5000)]}
-
-    def process_snapshot(process_pid):
-        total, rx, tx = values[process_pid].pop(0)
-        return SimpleNamespace(source="ok", total=total, rx=rx, tx=tx)
-
-    collector._cat_traffic_pid_dev = process_snapshot
     original_wait = collector._stop_event.wait
 
     def wait(seconds):
@@ -141,11 +133,12 @@ def test_traffic_missing_pid_keeps_package_columns_and_restarts_baseline(monkeyp
     rows = list(collector.traffic_queue.queue)
     assert len(waits) >= 5
     assert len(rows) == 5
-    assert all(len(row) == 9 for row in rows[1:])
-    assert [row[-1] for row in rows] == ["", 0.0, 0.98, 0.0, 0.98]
+    assert all(len(row) == 9 for row in rows)
+    assert [row[5] for row in rows] == ["", 42, 42, 77, 77]
+    assert all(row[6:] == ["", "", ""] for row in rows)
 
 
-def test_traffic_missing_first_package_does_not_spin_or_shift_baseline(monkeypatch, runtime):
+def test_traffic_missing_first_package_keeps_sampling_and_columns(monkeypatch, runtime):
     from mobileperf.android import trafficstats
 
     clock = [0.0]
@@ -166,9 +159,6 @@ def test_traffic_missing_first_package_does_not_spin_or_shift_baseline(monkeypat
     collector._cat_traffic_device_dev = lambda: SimpleNamespace(
         source="ok", total=100, rx=50, tx=50,
     )
-    collector._cat_traffic_pid_dev = lambda _pid: SimpleNamespace(
-        source="ok", total=100, rx=50, tx=50,
-    )
     original_wait = collector._stop_event.wait
 
     def wait(seconds):
@@ -183,6 +173,7 @@ def test_traffic_missing_first_package_does_not_spin_or_shift_baseline(monkeypat
     assert len(rows) == 3
     assert all(len(row) == 15 for row in rows)
     assert all(row[5:9] == ["", "", "", ""] for row in rows)
+    assert all(row[9:] == ["com.example.second", 42, "", "", "", ""] for row in rows)
 
 
 def test_traffic_collector_restarts_with_new_device_baseline(monkeypatch, runtime):
@@ -195,9 +186,6 @@ def test_traffic_collector_restarts_with_new_device_baseline(monkeypatch, runtim
         get_pid_from_pck=lambda _package: 42,
     )), ["com.example.app"], interval=1, timeout=2, traffic_queue=queue.Queue())
     collector._cat_traffic_device_dev = lambda: SimpleNamespace(
-        source="ok", total=clock[0] * 1000, rx=clock[0] * 500, tx=clock[0] * 500,
-    )
-    collector._cat_traffic_pid_dev = lambda _pid: SimpleNamespace(
         source="ok", total=clock[0] * 1000, rx=clock[0] * 500, tx=clock[0] * 500,
     )
     original_wait = collector._stop_event.wait

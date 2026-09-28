@@ -337,7 +337,7 @@ class ADBSystemMixin:
                 "error": "Invalid phone number",
             }
         return self._run(
-            ["adb", "-s", device_ip, "emu", "call", number],
+            ["adb", "-s", device_ip, "emu", "gsm", "call", number],
             device_ip=device_ip,
             number=number,
         )

@@ -1109,6 +1109,10 @@ class AppPanel(BasePanel):
         self._screenshot_running = running
         self._update_action_states()
 
+    def on_screenshot_submission_rejected(self) -> None:
+        """已无活动截图时撤销被准入拒绝的点击状态；旧请求仍由结果层等待收口。"""
+        self._set_screenshot_running(False)
+
     def _on_start_monkey(self):
         if (getattr(self, "_monkey_running", False) or self._monkey_preparation is not None
                 or self._monkey_closed or not self.selected_devices):

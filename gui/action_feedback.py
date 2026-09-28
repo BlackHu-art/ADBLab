@@ -70,6 +70,14 @@ class ActionFeedbackPresenter(QObject):
             None,
         )
         if pending is not None:
+            if spec.key == "take_screenshot" and not any(
+                operation.kind == "screenshot"
+                for operation in self.frame.adb_controller.operation_manager.active_snapshot()
+            ):
+                # 取消已结束业务操作，但旧 worker 尚未回调；拒绝重试时撤销按钮预置的忙碌态。
+                apps = self.frame.left_panel.app_panel
+                if apps is not None:
+                    apps.on_screenshot_submission_rejected()
             show_toast(
                 self.frame, tr(pending.spec.title), tr("该操作正在进行，请等待完成。"),
                 level="info", action_text=tr("查看任务"),
