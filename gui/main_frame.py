@@ -42,6 +42,7 @@ from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_app_update import QtAppUpdate
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
+from controllers.action_catalog import ACTION_SIGNALS
 from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
@@ -2089,10 +2090,27 @@ class MainFrame(FluentWindow):
             panel = DeviceConnectionPanel(self._adb_pairing, parent=self._device_hub)
             self._connection_panel = panel
             self._device_hub.set_connection_panel(panel)
-            panel.connect_requested.connect(self.left_panel.signals.connect_requested)
+            panel.address_connect_requested.connect(self._connect_address)
+            self.adb_controller.signals.connection_completed.connect(
+                panel.complete_address_connection
+            )
             panel.expanded_changed.connect(self._device_hub.set_connection_expanded)
         panel.expand(history=self.left_panel.connection_history())
         self._device_hub.set_connection_expanded(panel.is_expanded)
+
+    def _connect_address(self, target: str, request_id: str) -> None:
+        """地址请求沿用任务反馈准入，并把终态关联到仍然打开的连接面板。"""
+        submitted = False
+
+        def submit(address):
+            nonlocal submitted
+            self.adb_controller.connect_device(address, request_id=request_id)
+            submitted = True
+
+        self._action_feedback.dispatch(ACTION_SIGNALS["connect_requested"], submit, (target,))
+        if not submitted and self._connection_panel is not None:
+            # 已有同类任务或关闭准入拒绝时，不把面板留在永远等不到结果的忙碌状态。
+            self._connection_panel.complete_address_connection(request_id, False)
 
     def _on_wireless_connected(self, outcome) -> None:
         """仅接纳当前已核实连接；页内反馈不再重复发送全局完成 Toast。"""

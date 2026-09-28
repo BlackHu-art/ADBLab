@@ -6,6 +6,7 @@ from PySide6.QtGui import QDesktopServices, QImage
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
+from gui.i18n import tr
 from gui.widgets.device_connection import DeviceConnectionPanel
 from services.adb_pairing import PairingProgress
 from tests.ui_geometry_helpers import wait_until
@@ -189,7 +190,7 @@ def qr_png():
     return bytes(data)
 
 
-def test_valid_address_submits_once_and_collapses(dialog, qt_application):
+def test_valid_address_submits_once_and_keeps_panel_open(dialog, qt_application):
     window, pairing = dialog
     window.request_page("address")
     assert window.current_page == "address"
@@ -201,7 +202,71 @@ def test_valid_address_submits_once_and_collapses(dialog, qt_application):
     window.address_form._connect()
     window.address_form._connect()
     assert submitted.count() == 1
-    assert not window.isVisible()
+    assert window.isVisible()
+    assert window.address_form.error_label.text() == tr("连接中")
+    assert not window.navigation.isEnabled()
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_address_result_keeps_height_and_allows_retry(dialog, qt_application, success):
+    window, _ = dialog
+    window.request_page("address")
+    submitted = QSignalSpy(window.address_connect_requested)
+    window.address_form.address.setText("192.0.2.1:5555")
+    qt_application.processEvents()
+    before = window.height()
+    window.address_form._connect()
+    request_id = submitted.at(0)[1]
+    qt_application.processEvents()
+    assert window.height() == before
+    window.complete_address_connection(request_id, success)
+    qt_application.processEvents()
+    assert window.isVisible() and window.height() == before
+    assert window.address_form.connect_button.isEnabled()
+    assert window.address_form.address.text() == "192.0.2.1:5555"
+    assert window.address_form.error_label.text() == tr(
+        "设备已连接" if success else "连接未完成，请检查无线调试与网络后重试。"
+    )
+    window.address_form._connect()
+    assert submitted.count() == 2
+    assert submitted.at(1)[1] != request_id
+    window.complete_address_connection(request_id, not success)
+    assert not window.address_form.connect_button.isEnabled()
+    assert window.address_form.error_label.text() == tr("连接中")
+
+
+def test_address_late_result_does_not_reopen_or_complete_new_request(dialog):
+    window, pairing = dialog
+    window.request_page("address")
+    submitted = QSignalSpy(window.address_connect_requested)
+    window.address_form.address.setText("192.0.2.1:5555")
+    window.address_form._connect()
+    old_id = submitted.at(0)[1]
+    window.collapse()
+    window.complete_address_connection(old_id, True)
+    assert not window.is_expanded
+    window.expand()
+    pairing.finish("Idle")
+    window.request_page("address")
+    window.address_form._connect()
+    window.complete_address_connection(old_id, True)
+    assert window.address_form.error_label.text() == tr("连接中")
+    window.prepare_shutdown()
+    window.complete_address_connection(submitted.at(1)[1], True)
+    assert window.address_form.error_label.text() != tr("设备已连接")
+
+
+def test_editing_address_clears_previous_connection_result(dialog):
+    window, _ = dialog
+    window.request_page("address")
+    submitted = QSignalSpy(window.address_connect_requested)
+    form = window.address_form
+    form.address.setText("192.0.2.1:5555")
+    form._connect()
+    window.complete_address_connection(submitted.at(0)[1], True)
+    QTest.keyClick(form.address, Qt.Key.Key_End)
+    QTest.keyClicks(form.address, "6")
+    assert form.error_label.isHidden()
 
 
 def test_history_and_manual_secret_survive_only_as_intended(dialog):
@@ -256,6 +321,39 @@ def test_refresh_waits_for_idle_and_close_overrides_pending_refresh(dialog, qt_a
     qt_application.processEvents()
     assert not window.isVisible()
     assert pairing.calls.count(("qr",)) == 2
+
+
+def test_connected_qr_keeps_success_until_explicit_next_connection(dialog, qt_application):
+    panel, pairing = dialog
+    panel.refresh_qr()
+    pairing.qr_ready.emit(1, qr_png(), 29)
+    wait_until(qt_application, lambda: ("ack", 1) in pairing.calls)
+    pairing.publish("WaitingForScan", remaining=120)
+    pairing.publish("Pairing")
+    pairing.publish("WaitingForConnection")
+    pairing.publish("Connected")
+    qt_application.processEvents()
+    assert panel.qr_label.pixmap().isNull()
+    assert panel.qr_placeholder.isVisible()
+    assert panel.qr_label.accessibleName() == "已连接"
+    assert not panel._countdown.isActive()
+    assert panel.refresh_button.text() == "连接其他设备"
+    assert not panel.refresh_button.isEnabled()
+    starts = pairing.calls.count(("qr",))
+    panel.refresh_button.click()
+    assert pairing.calls.count(("qr",)) == starts
+
+    pairing.finish("Connected", "")
+    qt_application.processEvents()
+    assert panel.is_expanded and panel.qr_placeholder.isVisible()
+    assert panel.refresh_button.isEnabled()
+    assert panel.cancel_button.isHidden()
+    assert pairing.calls.count(("qr",)) == starts
+    panel.refresh_button.setFocus()
+    QTest.keyClick(panel.refresh_button, Qt.Key.Key_Space)
+    assert pairing.calls.count(("qr",)) == starts + 1
+    assert panel.qr_placeholder.isHidden()
+    assert panel.qr_label.toolTip() == ""
 
 
 def test_stop_keeps_action_visible_until_cleanup_then_shows_stopped_placeholder(

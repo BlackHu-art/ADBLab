@@ -6631,6 +6631,10 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>刷新二维码</translation>
         </message>
         <message>
+            <source>连接其他设备</source>
+            <translation>连接其他设备</translation>
+        </message>
+        <message>
             <source>使用配对码</source>
             <translation>使用配对码</translation>
         </message>
@@ -7187,6 +7191,43 @@ Android 设备管理、应用操作与诊断工作台</translation>
         <message>
             <source>MIME不能包含控制字符</source>
             <translation>MIME不能包含控制字符</translation>
+        </message>
+
+        <message>
+            <source>当前用户未安装此应用</source>
+            <translation>当前用户未安装此应用</translation>
+        </message>
+        <message>
+            <source>设备不支持读取应用图标</source>
+            <translation>设备不支持读取应用图标</translation>
+        </message>
+        <message>
+            <source>应用图标渲染失败</source>
+            <translation>应用图标渲染失败</translation>
+        </message>
+        <message>
+            <source>应用图标超过大小限制</source>
+            <translation>应用图标超过大小限制</translation>
+        </message>
+        <message>
+            <source>设备用户已切换，请刷新应用列表</source>
+            <translation>设备用户已切换，请刷新应用列表</translation>
+        </message>
+        <message>
+            <source>应用或设备配置已变化，请刷新应用列表</source>
+            <translation>应用或设备配置已变化，请刷新应用列表</translation>
+        </message>
+        <message>
+            <source>应用图标组件缺失</source>
+            <translation>应用图标组件缺失</translation>
+        </message>
+        <message>
+            <source>应用图标组件传输失败</source>
+            <translation>应用图标组件传输失败</translation>
+        </message>
+        <message>
+            <source>应用图标数据无效</source>
+            <translation>应用图标数据无效</translation>
         </message>
     </context>
 </TS>

@@ -6631,6 +6631,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>重新產生二維碼</translation>
         </message>
         <message>
+            <source>连接其他设备</source>
+            <translation>連接其他裝置</translation>
+        </message>
+        <message>
             <source>使用配对码</source>
             <translation>使用配對碼</translation>
         </message>
@@ -7187,6 +7191,43 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>MIME不能包含控制字符</source>
             <translation>MIME不能包含控制字元</translation>
+        </message>
+
+        <message>
+            <source>当前用户未安装此应用</source>
+            <translation>目前用戶未安裝此應用程式</translation>
+        </message>
+        <message>
+            <source>设备不支持读取应用图标</source>
+            <translation>此裝置不支援讀取應用程式圖標</translation>
+        </message>
+        <message>
+            <source>应用图标渲染失败</source>
+            <translation>應用程式圖標繪製失敗</translation>
+        </message>
+        <message>
+            <source>应用图标超过大小限制</source>
+            <translation>應用程式圖標超過大小限制</translation>
+        </message>
+        <message>
+            <source>设备用户已切换，请刷新应用列表</source>
+            <translation>裝置用戶已切換，請重新整理應用程式清單</translation>
+        </message>
+        <message>
+            <source>应用或设备配置已变化，请刷新应用列表</source>
+            <translation>應用程式或裝置設定已變更，請重新整理應用程式清單</translation>
+        </message>
+        <message>
+            <source>应用图标组件缺失</source>
+            <translation>缺少應用程式圖標元件</translation>
+        </message>
+        <message>
+            <source>应用图标组件传输失败</source>
+            <translation>應用程式圖標元件傳輸失敗</translation>
+        </message>
+        <message>
+            <source>应用图标数据无效</source>
+            <translation>應用程式圖標資料無效</translation>
         </message>
     </context>
 </TS>

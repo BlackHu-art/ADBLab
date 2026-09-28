@@ -23,6 +23,55 @@ from tests.ui_geometry_helpers import wait_until
 pytestmark = pytest.mark.ui
 
 
+@pytest.mark.parametrize("language", ["zh_CN", "en_US"])
+@pytest.mark.parametrize("font_size", [12, 22])
+@pytest.mark.parametrize("width", [360, 800])
+def test_ip_connection_feedback_keeps_height_at_all_states(
+    qt_application, language, font_size, width,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(width, 300)
+    panel.expand([("QA phone", "192.0.2.1:5555")])
+    panel.request_page("address")
+    pairing.finish("Idle", "")
+    form = panel.address_form
+    requests = QSignalSpy(panel.address_connect_requested)
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    try:
+        form.address.setText("192.0.2.1:5555")
+        settle()
+        height = panel.height()
+        for success in (False, True):
+            form._connect()
+            settle()
+            assert panel.height() == height
+            panel.complete_address_connection(requests.at(requests.count() - 1)[1], success)
+            settle()
+            assert panel.height() == height
+            feedback = form.error_label
+            required = feedback.fontMetrics().boundingRect(
+                feedback.contentsRect(), Qt.TextFlag.TextWordWrap, feedback.text(),
+            )
+            assert required.height() <= feedback.height()
+            assert panel.rect().contains(QRect(feedback.mapTo(panel, QPoint()), feedback.size()))
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
+
+
 @pytest.fixture
 def history_panel(qt_application):
     pairing = PairingDouble()
@@ -215,6 +264,101 @@ def test_qr_feedback_uses_full_width_and_retry_restores_compact_actions(qt_appli
         panel.prepare_shutdown()
         panel.close()
         panel.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "language,width,font_size",
+    [("zh_CN", 748, 12), ("zh_CN", 900, 12), ("zh_CN", 600, 22),
+     ("en_US", 900, 12), ("en_US", 600, 22), ("en_US", 360, 22), ("zh_HK", 360, 22)],
+)
+def test_success_keeps_scan_height_and_device_list_position(
+    qt_application, language, width, font_size,
+):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=font_size)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    panel = DeviceConnectionPanel(pairing, parent=host)
+    device_list = QLabel("QA device list", host)
+    layout.addWidget(panel)
+    layout.addWidget(device_list)
+    layout.addStretch()
+    host.resize(width, 1400)
+    host.show()
+    panel.expand()
+
+    def settle():
+        for _ in range(8):
+            qt_application.processEvents()
+
+    try:
+        pairing.qr_ready.emit(1, qr_png(), 29)
+        pairing.publish("WaitingForScan", remaining=120)
+        settle()
+        initial = (panel.height(), device_list.y(), panel.qr_label.geometry())
+        for state in ("Pairing", "WaitingForConnection", "Connected"):
+            pairing.publish(state)
+            settle()
+            assert (panel.height(), device_list.y(), panel.qr_label.geometry()) == initial
+        pairing.finish("Connected", "")
+        settle()
+        assert (panel.height(), device_list.y(), panel.qr_label.geometry()) == initial
+        assert panel.qr_placeholder.isVisible()
+        assert panel.status_detail.isHidden()
+        for widget in (panel.qr_placeholder, panel.status_label, panel.refresh_button):
+            assert panel.rect().contains(QRect(widget.mapTo(panel, QPoint()), widget.size()))
+        assert panel.refresh_button.width() >= panel.refresh_button.sizeHint().width()
+        panel.refresh_button.click()
+        settle()
+        assert (panel.height(), device_list.y(), panel.qr_label.geometry()) == initial
+    finally:
+        panel.prepare_shutdown()
+        host.close()
+        host.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
+
+
+@pytest.mark.parametrize("language", ["zh_CN", "en_US"])
+def test_success_reflows_without_clipping_after_font_and_window_changes(qt_application, language):
+    translators = install_translators(qt_application, language)
+    config = replace(BaseStyles.current_font_config(), ui_size=12)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    pairing = PairingDouble()
+    panel = DeviceConnectionPanel(pairing)
+    panel.resize(900, 300)
+    panel.expand()
+    pairing.finish("Connected", "")
+    try:
+        config = replace(config, ui_size=22)
+        BaseStyles._sync_legacy_values(config)
+        typography_manager.apply(config)
+        panel.resize(360, panel.height())
+        for _ in range(8):
+            qt_application.processEvents()
+        assert panel.refresh_button.width() >= panel.refresh_button.sizeHint().width()
+        assert panel.rect().contains(QRect(
+            panel.refresh_button.mapTo(panel, QPoint()), panel.refresh_button.size(),
+        ))
+        height = panel.height()
+        panel.refresh_button.click()
+        for _ in range(8):
+            qt_application.processEvents()
+        assert panel.height() == height
+        assert panel.qr_placeholder.isHidden()
+    finally:
+        panel.prepare_shutdown()
+        panel.close()
+        panel.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 @pytest.mark.parametrize(

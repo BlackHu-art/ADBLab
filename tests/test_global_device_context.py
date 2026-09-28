@@ -604,8 +604,7 @@ def test_popup_multiselect_round_trip_keeps_clicked_items_alive(frame, qt_applic
 
 
 def test_connection_panel_forwards_only_validated_target(frame, qt_application):
-    calls = []
-    frame.left_panel.signals.connect_requested.connect(calls.append)
+    controller = frame.adb_controller
     frame.show()
     frame._on_devices_updated([])
     frame._on_nav_requested("devices")
@@ -618,11 +617,87 @@ def test_connection_panel_forwards_only_validated_target(frame, qt_application):
     assert form is not None
     form.address.setText("invalid")
     form.connect_button.click()
-    assert calls == []
+    controller.connect_device.assert_not_called()
     form.address.setText("192.0.2.10:5555")
     form.connect_button.click()
-    assert calls == ["192.0.2.10:5555"]
-    assert panel.isHidden() and not frame._device_hub.connect_button.isChecked()
+    controller.connect_device.assert_called_once()
+    args, kwargs = controller.connect_device.call_args
+    assert args == ("192.0.2.10:5555",) and kwargs["request_id"]
+    assert panel.isVisible() and frame._device_hub.connect_button.isChecked()
+    callback = controller.signals.connection_completed.connect.call_args.args[0]
+    callback(kwargs["request_id"], True)
+    assert panel.isVisible() and panel.address_form.connect_button.isEnabled()
+    assert panel.address_form.error_label.text() == "设备已连接"
+
+
+def test_connection_panel_rejected_submission_does_not_stay_busy(frame, qt_application):
+    from adblab.application.action_results import capture_action_job
+    from controllers.action_catalog import ACTION_SIGNALS
+
+    frame.show()
+    frame._on_devices_updated([])
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
+    frame._device_hub.connect_button.click()
+    panel = frame._connection_panel
+    panel.request_page("address")
+    frame._adb_pairing.finish()
+    store = frame.adb_controller.action_results
+    pending_job = store.run(
+        ACTION_SIGNALS["connect_requested"], ("192.0.2.20:5555",),
+        lambda: capture_action_job("connect_device_async", "192.0.2.20:5555"),
+    )
+    assert pending_job is not None
+    assert store.recent()[0].state == "running"
+    panel.address_form.address.setText("192.0.2.10:5555")
+    panel.address_form._connect()
+    frame.adb_controller.connect_device.assert_not_called()
+    assert panel.isVisible() and panel.address_form.connect_button.isEnabled()
+    assert "连接未完成" in panel.address_form.error_label.text()
+    assert len(store.recent()) == 1
+    assert store.recent()[0].request_id == pending_job.request_id
+    assert store.recent()[0].state == "running"
+    store.complete(pending_job, {"success": False, "cancelled": True})
+
+
+@pytest.mark.parametrize("raises_after_result", [False, True])
+def test_connection_panel_synchronous_failure_result_is_delivered(
+    frame, qt_application, raises_after_result,
+):
+    from adblab.application.action_results import report_action_message
+    from controllers.signals import ADBControllerSignals
+
+    controller = frame.adb_controller
+    signals = ADBControllerSignals()
+    controller.signals.connection_completed = signals.connection_completed
+    frame.show()
+    frame._on_devices_updated([])
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
+    frame._device_hub.connect_button.click()
+    panel = frame._connection_panel
+    panel.request_page("address")
+    frame._adb_pairing.finish()
+    submitted = QSignalSpy(panel.address_connect_requested)
+
+    def fail_synchronously(_target, *, request_id):
+        report_action_message(False, "Connection failed")
+        signals.connection_completed.emit(request_id, False)
+        if raises_after_result:
+            raise RuntimeError("controlled submission failure")
+
+    controller.connect_device.side_effect = fail_synchronously
+    panel.address_form.address.setText("192.0.2.10:5555")
+    panel.address_form._connect()
+
+    assert submitted.count() == 1
+    controller.connect_device.assert_called_once_with(
+        "192.0.2.10:5555", request_id=submitted.at(0)[1],
+    )
+    assert panel.isVisible() and panel.address_form.connect_button.isEnabled()
+    assert "连接未完成" in panel.address_form.error_label.text()
+    assert len(controller.action_results.recent()) == 1
+    assert controller.action_results.recent()[0].state == "failed"
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])

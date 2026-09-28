@@ -262,3 +262,90 @@ def test_icon_view_detail_queries_follow_scrolled_viewport(page, qt_application)
     }
     packages = window._visible_detail_packages()
     assert packages and set(packages) <= visible
+
+
+@pytest.mark.parametrize(("error", "reason"), [
+    ("应用图标组件缺失", "应用图标组件缺失"),
+    ("应用图标组件传输失败", "应用图标组件传输失败"),
+    ("应用或设备配置已变化，请刷新应用列表", "应用或设备配置已变化，请刷新应用列表"),
+    ("设备用户已切换，请刷新应用列表", "设备用户已切换，请刷新应用列表"),
+    ("设备不支持读取应用图标", "设备不支持读取应用图标"),
+    ("应用图标渲染失败", "应用图标渲染失败"),
+    ("应用图标超过大小限制", "应用图标超过大小限制"),
+    ("当前用户未安装此应用", "当前用户未安装此应用"),
+    ("应用图标临时文件清理失败", "清理失败"),
+    ("设备图标响应无效", "应用图标数据无效"),
+    ("应用缓存身份无效，请刷新应用列表", "应用图标数据无效"),
+    ("包名格式无效", "包名无效"),
+    ("adb: private-device /private/local/path 192.0.2.23", "查询失败"),
+    ("", "应用图标数据无效"),
+])
+def test_failed_icon_exposes_only_safe_reason_in_tooltip_and_accessibility(
+    page, qt_application, error, reason,
+):
+    window, workers = page
+    populate(window)
+    wait_until(qt_application, lambda: bool(workers))
+    worker = workers[0]
+    worker.app_icon_loaded.emit("example.app0", b"invalid-png", error)
+    worker.finish()
+    wait_until(qt_application, lambda: window._icons_controller._worker is None)
+    item = window._detail_icon_by_pkg["example.app0"]
+    # 名称补全也会重建提示，失败原因应保留一次，并保持完整包名可读。
+    window._on_detail("example.app0", "新名称", "2.0", "")
+    for _ in range(2):
+        window._icons_controller.decorate("example.app0")
+    for column in range(4):
+        for text in (item.toolTip(column),
+                     item.data(column, Qt.ItemDataRole.AccessibleDescriptionRole)):
+            assert reason in text
+            assert text.count(reason) == 1
+            assert "example.app0" in text and "刷新重试" in text
+            assert "private-device" not in text and "/private/" not in text
+            assert "192.0.2.23" not in text
+    window._icons_controller._load_visible()
+    assert len(workers) == 1
+
+
+@pytest.mark.parametrize("reset", ["refresh", "uninstall", "close"])
+def test_refresh_uninstall_and_close_clear_icon_failure_descriptions(page, qt_application, reset):
+    window, workers = page
+    populate(window)
+    wait_until(qt_application, lambda: bool(workers))
+    worker = workers[0]
+    reason = "应用图标组件缺失"
+    worker.app_icon_loaded.emit("example.app0", b"", reason)
+    worker.finish()
+    wait_until(qt_application, lambda: window._icons_controller._worker is None)
+    item = window._detail_icon_by_pkg["example.app0"]
+    assert reason in item.toolTip(0)
+    if reset == "refresh":
+        window._icons_controller.reset(preserve_cache=True)
+    elif reset == "uninstall":
+        window._icons_controller.retain_packages(set())
+    else:
+        window.request_dispose()
+    assert not window._icons_controller.failures
+    for column in range(4):
+        assert reason not in item.toolTip(column)
+        assert "图标未读取" not in item.toolTip(column)
+        assert reason not in item.data(column, Qt.ItemDataRole.AccessibleDescriptionRole)
+
+
+@pytest.mark.parametrize("closing", [False, True])
+def test_late_icon_failure_cannot_reappear_after_refresh_or_close(page, qt_application, closing):
+    window, workers = page
+    populate(window)
+    wait_until(qt_application, lambda: bool(workers))
+    worker = workers[0]
+    item = window._detail_icon_by_pkg["example.app0"]
+    if closing:
+        window.request_dispose()
+    else:
+        window._icons_controller.reset(preserve_cache=True)
+    worker.app_icon_loaded.emit("example.app0", b"", "应用图标组件缺失")
+    worker.finish()
+    wait_until(qt_application, lambda: window._icons_controller._worker is None)
+    assert not window._icons_controller.failures
+    assert "图标未读取" not in item.toolTip(0)
+    assert "组件缺失" not in item.data(0, Qt.ItemDataRole.AccessibleDescriptionRole)

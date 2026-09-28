@@ -55,34 +55,78 @@ class ADBDeviceMixin(_ADBControllerBase):
         "get_connected_devices": "_process_device_list",
     }
 
-    def connect_device(self, ip: str):
+    def connect_device(self, ip: str, *, request_id: str = ""):
+        """提交连接；可选请求身份贯穿失败和取消终态，避免面板接收其他连接的结果。"""
+        if request_id:
+            if not hasattr(self, "_connection_requests"):
+                self._connection_requests: set[str] = set()
+            if request_id in self._connection_requests:
+                return
+            self._connection_requests.add(request_id)
         target, error = normalize_adb_connect_target(ip)
         if error:
-            self._emit_operation("connect", False, error)
+            self._complete_connection(request_id, False, error)
             return
-        self.device_model.connect_device_async(target)
+        try:
+            if request_id:
+                cast(Any, self.device_model).connect_device_async(
+                    target,
+                    _result_context={"device_ip": target, "_connection_request": request_id},
+                )
+            else:
+                self.device_model.connect_device_async(target)
+        except Exception:
+            # async_command 可能先同步发出失败再抛出；请求身份保证同一提交仅收口一次。
+            self._complete_connection(request_id, False, "Unable to start connection")
 
     def _process_connect_device_result(self, result):
-        if isinstance(result, dict):
-            ip = result.get("device_ip", "")
-            raw = result.get("output") or result.get("error", "")
+        payload = result if isinstance(result, dict) else {}
+        request_id = payload.get("_connection_request", "")
+        ip = payload.get("device_ip", "")
+        lines = str(payload.get("output") or "").strip().lower().splitlines()
+        success_line = next((
+            line.strip() for line in lines
+            if line.strip().startswith(("connected to ", "already connected to "))
+        ), "")
+        # 失败文本也可能包含 connected；命令失败或取消优先于输出中的成功词。
+        connected = bool(
+            ip and payload.get("success") and not payload.get("cancelled")
+            and success_line
+        )
+        if connected:
+            message = (
+                f"{ip} is already connected" if success_line.startswith("already connected to ")
+                else f"Successfully connected to {ip}"
+            )
         else:
-            ip = None
-            raw = str(result)
-        if not ip:
-            self._emit_operation("connect", False, "⚠️ Unknown device connection")
-            return
-        raw_lower = raw.lower()
-        if "already connected" in raw_lower:
-            self._finalize_connected_device(ip, f"{ip} is already connected")
-        elif "connected" in raw_lower:
-            self._finalize_connected_device(ip, f"Successfully connected to {ip}")
-        else:
-            self._emit_operation("connect", False, f"Connection failed: {raw}")
+            message = "Connection cancelled" if payload.get("cancelled") else "Connection failed"
+        self._complete_connection(request_id, connected, message, device_ip=ip)
+
+    def _complete_connection(
+        self, request_id: str, success: bool, message: str, *, device_ip: str = "",
+    ) -> None:
+        """先消耗请求身份再发布终态，忽略重复结果并保证面板退出忙碌状态。"""
+        if request_id:
+            pending = getattr(self, "_connection_requests", set())
+            if request_id not in pending:
+                return
+            pending.remove(request_id)
+        try:
+            if success:
+                self._finalize_connected_device(device_ip, message)
+            else:
+                self._emit_operation("connect", False, message)
+        finally:
+            if request_id:
+                self.signals.connection_completed.emit(request_id, success)
 
     def _finalize_connected_device(self, ip: str, message: str):
         # 设备信息查询（getprop）与 DeviceStore 落盘放到 executor，避免阻塞 GUI 线程。
-        self.executor.submit(self._save_device_info, ip)
+        try:
+            self.executor.submit(self._save_device_info, ip)
+        except RuntimeError:
+            # 历史保存准入失败不能撤销已经由 ADB 确认的连接。
+            self.log_service.log("WARNING", "设备已连接，但连接历史未能安排保存")
         self.refresh_devices()
         self._emit_operation("connect", True, message)
 

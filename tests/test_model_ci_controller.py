@@ -685,13 +685,161 @@ def test_connect_device_validates_and_normalizes_target_before_adb_call():
 
 
 def test_connect_device_rejects_incomplete_target_before_adb_call():
-    controller = Mock()
+    controller = _connection_controller()
 
     ADBDeviceMixin.connect_device(controller, "10.0.0.195")
 
     controller.device_model.connect_device_async.assert_not_called()
     controller._emit_operation.assert_called_once()
     assert "IP and port" in controller._emit_operation.call_args.args[2]
+
+
+def _connection_controller():
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.device_model = Mock()
+    controller.signals = Mock()
+    controller.executor = Mock()
+    controller.log_service = Mock()
+    controller.refresh_devices = Mock()
+    controller._emit_operation = Mock()
+    return controller
+
+
+def test_connect_device_carries_request_identity_and_normalized_target():
+    controller = _connection_controller()
+
+    controller.connect_device(" 192.0.2.1 : 5555 ", request_id="request-a")
+
+    controller.device_model.connect_device_async.assert_called_once_with(
+        "192.0.2.1:5555",
+        _result_context={"device_ip": "192.0.2.1:5555", "_connection_request": "request-a"},
+    )
+    controller.signals.connection_completed.emit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("payload", "success"),
+    [
+        ({"success": True, "output": "connected to 192.0.2.1:5555"}, True),
+        ({"success": True, "output": "already connected to 192.0.2.1:5555"}, True),
+        ({"success": True, "output": "* daemon started successfully\n"
+          "connected to 192.0.2.1:5555"}, True),
+        ({"success": False, "error": "connected but transport rejected"}, False),
+        ({"success": True, "output": "not connected to 192.0.2.1:5555"}, False),
+        ({"success": True, "cancelled": True, "output": "connected to 192.0.2.1:5555"}, False),
+        ({"success": False, "error": "private device/path detail"}, False),
+    ],
+)
+def test_connect_device_publishes_one_correlated_terminal_result(payload, success):
+    controller = _connection_controller()
+    controller.connect_device("192.0.2.1:5555", request_id="request-a")
+    result = {
+        **payload, "device_ip": "192.0.2.1:5555", "_connection_request": "request-a",
+    }
+
+    controller._process_connect_device_result(result)
+    controller._process_connect_device_result(result)
+
+    controller.signals.connection_completed.emit.assert_called_once_with("request-a", success)
+    controller._emit_operation.assert_called_once()
+    operation, actual_success, message = controller._emit_operation.call_args.args
+    assert (operation, actual_success) == ("connect", success)
+    assert "private device/path detail" not in message
+    assert controller.refresh_devices.call_count == int(success)
+    assert controller.executor.submit.call_count == int(success)
+
+
+def test_connect_device_invalid_target_completes_the_request_without_adb():
+    controller = _connection_controller()
+
+    controller.connect_device("192.0.2.1", request_id="request-invalid")
+
+    controller.device_model.connect_device_async.assert_not_called()
+    controller.signals.connection_completed.emit.assert_called_once_with("request-invalid", False)
+
+
+@pytest.mark.parametrize("synchronous_failure", [False, True])
+def test_connect_device_submission_error_completes_only_once(synchronous_failure):
+    controller = _connection_controller()
+
+    def reject(target, *, _result_context):
+        if synchronous_failure:
+            controller._process_connect_device_result({
+                "success": False, "error": "private submission error", **_result_context,
+            })
+        raise RuntimeError("private submission error")
+
+    controller.device_model.connect_device_async.side_effect = reject
+
+    controller.connect_device("192.0.2.1:5555", request_id="request-submit")
+
+    controller.signals.connection_completed.emit.assert_called_once_with("request-submit", False)
+    controller._emit_operation.assert_called_once()
+    assert "private submission error" not in controller._emit_operation.call_args.args[2]
+
+
+def test_connect_device_out_of_order_results_keep_each_request_identity():
+    controller = _connection_controller()
+    controller.connect_device("192.0.2.1:5555", request_id="first")
+    controller.connect_device("192.0.2.2:5555", request_id="second")
+
+    for request, target in (("second", "192.0.2.2:5555"), ("first", "192.0.2.1:5555")):
+        controller._process_connect_device_result({
+            "success": True, "device_ip": target,
+            "output": f"connected to {target}", "_connection_request": request,
+        })
+
+    assert controller.signals.connection_completed.emit.call_args_list == [
+        call("second", True), call("first", True),
+    ]
+
+
+def test_connect_device_success_survives_history_executor_shutdown():
+    controller = _connection_controller()
+    controller.executor.submit.side_effect = RuntimeError("cannot schedule new futures")
+    controller.connect_device("192.0.2.1:5555", request_id="request-a")
+
+    controller._process_connect_device_result({
+        "success": True, "device_ip": "192.0.2.1:5555",
+        "output": "connected to 192.0.2.1:5555", "_connection_request": "request-a",
+    })
+
+    controller.signals.connection_completed.emit.assert_called_once_with("request-a", True)
+    controller.refresh_devices.assert_called_once()
+
+
+def test_connect_device_untracked_result_does_not_complete_the_panel_request():
+    controller = _connection_controller()
+    controller.connect_device("192.0.2.1:5555", request_id="current")
+
+    controller._process_connect_device_result({
+        "success": True, "device_ip": "192.0.2.2:5555",
+        "output": "connected to 192.0.2.2:5555", "_connection_request": "unknown",
+    })
+    controller._process_connect_device_result({
+        "success": True, "device_ip": "192.0.2.3:5555",
+        "output": "connected to 192.0.2.3:5555",
+    })
+
+    controller.signals.connection_completed.emit.assert_not_called()
+    controller.refresh_devices.assert_called_once()
+    controller.executor.submit.assert_called_once_with(
+        controller._save_device_info, "192.0.2.3:5555",
+    )
+
+
+def test_connection_completed_signal_publishes_only_request_and_status():
+    from controllers.signals import ADBControllerSignals
+
+    signals = ADBControllerSignals()
+    received = []
+    signals.connection_completed.connect(
+        lambda request, success: received.append((request, success)),
+    )
+
+    signals.connection_completed.emit("request-a", False)
+
+    assert received == [("request-a", False)]
 
 
 def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():

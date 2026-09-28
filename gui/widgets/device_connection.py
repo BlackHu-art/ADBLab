@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 import time
+from uuid import uuid4
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetricsF, QImage, QKeySequence, QPainter, QPixmap, QShortcut
@@ -151,6 +152,9 @@ class _AddressForm(QWidget):
         form.addLayout(self.entry_row)
         self.error_label = BodyLabel("", entry)
         self.error_label.setWordWrap(True)
+        feedback_policy = self.error_label.sizePolicy()
+        feedback_policy.setRetainSizeWhenHidden(True)
+        self.error_label.setSizePolicy(feedback_policy)
         self.error_label.hide()
         form.addWidget(self.error_label)
         form.addStretch()
@@ -177,6 +181,7 @@ class _AddressForm(QWidget):
         self.history_rows = []
         self.connect_button.clicked.connect(self._connect)
         self.address.returnPressed.connect(self._connect)
+        self.address.textEdited.connect(lambda _text: self.show_feedback(""))
         self.set_history(history)
 
     def set_history(self, history):
@@ -221,11 +226,12 @@ class _AddressForm(QWidget):
         self.history_scroll.setMinimumHeight(row_height * (4 if self.history_rows else 1))
 
     def _fill(self, endpoint):
+        self.show_feedback("")
         self.address.setText(endpoint)
         self.address.setFocus()
 
     def _connect(self):
-        if not self.isEnabled():
+        if not self.isEnabled() or not self.connect_button.isEnabled():
             return
         target, error = normalize_adb_connect_target(self.address.text())
         self.error_label.setText(tr(error) if error else "")
@@ -234,6 +240,17 @@ class _AddressForm(QWidget):
             self.address.setFocus()
             return
         self.connect_requested.emit(target)
+
+    def set_available(self, available):
+        """等待结果时锁定提交目标，状态文案保持正常可读。"""
+        self.address.setEnabled(available)
+        self.connect_button.setEnabled(available)
+        self.history_box.setEnabled(available)
+
+    def show_feedback(self, text):
+        """用预留的反馈区域展示本次地址请求状态。"""
+        self.error_label.setText(text)
+        self.error_label.setVisible(bool(text))
 
     def reflow(self, width):
         self.columns.setDirection(
@@ -246,6 +263,16 @@ class _AddressForm(QWidget):
             if width < required
             else QBoxLayout.Direction.LeftToRight
         )
+        # 为成功、等待和失败统一预留空间，结果返回时不推移设备列表。
+        entry_width = (width - 24) // 2 if width > 580 else width
+        self.error_label.setMinimumHeight(max(
+            self.error_label.fontMetrics().boundingRect(
+                QRect(0, 0, max(1, entry_width), 10000),
+                Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft,
+                tr(text),
+            ).height()
+            for text in ("连接中", "设备已连接", "连接未完成，请检查无线调试与网络后重试。")
+        ))
         self._size_history()
 
 
@@ -253,6 +280,7 @@ class DeviceConnectionPanel(QWidget):
     """常驻页内单会话视图；收起立即隐藏，资源空闲前拒绝新一轮配对。"""
 
     connect_requested = Signal(str)
+    address_connect_requested = Signal(str, str)
     expanded_changed = Signal(bool)
     PAGES = ("qr", "manual", "address")
 
@@ -265,6 +293,7 @@ class DeviceConnectionPanel(QWidget):
         self._pending_refresh = False
         self._closed = True
         self._submitted_address = False
+        self._address_request_id = ""
         self._shutting_down = False
         self._pair_started = False
         self._qr_image = QImage()
@@ -401,6 +430,8 @@ class DeviceConnectionPanel(QWidget):
         self._expanded = True
         self._closed = False
         self._submitted_address = False
+        self._address_request_id = ""
+        self.address_form.show_feedback("")
         self._pending_page = None
         self._pending_refresh = False
         self.setMinimumHeight(0)
@@ -424,6 +455,8 @@ class DeviceConnectionPanel(QWidget):
             return
         self._expanded = False
         self._closed = True
+        self._submitted_address = False
+        self._address_request_id = ""
         self._pending_page = None
         self._pending_refresh = False
         self._clear_secrets()
@@ -617,7 +650,8 @@ class DeviceConnectionPanel(QWidget):
         )
         self.refresh_slot.setFixedWidth(
             self.refresh_button.sizeHint().width()
-            if self._qr_failed() else self._qr_refresh_slot_width
+            if self._qr_failed() or self.coordinator.state == "Connected"
+            else self._qr_refresh_slot_width
         )
         self.cancel_button.setFixedWidth(self.cancel_button.sizeHint().width())
         self._schedule_reflow()
@@ -632,9 +666,25 @@ class DeviceConnectionPanel(QWidget):
         ):
             return
         self._submitted_address = True
-        self.address_form.setEnabled(False)
+        self._address_request_id = uuid4().hex
+        self.address_form.show_feedback(tr("连接中"))
+        self._update_controls()
         self.connect_requested.emit(target)
-        self.collapse()
+        self.address_connect_requested.emit(target, self._address_request_id)
+
+    def complete_address_connection(self, request_id, success):
+        """只更新当前可见请求；已收起、关闭或被替代的请求不得恢复视图。"""
+        if (
+            self._closed or self._shutting_down or not self._submitted_address
+            or request_id != self._address_request_id
+        ):
+            return
+        self._submitted_address = False
+        self._address_request_id = ""
+        self.address_form.show_feedback(tr(
+            "设备已连接" if success else "连接未完成，请检查无线调试与网络后重试。"
+        ))
+        self._update_controls()
 
     def _submit_code(self):
         if (
@@ -666,6 +716,7 @@ class DeviceConnectionPanel(QWidget):
             or self._shutting_down
             or page not in self.PAGES
             or page == self.current_page
+            or self._submitted_address
             or self._has_pending()
             or self.coordinator.state in ("Stopping", "CleanupFailed")
         ):
@@ -813,11 +864,17 @@ class DeviceConnectionPanel(QWidget):
         self.status_label.setText(states.get(state, tr("连接未完成")))
         detail = reasons.get(reason, "")
         if state == "Connected":
-            detail = tr("连接已确认，可返回设备列表选择操作设备。")
+            # 扫码成功沿用原二维码和操作槽，避免成功说明把三栏挤成通栏。
+            detail = "" if self.current_page == "qr" else tr(
+                "连接已确认，可返回设备列表选择操作设备。"
+            )
         elif state == "Idle" and reason == "cancelled" and self._pair_started:
             detail = tr("手机可能已保存配对记录，可在无线调试中查看。")
         self.status_detail.setText(detail)
-        if self.current_page == "qr" and (
+        if self.current_page == "qr" and state == "Connected":
+            self._show_qr_placeholder(tr("已连接"), FluentIcon.COMPLETED)
+            self.qr_label.setToolTip(tr("连接已确认，可返回设备列表选择操作设备。"))
+        elif self.current_page == "qr" and (
             self._qr_expired or (state == "Failed" and reason == "scan_timeout")
         ):
             self._show_expired_qr()
@@ -826,7 +883,10 @@ class DeviceConnectionPanel(QWidget):
             and not self._has_pending() and not self.coordinator.busy
         ):
             self._show_qr_placeholder(tr("已停止"), FluentIcon.CANCEL)
-        self.status_label.setAccessibleDescription(self.status_label.text())
+        self.status_label.setAccessibleDescription(
+            tr("连接已确认，可返回设备列表选择操作设备。")
+            if state == "Connected" else self.status_label.text()
+        )
         self._update_controls()
         if state == "PairedOnly":
             QTimer.singleShot(0, self._reveal_continuation)
@@ -851,7 +911,9 @@ class DeviceConnectionPanel(QWidget):
         state = self.coordinator.state
         stopping = state in ("Stopping", "CleanupFailed") or self._has_pending()
         busy = self.coordinator.busy
-        self.navigation.setEnabled(not stopping and not self._shutting_down)
+        self.navigation.setEnabled(
+            not stopping and not self._shutting_down and not self._submitted_address
+        )
         self.status_box.setVisible(self.current_page != "address")
         paired = state == "PairedOnly" or (
             state == "WaitingForConnection" and self.continuation_box.isVisible()
@@ -885,7 +947,7 @@ class DeviceConnectionPanel(QWidget):
         qr = self.current_page == "qr"
         self.refresh_button.setVisible(qr)
         failed = self._qr_failed()
-        refresh_text = "重试" if failed else (
+        refresh_text = "连接其他设备" if state == "Connected" else "重试" if failed else (
             "重新生成" if self._qr_expired else (
                 "刷新二维码" if state == "WaitingForScan" else "生成二维码"
             )
@@ -893,10 +955,12 @@ class DeviceConnectionPanel(QWidget):
         self.refresh_button.setText(tr(refresh_text))
         self.refresh_button.setToolTip(tr(refresh_text))
         self.refresh_slot.setFixedWidth(
-            self.refresh_button.sizeHint().width() if failed else self._qr_refresh_slot_width
+            self.refresh_button.sizeHint().width()
+            if failed or state == "Connected" else self._qr_refresh_slot_width
         )
         self.refresh_button.setEnabled(
             not stopping and state not in ("Pairing", "WaitingForConnection")
+            and not (state == "Connected" and busy)
         )
         self.code_button.setVisible(True)
         self.code_button.setEnabled(not stopping)
@@ -912,7 +976,7 @@ class DeviceConnectionPanel(QWidget):
             and not busy and not self._has_pending()
         )
         self.cancel_button.setVisible(
-            not failed and not self._qr_expired and state != "CleanupFailed"
+            not failed and not self._qr_expired and state not in ("Connected", "CleanupFailed")
             and (busy or stopped) and (qr or not stopping)
         )
         self.cancel_button.setEnabled(busy and not stopping and not self._qr_expired)
@@ -929,7 +993,7 @@ class DeviceConnectionPanel(QWidget):
         else:
             self.progress_ring.stop()
         self.qr_label.setVisible(not failed)
-        self.address_form.setEnabled(not busy and not stopping and not self._submitted_address)
+        self.address_form.set_available(not busy and not stopping and not self._submitted_address)
         self.status_detail.setVisible(bool(self.status_detail.text()))
         self.countdown_label.setVisible(bool(self.countdown_label.text()))
         self._schedule_reflow()
@@ -1033,6 +1097,7 @@ class DeviceConnectionPanel(QWidget):
         self._qr_acknowledged = False
         self._qr_expired = False
         self.qr_label.clear()
+        self.qr_label.setToolTip("")
         self.qr_label.setAccessibleName(tr("无线调试配对二维码"))
         self.qr_placeholder.hide()
         self.countdown_label.clear()
@@ -1094,7 +1159,8 @@ class DeviceConnectionPanel(QWidget):
         )
 
     def _qr_refresh_width(self):
-        return self.refresh_slot.width()
+        # 成功按钮可使用原停止按钮的空间，不能反过来改变扫码布局的断点。
+        return self.refresh_slot.width() if self._qr_failed() else self._qr_refresh_slot_width
 
     def _qr_status_width(self, width):
         actions_width = self._qr_refresh_width() + 10 + self.cancel_button.width()
@@ -1108,7 +1174,8 @@ class DeviceConnectionPanel(QWidget):
             self._status_text_size(tr(text), available, control_height).height()
             for text in (
                 "正在准备扫码", "等待手机扫码", "正在停止，请稍候。",
-                "等待重新生成", "本次操作已停止",
+                "等待重新生成", "本次操作已停止", "正在配对", "已配对，正在确认连接",
+                "设备已连接",
             )
         )
 
@@ -1142,6 +1209,7 @@ class DeviceConnectionPanel(QWidget):
         self.cancel_button.setSizePolicy(policy)
         for column in range(3):
             self.action_layout.setColumnStretch(column, 0)
+            self.action_layout.setColumnMinimumWidth(column, 0)
         height = control_height
         if failed:
             self.action_layout.addWidget(self.refresh_slot, 0, 0, Qt.AlignmentFlag.AlignLeft)
@@ -1156,6 +1224,14 @@ class DeviceConnectionPanel(QWidget):
                     self.recovery_code_button, 1, 0, Qt.AlignmentFlag.AlignLeft,
                 )
                 self.action_layout.setColumnStretch(1, 1)
+                height += control_height + 6
+        elif qr and self.coordinator.state == "Connected":
+            self.action_layout.setColumnStretch(0, 1)
+            self.action_layout.setColumnMinimumWidth(1, self._qr_status_width(width))
+            self.action_layout.addWidget(
+                self.refresh_slot, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            )
+            if width < self._qr_refresh_width() + 10 + self.cancel_button.width():
                 height += control_height + 6
         elif qr:
             self.action_layout.setColumnStretch(0, 1)

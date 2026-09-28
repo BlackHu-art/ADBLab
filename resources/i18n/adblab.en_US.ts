@@ -6631,6 +6631,10 @@ Android device management, apps and diagnostics</translation>
             <translation>Refresh QR code</translation>
         </message>
         <message>
+            <source>连接其他设备</source>
+            <translation>Connect another</translation>
+        </message>
+        <message>
             <source>使用配对码</source>
             <translation>Use pairing code</translation>
         </message>
@@ -7187,6 +7191,43 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>MIME不能包含控制字符</source>
             <translation>MIME cannot contain control characters</translation>
+        </message>
+
+        <message>
+            <source>当前用户未安装此应用</source>
+            <translation>This app is not installed for the current user</translation>
+        </message>
+        <message>
+            <source>设备不支持读取应用图标</source>
+            <translation>This device does not support reading app icons</translation>
+        </message>
+        <message>
+            <source>应用图标渲染失败</source>
+            <translation>Failed to render the app icon</translation>
+        </message>
+        <message>
+            <source>应用图标超过大小限制</source>
+            <translation>The app icon exceeds the size limit</translation>
+        </message>
+        <message>
+            <source>设备用户已切换，请刷新应用列表</source>
+            <translation>The device user has changed. Refresh the app list.</translation>
+        </message>
+        <message>
+            <source>应用或设备配置已变化，请刷新应用列表</source>
+            <translation>The app or device configuration has changed. Refresh the app list.</translation>
+        </message>
+        <message>
+            <source>应用图标组件缺失</source>
+            <translation>The app icon component is missing</translation>
+        </message>
+        <message>
+            <source>应用图标组件传输失败</source>
+            <translation>Failed to transfer the app icon component</translation>
+        </message>
+        <message>
+            <source>应用图标数据无效</source>
+            <translation>The app icon data is invalid</translation>
         </message>
     </context>
 </TS>

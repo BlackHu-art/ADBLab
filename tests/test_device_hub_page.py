@@ -239,6 +239,38 @@ def test_cached_metadata_enriches_only_discovered_devices(qt_application):
     assert "历史设备" not in page.summary.text()
 
 
+@pytest.mark.parametrize("device_id, connection_kind", [
+    ("adb-demo._adb-tls-connect._tcp", "无线"),
+    ("adb-demo._adb-tls-connect._tcp.", "无线"),
+    ("adb-demo._adb-tls-connect._tcp.local", "无线"),
+    ("adb-demo._adb-tls-connect._tcp.local.", "无线"),
+    ("192.0.2.15:5555", "无线"),
+    ("[2001:db8::15]:5555", "无线"),
+    ("demo-usb-a", "USB"),
+    ("emulator-5554", "模拟器"),
+    ("demo._adb-tls-connect._tcp-unrelated", "USB"),
+    ("demo._adb-tls-pairing._tcp", "USB"),
+])
+def test_connection_kind_survives_discovery_state_changes(
+    qt_application, device_id, connection_kind,
+):
+    page = DeviceHubPage()
+    page.set_device_context([], [device_id], "ready")
+    page.resize(960, 600)
+    page.show()
+    qt_application.processEvents()
+    card = page.device_cards[0]
+    assert card.isVisible()
+    assert card.name_label.text() == f"Android {connection_kind}设备"
+    for state, state_text in (
+        ("ready", "在线"), ("scanning", "扫描中"), ("unavailable", "连接待确认"),
+    ):
+        page.set_device_context([], [device_id], state)
+        assert page.device_cards[0] is card
+        assert card.status_label.text() == f"{connection_kind} · {state_text}"
+        assert card.name_label.text() == f"Android {connection_kind}设备"
+
+
 def test_selection_round_trip_preserves_cards_and_emits_once(qt_application):
     _window, page = _show_page(qt_application)
     cards = page.device_cards

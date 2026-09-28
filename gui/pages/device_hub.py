@@ -44,7 +44,12 @@ def _metadata_text(value: object) -> str:
 def _connection_kind(device_id: str) -> str:
     if device_id.startswith("emulator-"):
         return tr("模拟器")
-    return tr("无线") if ":" in device_id else "USB"
+    # 扫码配对的在线标识是 mDNS 服务名，不含 IP 端口分隔符；末尾可带本地域名。
+    wireless = ":" in device_id or device_id.endswith((
+        "._adb-tls-connect._tcp", "._adb-tls-connect._tcp.",
+        "._adb-tls-connect._tcp.local", "._adb-tls-connect._tcp.local.",
+    ))
+    return tr("无线") if wireless else "USB"
 
 
 def _device_name(device_id: str, metadata: Mapping[str, object]) -> str:

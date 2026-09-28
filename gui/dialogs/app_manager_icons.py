@@ -6,10 +6,30 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Slot
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
+from gui.dialogs.app_manager_rows import refresh_row_description
 from gui.i18n import tr
 
 if TYPE_CHECKING:
     from models.app_manager_worker import AppManagerWorker
+
+
+def _safe_failure_reason(error: str) -> str:
+    """只翻译服务已定义的固定分类；原始执行错误不能进入页面或会话缓存。"""
+    return {
+        "当前用户未安装此应用": tr("当前用户未安装此应用"),
+        "设备不支持读取应用图标": tr("设备不支持读取应用图标"),
+        "应用图标渲染失败": tr("应用图标渲染失败"),
+        "应用图标超过大小限制": tr("应用图标超过大小限制"),
+        "设备用户已切换，请刷新应用列表": tr("设备用户已切换，请刷新应用列表"),
+        "应用或设备配置已变化，请刷新应用列表": tr("应用或设备配置已变化，请刷新应用列表"),
+        "应用图标组件缺失": tr("应用图标组件缺失"),
+        "应用图标组件传输失败": tr("应用图标组件传输失败"),
+        "应用图标临时文件清理失败": tr("清理失败"),
+        "设备图标响应无效": tr("应用图标数据无效"),
+        "应用图标数据无效": tr("应用图标数据无效"),
+        "应用缓存身份无效，请刷新应用列表": tr("应用图标数据无效"),
+        "包名格式无效": tr("包名无效"),
+    }.get(error, tr("查询失败"))
 
 
 class AppManagerIcons(QObject):
@@ -25,6 +45,7 @@ class AppManagerIcons(QObject):
         self._fingerprints: dict[str, str] = {}
         self._verified: set[str] = set()
         self.failures: set[str] = set()
+        self._failure_reasons: dict[str, str] = {}
         self._pending: set[str] = set()
         self._worker: AppManagerWorker | None = None
         self._cancelled = False
@@ -88,7 +109,7 @@ class AppManagerIcons(QObject):
             self.cache.clear()
             self._fingerprints.clear()
         self._verified.clear()
-        self.failures.clear()
+        self._forget_failures(set(self.failures))
         self._pending.clear()
 
     def retain_packages(self, packages: set[str]) -> None:
@@ -100,6 +121,20 @@ class AppManagerIcons(QObject):
             if package in packages
         }
         self._verified.intersection_update(packages)
+        self._forget_failures(self.failures - packages)
+
+    def _forget_failures(self, packages: set[str]) -> None:
+        """刷新、卸载或关闭撤销旧提示，已显示的占位行也不能残留上轮原因。"""
+        for package in packages:
+            self.failures.discard(package)
+            self._failure_reasons.pop(package, None)
+            item = self.page._detail_icon_by_pkg.get(package)
+            if item is not None:
+                refresh_row_description(item)
+
+    def _record_failure(self, package: str, error: str = "") -> None:
+        self.failures.add(package)
+        self._failure_reasons[package] = _safe_failure_reason(error)
 
     def validate_metadata(self, package: str, fingerprint: str) -> None:
         """只有非空且相同的设备元数据指纹允许跨刷新复用原图标。"""
@@ -120,12 +155,19 @@ class AppManagerIcons(QObject):
         item = self.page._detail_icon_by_pkg.get(package)
         if item is None:
             return
+        # 名称或版本补全会重建基础描述；每次从同一来源追加，避免重复提示。
+        refresh_row_description(item)
         if package in self.cache and package in self._verified:
             item.setIcon(0, self.cache[package])
             self.cache.move_to_end(package)
-        elif package in self.failures and tr("图标未读取") not in item.toolTip(0):
+        elif package in self.failures:
+            message = (tr("\n图标未读取，点击刷新重试。") + "\n"
+                       + self._failure_reasons.get(package, tr("查询失败")))
             for column in range(4):
-                item.setToolTip(column, item.toolTip(column) + tr("\n图标未读取，点击刷新重试。"))
+                item.setToolTip(column, item.toolTip(column) + message)
+                description = item.data(column, Qt.ItemDataRole.AccessibleDescriptionRole)
+                item.setData(column, Qt.ItemDataRole.AccessibleDescriptionRole,
+                             description + message)
 
     def _restore_placeholder(self, package: str) -> None:
         """LRU 淘汰同时归还行项目的真实像素引用，缓存上限覆盖两个持有者。"""
@@ -211,7 +253,7 @@ class AppManagerIcons(QObject):
         if not error and len(data) <= 256 * 1024:
             image = QImage.fromData(data)
         if image.isNull() or image.width() > 256 or image.height() > 256:
-            self.failures.add(package)
+            self._record_failure(package, error or "应用图标数据无效")
         else:
             self.cache[package] = QIcon(QPixmap.fromImage(image))
             self._verified.add(package)
@@ -229,7 +271,7 @@ class AppManagerIcons(QObject):
         if not self.page._closing and worker.property("iconEpoch") == self._epoch:
             if not self._cancelled:
                 for package in self._pending:
-                    self.failures.add(package)
+                    self._record_failure(package)
                     self.decorate(package)
         self._pending.clear()
         self._worker = None

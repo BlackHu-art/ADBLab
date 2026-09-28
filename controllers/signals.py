@@ -16,6 +16,7 @@ class ADBControllerSignals(QObject):
     screenshot_batch_ready = Signal(list)  # 一次操作终态中的有序成功路径
     logs_retrieved = Signal(str, str)
     operation_completed = Signal(str, bool, str)
+    connection_completed = Signal(str, bool)  # 参数：IP 连接请求标识、是否已确认连接。
     action_result_changed = Signal(object)  # 参数：带请求身份与来源分区的 ActionResult。
     text_input = Signal(str, str)
     current_package_received = Signal(str, str)
