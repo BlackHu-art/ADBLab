@@ -507,7 +507,7 @@ def test_start_commits_focused_valid_number_before_building_config(
         qt_application.processEvents()
 
         dialog.start_mobileperf()
-
+        wait_until(qt_application, lambda: dialog._status_state == "running")
         assert runner.start_count == 1
         assert runner.started_config.frequency_seconds == 7
         assert dialog.frequency_input.value() == 7
@@ -590,6 +590,7 @@ def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
         assert runner.start_count == 0
         dialog.monkey_check.setChecked(False)
         dialog.start_mobileperf()
+        wait_until(qt_application, lambda: dialog._status_state == "running")
         assert runner.start_count == 1
 
         dialog._set_running(False)

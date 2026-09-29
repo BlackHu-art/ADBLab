@@ -19,6 +19,7 @@ from qfluentwidgets import CommandBar, HorizontalFlipView, HorizontalPipsPager
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult
 from core.log_service import LogService
+from core.monkey_process import MonkeyProcessLease
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
 from gui.dialogs.file_explorer_view import _load_image_preview
 from gui.features.file_explorer import FileExplorerPage
@@ -749,16 +750,33 @@ class _FakeFileExplorerADBWorker(QObject):
         self.finished.emit()
 
 
+class _FakeDirectoryListWorker(_FakeFileExplorerADBWorker):
+    result_ready = Signal(object, bool)
+
+    def __init__(self, device_ip, path, use_root):
+        super().__init__(device_ip, ["shell", path])
+        self.path = path
+        self.use_root = use_root
+
+    def complete(self, output, error=False):
+        from services.file_explorer import DirectoryListing, parse_ls_output
+
+        if not error:
+            rows, targets = parse_ls_output(output)
+            output = DirectoryListing(tuple(rows), targets)
+        super().complete(output, error)
+
+
 def test_file_explorer_refresh_carries_monotonic_request_identity(qt_application):
     _FakeFileExplorerADBWorker.instances = []
     with (
         patch.object(FileExplorerPage, "_refresh"),
-        patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
+        patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker),
     ):
         dialog = FileExplorerPage(device_ip="device-1")
 
     try:
-        with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        with patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker):
             FileExplorerPage._refresh(dialog)
             dialog.current_path = "/sdcard/next"
             FileExplorerPage._refresh(dialog)
@@ -779,12 +797,12 @@ def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_applicatio
     _FakeFileExplorerADBWorker.instances = []
     with (
         patch.object(FileExplorerPage, "_refresh"),
-        patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
+        patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker),
     ):
         dialog = FileExplorerPage(device_ip="device-1")
 
     try:
-        with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        with patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker):
             dialog._navigate("/sdcard/first")
             dialog._navigate("/sdcard/second")
 
@@ -811,7 +829,7 @@ def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_applicatio
 
 def test_file_explorer_failed_navigation_keeps_committed_path_and_history(qt_application):
     _FakeFileExplorerADBWorker.instances = []
-    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+    with patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker):
         page = FileExplorerPage(device_ip="device-1")
         page._navigate("/data/denied")
 
@@ -835,7 +853,7 @@ def test_file_explorer_failed_navigation_keeps_committed_path_and_history(qt_app
 
 
 def test_file_explorer_back_history_commits_only_after_success(qt_application):
-    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+    with patch("gui.dialogs.file_explorer_list.DirectoryListWorker", _FakeDirectoryListWorker):
         page = FileExplorerPage(device_ip="device-1")
         page.current_path = "/sdcard/Documents"
         page.path_field.setText(page.current_path)
@@ -982,10 +1000,11 @@ def test_file_explorer_file_operation_failure_does_not_show_success():
     dialog._refresh.assert_not_called()
 
 
-def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
+@pytest.mark.ui
+def test_transfer_worker_uses_process_runner_for_streaming_push(tmp_path, qt_application):
     class FakeStdout:
         def __init__(self):
-            self.lines = iter(["pulled file\n", ""])
+            self.lines = iter(["pushed file\n", ""])
 
         def readline(self):
             return next(self.lines)
@@ -995,7 +1014,7 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
     proc.poll.return_value = 0
     proc.wait.return_value = 0
 
-    worker = TransferWorker("device-1", ["pull", "/sdcard/demo.txt", "demo.txt"], cwd=str(tmp_path))
+    worker = TransferWorker("device-1", ["push", "demo.txt", "/sdcard/demo.txt"], cwd=str(tmp_path))
     progress = []
     finished = []
     worker.progress.connect(progress.append)
@@ -1011,7 +1030,7 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
 
     start.assert_called_once_with(
         worker._process_key,
-        ["adb", "-s", "device-1", "pull", "/sdcard/demo.txt", "demo.txt"],
+        ["adb", "-s", "device-1", "push", "demo.txt", "/sdcard/demo.txt"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=str(tmp_path),
@@ -1021,8 +1040,8 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
         bufsize=1,
     )
     stop.assert_called_once_with(worker._process_key, timeout=0)
-    assert progress == ["pulled file"]
-    assert finished == [("pulled file", False, "demo.txt")]
+    assert progress == ["pushed file"]
+    assert finished == [("pushed file", False, "/sdcard/demo.txt")]
 
 
 def test_transfer_worker_pre_aborted_does_not_start_process(tmp_path):
@@ -1403,61 +1422,88 @@ def test_testing_model_current_package_uses_shared_detector():
     assert cancelled()
 
 
-def test_kill_monkey_treats_empty_device_stop_error_as_idempotent_success():
+@pytest.mark.ui
+def test_kill_monkey_stops_owned_process_after_remote_confirmation(qt_application):
     model = ADBTesting()
+    assert model.prepare_monkey_batch("device-1", "owned-batch")
+    state = model._monkey_batches["device-1"]
+    state.running = state.finished = True
+    lease = state.lease = MonkeyProcessLease()
     proc = Mock()
     proc.poll.return_value = None
     proc.wait.return_value = 0
     model._procs._procs["device-1_monkey"] = proc
 
-    with patch.object(model, "_run") as run:
-        run.return_value = {"success": False, "error": "", "device_ip": "device-1"}
+    with patch.object(model, "_run", return_value={
+        "success": True, "output": f"ADBLAB_MONKEY_STOPPED_{lease.token}\n",
+    }) as run:
+        try:
+            result = model.kill_monkey_async.__wrapped__(model, "device-1", 1, "owned-batch")
 
-        result = model.kill_monkey_async.__wrapped__(model, "device-1", 1)
+            assert result == {
+                "device_ip": "device-1", "index": 1, "batch_id": "owned-batch",
+                "success": True, "message": "Monkey process stopped", "already_stopped": False,
+            }
+            proc.terminate.assert_called_once()
+            assert model._procs._procs == {}
+            assert lease.released and state.lease is None
+            assert "device-1" not in model._monkey_batches
+            command = run.call_args.args[0]
+            assert command[:4] == ["adb", "-s", "device-1", "shell"]
+            assert lease.path in command[4]
+            again = model.kill_monkey_async.__wrapped__(model, "device-1", 1, "owned-batch")
+            assert again["success"] and again["already_stopped"]
+            assert run.call_count == 1
+        finally:
+            model.shutdown()
+            model.deleteLater()
 
-    assert result == {
-        "device_ip": "device-1",
-        "index": 1,
-        "success": True,
-        "message": "Monkey process stopped",
-        "already_stopped": False,
-    }
-    proc.terminate.assert_called_once()
-    assert model._procs._procs == {}
 
-
-def test_kill_monkey_reports_not_running_when_no_local_process_and_empty_device_error():
+@pytest.mark.ui
+def test_kill_monkey_without_owned_batch_is_idempotent_without_remote_commands(qt_application):
     model = ADBTesting()
 
     with patch.object(model, "_run") as run:
-        run.return_value = {"success": False, "error": "", "device_ip": "device-1"}
+        try:
+            result = model.kill_monkey_async.__wrapped__(model, "device-1", 1, "missing-batch")
 
-        result = model.kill_monkey_async.__wrapped__(model, "device-1", 1)
+            assert result == {
+                "device_ip": "device-1", "index": 1, "batch_id": "missing-batch",
+                "success": True, "message": "Monkey is not running", "already_stopped": True,
+            }
+            run.assert_not_called()
+        finally:
+            model.shutdown()
+            model.deleteLater()
 
-    assert result == {
-        "device_ip": "device-1",
-        "index": 1,
-        "success": True,
-        "message": "Monkey is not running",
-        "already_stopped": True,
-    }
 
-
-def test_kill_monkey_reports_real_device_stop_error_without_local_process():
+@pytest.mark.ui
+@pytest.mark.parametrize("error", ["", "device offline"])
+def test_kill_monkey_preserves_unconfirmed_lease_without_local_process(qt_application, error):
     model = ADBTesting()
+    assert model.prepare_monkey_batch("device-1", "owned-batch")
+    state = model._monkey_batches["device-1"]
+    state.running = state.finished = True
+    lease = state.lease = MonkeyProcessLease()
+    with patch.object(model, "_run", return_value={"success": False, "error": error}) as run:
+        try:
+            result = model.kill_monkey_async.__wrapped__(model, "device-1", 1, "owned-batch")
 
-    with patch.object(model, "_run") as run:
-        run.return_value = {"success": False, "error": "device offline", "device_ip": "device-1"}
-
-        result = model.kill_monkey_async.__wrapped__(model, "device-1", 1)
-
-    assert result == {
-        "device_ip": "device-1",
-        "index": 1,
-        "success": False,
-        "message": "device offline",
-        "already_stopped": False,
-    }
+            assert result == {
+                "device_ip": "device-1", "index": 1, "batch_id": "owned-batch",
+                "success": False, "message": "Monkey stop is not confirmed",
+                "already_stopped": False,
+            }
+            assert model._monkey_batches["device-1"] is state
+            assert state.lease is lease and not lease.released
+            with pytest.raises(RuntimeError, match="cleanup is not confirmed"):
+                model.assert_cleanup_complete()
+        finally:
+            run.return_value = {"success": True,
+                                "output": f"ADBLAB_MONKEY_STOPPED_{lease.token}\n"}
+            model.shutdown()
+            model.assert_cleanup_complete()
+            model.deleteLater()
 
 
 @pytest.fixture

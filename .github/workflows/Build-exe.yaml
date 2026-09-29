@@ -387,18 +387,27 @@ jobs:
         run: |
           set -euo pipefail
           KEEP=5
-          mapfile -t TAGS < <(git ls-remote --tags origin "refs/tags/v*" \
-            | awk '{print $2}' | sed 's|refs/tags/||' | sort -V)
+          REMOTE_TAGS=$(git ls-remote --refs --tags origin "refs/tags/v*")
+          SORTED_TAGS=$(printf '%s\n' "$REMOTE_TAGS" \
+            | awk '$2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$/ {sub(/^refs\/tags\//, "", $2); print $2}' \
+            | sort -Vu)
+          TAGS=()
+          if [ -n "$SORTED_TAGS" ]; then
+            mapfile -t TAGS <<< "$SORTED_TAGS"
+          fi
           if [ "${#TAGS[@]}" -le "$KEEP" ]; then
             echo "Version tags within retention limit (${#TAGS[@]} <= ${KEEP}); nothing to prune."
             exit 0
           fi
+          RELEASE_TAGS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')
           DROP_COUNT=$((${#TAGS[@]} - KEEP))
           echo "Pruning ${DROP_COUNT} oldest version tags; keeping newest ${KEEP}."
           for TAG in "${TAGS[@]:0:${DROP_COUNT}}"; do
             echo "Removing old version tag and its release: $TAG"
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
-            git push origin --delete "refs/tags/$TAG" || true
+            if grep -Fxq -- "$TAG" <<< "$RELEASE_TAGS"; then
+              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+            git push origin --delete "refs/tags/$TAG"
           done
         env:
           GH_TOKEN: ${{ github.token }}

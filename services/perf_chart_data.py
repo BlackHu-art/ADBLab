@@ -63,6 +63,14 @@ def _number(value: str) -> float | None:
 
 def _timestamp(value: str) -> float | None:
     text = value.strip()
+    # 兼容模式 FPS 写入下划线日期；float 也接受下划线，必须先排除日期歧义。
+    if text.count("_") == 5:
+        try:
+            return datetime.strptime(text, "%Y_%m_%d_%H_%M_%S").replace(
+                tzinfo=timezone.utc,
+            ).timestamp()
+        except (ValueError, OverflowError):
+            return None
     numeric = _number(text)
     if numeric is not None:
         return numeric

@@ -47,7 +47,7 @@ def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plug
 @pytest.mark.parametrize("available", [False, True])
 @pytest.mark.ui
 def test_packaging_check_reports_acrylic_capability(
-    qt_application, tmp_path, monkeypatch, capsys, available,
+    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys, available,
 ):
     """主包可导入不代表覆盖磨砂可用，自检必须报告图像依赖的实际能力。"""
     from PySide6.QtNetwork import QSslSocket
@@ -72,7 +72,9 @@ def test_packaging_check_reports_acrylic_capability(
     assert result == (0 if available else 1)
 
 
-def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypatch, capsys):
+def test_packaging_check_reports_missing_tls_without_network(
+    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys,
+):
     from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
 
     monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
@@ -89,7 +91,7 @@ def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypat
 
 @pytest.mark.parametrize("loadable", [False, True])
 def test_packaging_check_reports_translation_catalog_loadability(
-    qt_application, tmp_path, monkeypatch, capsys, loadable,
+    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys, loadable,
 ):
     """资源路径存在并不证明 Qt 能解码内嵌词库。"""
 
@@ -135,7 +137,8 @@ def test_packaging_check_reports_translation_catalog_loadability(
     ],
 )
 def test_packaging_check_reports_missing_visual_resource(
-    tmp_path, monkeypatch, capsys, missing_paths, expected_check,
+    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys,
+    missing_paths, expected_check,
 ):
     """首页、启动原图和许可均为发布资源，缺失时不能只检查目录存在。"""
 

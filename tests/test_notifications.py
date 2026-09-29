@@ -8,7 +8,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtGui import QEnterEvent, QFont, QFontMetricsF, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
-from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition
+from qfluentwidgets import HyperlinkButton, InfoBar, InfoBarIcon, InfoBarPosition
 from shiboken6 import isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -180,8 +180,28 @@ def test_screenshot_notice_preserves_full_text_and_action_in_compact_strip(
     assert notice.action_button.text() == "查看结果"
     assert notice.content_edit.text() == content
     assert notice.width() <= 600
-    # 保留原生按钮内边距，22pt 大字体也只占一行浮条的高度。
-    assert notice.height() <= 64
+    # 相同字号的实际字形度量因平台字体回退而异；单行预算取独立原生控件而非固定像素。
+    native_action = HyperlinkButton(window)
+    native_action.setText("查看结果")
+    native_action.ensurePolished()
+    native_action.setFont(notice.action_button.font())
+    native_bar = InfoBar(
+        InfoBarIcon.INFORMATION, "参考标题", "参考正文", duration=-1,
+        position=InfoBarPosition.NONE, parent=window,
+    )
+    margins = native_bar.hBoxLayout.contentsMargins()
+    native_row_height = max(
+        native_action.sizeHint().height(), native_bar.closeButton.height(),
+        native_bar.iconWidget.height(),
+    )
+    assert notice.height() <= native_row_height + margins.top() + margins.bottom()
+    assert not notice.titleLabel.wordWrap()
+    assert isinstance(notice.content_edit, QLineEdit)
+    for control in (
+        notice.titleLabel, notice.content_edit, notice.action_button, notice.closeButton,
+    ):
+        assert notice.rect().contains(control.geometry())
+        assert abs(control.geometry().center().y() - notice.height() // 2) <= 1
     assert window.rect().contains(notice.geometry())
 
 

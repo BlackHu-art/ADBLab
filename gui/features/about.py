@@ -168,10 +168,8 @@ class AboutPanel(SettingCardGroup):
         """只呈现检查器已校验的状态；改文案后重新测量卡片和设置页滚动范围。"""
 
         status = tr("更新状态：尚未检查")
-        detail = ""
-        if snapshot.status == "idle":
-            detail = tr("检查后，有新版本时可前往下载")
-        elif snapshot.status == "checking":
+        detail = tr("检查后，有新版本时可前往下载")
+        if snapshot.status == "checking":
             status = tr("正在检查更新…")
             detail = tr("正在获取最新正式版信息")
         elif snapshot.status == "error":
@@ -188,7 +186,7 @@ class AboutPanel(SettingCardGroup):
                 detail = tr("上次检查版本：{version}（历史结果）").format(
                     version=snapshot.release.version,
                 )
-        elif snapshot.release is not None:
+        elif snapshot.status != "idle" and snapshot.release is not None:
             if snapshot.status == "available":
                 status = tr("可更新至 {version} · {date} 发布").format(
                     version=snapshot.release.version,
@@ -205,7 +203,7 @@ class AboutPanel(SettingCardGroup):
                 detail = tr("检查时间：{time}").format(
                     time=snapshot.checked_at.astimezone().strftime("%Y-%m-%d %H:%M"),
                 )
-        # 保留原四行说明的高度；末行为空时仍占位，避免状态切换推动下方卡片。
+        # 未取得发布信息时仍给出下一步提示；空末行的回退字体测高可能更小，导致卡片跳动。
         content = "\n".join((self._app_description, status, detail))
         self.project_card.setContent(content)
         self.update_actions.setAccessibleDescription(content)

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from qfluentwidgets import NavigationInterface
+import gc
 
-from gui.styles.icon_loader import get_themed_icon
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtTest import QSignalSpy
+from qfluentwidgets import NavigationInterface
+from shiboken6 import isValid
+
+from gui.styles.icon_loader import get_fluent_icon
 
 
 def _navigation() -> tuple[NavigationInterface, list[str]]:
@@ -17,7 +22,7 @@ def _navigation() -> tuple[NavigationInterface, list[str]]:
     ):
         nav.addItem(
             key,
-            get_themed_icon(icon),
+            get_fluent_icon(icon),
             label,
             onClick=lambda _checked=False, k=key: requested.append(k),
         )
@@ -48,3 +53,15 @@ def test_navigation_width_configuration_uses_reference_api(qt_application):
 
     assert nav.panel.expandWidth == 160
     assert nav.panel.minimumExpandWidth == 720
+
+
+def test_navigation_and_route_items_release_before_python_collection(qt_application):
+    nav, _requested = _navigation()
+    destroyed = QSignalSpy(nav.destroyed)
+    item = nav.widget("devices")
+    nav.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert destroyed.count() == 1
+    assert not isValid(nav) and not isValid(item)
+    del nav, item
+    gc.collect()

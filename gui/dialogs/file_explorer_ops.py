@@ -22,6 +22,7 @@ from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from models.file_explorer_worker import LocalTextSaveWorker, TextSaveWorker
 from services import file_explorer as explorer_service
+from services.file_download import default_save_path, local_child_path
 
 
 class FileExplorerOps:
@@ -61,7 +62,7 @@ class FileExplorerOps:
         if self._local_save_worker is not None or self._frame._closing:
             return
         fp, _ = QFileDialog.getSaveFileName(
-            self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
+            self._frame, tr("Save As"), default_save_path(self._global_save_dir(), name)
         )
         if not fp or self._frame._closing:
             return
@@ -130,7 +131,7 @@ class FileExplorerOps:
         device = self._frame.device_ip
         use_root = self._frame.root_cb.isChecked()
         save_path, _ = QFileDialog.getSaveFileName(
-            self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
+            self._frame, tr("Save As"), default_save_path(self._global_save_dir(), name)
         )
         if not save_path or not self._frame._can_operate():
             return
@@ -239,8 +240,15 @@ class FileExplorerOps:
             self._frame, tr("Destination"), self._global_save_dir()
         )
         if dest:
-            items = [(name, self._frame._dpath(origin, name), os.path.join(dest, name))
-                     for name in names]
+            try:
+                items = [(name, self._frame._dpath(origin, name), local_child_path(dest, name))
+                         for name in names]
+                destinations = [os.path.normcase(item[2]) for item in items]
+                if len(set(destinations)) != len(destinations):
+                    raise ValueError("所选文件在本机存在重名冲突，请分别另存为。")
+            except ValueError as exc:
+                self._on_file_op_done(str(exc), True, "")
+                return
             self._enqueue_batch("pull", items, origin)
 
     def _push_file(self):

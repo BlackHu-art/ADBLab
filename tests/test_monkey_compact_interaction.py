@@ -71,8 +71,9 @@ def test_mouse_package_query_keeps_viewport_and_focus_at_its_action(
     vertical = scroll.verticalScrollBar()
     if partial_scroll:
         top = mapped_rect(get_button, content).top()
-        vertical.setValue(max(vertical.minimum(), top - 120))
-        assert vertical.value() > vertical.minimum()
+        # 该场景验证中途滚动；宽窗的内容较短，原偏移可能已被 Qt 钳到末端。
+        vertical.setValue(min(top - 120, vertical.maximum() // 2))
+        assert vertical.minimum() < vertical.value() < vertical.maximum()
     else:
         vertical.setValue(vertical.minimum())
     _settle(qt_application, owner, apps, scroll)
@@ -120,6 +121,41 @@ def test_mouse_package_query_keeps_viewport_and_focus_at_its_action(
     assert not cancel_button.isEnabled() and not cancel_button.isVisible()
     assert apps.start_monkey_btn.isEnabled()
     assert apps.monkey_events.isEnabled()
+
+
+def test_package_query_at_scroll_end_clamps_only_to_the_new_content_range(
+    qt_application, monkey_page,
+):
+    """末端内容变短时允许 Qt 收紧范围，动作坐标与查询焦点不能另行跳动。"""
+    owner, apps, scroll, content = monkey_page(900, 12)
+    button = apps.monkey_get_package_btn
+    button.window().activateWindow()
+    wait_until(qt_application, lambda: qt_application.activeWindow() is button.window())
+    vertical = scroll.verticalScrollBar()
+    vertical.setValue(vertical.maximum())
+    _settle(qt_application, owner, apps, scroll)
+    assert vertical.value() == vertical.maximum() > 0
+    before = (vertical.value(), content.height(), mapped_rect(button, content).top())
+    requests = QSignalSpy(apps.monkey_preparation_requested)
+    starts = QSignalSpy(apps.signals.start_monkey_batch_requested)
+
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    _settle(qt_application, owner, apps, scroll)
+    cancel = apps.monkey_cancel_prepare_btn
+    assert requests.count() == 1 and starts.count() == 0
+    assert apps._monkey_preparation is not None and cancel.hasFocus()
+    assert mapped_rect(cancel, content).top() == before[2]
+    assert vertical.value() == vertical.maximum() <= before[0]
+    assert vertical.value() - before[0] == content.height() - before[1]
+    assert_contained(cancel, scroll.viewport())
+
+    settled_scroll = vertical.value()
+    QTest.mouseClick(cancel, Qt.MouseButton.LeftButton)
+    _settle(qt_application, owner, apps, scroll)
+    assert apps._monkey_preparation is None
+    assert button.hasFocus() and mapped_rect(button, content).top() == before[2]
+    assert vertical.value() == settled_scroll
+    assert requests.count() == 1 and starts.count() == 0
 
 
 @pytest.mark.parametrize("width,font_size,terminal", [

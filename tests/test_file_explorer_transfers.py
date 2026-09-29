@@ -44,7 +44,7 @@ def test_force_stop_keeps_residual_until_actual_process_exit(monkeypatch):
 
 
 def test_cancel_during_start_reissues_stop_and_preserves_live_process(monkeypatch):
-    worker = TransferWorker("device-test", ["pull", "/a", "a"])
+    worker = TransferWorker("device-test", ["push", "a", "/a"])
     requests = []
     proc = SimpleNamespace(poll=lambda: None, stdout=None)
 
@@ -63,7 +63,7 @@ def test_cancel_during_start_reissues_stop_and_preserves_live_process(monkeypatc
 
 
 def test_cancel_unblocks_stdout_reader(monkeypatch):
-    worker = TransferWorker("device-test", ["pull", "/a", "a"])
+    worker = TransferWorker("device-test", ["push", "a", "/a"])
     reading = threading.Event()
     stopped = threading.Event()
 

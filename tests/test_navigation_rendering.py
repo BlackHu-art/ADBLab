@@ -692,7 +692,8 @@ def test_native_backdrop_switch_explicitly_clears_mica(monkeypatch, build, attri
     requests = []
     monkeypatch.setattr(window_effects, "is_mica_supported", lambda: True)
     monkeypatch.setattr(
-        window_effects.sys, "getwindowsversion", lambda: SimpleNamespace(build=build),
+        window_effects, "sys",
+        SimpleNamespace(platform="win32", getwindowsversion=lambda: SimpleNamespace(build=build)),
     )
     monkeypatch.setattr(
         window_effects, "set_dwm_attribute",
@@ -750,18 +751,23 @@ def test_native_palette_sync_stops_at_window_cleanup(monkeypatch, theme_probe_fr
     handle = frame.windowHandle()
     updates = []
     monkeypatch.setattr(main_frame, "apply_dark_title_bar", updates.append)
-    # 重复显示/绑定不应形成多个主题监听。
+    # Linux 基类还有全局过滤器，按实际投递基线验证重复绑定不会增加回调。
+    QCoreApplication.sendEvent(handle, QEvent(QEvent.Type.ApplicationPaletteChange))
+    assert updates and all(window is frame for window in updates)
+    initial_deliveries = len(updates)
+    updates.clear()
     frame._bind_window_screen()
     frame._bind_window_screen()
     QCoreApplication.sendEvent(handle, QEvent(QEvent.Type.ApplicationPaletteChange))
-    assert updates == [frame]
+    assert updates == [frame] * initial_deliveries
 
     if state == "closing":
         frame._closing = True
     else:
         frame._unbind_window_screen()
+    updates.clear()
     QCoreApplication.sendEvent(handle, QEvent(QEvent.Type.ApplicationPaletteChange))
-    assert updates == [frame]
+    assert updates == []
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])

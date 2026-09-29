@@ -262,6 +262,8 @@ class PerformancePage(QWidget):
 
     def archive_finished_run(self) -> None:
         """真实进程停止后幂等归档，供应用关闭屏障在结果库排空之前调用。"""
+        if self._run_controller.starting:
+            return
         self._library_controller.finish()
 
     def set_device_connected(self, connected: bool) -> None:
@@ -271,6 +273,8 @@ class PerformancePage(QWidget):
         if not connected and self._device_connected:
             self._invalidate_package_query()
         self._device_connected = connected
+        if not connected:
+            self._run_controller.cancel_start()
         self._sync_device_actions()
 
     def _can_operate_device(self) -> bool:
@@ -300,6 +304,8 @@ class PerformancePage(QWidget):
         if not selected and self._device_selected:
             self._invalidate_package_query()
         self._device_selected = selected
+        if not selected:
+            self._run_controller.cancel_start()
         self._sync_device_actions()
 
     def _sync_device_actions(self) -> None:
@@ -800,6 +806,13 @@ class PerformancePage(QWidget):
             )
             task_ids.append(package_task_id)
 
+        start_task_id = self._run_controller.register_start_shutdown(
+            supervisor, owner_id=owner_id, task_prefix=task_prefix,
+        )
+        if start_task_id is not None:
+            task_ids.append(start_task_id)
+            self._shutdown_registered = True
+            return tuple(task_ids)
         stop_thread = self._stop_thread
         runner_active = self._runner.is_running()
         if runner_active or (stop_thread is not None and stop_thread.is_alive()):
@@ -861,7 +874,9 @@ class PerformancePage(QWidget):
         self._log_flush_timer.stop()
         self._theme_sync_timer.stop()
         self._pending_log_rows = []
-        if self._runner.is_running() and not self._stopping:
+        if self._run_controller.starting:
+            self._run_controller.cancel_start()
+        elif self._runner.is_running() and not self._stopping:
             self._library_controller.request_cancel()
             if self._shutdown_registered:
                 # 应用关闭时 runner 已交给全局监督器；这里只发出轻量停止意图，
@@ -884,14 +899,16 @@ class PerformancePage(QWidget):
     def _poll_dispose_ready(self) -> None:
         """等待 runner、停止线程和包名查询线程全部真实退出。"""
 
-        if not self._runner.is_running() and not self._runner_finished_handled:
+        starting = self._run_controller.starting
+        if not starting and not self._runner.is_running() and not self._runner_finished_handled:
             self._mark_runner_finished()
         for worker in tuple(self._disposing_package_workers):
             if not self._package_worker_active(worker):
                 self._on_package_worker_finished(worker)
         stop_thread = self._stop_thread
         resources_running = bool(
-            self._disposing_package_workers
+            starting
+            or self._disposing_package_workers
             or self._result_loader.is_running()
             or self._runner.is_running()
             or (stop_thread is not None and stop_thread.is_alive())

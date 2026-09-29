@@ -366,9 +366,8 @@ class ADBDeviceMixin(_ADBControllerBase):
                 except Exception as e:
                     self.log_service.log("ERROR", f"DeviceStore write failed: {str(e)}")
                     return
-                # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
-                if _is_current_topology():
-                    self.signals.devices_updated.emit(devices)
+                # 属性已逐台通过 device_info_updated 更新；后台不能重发拓扑。
+                # 即使发射前代次仍有效，排队信号也可能在新发现结果之后才抵达界面。
 
         def _update():
             try:

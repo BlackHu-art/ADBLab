@@ -437,9 +437,16 @@ def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkey
     assert frame._task_page.action_results._selected == jobs[0].request_id
 
 
-def test_task_center_exposes_running_plain_commands_without_native_operation(result_frame):
+def test_task_center_exposes_running_plain_commands_without_native_operation(
+    result_frame, qt_application,
+):
+    from tests.ui_geometry_helpers import wait_for_stable_geometry
+
     frame = result_frame
     page = frame._task_page
+    frame._on_nav_requested("tasks")
+    wait_for_stable_geometry(qt_application, [page, page.running_actions_button])
+    assert page.isVisibleTo(frame)
     page._operation_manager = None
     page.refresh()
     jobs = []
@@ -448,6 +455,7 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(res
         lambda devices: jobs.append(capture_action_job("bugreport_async", devices[0])),
         (["synthetic-a"],),
     )
+    wait_for_stable_geometry(qt_application, [page.running_actions_button])
     assert not page.running_actions_button.isHidden()
     assert "1" in page.running_actions_button.text()
     assert page._idle_label.isHidden()

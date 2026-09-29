@@ -26,7 +26,7 @@ def set_dwm_attribute(hwnd: int, attribute: int, value: int) -> bool:
 
 def sync_mica_backdrop(hwnd: int, enabled: bool) -> bool:
     """同步 Windows 云母状态，关闭时显式清除上游遗留的系统 backdrop。"""
-    if not is_mica_supported():
+    if sys.platform != "win32" or not is_mica_supported():
         return False
     if sys.getwindowsversion().build < 22523:
         return set_dwm_attribute(hwnd, 1029, int(enabled))

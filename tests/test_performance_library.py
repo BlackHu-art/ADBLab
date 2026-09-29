@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QApplication
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.performance_launcher import PerformancePage
 from services.run_library import RunPreset
+from tests.ui_geometry_helpers import wait_until
 
 
 class _Library(QObject):
@@ -78,6 +80,13 @@ def page(qt_application, tmp_path):
     window.request_dispose("test")
     window.close()
     qt_application.processEvents()
+
+
+def _start(page, *, state="running"):
+    page.start_mobileperf()
+    app = QApplication.instance()
+    assert app is not None
+    wait_until(app, lambda: page._status_state == state)
 
 
 def _finish(page, tmp_path, *, exit_code=0, report=True, result=True):
@@ -234,7 +243,7 @@ def test_busy_performance_rejects_history_parameters_atomically(page, busy_state
     modified = deepcopy(before)
     modified.update(package="com.example.other", frequency_seconds=9)
     if busy_state == "running":
-        page.start_mobileperf()
+        _start(page)
     elif busy_state == "stopping":
         page._stopping = True
     else:
@@ -263,7 +272,7 @@ def test_invalid_parameters_leave_every_field_unchanged(page, monkeypatch, inval
 def test_natural_completion_records_effective_snapshot_and_artifacts_once(page, tmp_path):
     page.setProperty("run_device_label", "演示手机 A")
     page.frequency_input.setValue(3)
-    page.start_mobileperf()
+    _start(page)
     page.setProperty("run_device_label", "后续设备型号")
     page.package_edit.setText("com.example.edited")
     page.frequency_input.setValue(9)
@@ -289,7 +298,7 @@ def test_failed_start_records_no_stale_previous_artifacts(page, tmp_path):
     page._runner.result_dir = str(old)
     page._runner.report_file = str(stale)
     page._runner.start_error = "synthetic start failure"
-    page.start_mobileperf()
+    _start(page, state="failed")
     record, = page._library_controller._library.records
     assert record.state == "failed" and record.artifacts == ()
     assert "synthetic start failure" not in record.message
@@ -303,13 +312,13 @@ def test_empty_start_exception_still_archives_failed_without_artifacts(page, mon
         raise RuntimeError()
 
     monkeypatch.setattr(page._runner, "start", fail)
-    page.start_mobileperf()
+    _start(page, state="failed")
     record, = page._library_controller._library.records
     assert record.state == "failed" and record.artifacts == ()
 
 
 def test_empty_report_file_cannot_mark_a_run_successful(page, tmp_path):
-    page.start_mobileperf()
+    _start(page)
     target = tmp_path / "incomplete"
     target.mkdir()
     report = target / "summary.xlsx"
@@ -333,7 +342,7 @@ def test_attachment_lookup_errors_preserve_parameters_and_do_not_escape_archive(
     page, tmp_path, monkeypatch, closing, unavailable, expected_artifacts, expected_state,
 ):
     parameters = page.capture_run_parameters()
-    page.start_mobileperf()
+    _start(page)
     target = tmp_path / "finished"
     target.mkdir()
     report = target / "summary.xlsx"
@@ -371,7 +380,7 @@ def test_attachment_lookup_errors_preserve_parameters_and_do_not_escape_archive(
 def test_report_stat_error_during_dispose_still_emits_ready_with_incomplete_record(
     page, tmp_path, monkeypatch,
 ):
-    page.start_mobileperf()
+    _start(page)
     target = tmp_path / "finished"
     target.mkdir()
     report = target / "summary.xlsx"
@@ -403,13 +412,13 @@ def test_report_stat_error_during_dispose_still_emits_ready_with_incomplete_reco
 def test_incomplete_or_failed_runs_never_archive_as_success(
     page, tmp_path, exit_code, report, result, expected,
 ):
-    page.start_mobileperf()
+    _start(page)
     record, = _finish(page, tmp_path, exit_code=exit_code, report=report, result=result)
     assert record.state == expected
 
 
 def test_stop_waits_for_exit_then_archives_cancelled_once(page, qt_application, tmp_path):
-    page.start_mobileperf()
+    _start(page)
     page.stop_mobileperf()
     page._stop_thread.join(1)
     qt_application.processEvents()
@@ -421,7 +430,7 @@ def test_stop_waits_for_exit_then_archives_cancelled_once(page, qt_application, 
 
 
 def test_failed_stop_keeps_active_record_until_actual_exit(page, tmp_path):
-    page.start_mobileperf()
+    _start(page)
     page._library_controller.request_cancel()
     page._stopping = True
     page._mark_runner_finished()
@@ -435,7 +444,7 @@ def test_failed_stop_keeps_active_record_until_actual_exit(page, tmp_path):
 def test_dispose_records_before_ready_signal_even_when_completion_callback_is_late(
     page, tmp_path, already_ended,
 ):
-    page.start_mobileperf()
+    _start(page)
     runner = page._runner
     seen = []
     page.dispose_ready.connect(
@@ -461,10 +470,10 @@ def test_dispose_records_before_ready_signal_even_when_completion_callback_is_la
 
 
 def test_repeated_runs_have_distinct_ids_and_snapshots(page, tmp_path):
-    page.start_mobileperf()
+    _start(page)
     _finish(page, tmp_path)
     page.package_edit.setText("com.example.second")
-    page.start_mobileperf()
+    _start(page)
     records = _finish(page, tmp_path)
     assert len(records) == 2 and records[0].run_id != records[1].run_id
     assert [record.package_name for record in records] == ["com.example.demo", "com.example.second"]

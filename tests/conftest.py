@@ -10,6 +10,23 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _APPLICATION_REFERENCES = []
 
 
+@pytest.fixture
+def isolated_app_settings(tmp_path, monkeypatch):
+    """保留真实设置行为，隔离配置、迁移来源、单例和延迟写入生命周期。"""
+    from core import settings_manager
+
+    monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(settings_manager, "LEGACY_SETTINGS_FILE", str(tmp_path / "legacy.json"))
+    monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
+    settings = settings_manager.AppSettings.instance()
+    yield settings
+    timer = settings._save_timer
+    if timer is not None:
+        timer.cancel()
+        timer.join(timeout=2)
+        assert not timer.is_alive(), "Settings timer did not stop"
+
+
 @pytest.fixture(autouse=True)
 def isolated_run_library_storage(tmp_path, monkeypatch):
     """主窗口测试的归档库只读写临时目录，绝不加载或覆盖用户历史。"""
@@ -264,6 +281,11 @@ _INTEGRATION_TEST_FILES = frozenset(
 
 # 混合模块按真实 Qt 用例登记，保留同文件纯 Operation 契约的快速选择范围。
 _UI_TEST_FUNCTIONS = {
+    "test_gui_bootstrap.py": frozenset({
+        "test_packaging_check_reports_missing_tls_without_network",
+        "test_packaging_check_reports_translation_catalog_loadability",
+        "test_packaging_check_reports_missing_visual_resource",
+    }),
     "test_adb_execution_selection.py": frozenset({
         "test_remote_client_invalidation_queues_cleanup_without_blocking_gui",
         "test_legacy_performance_finish_reuses_discovery_but_retries_after_oserror",

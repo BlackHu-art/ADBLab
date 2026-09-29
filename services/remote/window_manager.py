@@ -38,6 +38,8 @@ class RemoteWindowManager:
 
     @staticmethod
     def _find_window(title: str) -> int:
+        if sys.platform != "win32":
+            return 0
         user32 = ctypes.windll.user32
         matches: list[int] = []
 

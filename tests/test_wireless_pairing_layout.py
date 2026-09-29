@@ -183,7 +183,7 @@ def test_wide_qr_page_places_actions_after_code_and_keeps_tabs_compact(
         assert abs(refresh.bottom() - stop.bottom()) <= 1
         alternative = QRect(panel.code_button.mapTo(panel, QPoint()), panel.code_button.size())
         assert abs(alternative.bottom() - refresh.bottom()) <= 1
-        assert refresh.bottom() <= code.bottom()
+        assert refresh.bottom() == code.bottom()
         assert panel.status_label.alignment() & Qt.AlignmentFlag.AlignLeft
         panel.refresh_button.grab()
         icon_left = refresh.left() + painted_icons[-1].left()

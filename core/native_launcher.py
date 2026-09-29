@@ -38,6 +38,8 @@ def sanitize_environment(environment: dict[str, str], root: str) -> dict[str, st
 
 def _kernel():
     """独立定义 Win32 函数签名，句柄由本次启动的清理栈独占。"""
+    if sys.platform != "win32":
+        raise OSError("Win32 kernel API is unavailable on this platform")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
     kernel.OpenEventW.restype = wintypes.HANDLE
@@ -56,6 +58,8 @@ def _kernel():
 
 def _control_cancelled(kernel, handles) -> bool:
     """取消或原属主退出即终止；监视失效必须报错，不能继续运行失管进程。"""
+    if sys.platform != "win32":
+        raise OSError("Win32 control handles are unavailable on this platform")
     state = kernel.WaitForMultipleObjects(len(handles), handles, False, 0)
     if state in (0, 1):
         return True
@@ -66,6 +70,8 @@ def _control_cancelled(kernel, handles) -> bool:
 
 def _startup_info(resources: ExitStack):
     """复制真实标准句柄限定继承，兼容 sys.std* 为 None 的 windowed helper。"""
+    if sys.platform != "win32":
+        raise OSError("Win32 startup handles are unavailable on this platform")
     import _winapi
     import msvcrt
 

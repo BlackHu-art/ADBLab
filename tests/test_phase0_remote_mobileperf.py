@@ -65,7 +65,7 @@ def test_remote_input_is_available_without_a_running_mirroring_session():
     panel._log.assert_not_called()
 
 
-def test_remote_multi_device_start_snapshots_every_selected_target():
+def test_remote_multi_device_start_snapshots_every_selected_target(tmp_path):
     panel = RemotePanel.__new__(RemotePanel)
     panel.panel = Mock(selected_devices=["device-a", "device-b"])
     panel._process = None
@@ -77,7 +77,7 @@ def test_remote_multi_device_start_snapshots_every_selected_target():
     panel._update_action_states = Mock()
     panel._update_status = Mock()
     panel._scrcpy_config = Mock(
-        side_effect=lambda _exe, device: Mock(device=device, adb="C:/tools/adb.exe"),
+        side_effect=lambda _exe, device: Mock(device=device, adb=str(tmp_path / "adb.exe")),
     )
     panel._log = Mock()
 

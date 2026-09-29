@@ -260,7 +260,7 @@ def test_monkey_probe_rejects_replaced_batch_and_ignores_other_device_abort(
 
 def test_monkey_preclear_failure_does_not_start_processes(qt_application, tmp_path):
     model = ADBTesting()
-    model._procs = Mock()
+    model._procs = Mock(active_keys=())
     model._run = Mock(return_value={"success": False, "error": "Permission denied"})
     result = ADBTesting.run_monkey_test_async.__wrapped__(
         model, "demo", "com.example.app", {"events": 10}, "demo", str(tmp_path), 1,

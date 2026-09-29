@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-09-29
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -16,7 +16,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 
 1. 设备发现与连接：轮询 `adb devices`，连接/断开 TCP 设备，缓存设备属性；仅 IP 连接历史及其元数据
    跨会话保存，范围见 [DATA_FLOW](DATA_FLOW.md#设备发现与元数据流)。全局设备栏管理操作目标，
-   固定设备功能使用独立会话。无线配对已有 Controller/model 接口，当前没有可见配对表单。
+   固定设备功能使用独立会话。连接面板提供扫码、配对码和 IP 三个入口；配对、续连及取消边界
+   见 [无线连接流程](BUSINESS_FLOW.md#2-连接设备与读取信息)。
 2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、批量安装、当前前台应用检测、
    APK 信息解析和设备端原生应用图标。
 3. 测试与诊断：Monkey、截图、录屏、logcat、bugreport、ANR、进程/电池/系统信息。

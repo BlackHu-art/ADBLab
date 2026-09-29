@@ -1,6 +1,12 @@
 import ast
+import json
+import os
 import re
 import shlex
+import shutil
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -605,6 +611,110 @@ def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():
     assert "KEEP=5" in workflow
     assert 'gh release delete "$TAG"' in workflow
     assert 'git push origin --delete "refs/tags/$TAG"' in workflow
+
+
+def _run_tag_retention(tmp_path, refs, *, releases=(), failure=""):
+    """执行工作流原始 bash；git/gh 只能访问离线状态和命令日志。"""
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    step = next(step for step in workflow["jobs"]["release"]["steps"]
+                if step.get("name") == "Retain latest 5 version tags")
+    script = tmp_path / "retention.sh"
+    script.write_text(step["run"], encoding="utf-8")
+    scenario = tmp_path / "scenario.json"
+    scenario.write_text(json.dumps({
+        "refs": refs, "releases": releases, "failure": failure,
+    }), encoding="utf-8")
+    calls = tmp_path / "calls.jsonl"
+    fake = tmp_path / "fake_cli.py"
+    fake.write_text(textwrap.dedent("""
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        state = json.loads(Path(os.environ["FAKE_SCENARIO"]).read_text())
+        tool, *args = sys.argv[1:]
+        with Path(os.environ["FAKE_CALLS"]).open("a") as output:
+            output.write(json.dumps([tool, *args]) + "\\n")
+        if tool == "git" and args[0] == "ls-remote":
+            if state["failure"] == "list-tags":
+                raise SystemExit(7)
+            for ref in state["refs"]:
+                if "--refs" not in args or not ref.endswith("^{}"):
+                    print("0" * 40, ref)
+        elif tool == "gh" and args[0] == "api":
+            if state["failure"] == "list-releases":
+                raise SystemExit(8)
+            print("\\n".join(state["releases"]))
+        elif tool == "gh" and args[:2] == ["release", "delete"]:
+            if state["failure"] == "delete-release":
+                raise SystemExit(9)
+            if args[2] not in state["releases"]:
+                raise SystemExit(10)
+        elif tool == "git" and args[:3] == ["push", "origin", "--delete"]:
+            if state["failure"] == "delete-tag":
+                raise SystemExit(11)
+        else:
+            raise AssertionError("Unexpected offline CLI call: " + repr([tool, *args]))
+    """), encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for tool in ("git", "gh"):
+        launcher = fake_bin / tool
+        launcher.write_text(
+            "#!/usr/bin/env bash\nexec " + shlex.quote(sys.executable)
+            + " -B " + shlex.quote(str(fake)) + " " + tool + ' "$@"\n',
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+    bash = shutil.which("bash")
+    assert bash, "The workflow contract requires a bash interpreter"
+    result = subprocess.run(
+        [bash, str(script)], cwd=tmp_path,
+        env={**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+             "FAKE_SCENARIO": str(scenario), "FAKE_CALLS": str(calls),
+             "GITHUB_REPOSITORY": "example/offline", "GH_TOKEN": "offline-test-only"},
+        capture_output=True, text=True, timeout=10,
+    )
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    deleted_releases = [args[3] for args in commands if args[:3] == ["gh", "release", "delete"]]
+    deleted_tags = [
+        args[4] for args in commands if args[:4] == ["git", "push", "origin", "--delete"]
+    ]
+    return result, deleted_releases, deleted_tags
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_tag_retention_counts_only_unique_stable_version_refs(tmp_path, annotated):
+    tags = [f"v1.0.{index}" for index in range(1, 8)]
+    refs = [f"refs/tags/{tag}" for tag in tags]
+    if annotated:
+        refs += [ref + "^{}" for ref in refs]
+    refs += ["refs/tags/vpreview", "refs/tags/v1.0.0-rc1", "refs/tags/v1.0", refs[0]]
+    result, releases, deleted = _run_tag_retention(tmp_path, refs, releases=["v1.0.2"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert deleted == ["refs/tags/v1.0.1", "refs/tags/v1.0.2"]
+    assert releases == ["v1.0.2"]
+
+
+@pytest.mark.parametrize("patches", [[], [1, 2, 3, 4, 10], [1, 2, 3, 4, 5, 10]])
+def test_tag_retention_preserves_five_newest_numeric_versions(tmp_path, patches):
+    refs = [f"refs/tags/v1.0.{patch}" for patch in reversed(patches)]
+    result, releases, deleted = _run_tag_retention(tmp_path, refs)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert deleted == (["refs/tags/v1.0.1"] if len(patches) == 6 else [])
+    assert releases == []
+
+
+@pytest.mark.parametrize("failure", ["list-tags", "list-releases", "delete-release", "delete-tag"])
+def test_tag_retention_stops_on_listing_or_deletion_failure(tmp_path, failure):
+    tags = [f"v1.0.{index}" for index in range(1, 8)]
+    result, releases, deleted = _run_tag_retention(
+        tmp_path, [f"refs/tags/{tag}" for tag in tags], releases=tags, failure=failure,
+    )
+    assert result.returncode != 0, "Retention must not report success after a failed CLI command"
+    assert releases == (["v1.0.1"] if failure.startswith("delete-") else [])
+    assert deleted == (["refs/tags/v1.0.1"] if failure == "delete-tag" else [])
 
 
 def test_build_prunes_tags_but_not_workflow_runs_or_artifacts():

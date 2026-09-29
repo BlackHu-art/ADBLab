@@ -101,8 +101,13 @@ class NetDevInfo:
     """解析 ``/proc/net/dev`` 或 ``/proc/<pid>/net/dev`` 的接口统计。
 
     输出遵循 ``接口名: 接收字段... 发送字段...`` 格式，例如
-    ``wlan0: <rx_bytes> ... <tx_bytes> ...``。
+    ``wlan0: <rx_bytes> ... <tx_bytes> ...``。只汇总明确支持的 Wi-Fi 与蜂窝
+    接口族；回环、VPN、叠加接口和未知接口不纳入，避免同一流量重复统计。
+    ``available`` 区分有效零流量与缺失或不完整的受支持接口统计。
     """
+
+    _WIFI_INTERFACE = re.compile(r"wlan[0-9]+")
+    _MOBILE_INTERFACE = re.compile(r"rmnet(?:_data)?[0-9]+")
 
     def __init__(self, source):
         self.source = source
@@ -115,46 +120,42 @@ class NetDevInfo:
         self.total = 0
         self.rx = 0
         self.tx = 0
+        self.available = False
         self._parse()
 
     def _parse(self):
-        sp_lines = self.source.split("\n")
-        for line in sp_lines:
-            # wlan0 的第 1、9 个数值字段分别表示接收和发送字节数。
-            if "wlan0:" in line:
-                items = line.split()
-                if len(items) < 10:
-                    continue
-                self.wifi_rx = int(items[1])
-                self.wifi_tx = int(items[9])
-                self.wifi_total = self.wifi_rx + self.wifi_tx
-                logger.debug(
-                    "wifi_rx : "
-                    + items[1]
-                    + " wifi_tx : "
-                    + items[9]
-                    + " total wifi:"
-                    + str(self.wifi_total)
-                )
-                # rmnet0 表示移动网络接口流量。
-            if "rmnet0:" in line:
-                items = line.split()
-                if len(items) < 10:
-                    continue
-                self.mobile_rx = int(items[1])
-                self.mobile_tx = int(items[9])
-                self.mobile_total = self.mobile_rx + self.mobile_tx
-                logger.debug(
-                    "mobile_rx : "
-                    + items[1]
-                    + " mobile_tx : "
-                    + items[9]
-                    + " total mobile:"
-                    + str(self.mobile_total)
-                )
-            self.rx = self.wifi_rx + self.mobile_rx
-            self.tx = self.wifi_tx + self.mobile_tx
-            self.total = self.wifi_total + self.mobile_total
+        complete = True
+        for line in self.source.splitlines():
+            interface, separator, counters = line.partition(":")
+            if not separator:
+                continue
+            interface = interface.strip()
+            is_wifi = self._WIFI_INTERFACE.fullmatch(interface) is not None
+            if not is_wifi and self._MOBILE_INTERFACE.fullmatch(interface) is None:
+                continue
+            fields = counters.split()
+            try:
+                rx, tx = int(fields[0]), int(fields[8])
+            except (IndexError, ValueError):
+                complete = False
+                continue
+            if rx < 0 or tx < 0:
+                complete = False
+                continue
+            self.available = True
+            if is_wifi:
+                self.wifi_rx += rx
+                self.wifi_tx += tx
+            else:
+                self.mobile_rx += rx
+                self.mobile_tx += tx
+        self.wifi_total = self.wifi_rx + self.wifi_tx
+        self.mobile_total = self.mobile_rx + self.mobile_tx
+        self.rx = self.wifi_rx + self.mobile_rx
+        self.tx = self.wifi_tx + self.mobile_tx
+        self.total = self.rx + self.tx
+        # 设备总量要求所有受支持接口完整，部分统计不能成为后续累计增量的基线。
+        self.available = self.available and complete
 
     def __repr__(self):
         return "NetDevInfo "
@@ -187,9 +188,15 @@ class TrafficCollecor:
         return TrafficSnapshot(out, packagename, uid)
 
     def _cat_traffic_device_dev(self):
+        """读取受支持接口的设备快照；非空但无法解析时按失败样本处理。"""
         out = self.device.adb.run_shell_cmd("cat /proc/net/dev")
         out = out.replace("\r", "")
-        return NetDevInfo(out)
+        snapshot = NetDevInfo(out)
+        if out and not snapshot.available:
+            raise RuntimeError(
+                "Device traffic unavailable: missing or incomplete interface counters"
+            )
+        return snapshot
 
     def _collect_traffic_thread(self, start_time):
         # Android 10 之前从 /proc/net/xt_qtaguid/stats 读取 UID 流量。

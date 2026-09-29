@@ -99,6 +99,86 @@ class FileEntry:
 
 
 @dataclass(frozen=True)
+class DirectoryListing:
+    """完整校验后交付的目录快照，名称来自独立原始字段而非展示文本。"""
+
+    entries: tuple[FileEntry, ...]
+    symlink_targets: dict[str, str]
+
+
+DIRECTORY_LIST_PREFIX = b"ADBLAB_LIST_V1\0"
+DIRECTORY_LIST_LIMIT = 8 * 1024 * 1024
+
+
+def directory_list_command(path: str) -> str:
+    """以 NUL 分隔名称、stat 元数据及链接目标，不用 ls 展示格式反推身份。"""
+    if not path.startswith("/") or any(char in path for char in "\0\r\n"):
+        raise ValueError("目录路径无效，请重新选择目录。")
+    # 参数直接由 find 传给 shell，空白、箭头和引号均不会重新变成语法。
+    script = (
+        'for p do printf "%s\\0" "${p##*/}" || exit; '
+        'stat -c "%A|%s|%y" -- "$p" || exit; printf "\\0" || exit; '
+        'if [ -L "$p" ]; then readlink -- "$p" || exit; fi; '
+        'printf "\\0" || exit; done'
+    )
+    directory = path.rstrip("/") + "/"
+    return (
+        "printf 'ADBLAB_LIST_V1\\0' && "
+        f"find {shell_quote(directory)} -mindepth 1 -maxdepth 1 "
+        f"-exec sh -c {shell_quote(script)} sh {{}} +"
+    )
+
+
+def parse_directory_listing(raw: bytes) -> DirectoryListing:
+    """整份严格解码后才交付；非法 UTF-8、换行身份及不完整字段均明确失败。"""
+    if len(raw) > DIRECTORY_LIST_LIMIT or not raw.startswith(DIRECTORY_LIST_PREFIX):
+        raise ValueError("设备目录列表格式不受支持或过大。")
+    body = raw[len(DIRECTORY_LIST_PREFIX):]
+    if body and not body.endswith(b"\0"):
+        raise ValueError("设备目录列表不完整。")
+    fields = body.split(b"\0")[:-1]
+    if len(fields) % 3:
+        raise ValueError("设备目录列表不完整。")
+    rows: list[FileEntry] = []
+    targets: dict[str, str] = {}
+    names: set[str] = set()
+    for offset in range(0, len(fields), 3):
+        name, metadata, target = (
+            field.decode("utf-8", errors="strict") for field in fields[offset:offset + 3]
+        )
+        if (not name or name in {".", ".."} or name in names
+                or any(char in name for char in "/\0\r\n")):
+            raise ValueError("目录包含无法安全操作的文件名，请在设备端重命名后刷新。")
+        match = re.fullmatch(
+            r"([bcdlps-][rwxSsTt-]{9})\|(\d+)\|"
+            r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)? [+-]\d{4}\n",
+            metadata,
+        )
+        if match is None:
+            raise ValueError("设备不支持所需的文件元数据格式。")
+        mode, size_text, modified = match.groups()
+        # 文件尺寸应能以设备 off_t 表示，拒绝超范围数值在 UI 格式化时溢出。
+        if len(size_text) > 19 or int(size_text) > (1 << 63) - 1:
+            raise ValueError("设备返回的文件尺寸超出支持范围。")
+        is_symlink = mode.startswith("l")
+        if is_symlink:
+            if not target.endswith("\n") or len(target) <= 1:
+                raise ValueError("设备返回的链接信息不完整。")
+            targets[name] = target[:-1]
+        elif target:
+            raise ValueError("设备返回的文件类型不一致，请刷新后重试。")
+        names.add(name)
+        is_dir = mode.startswith("d")
+        rows.append(FileEntry(
+            name, "Folder" if is_dir else "Link" if is_symlink else extension_label(name),
+            "-" if is_dir else format_size(size_text), modified, int(size_text),
+            is_dir, is_symlink,
+        ))
+    rows.sort(key=lambda item: (not (item.is_dir or item.is_symlink), item.name.lower()))
+    return DirectoryListing(tuple(rows), targets)
+
+
+@dataclass(frozen=True)
 class PreviewVersion:
     """远端原始文件版本；时间保留设备提供的纳秒文本，避免展示格式丢失精度。"""
 
@@ -224,52 +304,17 @@ def _is_size_token(value: str) -> bool:
 
 
 def _split_modified_name(value: str) -> tuple[str, str]:
-    if not value:
-        return "", ""
-    month_parts = value.split(maxsplit=3)
-    if (
-        len(month_parts) >= 4
-        and _looks_month(month_parts[0])
-        and month_parts[1].isdigit()
-        and _looks_time_or_year(month_parts[2])
+    # ls 在时间和名称之间只输出一个分隔符，其后的空白属于文件身份。
+    time_or_year = r"(?:\d{1,2}:\d{2}(?::\d{2})?|\d{4})"
+    for pattern in (
+        rf"([A-Za-z]{{3}}\s+\d{{1,2}}\s+{time_or_year})[ \t](.*)",
+        rf"(\d{{4}}-\d{{2}}-\d{{2}}\s+{time_or_year})[ \t](.*)",
+        r"([A-Za-z]{3}\s+\d{1,2})[ \t](.*)",
     ):
-        return " ".join(month_parts[:3]), month_parts[3]
-
-    iso_parts = value.split(maxsplit=2)
-    if len(iso_parts) >= 3 and _looks_iso_date(iso_parts[0]) and _looks_time_or_year(iso_parts[1]):
-        return " ".join(iso_parts[:2]), iso_parts[2]
-
-    short_parts = value.split(maxsplit=2)
-    if len(short_parts) >= 3:
-        return " ".join(short_parts[:2]), short_parts[2]
-    if len(short_parts) == 2:
-        return short_parts[0], short_parts[1]
-    return "", value
-
-
-def _looks_month(value: str) -> bool:
-    return value.lower()[:3] in {
-        "jan",
-        "feb",
-        "mar",
-        "apr",
-        "may",
-        "jun",
-        "jul",
-        "aug",
-        "sep",
-        "oct",
-        "nov",
-        "dec",
-    }
-
-
-def _looks_time_or_year(value: str) -> bool:
-    return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?|\d{4}", value))
-
-
-def _looks_iso_date(value: str) -> bool:
-    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value))
+        match = re.fullmatch(pattern, value)
+        if match:
+            return " ".join(match[1].split()), match[2]
+    return "", ""
 
 
 def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
@@ -287,14 +332,19 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
 
         name_part = entry["name"]
         is_symlink = entry["perms"].startswith("l")
-        if is_symlink and "->" in name_part:
-            name, target = name_part.split("->", 1)
-            name = name.strip()
-            symlink_targets[name] = target.strip()
+        if is_symlink:
+            # 展示协议无法区分名称/目标中的分隔串，歧义条目不得用于变更操作。
+            if len(re.findall(r"(?= -> )", name_part)) != 1:
+                continue
+            name, target = name_part.split(" -> ", 1)
+            if not target:
+                continue
         else:
             name = name_part
-        if not name or name in (".", ".."):
+        if not name or name in (".", "..") or "/" in name or "\0" in name:
             continue
+        if is_symlink:
+            symlink_targets[name] = target
 
         is_dir = entry["perms"].startswith("d")
         rows.append(

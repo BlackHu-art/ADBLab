@@ -1286,7 +1286,10 @@ class DeviceConnectionPanel(QWidget):
         self.qr_columns.setRowStretch(3, 1)
         self.qr_status_slot.setMinimumWidth(0)
         self.qr_status_slot.setMaximumWidth(16777215)
-        code_alignment = Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        # 宽三栏共用底线；字体回退使说明略高于二维码时，操作仍与二维码底边对齐。
+        code_alignment = (
+            Qt.AlignmentFlag.AlignBottom if wide and not details else Qt.AlignmentFlag.AlignTop
+        ) | Qt.AlignmentFlag.AlignHCenter
         if self._qr_failed():
             self.qr_columns.addWidget(self.qr_text, 0, 0, 1, 3)
             self.qr_columns.addWidget(self.qr_status_slot, 1, 0, 1, 3)

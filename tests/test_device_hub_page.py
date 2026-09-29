@@ -30,7 +30,8 @@ def _show_page(qt_application, width=960):
 
 
 def _settle_cards(qt_application, page):
-    widgets = [page]
+    widgets = [page, page.toolbar, page.summary, page.connect_button,
+               page.disconnect_button, page.refresh_button]
     for card in page.device_cards:
         widgets.extend((
             card, card.action_container, card.files_button, card.remote_button, card.apps_button,
@@ -41,6 +42,18 @@ def _settle_cards(qt_application, page):
         ):
             widgets.extend((field, field.caption, field.value))
     wait_for_stable_geometry(qt_application, widgets)
+
+
+def _assert_toolbar_controls_fit(page):
+    bounds = []
+    for control in (page.summary, page.connect_button, page.refresh_button, page.disconnect_button):
+        rectangle = QRect(control.mapTo(page.toolbar, QPoint()), control.size())
+        assert page.toolbar.rect().contains(rectangle)
+        assert control.height() >= control.fontMetrics().height()
+        bounds.append(rectangle)
+    for index, rectangle in enumerate(bounds):
+        assert not any(rectangle.intersects(other) for other in bounds[index + 1:])
+    assert page.summary.height() >= page.summary.heightForWidth(page.summary.width())
 
 
 def _rich_metadata():
@@ -585,14 +598,7 @@ def test_device_cards_fit_actual_fonts_and_preserve_keyboard_actions(
     _settle_cards(qt_application, page)
     assert window.width() == width
     assert page.width() <= width
-    toolbar_bounds = []
-    for control in (page.summary, page.connect_button, page.refresh_button, page.disconnect_button):
-        bounds = QRect(control.mapTo(page.toolbar, QPoint()), control.size())
-        assert page.toolbar.rect().contains(bounds)
-        assert control.height() >= control.fontMetrics().height()
-        toolbar_bounds.append(bounds)
-    for index, bounds in enumerate(toolbar_bounds):
-        assert not any(bounds.intersects(other) for other in toolbar_bounds[index + 1:])
+    _assert_toolbar_controls_fit(page)
     assert page.disconnect_button.font().pointSize() == font_size
     for card in page.device_cards:
         assert card.geometry().right() < page.width()
@@ -671,25 +677,34 @@ def test_owner_destruction_releases_cards_before_late_style_signals(qt_applicati
     qt_application.processEvents()
 
 
-def test_font_resize_round_trip_reflows_existing_controls(qt_application, monkeypatch):
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("width", [380, 620])
+def test_font_resize_round_trip_reflows_existing_controls(
+    qt_application, monkeypatch, theme, width,
+):
     size = 12
     monkeypatch.setattr(
         BaseStyles, "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or current[0])),
     )
     current = [size]
-    _window, page = _show_page(qt_application, 620)
+    BaseStyles.switch_theme(theme)
+    _window, page = _show_page(qt_application, width)
+    _settle_cards(qt_application, page)
+    _assert_toolbar_controls_fit(page)
     card = page.device_cards[0]
     baseline = card.height()
     current[0] = 22
     BaseStyles.ui_font_changed.emit(BaseStyles.current_font_config())
     _settle_cards(qt_application, page)
+    _assert_toolbar_controls_fit(page)
     assert page.device_cards[0] is card
     assert card.name_label.font().pointSize() == 22
     assert card.height() > baseline
     current[0] = 12
     BaseStyles.ui_font_changed.emit(BaseStyles.current_font_config())
     _settle_cards(qt_application, page)
+    _assert_toolbar_controls_fit(page)
     assert card.height() == baseline
 
 

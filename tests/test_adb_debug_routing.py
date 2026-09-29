@@ -39,7 +39,7 @@ def test_frozen_resolver_logs_internal_candidate_and_actual_source(
     debug_log, tmp_path, monkeypatch, bundled_exists,
 ):
     package = tmp_path / "package"
-    candidate = package / "_internal" / "scrcpy-win64" / "adb.exe"
+    candidate = package / "_internal" / "runtime-tools" / "windows-x86_64" / "adb.exe"
     candidate.parent.mkdir(parents=True)
     if bundled_exists:
         candidate.write_bytes(b"synthetic")
@@ -78,7 +78,7 @@ def test_frozen_resolver_logs_internal_candidate_and_actual_source(
 def test_native_entries_log_resolved_client_without_command_values(
     debug_log, monkeypatch, tmp_path, entry,
 ):
-    executable = str(tmp_path / "_internal" / "scrcpy-win64" / "adb.exe")
+    executable = str(tmp_path / "_internal" / "runtime-tools" / "windows-x86_64" / "adb.exe")
     Path(executable).parent.mkdir(parents=True)
     Path(executable).touch()
     monkeypatch.setattr(execution, "_adb_path", executable)

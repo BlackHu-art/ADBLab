@@ -9,10 +9,11 @@ def test_recheck_retires_input_sessions_before_probing_new_client():
     calls = []
     frame = SimpleNamespace(
         _closing=False,
+        invalidate_wireless_pairing=lambda reason: calls.append(("invalidate", reason)),
         _adb_environment=SimpleNamespace(recheck=lambda: calls.append("recheck")),
         left_panel=SimpleNamespace(_scrcpy_tab=SimpleNamespace(
             invalidate_adb_input_sessions=lambda: calls.append("retire"),
         )),
     )
     MainFrame.recheck_adb_environment(frame)
-    assert calls == ["retire", "recheck"]
+    assert calls == [("invalidate", "environment_recheck"), "retire", "recheck"]

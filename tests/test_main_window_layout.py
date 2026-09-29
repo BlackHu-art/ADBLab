@@ -498,19 +498,29 @@ def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
         wait_until(qt_application, lambda: settled_spy.count() == 1)
 
         assert settled_spy.count() == 1
-        # P1 页面栈/NavBar 引入额外布局层级后，分栏在 settle 信号后还有一次
-        # 无新代的宿主布局收尾；改为等待"最终几何与已应用计划一致"这一不变式
-        # 成立（wait 超时同样失败，断言强度不变，仅把瞬时时序改为确定性等待）。
+        # Qt 会在应用网格后反馈行高；完整水平计划必须一致，但不能把旧行高当成新输入。
+        # 除宽度与字体外，继续核对当前度量生成的列宽、间距和控件位置。
         wait_until(
             qt_application,
             lambda: all(
                 binding.applied_plan is not None
                 and binding.applied_plan.available_width == binding.responsive_context().width
-                and binding.applied_plan.context_fingerprint
-                == binding.responsive_context().fingerprint
+                and binding.applied_plan.settling_fingerprint
+                == binding.responsive_plan(binding.responsive_context()).settling_fingerprint
                 for binding in feature_panel._responsive_rows
             ),
         )
+        for binding in feature_panel._responsive_rows:
+            container = binding._container_ref()
+            plan = binding.applied_plan
+            assert container is not None and plan is not None
+            layout = container.layout()
+            assert isinstance(layout, QGridLayout)
+            widgets = binding.widgets()
+            for placement in plan.placements:
+                assert layout.getItemPosition(layout.indexOf(widgets[placement.item_index])) == (
+                    placement.row, placement.column, placement.row_span, placement.column_span,
+                )
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

@@ -11,7 +11,7 @@ from qfluentwidgets import TableItemDelegate
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from gui.i18n import tr
 from gui.styles.icon_loader import get_fluent_icon
-from models.file_explorer_worker import ADBWorker
+from models.file_explorer_worker import ADBWorker, DirectoryListWorker
 from services import file_explorer as explorer_service
 
 
@@ -114,7 +114,7 @@ class FileExplorerList:
     # ── 路径导航 ────────────────────────────────────────────────────────
 
     def _navigate(self, path: str, push: bool = True):
-        path = str(path or "").strip()
+        path = str(path or "")
         if not path or (path == self._frame.current_path and self._frame._active_refresh is None):
             return
         self._refresh(
@@ -155,7 +155,7 @@ class FileExplorerList:
         if not self._frame._can_operate():
             self._frame.status_bar.setText(tr("Select an online device before browsing files"))
             return
-        requested_path = str(requested_path or self._frame.current_path).strip()
+        requested_path = str(requested_path or self._frame.current_path)
         if not requested_path:
             return
         self.cancel_link_requests()
@@ -183,18 +183,16 @@ class FileExplorerList:
         self._frame.status_bar.setText(tr('Opening {value0}…').format(value0=requested_path))
         self._set_loading(True)
 
-        cmd = explorer_service.ls_command(requested_path)
-        shell_cmd = self._root(cmd)
-        worker = self._frame._run_adb("shell", shell_cmd)
-        if worker is None:
-            return
+        worker = self._frame._track_worker(DirectoryListWorker(
+            self._frame.device_ip, requested_path, self._frame.root_cb.isChecked(),
+        ))
         self._frame._active_refresh_worker = worker
         worker.setProperty("refreshRequestId", request_id)
         worker.setProperty("requestedPath", requested_path)
         self._frame._connect_worker_ui(
             worker,
             worker.result_ready,
-            lambda output, error: self._on_ls_result(
+            lambda output, error: self._on_directory_result(
                 output,
                 error,
                 request_id=request_id,
@@ -202,6 +200,12 @@ class FileExplorerList:
             ),
         )
         worker.start()
+
+    def _on_directory_result(self, output, error, **context):
+        """真实刷新只接受经过后台原始协议校验的快照，文本兼容解析不可回退。"""
+        if not error and not isinstance(output, explorer_service.DirectoryListing):
+            output, error = tr("Directory loading failed"), True
+        self._on_ls_result(output, error, **context)
 
     def _on_ls_result(
         self,
@@ -236,7 +240,11 @@ class FileExplorerList:
         self._frame.table.setUpdatesEnabled(False)
         self._frame.table.setSortingEnabled(False)
         try:
-            rows, symlink_targets = explorer_service.parse_ls_output(output)
+            if isinstance(output, explorer_service.DirectoryListing):
+                rows, symlink_targets = output.entries, output.symlink_targets
+            else:
+                # 旧调用方的展示适配保留；真实设备刷新只连接上面的严格快照入口。
+                rows, symlink_targets = explorer_service.parse_ls_output(output)
             self._frame.symlink_targets = symlink_targets
             parent_offset = 1 if requested_path != "/" else 0
             self._frame.table.setRowCount(len(rows) + parent_offset)

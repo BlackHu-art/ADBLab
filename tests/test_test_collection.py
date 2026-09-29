@@ -18,6 +18,10 @@ def _run_pytest(tmp_path, arguments, *, block_qt=False):
         from pathlib import Path
         import sys
 
+        if sys.platform != "win32":
+            import resource
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
         if sys.argv[2] == "block-qt":
             class RejectQt(importlib.abc.MetaPathFinder):
                 def find_spec(self, fullname, path=None, target=None):
@@ -44,23 +48,60 @@ def _run_pytest(tmp_path, arguments, *, block_qt=False):
 
         capture = Capture()
         result = pytest.main(sys.argv[3:], plugins=[capture])
+        settings = sys.modules.get("core.settings_manager")
         Path(sys.argv[1]).write_text(json.dumps({
             "collected": capture.rows,
             "passed": capture.passed,
             "qt_modules": sorted(name for name in sys.modules
                                  if name.split(".")[0] in {"PySide6", "qfluentwidgets"}),
+            "has_settings_singleton": settings is not None
+                                      and settings.AppSettings._instance is not None,
         }), encoding="utf-8")
         raise SystemExit(result)
     """)
+    environment = dict(
+        os.environ, QT_QPA_PLATFORM="offscreen", PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PYTHONDONTWRITEBYTECODE="1",
+    )
+    for name in (
+        "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "LOCALAPPDATA", "APPDATA",
+        "MOBILEPERF_LOG_DIR", "TMPDIR",
+    ):
+        directory = tmp_path / "user-environment" / name.lower()
+        directory.mkdir(parents=True, exist_ok=True)
+        environment[name] = str(directory)
     result = subprocess.run(
-        [sys.executable, "-c", runner, str(capture),
-         "block-qt" if block_qt else "allow-qt", "-c", str(root / "pyproject.toml"), *arguments],
+        [sys.executable, "-B", "-c", runner, str(capture),
+         "block-qt" if block_qt else "allow-qt", "-c", str(root / "pyproject.toml"),
+         "-p", "no:cacheprovider", *arguments],
         cwd=root,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+        env=environment,
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(capture.read_text(encoding="utf-8"))
+
+
+def test_monkey_preparation_fixture_isolates_settings_and_restores_singleton(tmp_path):
+    result = _run_pytest(tmp_path, [
+        "-q",
+        "tests/test_monkey_preparation.py::test_start_waits_for_all_target_package_information",
+    ])
+    assert len(result["passed"]) == 1
+    assert not result["has_settings_singleton"]
+    assert not list((tmp_path / "user-environment").rglob("app_settings.json"))
+
+
+def test_packaging_tls_check_preserves_application_for_later_gui_test(tmp_path):
+    result = _run_pytest(tmp_path, [
+        "-q",
+        "tests/test_gui_bootstrap.py::test_packaging_check_reports_missing_tls_without_network",
+        "tests/test_gui_bootstrap.py::test_packaging_check_reports_translation_catalog_loadability[True]",
+    ])
+    assert len(result["passed"]) == 2
+    assert all("ui" in markers for markers in result["collected"].values())
+    assert not result["has_settings_singleton"]
+    assert not list((tmp_path / "user-environment").rglob("app_settings.json"))
 
 
 def test_qt_operation_nodes_are_ui_without_excluding_pure_operation_tests(tmp_path):

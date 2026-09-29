@@ -611,6 +611,7 @@ def test_update_card_keeps_existing_height_and_button_positions_across_checks(
     snapshots = [
         UpdateSnapshot(status="available", release=release, checked_at=checked_at),
         UpdateSnapshot(),
+        UpdateSnapshot(status="idle", release=release),
         UpdateSnapshot(status="checking", can_check=False),
         UpdateSnapshot(status="checking", release=release, can_check=False),
         UpdateSnapshot(status="current", release=release, checked_at=checked_at),
@@ -631,6 +632,8 @@ def test_update_card_keeps_existing_height_and_button_positions_across_checks(
         card = about.project_card
         # 保留原四行版本说明的高度，检查过程不能撑高或收缩卡片。
         assert card.height() == original_height
+        if snapshot.status == "idle":
+            assert "更新状态：尚未检查" in card.contentLabel.text()
         buttons = (about.project_button, about.check_update_button, about.release_button)
         positions = tuple((button.mapTo(card, QPoint()), button.size()) for button in buttons)
         if original_positions is None:

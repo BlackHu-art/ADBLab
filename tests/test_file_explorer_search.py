@@ -8,6 +8,7 @@ from qfluentwidgets import SearchLineEdit
 from gui.dialogs.file_explorer import FileExplorerPage
 from gui.dialogs.file_explorer_list import FileExplorerList
 from models.file_explorer_worker import ADBWorker
+from services.file_explorer import DirectoryListing, parse_ls_output
 
 pytestmark = pytest.mark.ui
 
@@ -100,9 +101,10 @@ def test_directory_refresh_reapplies_latest_search_after_reordering_rows(
         assert len(started) == 1 and page._directory_loading
         page.search_field.setText("alpha")
         page.search_field.setText("  KEEP ")
-        started[0].result_ready.emit("\n".join(
+        rows, targets = parse_ls_output("\n".join(
             f"-rw-r--r-- 1 shell shell 1024 Sep 05 {name}" for name in new_names
-        ), False)
+        ))
+        started[0].result_ready.emit(DirectoryListing(tuple(rows), targets), False)
         qt_application.processEvents()
         assert not page._directory_loading
         assert page.search_field.text() == "  KEEP "
@@ -142,11 +144,11 @@ def test_rejected_directory_result_preserves_filtered_cached_rows(
             (page._file_name_at(row), page.table.isRowHidden(row))
             for row in range(page.table.rowCount())
         ]
-        started[0].result_ready.emit(
-            "permission denied" if result_kind == "failed"
-            else "-rw-r--r-- 1 shell shell 1024 Sep 05 stale.keep",
-            result_kind == "failed",
-        )
+        response = "permission denied"
+        if result_kind == "stale":
+            rows, targets = parse_ls_output("-rw-r--r-- 1 shell shell 1024 Sep 05 stale.keep")
+            response = DirectoryListing(tuple(rows), targets)
+        started[0].result_ready.emit(response, result_kind == "failed")
         qt_application.processEvents()
         assert [
             (page._file_name_at(row), page.table.isRowHidden(row))

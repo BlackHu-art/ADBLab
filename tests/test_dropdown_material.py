@@ -1,11 +1,12 @@
 """验证项目下拉保留原生状态底板，并从真实父层接收材质。"""
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QPoint, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, EditableComboBox, FluentWindow
+from shiboken6 import isValid
 
 from gui.styles import BaseStyles
 from gui.styles.fluent import configure_fluent_control
@@ -194,11 +195,54 @@ def test_dropdown_popup_keeps_readable_surface_and_enabled_selection(
         assert changed.count() == activated.count() == 1
         if kind == "strict":
             assert field.value() == 60
+        destroyed = QSignalSpy(menu.destroyed)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert destroyed.count() == 1
+        assert not isValid(menu) and isValid(field)
     finally:
-        if field.dropMenu is not None:
+        if field.dropMenu is not None and isValid(field.dropMenu):
             field.dropMenu.close()
         owner.close()
         owner.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("kind", ["combo", "editable", "strict"])
+@pytest.mark.parametrize("close_owner", [False, True], ids=["close-menu", "destroy-owner"])
+def test_dropdown_popup_releases_focus_before_menu_or_owner_destruction(
+    qt_application, theme, kind, close_owner,
+):
+    BaseStyles.switch_theme(theme)
+    owner = _PaintedHost()
+    field = configure_fluent_control(_make_field(kind, owner))
+    # 重复配置仍须保留真实下拉交互和单次提交语义。
+    configure_fluent_control(field)
+    QVBoxLayout(owner).addWidget(field)
+    owner.show()
+    original = field.currentIndex()
+    changed = QSignalSpy(field.currentIndexChanged)
+    button = field if kind == "combo" else field.dropButton
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    menu = field.dropMenu
+    wait_until(qt_application, lambda: menu.isVisible())
+    menu.view.setFocus(Qt.FocusReason.TabFocusReason)
+    wait_until(qt_application, menu.view.hasFocus)
+    focus_on_destruction = []
+    menu.destroyed.connect(lambda: focus_on_destruction.append(menu.view.hasFocus()))
+
+    if close_owner:
+        owner.deleteLater()
+    else:
+        menu.close()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert focus_on_destruction == [False]
+    assert not isValid(menu)
+    assert changed.count() == 0
+    if close_owner:
+        assert not isValid(owner) and not isValid(field)
+    else:
+        assert isValid(field) and field.currentIndex() == original
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

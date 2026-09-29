@@ -12,7 +12,7 @@ from typing import TypeVar
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
-from qfluentwidgets import RoundMenu, setCustomStyleSheet
+from qfluentwidgets import ComboBox, EditableComboBox, RoundMenu, setCustomStyleSheet
 
 from gui.i18n import tr
 from gui.styles.fonts import FontMixin
@@ -202,6 +202,19 @@ def configure_fluent_control(
     apply_font_role(widget, role, ensure_height=ensure_height)
     if focus:
         apply_focus_indicator(widget)
+    if isinstance(widget, (ComboBox, EditableComboBox)) and not widget.property(
+        "adblabMenuFocusGuard"
+    ):
+        # 下拉菜单由 Fluent 在点击时创建；每一轮都必须在列表析构前归还焦点。
+        create_menu = widget._createComboMenu
+
+        def create_guarded_menu():
+            menu = create_menu()
+            TransientMenuFocusGuard(menu)
+            return menu
+
+        widget._createComboMenu = create_guarded_menu
+        widget.setProperty("adblabMenuFocusGuard", True)
     return widget
 
 

@@ -108,6 +108,7 @@ def test_two_collectors_keep_separate_progress_parameters_and_stop_target(host, 
     first.timeout_input.setValue(10)
     first.start_btn.click()
     first.start_btn.click()
+    wait_until(qt_application, lambda: first._status_state == "running")
     assert first._runner.start.call_count == 1
     first._run_started_at = time.monotonic() - 120
     first._update_progress()
@@ -115,6 +116,7 @@ def test_two_collectors_keep_separate_progress_parameters_and_stop_target(host, 
     second.timeout_input.setValue(20)
     second.package_edit.setText("com.example.second")
     second.start_btn.click()
+    wait_until(qt_application, lambda: second._status_state == "running")
     second._run_started_at = time.monotonic() - 120
     second._update_progress()
     assert first._runner.is_running() and second._runner.is_running()
@@ -147,6 +149,7 @@ def test_running_session_stays_visible_after_deselection_and_disconnect(host, qt
     host.open_feature("performance", preferred_device="demo-a")
     first = host.stack.currentWidget()
     first.start_btn.click()
+    wait_until(qt_application, lambda: first._status_state == "running")
     host.set_device_context(["demo-b"], ["demo-b"])
     table = host.performance_sessions.table
     assert host.performance_sessions.isVisible()
@@ -197,7 +200,7 @@ def test_collapsing_state_list_reclaims_space_without_stopping_collectors(host, 
     host.open_feature("performance", preferred_device="demo-a")
     page = host.stack.currentWidget()
     page.start_btn.click()
-    qt_application.processEvents()
+    wait_until(qt_application, lambda: page._status_state == "running")
     panel = host.performance_sessions
     expanded_height = panel.height()
     panel.section.toggle_button.click()

@@ -227,7 +227,7 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     upsert.assert_called_once()
     records = upsert.call_args.args[0]
     assert [record["ip"] for record in records] == ["device-1", "device-2"]
-    controller.signals.devices_updated.emit.assert_called_once_with(["device-1", "device-2"])
+    controller.signals.devices_updated.emit.assert_not_called()
     metadata_events = controller.signals.device_info_updated.emit.call_args_list
     assert len(metadata_events) == 2
     assert metadata_events[0].args[0] == "device-1"
@@ -244,6 +244,34 @@ def _device_metadata_controller():
     controller._device_topology_generation = 1
     controller._device_topology = ("device-1", "device-2")
     return controller
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("invalidation", ["topology", "shutdown"])
+def test_queued_overview_completion_cannot_restore_old_topology(qt_application, invalidation):
+    from controllers.signals import ADBControllerSignals
+
+    controller = _device_metadata_controller()
+    controller.signals = ADBControllerSignals()
+    delivered = []
+    controller.signals.devices_updated.connect(lambda devices: delivered.append(devices))
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", return_value={
+            "Model": "Example",
+        }),
+        patch("controllers._device.DeviceStore.upsert_devices"),
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        worker = threading.Thread(target=controller.executor.submit.call_args.args[0])
+        worker.start()
+        worker.join(timeout=3)
+        assert not worker.is_alive()
+        if invalidation == "shutdown":
+            controller._shutting_down = True
+        else:
+            controller._process_device_list(["device-1"])
+        qt_application.processEvents()
+    assert delivered == ([] if invalidation == "shutdown" else [["device-1"]])
 
 
 def test_overview_fast_device_publishes_while_first_device_is_waiting():
@@ -525,7 +553,7 @@ def test_device_metadata_is_published_before_later_queries_finish(first_failure)
     assert [
         event.args[0] for event in controller.signals.device_info_updated.emit.call_args_list
     ] == ["device-1", "device-2"]
-    controller.signals.devices_updated.emit.assert_called_once_with(["device-1", "device-2"])
+    controller.signals.devices_updated.emit.assert_not_called()
 
 
 @pytest.mark.parametrize("invalidation", ["topology", "shutdown"])

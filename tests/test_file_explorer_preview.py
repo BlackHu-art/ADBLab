@@ -1,6 +1,7 @@
 """文件预览的版本判断、像素归属和真实请求生命周期回归。"""
 
 import ntpath
+import re
 import shlex
 import threading
 import time
@@ -265,52 +266,30 @@ def preview_io(qt_application, tmp_path, monkeypatch, request):
         ),
     )
 
-    class Process:
-        def __init__(self):
-            self.stopped = threading.Event()
-            self.stdout = self
-            self.read_entered = threading.Event()
-
-        def readline(self):
-            self.read_entered.set()
-            if state.block == "pull":
-                assert self.stopped.wait(3) or state.release.is_set()
-            return ""
-
-        def poll(self):
-            return None if state.block == "pull" and not self.stopped.is_set() else 0
-
-        def wait(self, timeout=None):
-            return 0
-
-    class Runner:
-        def __init__(self):
-            self.processes = {}
-
-        def start(self, key, cmd, **kwargs):
-            assert cmd[-3] == "pull"
-            state.pulls.append(tuple(cmd))
-            Path(cmd[-1]).write_bytes(content)
-            process = Process()
-            self.processes[key] = process
-            state.processes.append(process)
-            return process
-
-        def request_stop(self, key):
-            process = self.processes.get(key)
-            if process is not None:
-                process.stopped.set()
-            return process is not None
-
-        def stop(self, key, timeout=0):
-            process = self.processes.pop(key, None)
-            if process is not None:
-                process.stopped.set()
-            return 0
-
-        def force_stop(self, key, timeout=0):
-            self.stop(key, timeout)
-            return True
+    def run_to_file(cmd, output_path, *, cancelled, **kwargs):
+        assert cmd[:5] == ["adb", "-s", "device-preview", "shell", "-T"]
+        if "ADBLAB_LIST_END_" in cmd[-1]:
+            marker = re.search(r"ADBLAB_LIST_END_[a-f0-9]+", cmd[-1])[0].encode()
+            Path(output_path).write_bytes(b"ADBLAB_LIST_V1\0" + marker)
+            return CommandResult(success=True)
+        marker = re.search(r"ADBLAB_PULL_END_[a-f0-9]+", cmd[-1])[0].encode()
+        if "cat --" not in cmd[-1]:
+            assert "printf FILE" in cmd[-1]
+            Path(output_path).write_bytes(b"FILE" + marker)
+            return CommandResult(success=True)
+        state.pulls.append(tuple(cmd))
+        process = SimpleNamespace(read_entered=threading.Event(), stopped=threading.Event())
+        state.processes.append(process)
+        process.read_entered.set()
+        if state.block == "pull":
+            deadline = time.monotonic() + 3
+            while not state.release.wait(0.005):
+                if cancelled():
+                    process.stopped.set()
+                    return CommandResult(success=False, error="Cancelled")
+                assert time.monotonic() < deadline
+        Path(output_path).write_bytes(content + marker)
+        return CommandResult(success=True)
 
     def run(cmd, *, timeout=30, cancelled=None, **kwargs):
         state.commands.append(tuple(cmd))
@@ -333,7 +312,7 @@ def preview_io(qt_application, tmp_path, monkeypatch, request):
             return CommandResult(success=False, error="offline")
         return CommandResult(success=True, output="")
 
-    monkeypatch.setattr(workers, "ProcessRunner", Runner)
+    monkeypatch.setattr(workers.CommandRunner, "run_to_file", run_to_file)
     monkeypatch.setattr(workers.CommandRunner, "run", run)
     start_decode = PreviewReadWorker.start
 

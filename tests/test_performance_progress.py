@@ -12,6 +12,7 @@ from qfluentwidgets import ProgressRing
 
 from core.settings_manager import DEFAULTS, AppSettings
 from gui.dialogs.performance_launcher import PerformancePage
+from tests.ui_geometry_helpers import wait_until
 
 
 @pytest.fixture
@@ -129,9 +130,10 @@ def test_terminal_icon_requires_confirmed_report(
     assert not page._configuration_locked
 
 
-def test_start_error_shows_failure_icon_and_restores_actions(page):
+def test_start_error_shows_failure_icon_and_restores_actions(page, qt_application):
     page._runner.start.side_effect = RuntimeError("synthetic start failure")
     page.start_btn.click()
+    wait_until(qt_application, lambda: page._status_state == "failed")
     assert page._runner.start.call_count == 1
     assert page._status_state == "failed"
     assert page.progress_display.indicators.currentIndex() == 0

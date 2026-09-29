@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -363,8 +364,11 @@ class MobilePerfRunner:
         *,
         on_log: Callable[[str], None] | None = None,
         on_finished: Callable[[], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> str:
-        """创建临时配置并启动子进程，同时分别消费业务输出和开发诊断。"""
+        """同步准备并启动；取消在准备边界阻止创建进程，已进入创建的进程由调用方收口。"""
+        if cancelled is not None and cancelled():
+            raise CancelledError
         config = deepcopy(config)
         with self._state_lock:
             # 已退出进程的旧代写入可独立收尾；新运行使用不同路径，仍由监督接口保留旧资源。
@@ -388,6 +392,8 @@ class MobilePerfRunner:
             self._metadata_run_id = uuid4().hex
             self._last_exit_code = None
             self._capture_result_baseline(config)
+            if cancelled is not None and cancelled():
+                raise CancelledError
             config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
             self._config_dir = config_dir
             try:
@@ -420,6 +426,8 @@ class MobilePerfRunner:
                     ensure_ascii=True,
                 )
                 (Path(config_dir.name) / "clients").mkdir()
+                if cancelled is not None and cancelled():
+                    raise CancelledError
                 proc = self._process_runner.start(
                     process_key,
                     cmd,

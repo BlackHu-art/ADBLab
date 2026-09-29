@@ -1216,10 +1216,11 @@ class FileExplorerPage(QWidget):
             return
         self._active = True
         requested_path = ""
+        # 程序传入的路径保留真实身份；仅路径输入框提交时清理用户键入的外层空白。
         if isinstance(payload, dict):
-            requested_path = str(payload.get("path", "") or "").strip()
+            requested_path = str(payload.get("path", "") or "")
         elif isinstance(payload, str):
-            requested_path = payload.strip()
+            requested_path = payload
         self._activated_once = True
         if not self._loaded_once:
             if not self._can_operate():

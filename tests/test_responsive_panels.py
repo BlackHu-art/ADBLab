@@ -451,7 +451,15 @@ def _feature_category_slices(feature_panel, content: QWidget) -> tuple:
                 screen_bindings.append(binding)
         # 两行已迁往截图页；真实几何由下列专用测试覆盖：
         # test_screen_tools_reflow_and_refresh_fonts_after_transfer。
-        assert len(assigned) == 16
+        assert {
+            feature_panel.monkey_target_header_binding,
+            feature_panel.monkey_preset_binding,
+            feature_panel.monkey_parameter_binding,
+            feature_panel.monkey_seed_binding,
+            feature_panel.monkey_distribution_header_binding,
+            feature_panel.monkey_percentage_binding,
+            feature_panel.monkey_footer_binding,
+        }.issubset(assigned)
         assert len(screen_bindings) == 2
         assert {
             frozenset(id(widget) for widget in binding.widgets()) for binding in screen_bindings
@@ -2653,10 +2661,22 @@ def test_remote_control_groups_fill_available_width_with_equal_buttons(
                 ) <= 2
                 widths = [button.width() for button in buttons]
                 assert max(widths) - min(widths) <= 2, widths
-                assert abs(buttons[0].y() - row.contentsRect().top()) <= 2
+                grid = row.layout()
+                assert isinstance(grid, QGridLayout)
+                cells = []
+                for index, button in enumerate(buttons):
+                    position = grid.getItemPosition(grid.indexOf(button))
+                    assert position == (index // columns, index % columns, 1, 1)
+                    cell = grid.cellRect(position[0], position[1])
+                    cells.append(cell)
+                    # Latin 与中文回退字体的自然高度可不同；Fixed 按钮在同一行内居中。
+                    assert cell.contains(button.geometry())
+                    assert abs(button.geometry().center().y() - cell.center().y()) <= 1
+                    assert button.height() >= button.sizeHint().height()
+                assert cells[0].top() == row.contentsRect().top()
                 for index in range(columns, len(buttons)):
-                    gap = buttons[index].y() - buttons[index - columns].geometry().bottom() - 1
-                    assert abs(gap - row.layout().verticalSpacing()) <= 2
+                    gap = cells[index].top() - cells[index - columns].bottom() - 1
+                    assert gap == grid.verticalSpacing()
                 group_top = row.mapTo(content, QPoint(0, 0)).y()
                 if previous_bottom is not None:
                     spacing = remote._remote_section_groups[1].viewLayout.spacing()

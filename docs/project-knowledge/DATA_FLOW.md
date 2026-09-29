@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-27
+last_verified: 2026-09-29
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -54,12 +54,10 @@ sequenceDiagram
         C->>ADB: Executor 读取 getprop/屏幕/内存/存储/电池
         ADB-->>C: 受控解析的属性与带单位指标
         C-->>Frame: device_info_updated（单台完成即发布，失败发空快照）
-        Frame-->>UI: 更新属性显示，清除本轮缺失的动态指标
+        Frame-->>UI: 更新名称与属性显示，清除本轮缺失的动态指标
     end
     C->>DS: upsert_devices()（批次末统一更新成功记录）
     DS-->>DS: 更新内存缓存，仅 IP 历史写用户 YAML
-    C-->>Frame: devices_updated（元数据补全后再次发布）
-    Frame-->>UI: 更新列表名称
     Note over C,UI: 每台查询前后检查拓扑 generation 和关闭状态，丢弃晚到结果
 ```
 
@@ -190,6 +188,14 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
   原有 CSV 列结构，`pid_rx(KB)`、`pid_tx(KB)`、`pid_total(KB)` 及多目标的
   `total_proc_traffic(kB)` 留空，表示不可用而非零流量。Android 10 以下继续使用 UID 统计。
   页面流量图只读取 `device_*` 列，不依赖进程流量列。
+  设备接口统计包含 `wlanN`、`rmnetN`、`rmnet_dataN`，不叠加 VPN、回环或堆叠虚拟接口；
+  没有识别到受支持接口，或任一受支持接口计数不完整时，整份设备总量表示不可用，
+  不输出伪造的零流量或用部分总量作为增量基线。
+- gfxinfo 按当前窗口的表头定位 `Flags`、`IntendedVsync`、`Vsync`、`FrameCompleted`，
+  不依赖 Android 版本之间变化的固定列号；缺列、目标窗口缺失、仅有损坏记录时表示不可用，
+  未完成帧不进入有效 FPS 样本。
+- 结果图同时接受 ISO 时间与采集器既有的 `YYYY_MM_DD_HH_MM_SS` 时间，按完整日期计算跨度，
+  不把下划线时间当作数值时间戳。
 
 ### 性能运行元数据
 

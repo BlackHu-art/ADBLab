@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QPoint, Qt
+from PySide6.QtGui import QWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import ScrollArea
@@ -41,7 +42,8 @@ def _window_with_scroll(qt_application, monkeypatch, *, late=False, native_hover
     window.show()
     qt_application.processEvents()
     native_resize = Mock(return_value=True)
-    monkeypatch.setattr(window.windowHandle(), "startSystemResize", native_resize)
+    # 测试可能主动销毁原生句柄；恢复补丁不能再访问已经失效的 QWindow 包装对象。
+    monkeypatch.setattr(QWindow, "startSystemResize", native_resize)
     return window, controller, scroll, content, stack, native_resize
 
 
@@ -255,7 +257,7 @@ def test_deleting_visible_scroll_ancestor_restores_resize_hit(qt_application, mo
     hit = window.childAt(point)
     assert hit is bar or bar.isAncestorOf(hit)
     native_resize = Mock(return_value=True)
-    monkeypatch.setattr(window.windowHandle(), "startSystemResize", native_resize)
+    monkeypatch.setattr(QWindow, "startSystemResize", native_resize)
 
     container.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

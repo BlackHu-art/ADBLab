@@ -12,12 +12,23 @@ from models.app_manager_worker import AppManagerWorker
 
 def _run_monkey_with_failed_focus_probes(tmp_path, command_result):
     model = ADBTesting()
-    model._procs = Mock()
+    active = set()
+    model._procs = Mock(active_keys=active)
     logcat_proc = Mock()
     monkey_proc = Mock(pid=1234)
     monkey_proc.poll.return_value = None
-    model._procs.start.side_effect = [logcat_proc, monkey_proc]
-    model._procs.stop.return_value = None
+    processes = iter((logcat_proc, monkey_proc))
+
+    def start(key, *_args, **_kwargs):
+        active.add(key)
+        return next(processes)
+
+    def stop(key, *_args, **_kwargs):
+        active.discard(key)
+        return 0
+
+    model._procs.start.side_effect = start
+    model._procs.stop.side_effect = stop
 
     with (
         patch.object(model, "_run", return_value={"success": True, "output": ""}),
@@ -68,6 +79,7 @@ def test_monkey_focus_probe_failures_fail_closed_and_stop_process(
         assert result["error"] == expected_error
     model._procs.stop.assert_any_call("device-1_monkey")
     model._procs.stop.assert_any_call("device-1_logcat")
+    assert not model._procs.active_keys
 
 
 @pytest.mark.parametrize(

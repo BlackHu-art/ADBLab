@@ -348,32 +348,9 @@ class SurfaceStatsCollector:
             results = self.device.adb.run_shell_cmd(
                 f"dumpsys gfxinfo {_shq(self.package_name)} framestats"
             )
-            # 将 gfxinfo framestats 结果转换为统一的三时间戳结构。
-            results = results.replace("\r\n", "\n").splitlines()
-            if not len(results):
+            timestamps = self._parse_gfxinfo_frame_data(results)
+            if timestamps is None:
                 return (None, None)
-            isHaveFoundWindow = False
-            PROFILEDATA_line = 0
-            for line in results:
-                if not isHaveFoundWindow:
-                    if "Window" in line and self.focus_window in line:
-                        isHaveFoundWindow = True
-                if not isHaveFoundWindow:
-                    continue
-                if "PROFILEDATA" in line:
-                    PROFILEDATA_line += 1
-                fields = []
-                fields = line.split(",")
-                if fields and "0" == fields[0] and len(fields) >= 14:
-                    # 提取 INTENDED_VSYNC、VSYNC 和 FRAME_COMPLETED 计算 FPS 与卡顿。
-                    timestamp = [int(fields[1]), int(fields[2]), int(fields[13])]
-                    if timestamp[1] == pending_fence_timestamp:
-                        continue
-                    timestamp = [_timestamp / nanoseconds_per_second for _timestamp in timestamp]
-                    timestamps.append(timestamp)
-                # 到达下一个窗口的数据段时结束当前窗口解析。
-                if 2 == PROFILEDATA_line:
-                    break
         else:
             results = self.device.adb.run_shell_cmd(
                 f"dumpsys SurfaceFlinger --latency {_shq(self.focus_window)}"
@@ -402,6 +379,51 @@ class SurfaceStatsCollector:
                 timestamp = [_timestamp / nanoseconds_per_second for _timestamp in timestamp]
                 timestamps.append(timestamp)
         return (refresh_period, timestamps)
+
+    def _parse_gfxinfo_frame_data(self, output):
+        """按目标窗口和表头解析已完成帧；缺少窗口或必要字段时返回不可用。"""
+        in_window = False
+        in_profile = False
+        indices = None
+        timestamps = []
+        malformed_rows = False
+        required = ("Flags", "IntendedVsync", "Vsync", "FrameCompleted")
+        pending_timestamp = (1 << 63) - 1
+        for line in output.splitlines():
+            text = line.strip()
+            if text.startswith("Window:"):
+                if in_window:
+                    break
+                window = text.removeprefix("Window:").strip()
+                in_window = window == self.focus_window
+                continue
+            if not in_window:
+                continue
+            if text == "---PROFILEDATA---":
+                if in_profile:
+                    break
+                in_profile = True
+                continue
+            if not in_profile or not text:
+                continue
+            fields = [field.strip() for field in text.split(",")]
+            if indices is None:
+                if all(fields.count(name) == 1 for name in required):
+                    indices = [fields.index(name) for name in required]
+                continue
+            try:
+                flags, intended, vsync, completed = [int(fields[index]) for index in indices]
+            except (IndexError, ValueError):
+                malformed_rows = True
+                continue
+            # 零值、未完成 fence 和逆序时间均不代表可参与 FPS 计算的完成帧。
+            if flags != 0 or not 0 < intended <= vsync <= completed < pending_timestamp:
+                continue
+            timestamps.append([stamp / 1e9 for stamp in (intended, vsync, completed)])
+        # 真正空的帧表可表示没有刷新；只有损坏行时不能伪装成零 FPS。
+        if indices is None or (malformed_rows and not timestamps):
+            return None
+        return timestamps
 
     def _get_surface_stats_legacy(self):
         """返回 JellyBean 之前兼容路径的 Surface 索引和时间戳。

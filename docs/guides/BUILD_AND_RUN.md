@@ -327,8 +327,11 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    `scripts/check_build_artifacts.py release` 要求恰好四个预期版本、路径的非空归档，并检查归档
    可读且含主程序；缺包、多包、错误版本或损坏均阻止发布。现存同版本 Release 或远端 tag
    仍会使发布失败，防止直接覆盖。Release 正文由 `gh release create --notes-file` 读取同版本说明，
-   不再使用固定占位文案。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
-   Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
+   不再使用固定占位文案。发布完成后执行 "Retain latest 5 version tags"，仅统计去重后的
+   `v主版本.次版本.修订号` tag，不把 annotated tag 的 peeled ref 重复计数，也不清理预发布或
+   其他命名的 tag；删除超出最新 5 个的旧版本 tag 及对应 Release。读取列表或实际删除失败时
+   中止步骤，无对应 Release 的旧 tag 仍可清理。被保留策略删除的历史版本不再受“存在性检查”
+   保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
 全部任务设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，避免 Windows runner 的默认代码页使中文日志输出失败。

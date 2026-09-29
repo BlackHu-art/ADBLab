@@ -131,3 +131,21 @@ def test_parse_ls_output_preserves_whitespace_inside_symlink_name_and_target():
 
     assert rows[0].name == "my  link"
     assert links == {"my  link": "/sdcard/my  folder"}
+
+
+@pytest.mark.parametrize("name", [" leading.txt", "\tleading.txt", "link->name "])
+def test_listing_keeps_leading_whitespace_and_literal_arrow(name):
+    rows, links = explorer_service.parse_ls_output(
+        f"lrwxrwxrwx 1 shell shell 12 May 30 12:34 {name} -> target \n"
+    )
+    assert [row.name for row in rows] == [name]
+    assert links == {name: "target "}
+
+
+@pytest.mark.parametrize("name", ["one -> two -> target", "missing delimiter", "../escape -> x"])
+def test_ambiguous_link_listing_cannot_supply_an_operation_target(name):
+    rows, links = explorer_service.parse_ls_output(
+        f"lrwxrwxrwx 1 shell shell 12 May 30 12:34 {name}\n"
+    )
+    assert rows == []
+    assert links == {}

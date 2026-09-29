@@ -289,9 +289,15 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
                 _assert_role(section.headerLabel, FontRole.UI)
             _assert_role(performance.dialog_title, FontRole.TITLE)
             _assert_role(performance._results_group.headerLabel, FontRole.UI)
-            _assert_role(
-                performance.findChild(QLabel, "performanceDiagnosticsTitle"), FontRole.UI_SMALL
-            )
+            diagnostic_labels = {
+                label.property("configurationKey"): label
+                for label in performance._diagnostic_tools.findChildren(QLabel, "fieldLabel")
+            }
+            assert set(diagnostic_labels) == {"dumpheap_freq", "exceptionlog", "phone_log_path"}
+            for label in diagnostic_labels.values():
+                assert label.isVisibleTo(performance)
+                assert label.text() and label.buddy() is not None
+                _assert_role(label, FontRole.UI)
             assert performance._results_group not in performance._configuration_sections
         finally:
             settings.update(

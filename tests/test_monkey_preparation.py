@@ -19,7 +19,7 @@ from tests.ui_geometry_helpers import assert_non_overlapping, mapped_rect, wait_
 
 
 @pytest.fixture
-def apps(qt_application):
+def apps(qt_application, isolated_app_settings):
     owner = SidePanel()
     owner._devices_tab.update_device_list(["demo-a", "demo-b"])
     owner._devices_tab.set_selected_devices(["demo-a", "demo-b"])

@@ -229,20 +229,22 @@ def launch_owned_client(argv: list[str]) -> int:
         if not _alive(owner) or (directory / "cancel").exists():
             return 130
         with ExitStack() as streams:
-            options = {}
             if sys.platform == "win32":
                 from core.native_launcher import _kernel, _startup_info, sanitize_environment
                 if not _kernel().SetDllDirectoryW(None):
                     return 2
-                options = {
-                    "startupinfo": _startup_info(streams), "close_fds": True,
-                    "creationflags": subprocess.CREATE_NO_WINDOW,
-                    "env": sanitize_environment(dict(os.environ), getattr(sys, "_MEIPASS", "")),
-                }
+                child = subprocess.Popen(
+                    argv[5:], startupinfo=_startup_info(streams), close_fds=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    env=sanitize_environment(dict(os.environ), getattr(sys, "_MEIPASS", "")),
+                )
             elif sys.platform == "linux" and getattr(sys, "frozen", False):
                 from core.native_process import native_tool_environment
-                options = {"env": native_tool_environment(dict(os.environ))}
-            child = subprocess.Popen(argv[5:], **options)
+                child = subprocess.Popen(
+                    argv[5:], env=native_tool_environment(dict(os.environ)),
+                )
+            else:
+                child = subprocess.Popen(argv[5:])
         try:
             record["client"] = _identity(child.pid)
         except psutil.NoSuchProcess:

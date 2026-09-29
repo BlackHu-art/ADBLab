@@ -14,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 from core.exec import CommandRunner, ProcessRunner
 from core.log_service import LogService
 from services import file_explorer as explorer_service
+from services.file_download import SafeFileDownload
 
 
 class ADBWorker(QThread):
@@ -47,6 +48,54 @@ class ADBWorker(QThread):
             self.result_ready.emit(result.output, False)
         else:
             self.result_ready.emit(result.error, True)
+
+
+class DirectoryListWorker(ADBWorker):
+    """目录名称绕过通用文本规范化，完成校验后才发布可操作快照。"""
+
+    result_ready = Signal(object, bool)
+
+    def __init__(self, device_ip: str, path: str, use_root: bool):
+        super().__init__(device_ip, [], timeout=30)
+        self.path = path
+        self.use_root = use_root
+        self._completion_marker = f"ADBLAB_LIST_END_{uuid.uuid4().hex}".encode("ascii")
+
+    def run(self):
+        """所有暂存文件由线程作用域清理；取消不交付结果，也不回退有歧义的 ls。"""
+        if self._aborted.is_set():
+            return
+        try:
+            command = explorer_service.directory_list_command(self.path)
+            command = explorer_service.root_command(
+                f"({command}) && printf %s "
+                + explorer_service.shell_quote(self._completion_marker.decode()), self.use_root,
+            )
+            with tempfile.TemporaryDirectory(prefix="adblab-directory-") as temporary:
+                path = Path(temporary) / "listing"
+                result = CommandRunner.run_to_file(
+                    ["adb", "-s", self.device_ip, "shell", "-T", command], str(path),
+                    timeout=self.timeout, cancelled=self._aborted.is_set,
+                )
+                if self._aborted.is_set():
+                    return
+                if not result.success:
+                    raise OSError("目录读取失败，请检查设备连接、权限及文件工具支持。")
+                limit = explorer_service.DIRECTORY_LIST_LIMIT + len(self._completion_marker)
+                with path.open("rb") as stream:
+                    raw = stream.read(limit + 1)
+                if len(raw) > limit or not raw.endswith(self._completion_marker):
+                    raise ValueError("设备未返回完整目录列表，请刷新后重试。")
+                listing = explorer_service.parse_directory_listing(
+                    raw[:-len(self._completion_marker)],
+                )
+            if not self._aborted.is_set():
+                self.result_ready.emit(listing, False)
+        except (OSError, ValueError):
+            if not self._aborted.is_set():
+                self.result_ready.emit(
+                    "无法安全读取目录，请检查连接、权限、设备文件工具或不支持的文件名。", True,
+                )
 
 
 class TextReadWorker(ADBWorker):
@@ -214,7 +263,7 @@ class LocalTextSaveWorker(ADBWorker):
 
 
 class TransferWorker(QThread):
-    """执行 pull 或 push 长进程，并分别发送进度和业务结果。"""
+    """受控下载或 push 长进程，并分别发送进度和业务结果。"""
 
     progress = Signal(str)
     result_ready = Signal(str, bool, str)
@@ -264,6 +313,16 @@ class TransferWorker(QThread):
         self._run_entered.set()
         try:
             if self._aborted.is_set() or self.isInterruptionRequested():
+                return
+            if self.args and self.args[0] == "pull":
+                if len(self.args) != 3:
+                    raise ValueError("Invalid download arguments")
+                destination = os.path.join(self.cwd, self.args[2])
+                SafeFileDownload(
+                    self.device_ip, self._aborted.is_set, self.progress.emit,
+                ).download(self.args[1], destination)
+                if not self._aborted.is_set():
+                    self.result_ready.emit("OK", False, self.args[2])
                 return
             cmd = ["adb", "-s", self.device_ip] + self.args
             self._proc = self._process_runner.start(

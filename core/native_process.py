@@ -142,7 +142,13 @@ class NativeCommandScope:
 class _CancellationEvent:
     """每次启动独占取消事件；保持到入口退出，避免尚未打开事件时丢失控制通道。"""
 
+    _lock: threading.Lock
+    _finalizer: weakref.finalize
+    name: str
+
     def __init__(self):
+        if sys.platform != "win32":
+            raise OSError("Win32 cancellation events are unavailable on this platform")
         from ctypes import wintypes
 
         self._lock = threading.Lock()
@@ -163,6 +169,8 @@ class _CancellationEvent:
 
     def signal(self) -> None:
         """取消只关闭当前工具的准入和客户端，不停止独立 ADB 服务。"""
+        if sys.platform != "win32":
+            raise OSError("Win32 cancellation events are unavailable on this platform")
         with self._lock:
             if self._finalizer.alive and not self._api.SetEvent(self._handle):
                 raise ctypes.WinError(ctypes.get_last_error())

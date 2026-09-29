@@ -580,7 +580,8 @@ class DeviceHubPage(QWidget):
         self.summary.setTextFormat(Qt.TextFormat.PlainText)
         self.summary.setMinimumWidth(0)
         self.toolbar = QWidget(self)
-        self.toolbar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # 摘要换行后的高度由 heightForWidth 决定，Maximum 会把它压回单行 sizeHint。
+        self.toolbar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._toolbar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self.toolbar)
         self._toolbar_layout.setContentsMargins(0, 0, 0, 0)
         self._toolbar_layout.setSpacing(12)
