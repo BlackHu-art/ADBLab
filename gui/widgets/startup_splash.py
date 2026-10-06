@@ -1,4 +1,4 @@
-"""纯 Qt 启动画面：保留原始图标，只从左向右恢复底部液体的亮度。"""
+"""纯 Qt 启动画面：保留原始图标，用液体亮度呈现真实进度和等待活动。"""
 
 from __future__ import annotations
 
@@ -53,6 +53,8 @@ class StartupSplash(QWidget):
         self._liquid = self._liquid_boundary()
         self._progress = 0.0
         self._target = 0.0
+        self._animate = True
+        self._activity_phase = 0.0
         self._elapsed = QElapsedTimer()
         self._animation = QTimer(self)
         self._animation.setTimerType(Qt.TimerType.PreciseTimer)
@@ -82,7 +84,7 @@ class StartupSplash(QWidget):
         return path
 
     def set_progress(self, value: float, *, animate: bool = True) -> None:
-        """仅接受前进的阶段；缓动追赶真实目标，关闭后的晚到进度无效。"""
+        """仅接受前进的阶段；等待高光不推进进度，animate=False 固定显示。"""
 
         if self._closed or not math.isfinite(value):
             return
@@ -92,13 +94,17 @@ class StartupSplash(QWidget):
         if self._animation.isActive():
             # 先兑现旧目标已走过的时间，连续到达的阶段不会重置当前位置。
             self._advance()
+        self._animate = animate
         if not animate:
             self._animation.stop()
             self._target = self._progress = target
-        elif target > self._target:
+        else:
             self._target = target
-            self._elapsed.start()
-            self._animation.start()
+            if not self._animation.isActive() and (
+                target > self._progress or (self._first_frame_delivered and target < 100)
+            ):
+                self._elapsed.start()
+                self._animation.start()
         if self.isVisible():
             # 零间隔阶段调度可能推迟普通 update；只重绘完整的启动窗，不重入事件循环。
             self.repaint()
@@ -107,13 +113,17 @@ class StartupSplash(QWidget):
 
     @Slot()
     def _advance(self) -> None:
-        # 按实际帧间隔渐近追赶阶段值，避免短缓动迅速冲到终点后长时间停住。
-        # 完成信号不等待此缓动；显示值始终不超过宿主已完成的真实阶段。
-        fraction = -math.expm1(-self._elapsed.restart() / 160.0)
+        if self._closed:
+            return
+        # 阶段完成值只负责单调填充；等待高光持续活动，不能冒充下一阶段的进度。
+        elapsed = self._elapsed.restart()
+        self._activity_phase = (self._activity_phase + elapsed / 1400.0) % 1.0
+        fraction = -math.expm1(-elapsed / 160.0)
         self._progress += (self._target - self._progress) * fraction
         if self._target - self._progress <= 0.05:
             self._progress = self._target
-            self._animation.stop()
+            if self._target >= 100:
+                self._animation.stop()
         self.update()
 
     def finish(self) -> None:
@@ -149,6 +159,10 @@ class StartupSplash(QWidget):
         if self._closed or self._first_frame_delivered:
             return
         self._first_frame_delivered = True
+        # 先启动等待活动再通知宿主；首阶段导入尚未产出任何进度时也能独立刷新。
+        if self._animate and self._target < 100 and not self._animation.isActive():
+            self._elapsed.start()
+            self._animation.start()
         self.first_painted.emit()
 
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -179,6 +193,13 @@ class StartupSplash(QWidget):
                 edge.setColorAt(0, QColor(6, 60, 146, 0))
                 edge.setColorAt(1, QColor(6, 60, 146, 158))
                 painter.fillRect(0, 166, 256, 66, edge)
+            if self._animation.isActive() and self._target < 100:
+                center = 128 + 92 * math.sin(self._activity_phase * math.tau)
+                activity = QLinearGradient(center - 32, 0, center + 32, 0)
+                activity.setColorAt(0, QColor(255, 255, 255, 0))
+                activity.setColorAt(.5, QColor(255, 255, 255, 46))
+                activity.setColorAt(1, QColor(255, 255, 255, 0))
+                painter.fillRect(0, 166, 256, 66, activity)
         painter.end()
         if self.isVisible() and not self._closed and not self._first_frame_pending:
             self._first_frame_pending = True

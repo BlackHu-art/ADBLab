@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtNetwork import QLocalSocket
@@ -25,6 +26,7 @@ class _SplashSession(QObject):
         self._cancelling = False
         self._buffer = bytearray()
         self._splash = StartupSplash()
+        self._splash.set_progress(0, animate=os.environ.get("ADBLAB_STARTUP_ANIMATE", "1") != "0")
         self._splash.first_painted.connect(lambda: self._send("ready"))
         self._splash.cancelled.connect(self._cancelled)
         self._socket = QLocalSocket(self)

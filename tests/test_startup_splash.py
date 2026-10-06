@@ -150,6 +150,33 @@ def test_stage_progress_paints_continuously_while_waiting_for_the_next_stage(qt_
         widget.deleteLater()
 
 
+@pytest.mark.parametrize("progress", [0, 40])
+def test_waiting_animation_changes_pixels_without_advancing_completed_progress(splash, progress):
+    splash.set_progress(progress)
+    _wait_until(lambda: splash._progress == progress)
+    original = _original_frame(splash.devicePixelRatioF()).convertToFormat(
+        QImage.Format.Format_RGBA8888,
+    )
+    original_alpha = bytes(original.constBits())[3::4]
+    frames = []
+    for _ in range(8):
+        image = splash.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        frame = bytes(image.constBits())
+        frames.append(frame)
+        assert frame[3::4] == original_alpha
+        assert splash._progress == progress
+        QTest.qWait(35)
+    assert len(set(frames)) >= 4, "Waiting must remain visible before the next completed stage"
+
+
+def test_explicit_static_progress_disables_waiting_animation(splash):
+    splash.set_progress(40, animate=False)
+    snapshot = splash.grab().toImage()
+    QTest.qWait(100)
+    assert splash.grab().toImage() == snapshot
+    assert not any(timer.isActive() for timer in splash.findChildren(QTimer))
+
+
 def test_blocking_startup_stages_paint_intermediate_progress_without_extra_wait(qt_application):
     from gui.startup import StartupController
     from gui.widgets.startup_splash import StartupSplash

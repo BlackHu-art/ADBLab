@@ -43,7 +43,8 @@ def worker_probe(tmp_path, monkeypatch):
         "class ProbeSplash(startup_splash.StartupSplash):\n"
         "    def paintEvent(self, event):\n"
         "        super().paintEvent(event)\n"
-        "        record(kind='paint', progress=self._progress)\n"
+        "        record(kind='paint', progress=self._progress,\n"
+        "               active=self._animation.isActive())\n"
         "    def set_progress(self, value, *, animate=True):\n"
         "        super().set_progress(value, animate=animate)\n"
         "        record(kind='progress', value=value, animate=animate)\n"
@@ -104,6 +105,32 @@ def test_source_cli_worker_starts_and_finishes_without_user_data(splash, tmp_pat
     assert not list(tmp_path.rglob("app_settings.json"))
 
 
+@pytest.mark.parametrize("animate", [False, True], ids=["static", "animated"])
+def test_worker_respects_initial_animation_while_parent_cannot_read_ready(
+    worker_probe, splash, monkeypatch, animate,
+):
+    # 父代理必须覆盖继承的启动偏好；ready 尚未读取时不能靠后续消息纠正首帧。
+    monkeypatch.setenv("ADBLAB_STARTUP_ANIMATE", "1" if not animate else "0")
+    painted = []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.set_progress(0, animate=animate)
+    splash.show()
+    deadline = time.monotonic() + 5
+    while not any(row["kind"] == "paint" for row in _records(worker_probe)):
+        assert time.monotonic() < deadline, _records(worker_probe)
+        time.sleep(.01)
+    # 不泵送父 Qt 事件，保留真实子进程自己的连接、首帧与等待动画。
+    time.sleep(.45)
+    frames = [row for row in _records(worker_probe) if row["kind"] == "paint"]
+    assert not painted
+    assert all(row["progress"] == 0 for row in frames)
+    if animate:
+        assert sum(row["active"] for row in frames) >= 8
+    else:
+        assert not any(row["active"] for row in frames)
+    _wait_until(lambda: bool(painted))
+
+
 def test_worker_reports_first_paint_and_receives_real_progress(worker_probe, splash):
     painted, cancelled = [], []
     splash.first_painted.connect(lambda: painted.append(True))
@@ -152,6 +179,33 @@ def test_worker_keeps_painting_while_parent_gui_is_blocked(worker_probe, splash)
     assert frames[-1]["time"] - frames[0]["time"] >= .3
 
 
+@pytest.mark.parametrize("progress", [0, 40])
+def test_worker_keeps_waiting_animation_while_parent_has_no_new_progress(
+    worker_probe, splash, progress,
+):
+    painted = []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.show()
+    _wait_until(lambda: bool(painted))
+    if progress:
+        splash.set_progress(progress)
+        _wait_until(lambda: any(
+            row.get("progress") == progress for row in _records(worker_probe)
+        ))
+    started = time.perf_counter()
+    # 首阶段导入或后续构建占用父 GUI，子进程不能依赖下一笔进度才继续绘制。
+    while time.perf_counter() - started < .55:
+        sum(range(500))
+    ended = time.perf_counter()
+    frames = [
+        row for row in _records(worker_probe)
+        if row["kind"] == "paint" and started < row["time"] < ended
+    ]
+    assert len(frames) >= 12
+    assert all(row["progress"] == progress for row in frames)
+    assert frames[-1]["time"] - frames[0]["time"] >= .3
+
+
 @pytest.mark.parametrize("show_first", [False, True])
 def test_finish_before_worker_ready_cannot_reopen_a_splash(worker_probe, splash, show_first):
     painted, cancelled = [], []
@@ -187,6 +241,31 @@ def test_worker_start_failure_falls_back_and_preserves_progress(splash, monkeypa
     assert fallback._progress == 60
     fallback.close()
     assert len(cancelled) == 1
+
+
+def test_worker_fallback_keeps_waiting_visible_before_first_progress(splash, monkeypatch):
+    from gui import startup_process
+    from gui.widgets.startup_splash import StartupSplash
+
+    monkeypatch.setattr(
+        startup_process, "_worker_command", lambda _name: ["/missing/splash-worker"],
+    )
+    painted = []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.show()
+    _wait_until(lambda: bool(painted))
+    fallback = next(
+        widget for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, StartupSplash)
+    )
+    frames = []
+    for _ in range(8):
+        image = fallback.grab().toImage()
+        frames.append(bytes(image.constBits()))
+        assert fallback._progress == 0
+        QTest.qWait(35)
+    assert len(set(frames)) >= 4
+    assert painted == [True]
 
 
 @pytest.mark.parametrize("failure", ["start", "exit"])

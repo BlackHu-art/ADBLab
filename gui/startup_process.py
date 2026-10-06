@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from gui.widgets.startup_splash import StartupSplash
@@ -66,7 +66,7 @@ class StartupSplashProcess(QObject):
         self._cancelled = False
         self._draining = False
         self._progress = 0.0
-        self._animate = False
+        self._animate = True
 
     def show(self) -> None:
         """只启动一次显示进程；真正首帧到达前不放行主窗口初始化。"""
@@ -79,7 +79,10 @@ class StartupSplashProcess(QObject):
             return
         command = _worker_command(name)
         self._startup_timer.start(_START_TIMEOUT_MS)
-        # 继承冻结环境，使 onefile 子进程复用现有资源，不重复解包。
+        # 继承冻结环境；首帧动画偏好随进程启动，不能等父 GUI 读取 ready 后才生效。
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("ADBLAB_STARTUP_ANIMATE", "1" if self._animate else "0")
+        self._process.setProcessEnvironment(environment)
         self.diagnostic.emit("launch")
         self._process.start(command[0], command[1:])
 
@@ -210,6 +213,8 @@ class StartupSplashProcess(QObject):
         self._local.first_painted.connect(self._publish_ready)
         self._local.cancelled.connect(self._publish_cancelled)
         self._local.set_progress(self._progress, animate=False)
+        if self._animate:
+            self._local.set_progress(self._progress)
         self._local.show()
         self._disconnect()
         self._schedule_reap()
