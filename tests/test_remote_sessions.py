@@ -133,7 +133,7 @@ class _Service:
 
 
 @pytest.fixture
-def remote_session(monkeypatch, qt_application, tmp_path):
+def remote_session(monkeypatch, qt_application, tmp_path, isolated_app_settings):
     adb = tmp_path / "adb.exe"
     adb.touch()
     service = _Service()

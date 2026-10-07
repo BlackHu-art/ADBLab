@@ -7229,5 +7229,45 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>应用图标数据无效</source>
             <translation>應用程式圖標資料無效</translation>
         </message>
+        <message>
+            <source>窗口与录制</source>
+            <translation>視窗與錄製</translation>
+        </message>
+        <message>
+            <source>音量与媒体</source>
+            <translation>音量與媒體</translation>
+        </message>
+        <message>
+            <source>手势与方向</source>
+            <translation>手勢與方向</translation>
+        </message>
+        <message>
+            <source>镜像将在独立窗口打开</source>
+            <translation>鏡像將在獨立視窗開啟</translation>
+        </message>
+        <message>
+            <source>按键与手势可独立使用，无需启动镜像。</source>
+            <translation>按鍵與手勢可獨立使用，無需啟動鏡像。</translation>
+        </message>
+        <message>
+            <source>仅录制，不打开镜像窗口</source>
+            <translation>僅錄製，不開啟鏡像視窗</translation>
+        </message>
+        <message>
+            <source>回车</source>
+            <translation>回車</translation>
+        </message>
+        <message>
+            <source>退格</source>
+            <translation>退格</translation>
+        </message>
+        <message>
+            <source>播放/暂停</source>
+            <translation>播放/暫停</translation>
+        </message>
+        <message>
+            <source>点按电源键，切换屏幕开关</source>
+            <translation>點按電源鍵，切換螢幕開關</translation>
+        </message>
     </context>
 </TS>

@@ -308,8 +308,17 @@ def _assert_feature_binding_geometry(
 
     for binding in overflowing:
         widgets = binding.widgets()
-        assert_scroll_target_reachable(scroll, widgets[0])
-        assert_scroll_target_reachable(scroll, widgets[-1])
+        for widget in (widgets[0], widgets[-1]):
+            # 外层分栏承载可高于 viewport 的完整分区；其首尾操作仍必须可滚动到达。
+            descendants = tuple(
+                target
+                for nested in bindings
+                for target in nested.widgets()
+                if target is not widget and widget.isAncestorOf(target)
+            )
+            targets = (descendants[0], descendants[-1]) if descendants else (widget,)
+            for target in targets:
+                assert_scroll_target_reachable(scroll, target)
     return overflowing
 
 
@@ -395,13 +404,11 @@ def _combo_edit_field_rect(combo, *, width: int | None = None) -> QRect:
 
 
 def _groups_with_titles_wider_than_viewport(content: QWidget, viewport_width: int) -> tuple:
-    """返回标题本身需要 SidePanel 横向滚动才能完整到达的直接分区 Card。"""
+    """返回标题本身需要横向滚动才能完整到达的分区，包含两栏内嵌分区。"""
 
     return tuple(
         card
-        for card in content.findChildren(
-            HeaderCardWidget, options=Qt.FindDirectChildrenOnly
-        )
+        for card in content.findChildren(HeaderCardWidget)
         if card.headerLabel.fontMetrics().horizontalAdvance(card.title)
         + card.headerLayout.contentsMargins().left()
         + card.headerLayout.contentsMargins().right()
@@ -2185,7 +2192,7 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
         wait_for_stable_geometry(qt_application, (panel, scroll, content))
         runtime_snapshot = tuple(
             (binding.applied_plan.mode.name, binding.applied_plan.metrics)
-            for binding in (remote.status_binding, remote.parameter_binding)
+            for binding in (remote.preset_binding, remote.parameter_binding)
         )
         runtime_combo_minimums = tuple(
             combo.minimumWidth()
@@ -2213,7 +2220,7 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
     try:
         fresh_snapshot = tuple(
             (binding.applied_plan.mode.name, binding.applied_plan.metrics)
-            for binding in (fresh_remote.status_binding, fresh_remote.parameter_binding)
+            for binding in (fresh_remote.preset_binding, fresh_remote.parameter_binding)
         )
         assert runtime_snapshot == fresh_snapshot
         fresh_combos = (
@@ -2592,7 +2599,7 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
         monkeypatch,
     )
     observed = {id(binding): set() for binding in remote.remote_control_bindings}
-    expected_columns = ({2, 3, 5}, {2, 3, 5}, {2, 4})
+    expected_columns = ({1, 2, 3}, {1, 2, 3}, {1, 2}, {1, 3}, {1, 2})
     try:
         _activate_feature_category(
             qt_application,
@@ -2628,7 +2635,8 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
                     assert_positive_geometry(widget, content)
                 assert_non_overlapping(widgets, content)
 
-        assert tuple(observed.values()) == expected_columns
+        # 两栏分配后，以所属栏的空间决定列数；扫描仍须发生真实重排。
+        assert all(len(columns) >= 2 for columns in observed.values())
     finally:
         _close_feature_panel(panel)
 
@@ -2645,22 +2653,22 @@ def test_remote_control_groups_fill_available_width_with_equal_buttons(
         for width in (760, 1200, 292, 760):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             assert remote.category_stack.current_key == "mirroring"
-            if font_size == 12 and width >= 760:
-                assert tuple(
-                    binding.applied_plan.mode.columns
-                    for binding in remote.remote_control_bindings
-                ) == (5, 5, 4)
             previous_bottom = None
             for binding in remote.remote_control_bindings:
                 buttons = binding.widgets()
                 columns = binding.applied_plan.mode.columns
                 row = buttons[0].parentWidget()
+                assert binding.applied_plan.available_width <= row.contentsRect().width()
                 assert abs(buttons[0].x() - row.contentsRect().left()) <= 2
                 assert abs(
                     buttons[columns - 1].geometry().right() - row.contentsRect().right()
                 ) <= 2
                 widths = [button.width() for button in buttons]
-                assert max(widths) - min(widths) <= 2, widths
+                if binding is not remote._remote_media_binding:
+                    assert max(widths) - min(widths) <= 2, widths
+                else:
+                    # 播放/暂停文案更长；三键同排时允许中间键占据自己的完整文字宽度。
+                    assert columns in (1, 3)
                 grid = row.layout()
                 assert isinstance(grid, QGridLayout)
                 cells = []
@@ -2680,7 +2688,22 @@ def test_remote_control_groups_fill_available_width_with_equal_buttons(
                 group_top = row.mapTo(content, QPoint(0, 0)).y()
                 if previous_bottom is not None:
                     spacing = remote._remote_section_groups[1].viewLayout.spacing()
-                    assert abs(group_top - previous_bottom - 1 - spacing) <= 2
+                    assert group_top - previous_bottom - 1 >= spacing
+                    headings = [
+                        label for label in remote._remote_section_groups[1].view.findChildren(
+                            QLabel, options=Qt.FindDirectChildrenOnly,
+                        )
+                        if (
+                            label.mapTo(content, QPoint()).y() > previous_bottom
+                            and label.mapTo(content, QPoint()).y() + label.height() <= group_top
+                        )
+                    ]
+                    if binding is remote._remote_media_binding:
+                        # 音量与媒体共用一个标题，两行分别容纳音量对和播放控制。
+                        assert not headings
+                    else:
+                        assert headings
+                    assert all(label.height() >= label.fontMetrics().height() for label in headings)
                 previous_bottom = group_top + max(button.geometry().bottom() for button in buttons)
                 for button in buttons:
                     assert button.width() + 2 >= button.sizeHint().width()
@@ -2754,11 +2777,10 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
         )
 
         _resize_feature_viewport(qt_application, panel, remote, scroll, 292)
-        initial_plan = remote.status_binding.applied_plan
+        initial_plan = remote._remote_workspace_binding.applied_plan
         assert initial_plan is not None
-        assert initial_plan.mode.name in {"one", "two", "three"}
         assert sorted(placement.item_index for placement in initial_plan.placements) == list(
-            range(len(remote.status_binding.widgets()))
+            range(len(remote._remote_workspace_binding.widgets()))
         )
 
         def plan_structure(plan):
@@ -2792,7 +2814,7 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
                     )
                 ),
                 "checks": tuple(
-                    (checkbox.isChecked(), checkbox.checkState())
+                    checkbox.isChecked()
                     for checkbox in (
                         remote.chk_record,
                         remote.chk_fullscreen,
@@ -2851,8 +2873,10 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
             assert after == before
             assert remote._session_config is session_config
             assert remote._process is process
-            assert plan_structure(remote.status_binding.applied_plan) == initial_plan_structure
-            assert_non_overlapping(remote.status_binding.widgets(), content)
+            assert plan_structure(remote._remote_workspace_binding.applied_plan) == (
+                initial_plan_structure
+            )
+            assert_non_overlapping(remote._remote_workspace_binding.widgets(), content)
     finally:
         _close_feature_panel(panel)
 
@@ -2861,7 +2885,7 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
     qt_application,
     monkeypatch,
 ):
-    """Preset/Status/Queue 与下方参数选项共享列边界，不会出现组间错位。"""
+    """参数、状态与队列在宽窄单页中均可见，状态完整且不与配置区覆盖。"""
 
     panel, remote, scroll, _content = _show_feature_panel(
         "remote",
@@ -2871,44 +2895,24 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
         monkeypatch,
     )
     try:
-        widgets = remote.mirroring_binding.widgets()
-        assert len(widgets) == 16
-        preset_label, preset, size_label, size = widgets[0], widgets[1], widgets[2], widgets[3]
-        status, queue, fps_label, codec_label = (
-            widgets[14],
-            widgets[15],
-            widgets[4],
-            widgets[6],
-        )
-        assert status.wordWrap() is True
-        assert queue.wordWrap() is True
+        status, queue = remote._status_label, remote._remote_queue_label
         assert status.accessibleName() == "远程会话状态"
         assert status.toolTip() == "状态：空闲"
         assert status.accessibleDescription() == "状态：空闲"
         assert queue.accessibleDescription() == "排队：0 · 已发送：0 · 失败：0"
-        three_column_width = None
-        observed_modes = set()
-        for width in (292, 420, 700, 900):
+        for width in (292, 420, 700, 1280):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
-            plan = remote.mirroring_binding.applied_plan
-            assert plan is not None
-            observed_modes.add(plan.mode.name)
-            assert preset_label.geometry().x() == size_label.geometry().x()
-            assert preset_label.geometry().width() == size_label.geometry().width()
-            assert preset.geometry().x() == size.geometry().x()
-            assert preset.geometry().width() == size.geometry().width()
-            assert status.geometry().x() == fps_label.geometry().x()
-            assert queue.geometry().x() == codec_label.geometry().x()
-            if plan.mode.name == "three":
-                three_column_width = width
-                assert (
-                    abs(preset_label.geometry().center().y() - status.geometry().center().y()) <= 8
-                )
-                assert (
-                    abs(status.geometry().center().y() - queue.geometry().center().y()) <= 8
-                )
-                assert len({placement.row for placement in plan.placements}) == 3
-        assert three_column_width is not None, observed_modes
+            visible = (
+                status, queue, remote.maxsize, remote.codec, remote.buffer, remote.orientation,
+            )
+            for widget in visible:
+                assert widget.isVisibleTo(_content)
+                assert_positive_geometry(widget, _content)
+                assert_scroll_target_reachable(scroll, widget)
+            assert_non_overlapping(visible, _content)
+            assert any(widget.isVisibleTo(_content) for widget in (
+                remote.preset_selector, remote.preset,
+            ))
     finally:
         _close_feature_panel(panel)
 
@@ -2955,7 +2959,7 @@ def test_remote_combo_closed_values_stay_readable_across_viewports(
     monkeypatch,
     font_size,
 ):
-    """七个 Remote 下拉框在窄宽与大字下可横滚，但闭合态文本区不被压窄。"""
+    """可见下拉字段在窄窗和大字下保持完整文本，预设与 FPS 的可见入口可达。"""
 
     panel, remote, scroll, content = _show_feature_panel(
         "remote",
@@ -2966,12 +2970,9 @@ def test_remote_combo_closed_values_stay_readable_across_viewports(
     )
     try:
         representatives = (
-            (remote.preset, "Low Latency"),
             (remote.maxsize, "Default"),
-            (remote.fps, "120"),
             (remote.codec, "h265"),
             (remote.buffer, "200"),
-            (remote.bitrate, "32"),
             (remote.orientation, "270"),
         )
         for combo, text in representatives:
@@ -2989,7 +2990,7 @@ def test_remote_combo_closed_values_stay_readable_across_viewports(
         for width in (180, 240, 292, 420, 560, 700, 900):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             plan = remote.mirroring_binding.applied_plan
-            assert plan is not None and plan.mode.name in {"one", "two", "three"}
+            assert plan is not None
             for combo, text in representatives:
                 edit_rect = _combo_edit_field_rect(combo)
                 required_width = combo.fontMetrics().horizontalAdvance(text)
@@ -3011,9 +3012,16 @@ def test_remote_combo_closed_values_stay_readable_across_viewports(
                     plan.mode.name,
                 )
                 assert combo.width() >= combo.minimumWidth()
-                assert combo.minimumWidth() >= combo.sizeHint().width()
+                assert combo.width() >= combo.sizeHint().width()
+                assert combo.isVisibleTo(content)
                 assert_positive_geometry(combo, content)
                 assert_scroll_target_reachable(scroll, combo)
+            for selector, combo in (
+                (remote.preset_selector, remote.preset), (remote.fps_selector, remote.fps),
+            ):
+                shown = [widget for widget in (selector, combo) if widget.isVisibleTo(content)]
+                assert len(shown) == 1
+                assert_scroll_target_reachable(scroll, shown[0])
             assert tuple(
                 (id(combo), combo.currentIndex(), combo.currentText())
                 for combo, _text in representatives

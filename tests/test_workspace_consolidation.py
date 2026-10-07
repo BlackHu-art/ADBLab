@@ -147,11 +147,13 @@ def test_merged_panels_keep_every_card_and_responsive_control(
         assert page is not None
         page_layout = page.layout()
         assert page_layout is not None
-        page_cards = tuple(
-            page_layout.itemAt(index).widget() for index in range(page_layout.count())
+        page_cards = (
+            tuple(page.findChildren(HeaderCardWidget))
+            if isinstance(panel, RemotePanel)
+            else tuple(page_layout.itemAt(index).widget() for index in range(page_layout.count()))
         )
         assert tuple(card.headerLabel.text() for card in page_cards) == titles
-        assert all(card.parentWidget() is page for card in page_cards)
+        assert all(page.isAncestorOf(card) for card in page_cards)
         assert stack.set_current(key)
         qt_application.processEvents()
         assert all(card.isVisibleTo(root) for card in page_cards)

@@ -1,4 +1,4 @@
-"""将操作语义映射到 Fluent 图标，补充组件库缺少的设备轮廓。
+"""将操作语义映射到 Fluent 图标，复用资源补充设备与远程按键图形。
 
 Fluent 按钮直接使用 FluentIcon，保留强调、禁用和选中状态的原生绘制；
 Qt 窗口与菜单通过 qicon() 使用相同图标和主题。
@@ -15,34 +15,44 @@ from qfluentwidgets.common.icon import SvgIconEngine, getIconColor
 from utils.resource_path import resource_path
 
 
-@lru_cache(maxsize=4)
-def _device_svg(path: str) -> str:
+@lru_cache(maxsize=32)
+def _resource_svg(path: str) -> str:
     """打包资源在进程内不可变，只在首次使用对应路径时读取。"""
     return Path(path).read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=32)
-def _tinted_device_icon(path: str, tint: str) -> QIcon:
+def _tinted_resource_icon(path: str, tint: str) -> QIcon:
     """按已解析的主题色缓存矢量引擎，保持不同 DPI 的绘制精度。"""
-    return QIcon(SvgIconEngine(_device_svg(path).replace("currentColor", tint)))
+    return QIcon(SvgIconEngine(_resource_svg(path).replace("currentColor", tint)))
 
 
-class DeviceIcon(FluentIconBase):
-    """通过 Fluent 扩展接口复用已授权的手机轮廓，避免用电话听筒表示设备。"""
+class ResourceIcon(FluentIconBase):
+    """按 Fluent 主题与调用方颜色绘制仓库已有 SVG，保留矢量缩放和禁用态。"""
+
+    def __init__(self, filename: str) -> None:
+        self._filename = filename
 
     def path(self, theme=Theme.AUTO) -> str:
         """资源定位同时支持源码与打包后的解压目录。"""
-        return resource_path("resources/icons/device-mobile.svg")
+        return resource_path(f"resources/icons/{self._filename}")
 
     def icon(self, theme=Theme.AUTO, color: QColor | str | None = None) -> QIcon:
         """颜色由当前主题或调用方确定，禁用和选中状态仍由 Fluent 引擎处理。"""
         tint = QColor(color if color is not None else getIconColor(theme)).name()
-        return QIcon(_tinted_device_icon(self.path(theme), tint))
+        return QIcon(_tinted_resource_icon(self.path(theme), tint))
 
     def render(self, painter, rect, theme=Theme.AUTO, indexes=None, **attributes):
         """导航与图标控件直接绘制时使用同一份主题着色。"""
         color = attributes.get("fill") or attributes.get("stroke")
         self.icon(theme, color).paint(painter, QRectF(rect).toRect())
+
+
+class DeviceIcon(ResourceIcon):
+    """保留设备轮廓的无参数接口，避免用电话听筒表示设备。"""
+
+    def __init__(self) -> None:
+        super().__init__("device-mobile.svg")
 
 
 DEVICE_ICON = DeviceIcon()
@@ -80,7 +90,7 @@ _FLUENT_ICONS = {
         (FluentIcon.CLOUD_DOWNLOAD, ("cloud-arrow-down.svg",)),
         (FluentIcon.COPY, ("copy.svg",)),
         (FluentIcon.LIBRARY, ("database.svg", "memory.svg")),
-        (DEVICE_ICON, ("device-mobile.svg",)),
+        (DEVICE_ICON, ("device-mobile.svg", "remote-portrait.svg")),
         (FluentIcon.PHONE, ("phone-call.svg",)),
         (FluentIcon.DOWNLOAD, ("download-simple.svg", "tray-arrow-down.svg")),
         (FluentIcon.ERASE_TOOL, ("eraser.svg",)),
@@ -140,6 +150,18 @@ _FLUENT_ICONS = {
         (FluentIcon.PEOPLE, ("user-switch.svg",)),
         (FluentIcon.WIFI, ("wifi-high.svg",)),
         (FluentIcon.CLOSE, ("x.svg",)),
+        # 远程动作使用独立别名，避免修正按键语义时改变其他页面的兼容图标。
+        (ResourceIcon("speaker-low.svg"), ("remote-volume-down.svg",)),
+        (ResourceIcon("speaker-high.svg"), ("remote-volume-up.svg",)),
+        (ResourceIcon("skip-back.svg"), ("remote-media-prev.svg",)),
+        (ResourceIcon("skip-forward.svg"), ("remote-media-next.svg",)),
+        (ResourceIcon("play-pause.svg"), ("remote-play-pause.svg",)),
+        (ResourceIcon("arrow-elbow-down-left.svg"), ("remote-enter.svg",)),
+        (ResourceIcon("backspace.svg"), ("remote-backspace.svg",)),
+        (ResourceIcon("arrow-line-down.svg"), ("remote-notification-expand.svg",)),
+        (ResourceIcon("arrow-line-up.svg"), ("remote-notification-collapse.svg",)),
+        (ResourceIcon("rectangle.svg"), ("remote-landscape.svg",)),
+        (ResourceIcon("cards.svg"), ("remote-recents.svg",)),
     )
     for name in names
 }

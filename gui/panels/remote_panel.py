@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
@@ -321,30 +322,30 @@ class RemotePanel(BasePanel):
     _ORIENTATIONS = ["0", "90", "180", "270"]
     _KEY_ICONS = {
         "HOME": "house.svg",
-        "BACK": "arrow-u-left-up.svg",
-        "RECENTS": "squares-four.svg",
+        "BACK": "arrow-left.svg",
+        "RECENTS": "remote-recents.svg",
         "MENU": "list.svg",
         "POWER": "power.svg",
         "SETTINGS": "gear.svg",
         "CAMERA": "camera.svg",
         "SEARCH": "magnifying-glass.svg",
-        "ENTER": "keyboard.svg",
-        "DEL": "backspace.svg",
-        "VOL_DOWN": "speaker-low.svg",
-        "VOL_UP": "speaker-high.svg",
-        "MEDIA_PLAY": "play.svg",
-        "MEDIA_PREV": "skip-back.svg",
-        "MEDIA_NEXT": "skip-forward.svg",
+        "ENTER": "remote-enter.svg",
+        "DEL": "remote-backspace.svg",
+        "VOL_DOWN": "remote-volume-down.svg",
+        "VOL_UP": "remote-volume-up.svg",
+        "MEDIA_PLAY": "remote-play-pause.svg",
+        "MEDIA_PREV": "remote-media-prev.svg",
+        "MEDIA_NEXT": "remote-media-next.svg",
     }
     _ACTION_ICONS = {
         "swipe_up": "arrow-up.svg",
         "swipe_down": "arrow-down.svg",
         "swipe_left": "arrow-left.svg",
         "swipe_right": "arrow-right.svg",
-        "notif_expand": "tray-arrow-down.svg",
-        "notif_collapse": "tray-arrow-up.svg",
-        "rotate_portrait": "device-rotate.svg",
-        "rotate_landscape": "device-rotate.svg",
+        "notif_expand": "remote-notification-expand.svg",
+        "notif_collapse": "remote-notification-collapse.svg",
+        "rotate_portrait": "remote-portrait.svg",
+        "rotate_landscape": "remote-landscape.svg",
     }
 
     # 表单控件由 RemotePanelForm 控制器创建，此处提供类级类型声明供跨控制器解析。
@@ -487,6 +488,59 @@ class RemotePanel(BasePanel):
         for button in self._remote_control_buttons:
             button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         super().activate_responsive_bindings()
+
+    def refresh_responsive_metrics(self) -> bool:
+        """复合控件也参与宿主的统一字体刷新，挂载后恢复其内容宽度下限。"""
+        widgets = tuple(widget for _row, items in self._responsive_row_owners for widget in items)
+        previous = tuple(widget.minimumWidth() for widget in widgets)
+        self._form_controller.refresh_control_metrics()
+        changed = super().refresh_responsive_metrics()
+        return changed or previous != tuple(widget.minimumWidth() for widget in widgets)
+
+    def _responsive_context(self, container):
+        """两栏内网格只消费所属分区的宽度，不能借用相邻栏的 viewport 空间。"""
+        context = super()._responsive_context(container)
+        sections = getattr(self, "_remote_section_groups", ())
+        if container.objectName() == "remoteWorkspaceRow":
+            # 分栏由 viewport 决定，但单栏仍需把内层不可再收缩的控件宽度传给
+            # 滚动容器。只读取最保守计划，避免上一帧多列宽度反向锁住下一次分栏。
+            # 正常 860px 最小窗口保留双栏；字号增长由栏内网格减列承接，
+            # 不同比放大外层断点。更窄工作区仍可退为单栏，并保留真实内容下限。
+            column_minimum = min(context.width, 320)
+            for section in sections:
+                required_width = max((
+                    binding.conservative_responsive_plan(context).required_width
+                    for binding, (row, _widgets) in zip(
+                        self._responsive_rows, self._responsive_row_owners,
+                    )
+                    if section.view.isAncestorOf(row)
+                ), default=0)
+                margins = section.viewLayout.contentsMargins()
+                minimum = max(
+                    column_minimum, required_width + margins.left() + margins.right(),
+                    section.headerView.minimumSizeHint().width(),
+                )
+                if section.minimumWidth() != minimum:
+                    section.setMinimumWidth(minimum)
+            return context
+        for section in sections:
+            if section.view.isAncestorOf(container):
+                margins = section.viewLayout.contentsMargins()
+                section_width = section.view.width()
+                workspace_binding = getattr(self, "_remote_workspace_binding", None)
+                if workspace_binding is not None:
+                    # 本轮候选分栏已由 viewport 确定；不等上一帧 section 几何扩宽，
+                    # 否则外层、内层和滚动条会依次反馈并耗尽同一代的收敛轮次。
+                    workspace_context = self._responsive_context(section.parentWidget())
+                    workspace_plan = workspace_binding.responsive_plan(workspace_context)
+                    columns = workspace_plan.mode.columns
+                    section_width = max(0, (
+                        workspace_context.width - workspace_plan.spacing * (columns - 1)
+                    ) // columns)
+                return replace(context, width=min(
+                    context.width, max(0, section_width - margins.left() - margins.right()),
+                ))
+        return context
 
     def get_remote_session_devices(self) -> list[str]:
         """返回正在预检或运行的镜像批次设备，不受当前复选变化影响。"""

@@ -247,6 +247,7 @@ class BasePanel(QWidget):
         policies=None,
         modes=None,
         span_tail=False,
+        adaptive_spacing=True,
     ) -> ResponsiveGridBinding:
         """在真实视觉树中创建一行 binding，并注册到面板级协调器。"""
 
@@ -309,7 +310,7 @@ class BasePanel(QWidget):
             self._responsive_coordinator,
             context_provider=self._responsive_context,
             use_provided_geometry=True,
-            adaptive_spacing=True,
+            adaptive_spacing=adaptive_spacing,
         )
         self._responsive_rows.append(binding)
         self._responsive_row_owners.append((row_container, widgets))
