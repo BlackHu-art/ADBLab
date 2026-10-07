@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.exec import CommandResult
 from services.file_download import SafeFileDownload, default_save_path, local_child_path
 
 
@@ -29,6 +30,40 @@ def test_unsafe_dialog_default_stays_inside_selected_directory(tmp_path):
     assert default_save_path(str(tmp_path), "../escape") == str(tmp_path) + os.sep
 
 
+def test_download_preserves_binary_bytes_when_legacy_shell_expands_linefeeds(tmp_path, monkeypatch):
+    content = bytes(range(256)) + b"\x00first\nsecond\r\nthird\rfourth\n\x00"
+    destination = tmp_path / "saved.bin"
+    destination.write_bytes(b"original")
+    progress = []
+
+    def run(cmd, output_path, *, timeout, cancelled):
+        assert cmd[:3] == ["adb", "-s", "synthetic-device"]
+        assert not cancelled()
+        marker = re.search(r"ADBLAB_PULL_END_[a-f0-9]+", cmd[-1])[0].encode()
+        if "cat --" in cmd[-1]:
+            payload = content + marker
+        else:
+            assert "printf FILE" in cmd[-1]
+            payload = b"FILE" + marker
+        # 旧 shell 通道即使带 -T 也可能转换 LF；exec-out 保留原始字节。
+        if cmd[3:-1] == ["shell", "-T"]:
+            payload = payload.replace(b"\n", b"\r\n")
+        else:
+            assert cmd[3:-1] == ["exec-out"]
+        Path(output_path).write_bytes(payload)
+        return CommandResult(success=True)
+
+    monkeypatch.setattr("services.file_download.CommandRunner.run_to_file", run)
+
+    SafeFileDownload("synthetic-device", lambda: False, progress.append).download(
+        "/device/file", str(destination),
+    )
+
+    assert destination.read_bytes() == content
+    assert progress == ["文件下载完成"]
+    assert not list(tmp_path.glob(".adblab-pull-*"))
+
+
 @pytest.fixture
 def shell_device(monkeypatch):
     if os.name == "nt":
@@ -36,7 +71,7 @@ def shell_device(monkeypatch):
     calls = []
 
     def run(cmd, output_path, timeout, cancelled):
-        assert cmd[:5] == ["adb", "-s", "synthetic-device", "shell", "-T"]
+        assert cmd[:4] == ["adb", "-s", "synthetic-device", "exec-out"]
         assert not cancelled()
         calls.append(cmd[-1])
         with open(output_path, "wb") as stream:

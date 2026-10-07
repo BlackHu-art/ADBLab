@@ -267,7 +267,7 @@ def preview_io(qt_application, tmp_path, monkeypatch, request):
     )
 
     def run_to_file(cmd, output_path, *, cancelled, **kwargs):
-        assert cmd[:5] == ["adb", "-s", "device-preview", "shell", "-T"]
+        assert cmd[:4] == ["adb", "-s", "device-preview", "exec-out"]
         if "ADBLAB_LIST_END_" in cmd[-1]:
             marker = re.search(r"ADBLAB_LIST_END_[a-f0-9]+", cmd[-1])[0].encode()
             Path(output_path).write_bytes(b"ADBLAB_LIST_V1\0" + marker)

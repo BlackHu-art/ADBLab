@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from core.exec import CommandRunner, ProcessRunner
+from core.exec import CommandRunner, ProcessRunner, command_outcome
 from core.log_service import LogService
 from services import file_explorer as explorer_service
 from services.file_download import SafeFileDownload
@@ -73,28 +73,50 @@ class DirectoryListWorker(ADBWorker):
             )
             with tempfile.TemporaryDirectory(prefix="adblab-directory-") as temporary:
                 path = Path(temporary) / "listing"
+                # 旧 adbd 的 shell -T 仍可能经过终端换行转换；exec-out 保留协议原始字节。
                 result = CommandRunner.run_to_file(
-                    ["adb", "-s", self.device_ip, "shell", "-T", command], str(path),
+                    ["adb", "-s", self.device_ip, "exec-out", command], str(path),
                     timeout=self.timeout, cancelled=self._aborted.is_set,
                 )
                 if self._aborted.is_set():
                     return
                 if not result.success:
-                    raise OSError("目录读取失败，请检查设备连接、权限及文件工具支持。")
+                    outcome = command_outcome(result)
+                    if outcome == "cancelled":
+                        return
+                    # 只报告错误类别，不能透传带设备标识、目录名称或本机路径的 stderr。
+                    detail = str(getattr(result, "error", "") or "").lower()
+                    if outcome == "timed_out":
+                        message = "目录读取超时，请检查设备连接后重试。"
+                    elif "permission denied" in detail:
+                        message = "目录读取被拒绝，请检查设备授权、目录访问权限及本机临时目录权限。"
+                    elif "unknown command" in detail or "not supported" in detail:
+                        message = "ADB 或设备文件工具不支持目录读取，请检查客户端及设备工具。"
+                    else:
+                        message = "目录读取失败，请检查设备连接、文件工具及本机临时目录。"
+                    self.result_ready.emit(message, True)
+                    return
                 limit = explorer_service.DIRECTORY_LIST_LIMIT + len(self._completion_marker)
                 with path.open("rb") as stream:
                     raw = stream.read(limit + 1)
                 if len(raw) > limit or not raw.endswith(self._completion_marker):
-                    raise ValueError("设备未返回完整目录列表，请刷新后重试。")
+                    # exec-out 可能把远端 stderr 合入 stdout；没有尾标记时不能把它当目录解析。
+                    raise ValueError("设备目录列表不完整或过大，请检查连接及文件工具后重试。")
                 listing = explorer_service.parse_directory_listing(
                     raw[:-len(self._completion_marker)],
                 )
             if not self._aborted.is_set():
                 self.result_ready.emit(listing, False)
-        except (OSError, ValueError):
+        except UnicodeError:
+            if not self._aborted.is_set():
+                self.result_ready.emit("目录包含非 UTF-8 名称，请在设备端重命名后刷新。", True)
+        except ValueError as exc:
+            if not self._aborted.is_set():
+                self.result_ready.emit(str(exc), True)
+        except OSError:
             if not self._aborted.is_set():
                 self.result_ready.emit(
-                    "无法安全读取目录，请检查连接、权限、设备文件工具或不支持的文件名。", True,
+                    "无法读写目录列表临时文件，请检查本机可用空间和临时目录权限。", True,
                 )
 
 
@@ -110,7 +132,8 @@ class TextReadWorker(ADBWorker):
             + f" && printf %s {explorer_service.shell_quote(self._completion_marker.decode())}",
             use_root,
         )
-        super().__init__(device_ip, ["shell", "-T", command])
+        # 与目录和下载一致使用原始执行通道，不能在接收后改写换行来猜测原文。
+        super().__init__(device_ip, ["exec-out", command])
         self.byte_limit = byte_limit
 
     def run(self):

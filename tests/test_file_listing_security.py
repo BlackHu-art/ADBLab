@@ -1,6 +1,7 @@
 """目录身份在原始字节、界面和变更入口之间保持一致。"""
 
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -56,6 +57,93 @@ def test_ambiguous_or_invalid_directory_response_never_publishes_partial_rows(ra
         explorer.parse_directory_listing(raw)
 
 
+@pytest.mark.ui
+@pytest.mark.parametrize("legacy_shell", [False, True])
+@pytest.mark.parametrize("use_root", [False, True])
+def test_directory_reader_keeps_protocol_and_link_bytes_on_legacy_transport(
+    monkeypatch, legacy_shell, use_root,
+):
+    from core import exec as execution
+    from core.adb_transport import ExecutionResult
+    from models.file_explorer_worker import DirectoryListWorker
+
+    paths = []
+
+    def capture(command, timeout, cancelled, *, stdout_sink):
+        assert not cancelled()
+        marker = re.search(r"ADBLAB_LIST_END_[a-f0-9]+", command[-1])[0].encode()
+        raw = framed(
+            ("notes.txt", "-rw-r--r--", ""), ("link", "lrwxrwxrwx", "a\r\nb\nc\r"),
+        ) + marker
+        if legacy_shell and command[3] == "shell":
+            raw = raw.replace(b"\n", b"\r\n")
+        stdout_sink.write(raw)
+        paths.append(Path(stdout_sink.name))
+        return ExecutionResult(returncode=0)
+
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "adb_runtime", lambda: None)
+    monkeypatch.setattr(execution, "native_capture", capture)
+    worker = DirectoryListWorker("synthetic-device", "/device", use_root)
+    results = []
+    worker.result_ready.connect(lambda *args: results.append(args))
+    worker.run()
+    assert len(results) == 1 and results[0][1] is False
+    assert {entry.name for entry in results[0][0].entries} == {"notes.txt", "link"}
+    assert results[0][0].symlink_targets == {"link": "a\r\nb\nc\r"}
+    assert paths and all(not path.exists() for path in paths)
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize(("failure", "category"), [
+    ("timeout", "超时"), ("permission", "权限"), ("transport", "连接"),
+    ("tool", "工具"), ("incomplete", "不完整"), ("metadata", "元数据"),
+    ("encoding", "UTF-8"), ("local", "临时"), ("remote-output", "不完整"),
+])
+def test_directory_reader_reports_safe_failure_category(monkeypatch, failure, category):
+    from core.exec import CommandResult
+    from models.file_explorer_worker import DirectoryListWorker
+
+    paths = []
+
+    def unavailable_temporary(**kwargs):
+        raise OSError("private-temp-path")
+
+    if failure == "local":
+        monkeypatch.setattr(
+            "models.file_explorer_worker.tempfile.TemporaryDirectory", unavailable_temporary,
+        )
+
+    def capture(command, output_path, **kwargs):
+        paths.append(Path(output_path))
+        raw = framed(("notes.txt", "-rw-r--r--", ""))
+        if failure == "metadata":
+            raw = raw.replace(b"+0000\n", b"CST\n")
+        if failure == "encoding":
+            raw = raw.replace(b"notes.txt", b"private-name-\xff")
+        if failure == "remote-output":
+            raw = b"find: /private-name: Permission denied\n"
+        if failure not in {"incomplete", "remote-output"}:
+            raw += re.search(r"ADBLAB_LIST_END_[a-f0-9]+", command[-1])[0].encode()
+        Path(output_path).write_bytes(raw)
+        errors = {
+            "timeout": "Timeout(30s)", "permission": "Permission denied: private-name",
+            "transport": "device 'private-device' not found", "tool": "unknown command exec-out",
+        }
+        return CommandResult(success=failure not in errors, error=errors.get(failure, ""))
+
+    monkeypatch.setattr("models.file_explorer_worker.CommandRunner.run_to_file", capture)
+    worker = DirectoryListWorker("synthetic-device", "/device", False)
+    results = []
+    worker.result_ready.connect(lambda *args: results.append(args))
+    worker.run()
+    assert len(results) == 1 and results[0][1] is True
+    assert category in results[0][0]
+    assert "private-" not in results[0][0]
+    assert bool(paths) == (failure != "local")
+    assert all(not path.exists() for path in paths)
+
+
 @pytest.fixture
 def local_shell(monkeypatch):
     if os.name == "nt":
@@ -63,7 +151,7 @@ def local_shell(monkeypatch):
     calls = []
 
     def capture(command, output_path, *, timeout, cancelled):
-        assert command[:5] == ["adb", "-s", "synthetic-device", "shell", "-T"]
+        assert command[:4] == ["adb", "-s", "synthetic-device", "exec-out"]
         assert not cancelled()
         calls.append(command)
         with open(output_path, "wb") as output:

@@ -55,7 +55,7 @@ def test_text_reader_preserves_raw_bytes_and_removes_local_temporary_file(monkey
     paths = []
 
     def capture(command, output_path, **kwargs):
-        assert command[:5] == ["adb", "-s", "test-device", "shell", "-T"]
+        assert command[:4] == ["adb", "-s", "test-device", "exec-out"]
         assert "head -c 33" in command[-1]
         assert not kwargs["cancelled"]()
         paths.append(Path(output_path))
@@ -66,6 +66,36 @@ def test_text_reader_preserves_raw_bytes_and_removes_local_temporary_file(monkey
     worker = workers.TextReadWorker("test-device", "/notes.txt", False, 32)
     results = []
     worker.result_ready.connect(lambda value, error: results.append((value, error)))
+    worker.run()
+    assert results == [(payload, False)]
+    assert paths and all(not path.exists() for path in paths)
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("use_root", [False, True])
+def test_text_reader_preserves_mixed_newlines_on_legacy_shell(monkeypatch, use_root):
+    from core import exec as execution
+    from core.adb_transport import ExecutionResult
+    from models.file_explorer_worker import TextReadWorker
+
+    payload = b"\xef\xbb\xbf  LF\nCRLF\r\nCR\rNUL\0end\xff"
+    paths = []
+    worker = TextReadWorker("synthetic-device", "/notes.txt", use_root, 128)
+
+    def capture(command, timeout, cancelled, *, stdout_sink):
+        assert not cancelled()
+        raw = payload + worker._completion_marker
+        if command[3] == "shell":
+            raw = raw.replace(b"\n", b"\r\n")
+        stdout_sink.write(raw)
+        paths.append(Path(stdout_sink.name))
+        return ExecutionResult(returncode=0)
+
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "adb_runtime", lambda: None)
+    monkeypatch.setattr(execution, "native_capture", capture)
+    results = []
+    worker.result_ready.connect(lambda *args: results.append(args))
     worker.run()
     assert results == [(payload, False)]
     assert paths and all(not path.exists() for path in paths)

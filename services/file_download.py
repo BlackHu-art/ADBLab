@@ -61,15 +61,16 @@ class SafeFileDownload:
             raise InterruptedError("下载已取消")
         marker = f"ADBLAB_PULL_END_{uuid.uuid4().hex}".encode("ascii")
         command = f"({command}) && printf %s {shell_quote(marker.decode())}"
+        # 旧 adbd 的 shell -T 仍可能转换 LF，此处使用 exec-out 保留原始文件字节。
         result = CommandRunner.run_to_file(
-            ["adb", "-s", self.device, "shell", "-T", command], str(path),
+            ["adb", "-s", self.device, "exec-out", command], str(path),
             timeout=timeout, cancelled=self.cancelled,
         )
         if self.cancelled():
             raise InterruptedError("下载已取消")
         if not result.success:
             raise OSError("设备下载失败，请检查连接和读取权限。")
-        # 兼容旧设备不传播 shell 退出码；确认完整尾标记后才允许发布正文。
+        # 执行通道可能不传播远端退出码；确认完整尾标记后才允许发布正文。
         with path.open("r+b") as stream:
             size = stream.seek(0, os.SEEK_END)
             if size < len(marker):
