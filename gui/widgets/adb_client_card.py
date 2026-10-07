@@ -34,6 +34,7 @@ from qfluentwidgets import (
 
 from core.exec import resolve_adb_program
 from gui.i18n import tr
+from gui.styles.fluent import configure_button
 from services.adb_clients import (
     ERROR_CANCELLED,
     ERROR_MISSING,
@@ -201,6 +202,11 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._custom_radio = RadioButton(self.view)
         self._custom_button = PushButton(tr("选择文件…"), self.view)
         self._action_button = PrimaryPushButton(tr("重新识别本地 ADB 环境"), self.view)
+        configure_button(
+            self._action_button,
+            text=tr("重新识别本地 ADB 环境"),
+            tooltip=tr("重新检测"),
+        )
 
         self._custom_row = self._build_custom_row()
         self._action_row = self._build_action_row()

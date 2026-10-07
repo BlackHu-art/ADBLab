@@ -48,7 +48,6 @@ from qfluentwidgets import (
     SmoothScrollArea,
     StrongBodyLabel,
     SwitchSettingCard,
-    setCustomStyleSheet,
 )
 
 from core.exec import reset_adb_program_cache
@@ -58,7 +57,8 @@ from gui.i18n import tr
 from gui.notifications import show_toast
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_font_role, apply_label_role
+from gui.styles.combo_menu import configure_combo_menu
+from gui.styles.fluent import apply_font_role, apply_label_role, set_fluent_font_rule
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adb_client_card import AdbClientSettingCard, AdbEnvironmentSettingCard
 from gui.widgets.home_banner import HomeBanner
@@ -1325,7 +1325,7 @@ class SettingsPage(ScrollArea):
                 font = BaseStyles.font_for_role(FontRole.UI)
                 family = font.family().replace("'", "\\'")
                 rule = f"ComboBox {{ font-family: '{family}'; font-size: {font.pointSizeF()}pt; }}"
-                setCustomStyleSheet(control, rule, rule)
+                set_fluent_font_rule(control, rule)
             for child in control.findChildren(QWidget):
                 child.setFont(control.font())
                 if isinstance(child, QLabel):
@@ -1534,6 +1534,7 @@ class ComboSettingCard(SettingCard):
     ) -> None:
         super().__init__(icon, title, content, parent)
         self.combo_box = ComboBox(self)
+        configure_combo_menu(self.combo_box)
         self.combo_box.addItems(values)
         if self.combo_box.findText(current) < 0:
             self.combo_box.addItem(current)

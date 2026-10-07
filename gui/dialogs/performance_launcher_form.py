@@ -1101,8 +1101,11 @@ class PerformanceLauncherForm:
         self._frame.stop_btn.setEnabled(False)
 
         self._frame.start_btn = PrimaryPushButton()
-        self._frame.start_btn.setText(tr("开始采集"))
-        self._frame.start_btn.setToolTip(tr("Start performance collection with this configuration"))
+        configure_button(
+            self._frame.start_btn,
+            text=tr("开始采集"),
+            tooltip=tr("Start performance collection with this configuration"),
+        )
         self._frame.start_btn.setIcon(get_fluent_icon("play.svg"))
         self._frame.start_btn.setIconSize(QSize(14, 14))
         self._frame.start_btn.setProperty("iconName", "play.svg")

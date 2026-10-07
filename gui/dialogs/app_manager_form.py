@@ -38,6 +38,7 @@ from gui.dialogs.app_manager_material import AppManagerMaterial
 from gui.dialogs.app_manager_rows import STATUS_ROLE, AppManagerIconView, AppManagerRowDelegate
 from gui.i18n import tr
 from gui.styles import BaseStyles
+from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import apply_focus_indicator, apply_label_role, create_transient_menu
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
@@ -195,6 +196,7 @@ class AppManagerForm:
         self._frame.search_input.returnPressed.connect(self._frame.search_input.search)
         self._frame._type_label = apply_label_role(BodyLabel(tr("类型")), FontRole.UI)
         self._frame.type_filter = ComboBox()
+        configure_combo_menu(self._frame.type_filter)
         for label, key in (
             (tr("全部应用"), "All"), (tr("用户应用"), "User Apps"), (tr("系统应用"), "System Apps")
         ):

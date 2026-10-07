@@ -13,12 +13,11 @@ from qfluentwidgets import (
     PushButton,
     SettingCard,
     SettingCardGroup,
-    setCustomStyleSheet,
 )
 
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_font_role, configure_button, refresh_fluent_widget_style
+from gui.styles.fluent import apply_font_role, configure_button, set_fluent_font_rule
 from gui.styles.typography import FontRole
 from gui.widgets.setting_card_layout import SettingsCardPresentation, apply_setting_text_style
 from services.app_update import UpdateSnapshot
@@ -145,18 +144,13 @@ class AboutPanel(SettingCardGroup):
         apply_font_role(button, FontRole.UI)
         # SettingCard 的第三方 QSS 固定按钮为 14px；局部覆盖字号，
         # 避免大字号下操作仍缩成小字，同时保留原生样式和项目焦点规则。
-        refresh_fluent_widget_style(button)
         font = BaseStyles.font_for_role(FontRole.UI)
         family = font.family().replace("'", "\\'")
         font_rule = (
             f"{type(button).__name__} {{ font-family: '{family}'; "
             f"font-size: {font.pointSizeF()}pt; }}"
         )
-        setCustomStyleSheet(
-            button,
-            str(button.property("lightCustomQss") or "") + font_rule,
-            str(button.property("darkCustomQss") or "") + font_rule,
-        )
+        set_fluent_font_rule(button, font_rule)
         button.ensurePolished()
         # 原生按钮左右各有 12px 内边距，再为项目的 2px 焦点框预留空间。
         # 尺寸只随文字和字号变化，避免禁用导致焦点转移时整组操作横向跳动。

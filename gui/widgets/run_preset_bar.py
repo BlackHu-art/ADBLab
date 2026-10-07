@@ -13,6 +13,7 @@ from gui.dialogs.fluent_dialog import FluentInputDialog, FluentMessageBox
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
+from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import set_function_tooltip
 
 
@@ -36,6 +37,7 @@ class RunPresetBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.combo = ComboBox(self)
+        configure_combo_menu(self.combo)
         self.combo.setMinimumWidth(90)
         self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.combo.setAccessibleName(tr("测试方案"))

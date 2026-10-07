@@ -6,13 +6,16 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFontMetricsF, QPainter
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPalette
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
+from gui.styles.material import ensure_material_observer
 from gui.styles.tokens import RAW_PALETTE
 from services.perf_chart_data import METRIC_UNITS, reduce_extrema
 
@@ -42,6 +45,18 @@ class PerfChartView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._chart_scroll)
         self._series_names: list[str] = []
+        self._background_layers = (
+            self._chart_view, self._chart_view.viewport(),
+            self._chart_scroll, self._chart_scroll.viewport(),
+        )
+        self._native_auto_fill: tuple[bool, ...] = ()
+        # 先完成普通背景的 QSS polish，再记录 Qt 对各层填充的最终设置。
+        self._apply_material_surface(self, False)
+        for layer in self._background_layers:
+            layer.ensurePolished()
+        self._native_auto_fill = tuple(
+            layer.autoFillBackground() for layer in self._background_layers
+        )
         self._sync_theme_state()
 
     def set_series(self, metrics: dict[str, list[tuple[float, float]]]) -> None:
@@ -111,9 +126,7 @@ class PerfChartView(QWidget):
     def _sync_theme_state(self) -> None:
         """同步背景、图例与坐标轴，确保新建轴和深色主题使用相同文字语义。"""
 
-        window = BaseStyles.color("WINDOW_BG")
         text = BaseStyles.color("TEXT_PRIMARY")
-        self._chart.setBackgroundBrush(self._chart_view.palette().brush(self._chart_view.backgroundRole()))
         self._chart.setTitleBrush(Qt.GlobalColor.transparent)
         self._chart.legend().setLabelColor(text)
         self._chart.legend().setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
@@ -124,11 +137,31 @@ class PerfChartView(QWidget):
             axis.setTitleFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
             axis.setLinePenColor(BaseStyles.color("BORDER_COLOR"))
             axis.setGridLineColor(BaseStyles.color("BORDER_COLOR"))
-        self._chart.setBackgroundVisible(False)
-        self._chart_view.setStyleSheet(
-            f"QChartView {{ background: {window}; color: {text}; border: none; }}"
-        )
         self._update_readable_width()
+        ensure_material_observer(self, PerfChartView._apply_material_surface)
+
+    @staticmethod
+    def _apply_material_surface(widget: QWidget, mica: bool) -> None:
+        """只同步图表的背景层，不重建曲线、坐标轴或改变滚动位置。"""
+        view = cast(PerfChartView, widget)
+        background = "transparent" if mica else BaseStyles.color("WINDOW_BG")
+        text = BaseStyles.color("TEXT_PRIMARY")
+        view._chart.setBackgroundVisible(False)
+        # QChartView 和外层滚动区的视口都可能独立填底，只改 QSS 无法透出宿主。
+        # 普通窗口清除显式颜色以继承当前主题，不能恢复创建时的旧主题调色板。
+        palette = QPalette()
+        if mica:
+            palette.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
+            palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 0))
+        for layer in view._background_layers:
+            layer.setPalette(palette)
+        # 清理调色板必须先于 QSS，让普通态视口重新获得原生背景色与填充语义。
+        view._chart_view.setStyleSheet(
+            f"QChartView {{ background: {background}; color: {text}; border: none; }}"
+        )
+        for layer, native_auto_fill in zip(view._background_layers, view._native_auto_fill):
+            layer.setAutoFillBackground(False if mica else native_auto_fill)
+        view._chart_view.viewport().update()
 
     def _update_readable_width(self) -> None:
         """按真实字体预留轴和图例宽度，窄宿主通过滚动访问全部指标而不缩小文字。"""

@@ -8,6 +8,7 @@ from qfluentwidgets import ComboBox, Pivot
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
+from gui.styles.combo_menu import configure_combo_menu
 
 
 class AdaptiveNavigation(QWidget):
@@ -39,6 +40,7 @@ class AdaptiveNavigation(QWidget):
 
         self.pivot = Pivot(self)
         self.combo = ComboBox(self)
+        configure_combo_menu(self.combo)
         self.pivot.setAccessibleName(tr(accessible_name))
         self.combo.setAccessibleName(tr(accessible_name))
         self.combo.setToolTip(tr("选择{category}").format(category=tr(accessible_name)))

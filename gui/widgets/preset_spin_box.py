@@ -10,6 +10,8 @@ from PySide6.QtGui import QFocusEvent, QKeyEvent
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import EditableComboBox, LineEdit
 
+from gui.styles.combo_menu import configure_combo_menu
+
 
 class StrictIntComboBox(EditableComboBox):
     """保持原版可编辑下拉外观，并以严格整数作为业务值。"""
@@ -29,6 +31,7 @@ class StrictIntComboBox(EditableComboBox):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent=parent)
+        configure_combo_menu(self)
         if minimum > maximum:
             raise ValueError("minimum 不能大于 maximum")
         preset_values = tuple(presets)

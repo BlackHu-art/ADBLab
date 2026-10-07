@@ -7,15 +7,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import MethodType
 from typing import TypeVar
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QFont
+from PySide6.QtGui import QAction, QColor, QFont, QIcon
 from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
-from qfluentwidgets import ComboBox, EditableComboBox, RoundMenu, setCustomStyleSheet
+from qfluentwidgets import PrimaryPushButton, PushButton, RoundMenu, setCustomStyleSheet
 
 from gui.i18n import tr
 from gui.styles.fonts import FontMixin
+from gui.styles.material import ensure_material_observer, is_mica_active
 from gui.styles.theme import ThemeMixin
 from gui.styles.typography import FontRole
 from gui.widgets.transient_menu import TransientMenuFocusGuard
@@ -116,9 +118,19 @@ def apply_focus_indicator(widget: QWidget, *, selector: str | None = None) -> No
     radius = ThemeMixin.RADIUS_MD
     setCustomStyleSheet(
         widget,
-        f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}",
-        f"{name}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}",
+        f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}"
+        + str(widget.property("adblabFontQss") or ""),
+        f"{name}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}"
+        + str(widget.property("adblabFontQss") or ""),
     )
+
+
+def set_fluent_font_rule(widget: QWidget, rule: str) -> None:
+    """保存局部字号声明，统一刷新时与焦点及材质合成，避免相互覆盖。"""
+    widget.setProperty("adblabFontQss", rule)
+    refresh_fluent_widget_style(widget)
+    if not widget.property("adblabConfiguredButton") and not widget.property("adblabFocusSelector"):
+        setCustomStyleSheet(widget, rule, rule)
 
 
 def apply_reading_surface(widget: _WidgetT) -> _WidgetT:
@@ -143,6 +155,19 @@ def _apply_button_custom_style(button: QAbstractButton, *, danger: bool) -> None
     light_focus = ThemeMixin.color_for("Light", "BORDER_FOCUS")
     dark_focus = ThemeMixin.color_for("Dark", "BORDER_FOCUS")
     radius = ThemeMixin.RADIUS_MD
+    font_rule = str(button.property("adblabFontQss") or "")
+
+    def finish(style: str, theme: str) -> str:
+        if is_mica_active(button) and (isinstance(button, PrimaryPushButton) or danger):
+            dark = theme == "Dark"
+            background = "rgba(255, 255, 255, 0.0419)" if dark else "rgba(249, 249, 249, 0.3)"
+            text = "rgba(255, 255, 255, 0.3628)" if dark else "rgba(0, 0, 0, 0.36)"
+            border = "rgba(255, 255, 255, 0.053)" if dark else "rgba(0, 0, 0, 0.06)"
+            style += (
+                f"{selector}:disabled {{ background: {background}; color: {text}; "
+                f"border: 1px solid {border}; }}"
+            )
+        return style + font_rule
     if danger:
 
         def danger_qss(theme: str, focus_color: str) -> str:
@@ -162,15 +187,21 @@ def _apply_button_custom_style(button: QAbstractButton, *, danger: bool) -> None
 
         setCustomStyleSheet(
             button,
-            danger_qss("Light", light_focus),
-            danger_qss("Dark", dark_focus),
+            finish(danger_qss("Light", light_focus), "Light"),
+            finish(danger_qss("Dark", dark_focus), "Dark"),
         )
         return
 
     setCustomStyleSheet(
         button,
-        f"{selector}:focus {{ border: 2px solid {light_focus}; border-radius: {radius}px; }}",
-        f"{selector}:focus {{ border: 2px solid {dark_focus}; border-radius: {radius}px; }}",
+        finish(
+            f"{selector}:focus {{ border: 2px solid {light_focus}; border-radius: {radius}px; }}",
+            "Light",
+        ),
+        finish(
+            f"{selector}:focus {{ border: 2px solid {dark_focus}; border-radius: {radius}px; }}",
+            "Dark",
+        ),
     )
 
 
@@ -202,20 +233,24 @@ def configure_fluent_control(
     apply_font_role(widget, role, ensure_height=ensure_height)
     if focus:
         apply_focus_indicator(widget)
-    if isinstance(widget, (ComboBox, EditableComboBox)) and not widget.property(
-        "adblabMenuFocusGuard"
-    ):
-        # 下拉菜单由 Fluent 在点击时创建；每一轮都必须在列表析构前归还焦点。
-        create_menu = widget._createComboMenu
+    from gui.styles.combo_menu import configure_combo_menu
 
-        def create_guarded_menu():
-            menu = create_menu()
-            TransientMenuFocusGuard(menu)
-            return menu
-
-        widget._createComboMenu = create_guarded_menu
-        widget.setProperty("adblabMenuFocusGuard", True)
+    configure_combo_menu(widget)
     return widget
+
+
+def _refresh_button_material(widget: QWidget, _mica: bool) -> None:
+    """材质变化仅重建本按钮的样式，不更改业务启用状态。"""
+    if isinstance(widget, QAbstractButton):
+        _apply_button_custom_style(widget, danger=widget.property("buttonVariant") == "danger")
+
+
+def _draw_material_icon(button, icon, painter, rect, state=QIcon.State.Off):
+    """半透明禁用主按钮沿用普通按钮图标，避免浅色材质上强制绘制白色图标。"""
+    if not button.isEnabled() and is_mica_active(button):
+        PushButton._drawIcon(button, icon, painter, rect, state)
+    else:
+        PrimaryPushButton._drawIcon(button, icon, painter, rect, state)
 
 
 def configure_button(
@@ -238,6 +273,10 @@ def configure_button(
     else:
         button.setProperty("buttonVariant", "")
     _apply_button_custom_style(button, danger=danger)
+    if isinstance(button, PrimaryPushButton) or danger:
+        ensure_material_observer(button, _refresh_button_material)
+    if type(button) is PrimaryPushButton:
+        button._drawIcon = MethodType(_draw_material_icon, button)
     return button
 
 

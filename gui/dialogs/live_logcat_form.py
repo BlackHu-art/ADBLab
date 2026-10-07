@@ -33,6 +33,7 @@ from gui.dialogs.live_logcat_material import LogcatMaterial
 from gui.dialogs.live_logcat_worker import LEVEL_LABELS
 from gui.i18n import tr
 from gui.styles import BaseStyles
+from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.typography import FontRole
 
@@ -144,6 +145,7 @@ class LiveLogcatForm:
         self._frame._filters_layout = filters
         self._frame._level_label = apply_label_role(BodyLabel(tr("等级")), FontRole.UI)
         self._frame.level_combo = ComboBox()
+        configure_combo_menu(self._frame.level_combo)
         self._frame.level_combo.addItem(tr("全部等级"), userData=None)
         for code in ("V", "D", "I", "W", "E", "F"):
             self._frame.level_combo.addItem(tr(LEVEL_LABELS[code]), userData=code)
