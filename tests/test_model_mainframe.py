@@ -1,6 +1,7 @@
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
 import os
+import subprocess
 import warnings
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, call, patch
@@ -44,12 +45,12 @@ def test_main_frame_open_cmd_launches_terminal_via_process_runner():
 class _FakeScanProc:
     def __init__(self, output: str, return_code: int = 0):
         self._output = output
-        self._return_code = return_code
+        self.returncode = return_code
 
     def poll(self):
-        return self._return_code
+        return self.returncode
 
-    def communicate(self):
+    def communicate(self, timeout=None):
         return self._output, ""
 
 
@@ -69,6 +70,9 @@ class _FakeScanRunner:
 
     def stop(self, key, timeout=5.0):
         self.stopped.append(key)
+
+    def release_finished(self, key, process):
+        return process.poll() is not None
 
 
 def test_scan_thread_uses_command_runner_for_device_polling():
@@ -236,37 +240,48 @@ def test_scan_thread_stop_terminates_inflight_scan():
     thread = _ScanThread(interval_ms=3000)
 
     class _RunningProc:
+        returncode = None
+
         def poll(self):
-            return None
+            return self.returncode
+
+        def communicate(self, timeout=None):
+            if self.returncode is not None:
+                return "", ""
+            thread.stop()
+            raise subprocess.TimeoutExpired("device_scan", timeout)
+
+        def kill(self):
+            self.returncode = -1
+
+        def wait(self, timeout=None):
+            return self.returncode
 
     class _RunningRunner:
         def __init__(self):
-            self.stopped = []
+            self.process = _RunningProc()
+            self.released = []
 
         def start(self, key, cmd, **kwargs):
-            return _RunningProc()
+            return self.process
 
-        def stop(self, key, timeout=5.0):
-            self.stopped.append(key)
+        def release_finished(self, key, process):
+            assert process is self.process
+            assert process.poll() is not None
+            self.released.append(key)
 
     runner = _RunningRunner()
-    sleeps = {"count": 0}
-
-    def stop_after_first_poll(_ms):
-        sleeps["count"] += 1
-        if sleeps["count"] == 1:
-            thread._stop_flag = True
 
     with (
         patch("gui.main_frame.CommandRunner.active_count", return_value=0),
         patch("gui.main_frame.ProcessRunner", return_value=runner),
-        patch.object(_ScanThread, "msleep", side_effect=stop_after_first_poll),
     ):
         thread.run()
 
     # 停止请求必须终止在途的 adb 子进程，保证线程及时退出，
     # 避免关闭窗口时 QThread 仍在运行被销毁。
-    assert runner.stopped == ["device_scan"]
+    assert runner.process.returncode == -1
+    assert runner.released == ["device_scan"]
 
 
 def test_main_frame_starts_scan_thread_with_debounced_refresh():

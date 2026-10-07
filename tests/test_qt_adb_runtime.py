@@ -1,6 +1,7 @@
 """ADB 运行实例的 Qt 延迟启动、扫描、展示和资源收口验证。"""
 
 import socket
+import subprocess
 import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -369,17 +370,26 @@ def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_
     monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 0)
     proc = Mock()
     proc.poll.return_value = None
+
+    def communicate(timeout):
+        if proc.poll() is not None:
+            return "", ""
+        clock[0] += timeout
+        raise subprocess.TimeoutExpired("device_scan", timeout)
+
+    proc.communicate.side_effect = communicate
+    proc.kill.side_effect = lambda: setattr(proc.poll, "return_value", -1)
     runner = Mock()
     runner.start.return_value = proc
     monkeypatch.setattr("gui.main_frame.ProcessRunner", lambda: runner)
     scan = _ScanThread()
     monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _: True)
-    monkeypatch.setattr(scan, "msleep", lambda ms: clock.__setitem__(0, clock[0] + ms / 1000))
     scan.run()
     runtime.wait_for_device_check.assert_called_once()
     if wait_seconds < 15:
         runner.start.assert_called_once()
-        runner.stop.assert_called_once_with("device_scan", timeout=2.0)
+        proc.kill.assert_called_once()
+        runner.release_finished.assert_called_once_with("device_scan", proc)
         assert clock[0] == pytest.approx(115, abs=0.11)
     else:
         runner.start.assert_not_called()

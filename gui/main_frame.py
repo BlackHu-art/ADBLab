@@ -45,6 +45,7 @@ from controllers import ADBController
 from controllers.action_catalog import ACTION_SIGNALS
 from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
 from core.log_service import LogService
+from core.native_process import cancel_and_drain_native, close_native_pipes
 from core.settings_manager import AppSettings, set_error_sink
 from core.startup_diagnostics import StartupDiagnostics
 from gui.action_feedback import ActionFeedbackPresenter
@@ -120,9 +121,9 @@ class _ScanDiscoveryState(str):
 class _ScanThread(QThread):
     """以低频率轮询 ``adb devices`` 的长生命周期线程。
 
-    扫描调用走 ProcessRunner 并以 100ms 轮询推进：停止请求可在任意时刻
-    终止正在执行的 adb 子进程，保证线程在关闭窗口的等待预算内退出，
-    避免 Qt 在 QThread 运行中销毁对象导致进程崩溃。
+    原生扫描由 ProcessRunner 跟踪，以最多 100ms 的分片读取输出；客户端已退出
+    但后代仍持有管道时也能响应停止和截止时间。清理只终止自有客户端，
+    未确认退出的进程仍由全局关闭屏障跟踪。
     """
 
     SCAN_CALL_TIMEOUT_S = 15.0
@@ -229,8 +230,9 @@ class _ScanThread(QThread):
     ) -> str | None:
         """执行一次 ``adb devices`` 并返回 stdout 文本。
 
-        发现准入与原生客户端共享截止时间；独立调用时仍使用原有扫描预算。停止请求到来时
-        终止本次子进程并返回 None，不推断具体监控软件的因果关系。
+        发现准入与原生客户端共享截止时间；独立调用时仍使用原有扫描预算。
+        失败、取消和超时返回 None，另用最多 0.5 秒确认客户端退出及排空管道；
+        独立 ADB 服务仍持有写端时不等待 EOF，也不终止共享服务。
         """
         if deadline is None:
             deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
@@ -248,24 +250,30 @@ class _ScanThread(QThread):
             )
         except Exception:
             return None
+        completed = False
         try:
-            return_code = None
-            while True:
-                if self._stop_flag:
-                    runner.stop("device_scan", timeout=2.0)
-                    return None
+            try:
+                while not self._stop_flag:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return None
+                    try:
+                        stdout, _stderr = proc.communicate(timeout=min(0.1, remaining))
+                    except subprocess.TimeoutExpired:
+                        continue
+                    completed = True
+                    return stdout if proc.returncode == 0 else None
+                return None
+            finally:
                 try:
-                    return_code = proc.poll()
-                    if return_code is not None:
-                        break
-                except OSError:
-                    return None
-                if time.monotonic() >= deadline:
-                    runner.stop("device_scan", timeout=2.0)
-                    return None
-                self.msleep(100)
-            stdout, _stderr = proc.communicate()
-            return stdout if return_code == 0 else None
+                    if not completed:
+                        cancel_and_drain_native(proc, timeout=0.5)
+                finally:
+                    try:
+                        close_native_pipes(proc)
+                    finally:
+                        # 清理失败时保留实例和全局登记，交给应用关闭屏障继续处理。
+                        runner.release_finished("device_scan", proc)
         except Exception:
             return None
 
