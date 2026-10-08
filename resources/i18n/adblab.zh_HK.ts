@@ -7269,5 +7269,41 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>点按电源键，切换屏幕开关</source>
             <translation>點按電源鍵，切換螢幕開關</translation>
         </message>
+        <message>
+            <source>自动（启动时检测）</source>
+            <translation>自動（啟動時偵測）</translation>
+        </message>
+        <message>
+            <source>自动视频编码</source>
+            <translation>自動視訊編碼</translation>
+        </message>
+        <message>
+            <source>启动时按设备能力自动选择视频编码与编码器</source>
+            <translation>啟動時按裝置能力自動選擇視訊編碼與編碼器</translation>
+        </message>
+        <message>
+            <source>启动时按设备能力自动选择编码器</source>
+            <translation>啟動時按裝置能力自動選擇編碼器</translation>
+        </message>
+        <message>
+            <source>硬件</source>
+            <translation>硬體</translation>
+        </message>
+        <message>
+            <source>软件</source>
+            <translation>軟體</translation>
+        </message>
+        <message>
+            <source>混合</source>
+            <translation>混合</translation>
+        </message>
+        <message>
+            <source>自动</source>
+            <translation>自動</translation>
+        </message>
+        <message>
+            <source>{codec} · 默认（未取得列表）</source>
+            <translation>{codec} · 預設（未取得列表）</translation>
+        </message>
     </context>
 </TS>

@@ -159,6 +159,7 @@ class RemotePanelForm(QObject):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         label = self._frame._label(text)
+        label.setMinimumWidth(label.fontMetrics().horizontalAdvance(text))
         label.setBuddy(control)
         self._frame._parameter_labels.append(label)
         layout.addWidget(label)
@@ -205,7 +206,7 @@ class RemotePanelForm(QObject):
     def refresh_control_metrics(self) -> None:
         """随宿主字体刷新复合字段的度量，不请求额外布局代次。"""
         # 字段容器承担布局下限，字体变化仍需重测其内部下拉框的选项宽度。
-        for name in ("preset", "maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
+        for name in ("preset", "maxsize", "fps", "buffer", "bitrate", "orientation"):
             self._frame._refresh_responsive_widget_minimum(getattr(self._frame, name))
         for switch in self._switches:
             configure_fluent_control(switch, focus=False)
@@ -227,6 +228,7 @@ class RemotePanelForm(QObject):
         for editor in self._editors:
             editor.refresh_metrics()
         for container, label, control in self._fields:
+            label.setMinimumWidth(label.fontMetrics().horizontalAdvance(label.text()))
             container.setMinimumWidth(max(
                 control.minimumWidth(), label.minimumSizeHint().width(),
             ))
@@ -288,7 +290,7 @@ class RemotePanelForm(QObject):
         frame._parameter_labels = []
         for name, items in (
             ("preset", frame._PRESET_NAMES), ("maxsize", frame._SIZES),
-            ("fps", frame._FPS), ("codec", frame._CODECS), ("buffer", frame._BUFFERS),
+            ("fps", frame._FPS), ("buffer", frame._BUFFERS),
             ("bitrate", frame._BITRATES), ("orientation", frame._ORIENTATIONS),
         ):
             combo = frame._combo(items)
@@ -318,6 +320,13 @@ class RemotePanelForm(QObject):
         )
         frame.parameter_binding = frame.mirroring_binding
         frame._add_responsive_row(gl, self._field(tr("码率："), bitrate_editor), wide_columns=1)
+        frame.codec = frame._status_text(tr("自动（启动时检测）"))
+        frame.codec.setWordWrap(True)
+        frame.codec.setAccessibleName(tr("自动视频编码"))
+        frame.codec.setMinimumWidth(0)
+        frame.codec.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        frame.codec.setToolTip(tr("启动时按设备能力自动选择视频编码与编码器"))
+        frame.codec.setAccessibleDescription(frame.codec.toolTip())
         frame._add_responsive_row(
             gl, self._field(tr("编码："), frame.codec),
             self._field(tr("缓冲："), frame.buffer),
@@ -354,13 +363,12 @@ class RemotePanelForm(QObject):
         frame.chk_noaudio.setChecked(True)
         frame.chk_stayawake = self._switch("保持唤醒", "镜像期间保持设备屏幕唤醒")
         frame.chk_turnscreenoff = self._switch("关闭设备屏幕", "连接后关闭设备屏幕")
-        frame.chk_hw_encoder = self._switch("硬件编码", "强制使用硬件编码器（可能造成卡顿）")
         frame.chk_noplayback = self._switch("仅录制", "只录制文件，不显示镜像窗口")
         frame._add_responsive_row(
             gl, frame.chk_record, frame.chk_noaudio, frame.chk_stayawake,
-            frame.chk_turnscreenoff, frame.chk_hw_encoder, frame.chk_noplayback,
+            frame.chk_turnscreenoff, frame.chk_noplayback,
             spacing=12, compact_columns=1, medium_columns=2, wide_columns=2,
-            policies=(WidthPolicy.NATURAL,) * 6,
+            policies=(WidthPolicy.NATURAL,) * 5,
         )
         frame.record_path = frame._status_text("")
         frame.record_path.setAccessibleName(tr("录屏保存路径"))
@@ -635,7 +643,7 @@ class RemotePanelForm(QObject):
     def _save_all(self):
         p = self._frame.preset.currentData()
         self._frame._settings.set("scrcpy_preset", p if p else "Custom")
-        for k in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
+        for k in ("maxsize", "fps", "buffer", "bitrate", "orientation"):
             self._frame._settings.set(f"scrcpy_{k}", getattr(self._frame, k).currentData())
 
     def _load(self, key: str) -> str:
@@ -662,7 +670,7 @@ class RemotePanelForm(QObject):
             saved_preset = self._frame._load("preset")
             preset_index = self._frame.preset.findData(saved_preset)
             self._frame.preset.setCurrentIndex(preset_index)
-            for key in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
+            for key in ("maxsize", "fps", "buffer", "bitrate", "orientation"):
                 combo = getattr(self._frame, key)
                 saved_index = combo.findData(self._frame._load(key))
                 if saved_index >= 0:
@@ -680,7 +688,7 @@ class RemotePanelForm(QObject):
             was_loading = getattr(self._frame, "_loading", False)
             self._frame._loading = True
             p = self._frame._PRESETS[idx]
-            for key in ("maxsize", "fps", "bitrate", "codec", "buffer"):
+            for key in ("maxsize", "fps", "bitrate", "buffer"):
                 combo = getattr(self._frame, key)
                 combo.setCurrentIndex(combo.findData(p[key]))
             self._frame._loading = was_loading
@@ -733,7 +741,6 @@ class RemotePanelForm(QObject):
             "preset",
             "maxsize",
             "fps",
-            "codec",
             "buffer",
             "bitrate",
             "orientation",
@@ -743,7 +750,6 @@ class RemotePanelForm(QObject):
             "chk_showtouches",
             "chk_stayawake",
             "chk_turnscreenoff",
-            "chk_hw_encoder",
             "chk_noplayback",
             "chk_noaudio",
         )

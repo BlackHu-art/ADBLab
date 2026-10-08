@@ -386,11 +386,16 @@ def test_command_runner_logs_slow_sanitized_command():
     from core.exec import CommandRunner
 
     proc_result = Mock(returncode=0, stdout="ok", stderr="")
+    clock = [1.0]
+
+    def run(*_args, **_kwargs):
+        clock[0] += 0.5
+        return proc_result
 
     with (
         patch("core.exec.resolve_adb_program", return_value="adb.exe"),
-        patch("core.exec.run_native", return_value=proc_result),
-        patch("core.exec.perf_counter", side_effect=[1.0, 1.5]),
+        patch("core.exec.run_native", side_effect=run),
+        patch("core.exec.perf_counter", side_effect=lambda: clock[0]),
         patch("core.exec._slow_threshold_ms", return_value=100),
         patch("core.log_service.LogService") as log_service_cls,
     ):

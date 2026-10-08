@@ -143,6 +143,7 @@ def test_remote_batch_start_snapshots_configs_for_every_selected_device():
     panel._launch_worker = None
     panel._process_key = "scrcpy_test"
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.resolve_executable.return_value = "scrcpy.exe"
     panel._scrcpy_config = lambda exe, device: _scrcpy_config(exe=exe, device=device)
     panel._set_session_state = Mock()
@@ -183,6 +184,7 @@ def _remote_batch_panel():
     panel._input_engine = Mock()
     panel._adb = _idle_input_bridge()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.start.side_effect = lambda *_args: Mock(stderr=[], poll=lambda: None)
     return panel
 
@@ -397,6 +399,8 @@ def test_remote_batch_configuration_failure_leaves_start_available():
 
 def test_remote_real_batch_worker_delivers_all_processes_once_and_stops_in_gui(qt_application):
     service = Mock()
+    service.encoder_probes_running.return_value = False
+    service.wait_encoder_probes.return_value = True
     service.resolve_executable.return_value = "scrcpy.exe"
     service.build_launch_plan.side_effect = lambda config, **_kwargs: Mock(
         args=["scrcpy", "-s", config.device], device_info="1080x2400", messages=[],
@@ -411,12 +415,13 @@ def test_remote_real_batch_worker_delivers_all_processes_once_and_stops_in_gui(q
     service.stop.side_effect = lambda key, **_kwargs: active.discard(key)
     service.is_active.side_effect = lambda key: key in active
     with (
-        patch("gui.panels.remote_panel.ScrcpyService", return_value=service),
+        patch("gui.panels.remote_panel.ScrcpyService", return_value=service) as service_type,
         patch("gui.panels.remote_panel.ADBBridge", return_value=_idle_input_bridge(path=_TEST_ADB)),
         patch("gui.panels.remote_panel.RemoteControlService"),
         patch("gui.panels.remote_panel.RemoteInputEngine"),
         patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
     ):
+        service_type.require_client.side_effect = lambda path: path
         side = SidePanel()
         remote = side._ensure_tab_loaded(2)
         try:
@@ -640,7 +645,9 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
         CommandResult(success=True, output="scrcpy 4.1"),
         CommandResult(success=True, output="ok"),
         CommandResult(success=True, output="Physical size: 1080x2400"),
-        CommandResult(success=True, output="OMX.qcom.video.encoder.avc h264 encoder"),
+        CommandResult(True, output=(
+            "--video-codec=h264 --video-encoder=OMX.qcom.video.encoder.avc (hw)"
+        )),
     ]
     service = ScrcpyService(command_runner=runner)
 
@@ -657,13 +664,17 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
 def test_scrcpy_native_preflight_accepts_six_second_queries_within_twenty_seconds():
     clock, budgets = [100.0], []
 
-    def run(command, *, timeout, native_tool):
+    def run(command, *, timeout, native_tool, env=None, cancelled=None, command_scope=None):
         assert native_tool is True
         budgets.append(timeout)
         if "--version" in command:
             return CommandResult(True, output="scrcpy 4.1")
         clock[0] += min(timeout, 6)
-        output = "ok" if command[-1] == "echo ok" else "Physical size: 1080x2400"
+        if "--list-encoders" in command:
+            assert env["ADB"] == _TEST_ADB
+            output = "--video-codec=h264 --video-encoder=c2.fixture.avc.encoder (hw)"
+        else:
+            output = "ok" if command[-1] == "echo ok" else "Physical size: 1080x2400"
         return CommandResult(timeout >= 6, output=output if timeout >= 6 else "")
 
     service = ScrcpyService(command_runner=Mock(run=run))
@@ -673,8 +684,8 @@ def test_scrcpy_native_preflight_accepts_six_second_queries_within_twenty_second
     ):
         plan = service.build_launch_plan(_scrcpy_config())
     assert plan.device_info == "1080x2400"
-    assert budgets == [3, 15, 14]
-    assert clock[0] == 112
+    assert budgets == [3, 15, 14, 8]
+    assert clock[0] == 118
     assert not any(level == "WARNING" for level, _message in plan.messages)
 
 
@@ -686,12 +697,15 @@ def test_scrcpy_ready_fast_preflight_retains_five_second_caps_and_configured_adb
         CommandResult(True, output="scrcpy 4.1"),
         CommandResult(True, output="ok"),
         CommandResult(True, output="Physical size: 1080x2400"),
+        CommandResult(True, output=(
+            "--video-codec=h264 --video-encoder=c2.fixture.avc.encoder (hw)"
+        )),
     ]
     config = _scrcpy_config()
     with patch("core.exec._adb_runtime", runtime):
         plan = ScrcpyService(command_runner=runner).build_launch_plan(config)
     assert plan.device_info == "1080x2400"
-    assert [entry.kwargs["timeout"] for entry in runner.run.call_args_list] == [3, 5, 5]
+    assert [entry.kwargs["timeout"] for entry in runner.run.call_args_list] == [3, 5, 5, 8]
     assert runtime.can_shell_fast.called
     assert all(
         entry.args == (config.adb, config.device)
@@ -810,7 +824,8 @@ def test_scrcpy_launch_plan_skips_advisory_speed_probe():
 
     plan = ScrcpyService(command_runner=Mock(run=run)).build_launch_plan(_scrcpy_config())
     assert plan.device_info == "1080x2400"
-    assert len(commands) == 3
+    assert len(commands) == 4
+    assert commands[-1] == ["scrcpy.exe", "-s", "device-1", "--list-encoders"]
     assert not any("dd if=" in command[-1] for command in commands)
 
 
@@ -1190,6 +1205,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._update_status = lambda text, color: RemotePanel._update_status(panel, text, color)
     panel._log = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._remote_control = Mock()
     panel._input_engine = Mock()
     panel._process_key = "scrcpy_test"
@@ -1244,6 +1260,7 @@ def test_remote_panel_launch_failure_returns_controls_to_idle():
     panel._update_status = Mock()
     panel._log = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.start.side_effect = OSError("launch failed")
     panel._remote_control = Mock()
     panel._process_key = "scrcpy_test"
@@ -1266,6 +1283,7 @@ def test_remote_panel_worker_start_failure_returns_to_idle():
     panel._process = None
     panel._launch_worker = None
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.resolve_executable.return_value = "C:/tools/scrcpy.exe"
     panel.panel = Mock(selected_devices=["device-1"])
     panel._set_session_state = Mock()
@@ -1300,6 +1318,7 @@ def test_remote_panel_stop_scrcpy_uses_scrcpy_service_stop():
     panel._set_session_state = Mock()
     panel._update_status = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._process_key = "scrcpy_test"
     panel._log = Mock()
 
@@ -1459,6 +1478,7 @@ def test_remote_shutdown_claim_before_user_stop_does_not_start_blocking_stop():
     panel._set_session_state = Mock()
     panel._update_status = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.request_stop.return_value = True
     panel._process_key = "scrcpy_test"
     panel._log = Mock()
@@ -1504,6 +1524,7 @@ def test_remote_user_stop_exception_releases_claim_for_shutdown_retry():
     panel._set_session_state = Mock()
     panel._update_status = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._scrcpy_service.stop.side_effect = RuntimeError("stop failed")
     panel._scrcpy_service.request_stop.return_value = True
     panel._process_key = "scrcpy_test"
@@ -2638,6 +2659,7 @@ def test_remote_panel_close_requests_scrcpy_stop_without_waiting():
     panel._process = Mock()
     panel._watchdog = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._process_key = "scrcpy_test"
     panel._launch_worker = None
     panel._remote_executor = Mock()
@@ -2660,6 +2682,7 @@ def test_remote_panel_shutdown_detaches_launch_worker_without_blocking():
     panel._process = None
     panel._watchdog = Mock()
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
     panel._process_key = "scrcpy_test"
     panel._remote_executor = Mock()
     panel._adb = _idle_input_bridge()
@@ -2706,6 +2729,7 @@ def test_remote_panel_start_ignores_shortcut_while_stopping_after_worker_exits()
     old_worker.isRunning.return_value = False
     panel._launch_worker = old_worker
     panel._scrcpy_service = Mock()
+    panel._scrcpy_service.encoder_probes_running.return_value = False
 
     with patch("gui.panels.remote_panel.ScrcpyLaunchWorker") as worker_cls:
         RemotePanel._start_scrcpy(panel)

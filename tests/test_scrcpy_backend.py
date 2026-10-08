@@ -95,9 +95,14 @@ def test_scrcpy_override_keeps_selected_homebrew_adb_in_native_plan(
         assert plan.backend == "native"
         assert plan.env["ADB"] == str(selected)
         assert all(
-            call.args[0][0] == str(exe if "--version" in call.args[0] else selected)
+            call.args[0][0] == str(
+                exe if any(flag in call.args[0] for flag in ("--version", "--list-encoders"))
+                else selected
+            )
             for call in service.command_runner.run.call_args_list
         )
+        encoder_probe = service.command_runner.run.call_args_list[-1]
+        assert encoder_probe.kwargs["env"]["ADB"] == str(selected)
     finally:
         adb_resolver.invalidate_adb_path_cache()
         execution.reset_adb_program_cache()

@@ -118,7 +118,9 @@ def native_capture(
                     continue
         finally:
             try:
-                if not completed:
+                if command_scope is not None:
+                    command_scope._cleanup_process(proc, completed=completed, timeout=0.5)
+                elif not completed:
                     cancel_and_drain_native(proc, timeout=0.5)
             finally:
                 # 普通 Popen.__exit__ 会无界等待 reader 的流锁，必须走相同的有界所有权边界。

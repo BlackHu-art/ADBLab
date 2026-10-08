@@ -9,21 +9,24 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from core.adb_dimensions import parse_wm_size
 from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
+from core.native_process import NativeCommandScope
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
 from utils.runtime_tools import bundled_tool_path
 from utils.scrcpy_bridge import resolve_scrcpy_bridge
 from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
 from utils.user_data import user_data_root
 
+from .encoder_probe import ENCODER_SCOPE_ENV, ScrcpyEncoderScope
 from .scrcpy_args import build_scrcpy_args
 from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan, ScrcpyToolError
+from .video_encoder import VideoEncoder, select_video_encoder
 
 _port_lock = threading.Lock()
 _reserved_ports: set[int] = set()
@@ -77,16 +80,26 @@ class ScrcpyService:
         self._version_cache: dict[str, str] = {}
         self._bridge_sessions: dict[str, _BridgeSession] = {}
         self._bridge_lock = threading.Lock()
+        self._encoder_scopes: set[NativeCommandScope] = set()
+        self._encoder_lock = threading.Lock()
+        self._encoder_stopped = False
 
     def run_command(
         self, cmd: list[str], timeout: float = 5, *, deadline: float | None = None,
         cancelled: Callable[[], bool] | None = None,
+        env: Mapping[str, str] | None = None,
+        command_scope: NativeCommandScope | None = None,
     ):
         """预检共用启动预算；ADB/scrcpy 即使改名也须隔离，取消后停止后续查询。"""
         self._check_budget(deadline, cancelled)
         if deadline is not None:
             timeout = min(timeout, max(0, deadline - time.monotonic()))
-        if cancelled is None:
+        if env is not None:
+            result = self.command_runner.run(
+                cmd, timeout=timeout, native_tool=True, cancelled=cancelled, env=env,
+                command_scope=command_scope,
+            )
+        elif cancelled is None:
             result = self.command_runner.run(cmd, timeout=timeout, native_tool=True)
         else:
             result = self.command_runner.run(
@@ -210,6 +223,72 @@ class ScrcpyService:
             pass
         return None
 
+    def detect_video_encoder(
+        self, config: ScrcpyConfig, *, deadline: float,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> VideoEncoder | None:
+        """后台列举设备实际编码器，共享启动预算并使用选定的原客户端。
+
+        查询只改变本次子进程环境；列表失败退回 H.264 默认选择，取消或到期直接终止。
+        """
+        environment = dict(os.environ)
+        environment["ADB"] = config.adb
+        scope = ScrcpyEncoderScope(config.exe, config.adb)
+        environment[ENCODER_SCOPE_ENV] = scope.token
+        with self._encoder_lock:
+            if self._encoder_stopped:
+                raise InterruptedError("scrcpy encoder probes stopped")
+            self._encoder_scopes.add(scope)
+
+        def query_cancelled() -> bool:
+            return scope._stop_requested() or bool(cancelled and cancelled())
+
+        try:
+            result = self.run_command(
+                [config.exe, "-s", config.device, "--list-encoders"], timeout=8,
+                deadline=deadline, cancelled=query_cancelled, env=environment,
+                command_scope=scope,
+            )
+        except (InterruptedError, TimeoutError):
+            raise
+        except OSError:
+            if scope.is_running():
+                raise
+            return None
+        finally:
+            with self._encoder_lock:
+                running = scope.is_running()
+                if not running:
+                    self._encoder_scopes.discard(scope)
+            if running:
+                raise OSError("编码器查询尚未完成清理，不能启动投屏。")
+        return select_video_encoder(result.output or "") if result.success else None
+
+    def encoder_probes_running(self) -> bool:
+        """残留查询独立于启动 worker 保留，直到进程退出得到确认。"""
+        with self._encoder_lock:
+            self._encoder_scopes = {scope for scope in self._encoder_scopes if scope.is_running()}
+            return bool(self._encoder_scopes)
+
+    def request_stop_encoder_probes(self) -> None:
+        """关闭查询准入并通知全部作用域；不在 GUI 线程等待进程。"""
+        with self._encoder_lock:
+            self._encoder_stopped = True
+            scopes = tuple(self._encoder_scopes)
+        for scope in scopes:
+            scope.request_stop()
+
+    def wait_encoder_probes(self, timeout: float) -> bool:
+        """后台重试残留清理，全部查询共用关闭预算。"""
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._encoder_lock:
+            scopes = tuple(self._encoder_scopes)
+        stopped = True
+        for scope in scopes:
+            if not scope.wait(max(0.0, deadline - time.monotonic())):
+                stopped = False
+        return not self.encoder_probes_running() and stopped
+
     @staticmethod
     def require_client(path: str | None) -> str:
         """冻结用户选定的精确客户端；scrcpy 上传文件时必须保留该进程身份。"""
@@ -257,21 +336,23 @@ class ScrcpyService:
                 config.adb, config.device, deadline=deadline, cancelled=cancelled,
             )
 
-        encoder = None
-        if config.hw_encoder:
-            encoder = self.detect_encoder(
-                config.adb, config.device, deadline=deadline, cancelled=cancelled,
-            )
-            if encoder:
-                messages.append(("INFO", f"Using encoder: {encoder}"))
-            else:
-                messages.append(("WARNING", "No hardware encoder found, using default"))
+        selected = self.detect_video_encoder(
+            config, deadline=deadline, cancelled=cancelled,
+        ) if preflight.success else None
+        encoder = selected.name if selected is not None else None
+        config = replace(config, codec=selected.codec if selected else "h264", hw_encoder=False)
+        if encoder:
+            messages.append(("INFO", f"Using encoder: {encoder}"))
+        else:
+            messages.append(("WARNING", "Video encoder list unavailable, using default H.264"))
 
         return ScrcpyLaunchPlan(
             args=build_scrcpy_args(config, encoder),
             device_info=device_info,
             version=version,
             encoder=encoder,
+            codec=config.codec,
+            encoder_kind=selected.kind if selected else "unknown",
             messages=messages,
             **self._launch_backend(config, version),
         )

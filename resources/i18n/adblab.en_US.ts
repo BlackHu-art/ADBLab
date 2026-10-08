@@ -7269,5 +7269,41 @@ Android device management, apps and diagnostics</translation>
             <source>点按电源键，切换屏幕开关</source>
             <translation>Press the power key to toggle the screen</translation>
         </message>
+        <message>
+            <source>自动（启动时检测）</source>
+            <translation>Auto (detect on start)</translation>
+        </message>
+        <message>
+            <source>自动视频编码</source>
+            <translation>Automatic video encoding</translation>
+        </message>
+        <message>
+            <source>启动时按设备能力自动选择视频编码与编码器</source>
+            <translation>Select video codec and encoder based on device capabilities at startup</translation>
+        </message>
+        <message>
+            <source>启动时按设备能力自动选择编码器</source>
+            <translation>Select encoder automatically on start</translation>
+        </message>
+        <message>
+            <source>硬件</source>
+            <translation>Hardware</translation>
+        </message>
+        <message>
+            <source>软件</source>
+            <translation>Software</translation>
+        </message>
+        <message>
+            <source>混合</source>
+            <translation>Hybrid</translation>
+        </message>
+        <message>
+            <source>自动</source>
+            <translation>Auto</translation>
+        </message>
+        <message>
+            <source>{codec} · 默认（未取得列表）</source>
+            <translation>{codec} · Default (encoder list unavailable)</translation>
+        </message>
     </context>
 </TS>

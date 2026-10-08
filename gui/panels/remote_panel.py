@@ -306,17 +306,16 @@ class RemotePanel(BasePanel):
     )
 
     _PRESETS = {
-        0: {"maxsize": "1024", "fps": "30", "bitrate": "4", "codec": "h264", "buffer": "50"},
-        1: {"maxsize": "1280", "fps": "30", "bitrate": "8", "codec": "h264", "buffer": "20"},
-        2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "codec": "h265", "buffer": "50"},
-        3: {"maxsize": "720p", "fps": "24", "bitrate": "2", "codec": "h264", "buffer": "0"},
+        0: {"maxsize": "1024", "fps": "30", "bitrate": "4", "buffer": "50"},
+        1: {"maxsize": "1280", "fps": "30", "bitrate": "8", "buffer": "20"},
+        2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "buffer": "50"},
+        3: {"maxsize": "720p", "fps": "24", "bitrate": "2", "buffer": "0"},
     }
 
     _PRESET_NAMES = ["Smooth", "Balanced", "Quality", "Low Latency"]
 
     _SIZES = ["1024", "1280", "1920", "480p", "720p", "1080p", "Default"]
     _FPS = ["24", "30", "60", "120"]
-    _CODECS = ["h264", "h265", "av1"]
     _BUFFERS = ["0", "10", "20", "30", "50", "100", "150", "200"]
     _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
     _ORIENTATIONS = ["0", "90", "180", "270"]
@@ -354,7 +353,7 @@ class RemotePanel(BasePanel):
     preset: QComboBox
     maxsize: QComboBox
     fps: QComboBox
-    codec: QComboBox
+    codec: QLabel
     buffer: QComboBox
     bitrate: QComboBox
     orientation: QComboBox
@@ -424,7 +423,6 @@ class RemotePanel(BasePanel):
         for combo in (
             self.maxsize,
             self.fps,
-            self.codec,
             self.buffer,
             self.bitrate,
             self.orientation,
@@ -729,7 +727,12 @@ class RemotePanel(BasePanel):
         return text[:1000]
 
     def shutdown(self):
-        """先停止 scrcpy 和启动 worker，再关闭输入队列及持久 ADB 会话。"""
+        """先关闭查询准入和停止 scrcpy，再关闭输入队列及持久 ADB 会话。"""
+        stop_probes = getattr(
+            getattr(self, "_scrcpy_service", None), "request_stop_encoder_probes", None,
+        )
+        if stop_probes is not None:
+            stop_probes()
         self._closing = True
         if self._process or any(
             session.resource_owned for session in getattr(self, "_device_sessions", {}).values()
@@ -782,7 +785,11 @@ class RemotePanel(BasePanel):
                 process_terminal.set()
             return running
 
-        if worker is None and not input_shutdown.has_resources and not process_running():
+        probe_checker = getattr(scrcpy_service, "encoder_probes_running", None)
+        if (
+            worker is None and not input_shutdown.has_resources and not process_running()
+            and not (probe_checker and probe_checker())
+        ):
             return False
         self._shutdown_task_registered = True
 
@@ -797,11 +804,24 @@ class RemotePanel(BasePanel):
             except RuntimeError:
                 return False
 
+        def probes_running() -> bool:
+            checker = getattr(scrcpy_service, "encoder_probes_running", None)
+            return bool(checker and checker())
+
         def is_running() -> bool:
-            return worker_running() or input_shutdown.is_running() or process_running()
+            return (
+                worker_running() or input_shutdown.is_running()
+                or process_running() or probes_running()
+            )
 
         def request_stop() -> None:
             request_error = None
+            stop_probes = getattr(scrcpy_service, "request_stop_encoder_probes", None)
+            if stop_probes is not None:
+                try:
+                    stop_probes()
+                except Exception as exc:
+                    request_error = exc
             if worker_running():
                 try:
                     self._request_launch_worker_interruption_once(worker)
@@ -838,6 +858,9 @@ class RemotePanel(BasePanel):
                     worker.wait(max(0, min(50, int(remaining * 1000))))
                 elif input_shutdown.is_running():
                     input_shutdown.wait(min(remaining, 0.05))
+                elif probes_running():
+                    assert scrcpy_service is not None  # 查询资源来自已捕获的 service。
+                    scrcpy_service.wait_encoder_probes(min(remaining, 0.5))
                 else:
                     time.sleep(min(remaining, 0.05))
             return True
@@ -846,14 +869,25 @@ class RemotePanel(BasePanel):
             deadline = time.monotonic() + max(0.0, timeout)
             first_error = None
             input_forced = False
+            probes_forced = True
             try:
                 input_forced = input_shutdown.force_stop(max(0.0, deadline - time.monotonic()))
             except Exception as exc:
                 first_error = exc
+            if probes_running():
+                try:
+                    assert scrcpy_service is not None
+                    probes_forced = scrcpy_service.wait_encoder_probes(
+                        max(0.0, deadline - time.monotonic()),
+                    )
+                except Exception as exc:
+                    probes_forced = False
+                    if first_error is None:
+                        first_error = exc
             if not process_running():
                 if first_error is not None:
                     raise first_error
-                return input_forced
+                return input_forced and probes_forced
             assert scrcpy_service is not None  # process_running() 已排除 None
             forced = True
             for key in process_keys:
@@ -874,7 +908,7 @@ class RemotePanel(BasePanel):
                 process_terminal.set()
             if first_error is not None:
                 raise first_error
-            return forced
+            return forced and probes_forced
 
         supervisor.register(
             task_id,
@@ -965,18 +999,56 @@ class RemotePanel(BasePanel):
             request_input_stop = getattr(adb, "request_stop_input_sessions", None)
             force_input_stop = getattr(adb, "force_stop_input_sessions", None)
             input_running = getattr(adb, "input_sessions_running", None)
+            wait_probes = getattr(
+                getattr(self, "_scrcpy_service", None), "wait_encoder_probes", None,
+            )
+            probe_running = getattr(
+                getattr(self, "_scrcpy_service", None), "encoder_probes_running", None,
+            )
+
+            def resources_running() -> bool:
+                """后台清理结束不等于资源已释放，残留查询仍须阻止关闭确认。"""
+                return bool(
+                    (callable(input_running) and input_running())
+                    or (callable(probe_running) and probe_running())
+                )
+
+            def force_resources(timeout: float) -> bool:
+                """输入与查询共用强停预算，失败的查询保留后台重试入口。"""
+                deadline = time.monotonic() + max(0.0, timeout)
+                input_stopped = not callable(force_input_stop) or force_input_stop(timeout)
+                if callable(input_running) and not input_running():
+                    input_stopped = True
+                probes_stopped = not callable(wait_probes) or wait_probes(
+                    max(0.0, deadline - time.monotonic()),
+                )
+                return bool(input_stopped and probes_stopped)
+
+            def close_remote_resources() -> None:
+                """直接关闭也由既有后台线程接管查询，不把有界等待放进 GUI。"""
+                try:
+                    if callable(close_input):
+                        close_input()
+                finally:
+                    if callable(wait_probes) and not wait_probes(2):
+                        raise TimeoutError("编码器查询清理超时。")
+
             handle = _RemoteInputShutdown(
                 executor=executor,
                 warmup_threads=warmup_threads,
-                close_input=close_input if callable(close_input) else None,
+                close_input=(
+                    close_remote_resources
+                    if callable(close_input) or callable(wait_probes) else None
+                ),
                 has_running_future=self._has_running_remote_future,
                 request_input_stop=request_input_stop if callable(request_input_stop) else None,
                 force_input_stop=(
-                    cast(Callable[[float], bool], force_input_stop)
-                    if callable(force_input_stop) else None
+                    force_resources
+                    if callable(force_input_stop) or callable(wait_probes) else None
                 ),
                 input_running=(
-                    cast(Callable[[], bool], input_running) if callable(input_running) else None
+                    resources_running
+                    if callable(input_running) or callable(probe_running) else None
                 ),
             )
             self._remote_input_shutdown = handle

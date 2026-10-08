@@ -230,8 +230,11 @@ class ResponsiveGridBinding:
             plan.required_width if plan.overflow_required else 0,
         )
         container.updateGeometry()
-        if (parent := container.parentWidget()) is not None:
+        parent = container.parentWidget()
+        while parent is not None:
+            # 嵌套网格改变行数或间距后，外层 QWidgetItem 的换行高度缓存也必须失效。
             parent.updateGeometry()
+            parent = parent.parentWidget()
         self._applied_plan = plan
         coordinator = self._coordinator_ref()
         if coordinator is not None:

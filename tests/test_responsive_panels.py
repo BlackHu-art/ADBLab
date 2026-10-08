@@ -122,7 +122,10 @@ def _show_feature_panel(
         patch("core.settings_manager.AppSettings.instance", return_value=settings),
         patch("gui.panels.remote_panel.AppSettings.instance", return_value=settings),
         patch("gui.panels.remote_panel.ADBBridge", return_value=adb),
-        patch("gui.panels.remote_panel.ScrcpyService", return_value=Mock()),
+        patch("gui.panels.remote_panel.ScrcpyService", return_value=Mock(
+            encoder_probes_running=Mock(return_value=False),
+            wait_encoder_probes=Mock(return_value=True),
+        )),
         patch("gui.panels.remote_panel.RemoteControlService", return_value=Mock()),
         patch("gui.panels.remote_panel.RemoteInputEngine", return_value=Mock()),
     ):
@@ -2200,7 +2203,6 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
                 remote.preset,
                 remote.maxsize,
                 remote.fps,
-                remote.codec,
                 remote.buffer,
                 remote.bitrate,
                 remote.orientation,
@@ -2227,7 +2229,6 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
             fresh_remote.preset,
             fresh_remote.maxsize,
             fresh_remote.fps,
-            fresh_remote.codec,
             fresh_remote.buffer,
             fresh_remote.bitrate,
             fresh_remote.orientation,
@@ -2748,7 +2749,6 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
             for combo, text in (
                 (remote.maxsize, "1920"),
                 (remote.fps, "120"),
-                (remote.codec, "av1"),
                 (remote.buffer, "150"),
                 (remote.bitrate, "24"),
                 (remote.orientation, "270"),
@@ -2761,7 +2761,6 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
                 (remote.chk_showtouches, True),
                 (remote.chk_stayawake, False),
                 (remote.chk_turnscreenoff, True),
-                (remote.chk_hw_encoder, True),
                 (remote.chk_noplayback, False),
                 (remote.chk_noaudio, True),
             ):
@@ -2807,7 +2806,6 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
                         remote.preset,
                         remote.maxsize,
                         remote.fps,
-                        remote.codec,
                         remote.buffer,
                         remote.bitrate,
                         remote.orientation,
@@ -2822,11 +2820,11 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
                         remote.chk_showtouches,
                         remote.chk_stayawake,
                         remote.chk_turnscreenoff,
-                        remote.chk_hw_encoder,
                         remote.chk_noplayback,
                         remote.chk_noaudio,
                     )
                 ),
+                "encoding_display": (remote.codec.text(), remote.codec.toolTip()),
                 "record": (
                     remote._record_path,
                     remote.record_path.text(),
@@ -2971,7 +2969,6 @@ def test_remote_combo_closed_values_stay_readable_across_viewports(
     try:
         representatives = (
             (remote.maxsize, "Default"),
-            (remote.codec, "h265"),
             (remote.buffer, "200"),
             (remote.orientation, "270"),
         )

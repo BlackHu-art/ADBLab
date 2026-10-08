@@ -45,7 +45,7 @@ def test_invalid_saved_custom_parameters_keep_legal_control_values(
     )
     try:
         assert remote.preset.currentIndex() == -1
-        for name in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
+        for name in ("maxsize", "fps", "buffer", "bitrate", "orientation"):
             combo = getattr(remote, name)
             assert combo.currentIndex() >= 0, name
             assert combo.currentData() == combo.itemData(0), name
@@ -55,7 +55,7 @@ def test_invalid_saved_custom_parameters_keep_legal_control_values(
 
 _OPTION_NAMES = (
     "chk_record", "chk_fullscreen", "chk_aot", "chk_showtouches", "chk_stayawake",
-    "chk_turnscreenoff", "chk_hw_encoder", "chk_noplayback", "chk_noaudio",
+    "chk_turnscreenoff", "chk_noplayback", "chk_noaudio",
 )
 
 
@@ -130,9 +130,11 @@ def test_parameter_selectors_save_stable_values_and_custom_clears_preset(remote_
     _panel, remote, _scroll, _content, settings = remote_layout
     remote.preset_selector.items["Quality"].click()
     assert remote.preset.currentData() == "Quality"
-    assert (remote.maxsize.currentData(), remote.fps.currentData(), remote.codec.currentData()) == (
-        "1920", "60", "h265",
+    assert (remote.maxsize.currentData(), remote.fps.currentData()) == (
+        "1920", "60",
     )
+    assert remote.codec.text()
+    assert settings.get("scrcpy_codec") == "h264"
     assert remote.fps_selector.currentRouteKey() == "60"
     assert remote.bitrate_slider.value() == 4
     assert settings.get("scrcpy_preset") == "Quality"
@@ -309,12 +311,13 @@ def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(remote_
     remote.set_target_devices(["synthetic-device"])
     controls = (
         remote.preset_selector, remote.fps_selector, remote.bitrate_slider,
-        remote.maxsize, remote.codec, remote.buffer, remote.orientation,
+        remote.maxsize, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
     )
     for state in (remote._SESSION_STARTING, remote._SESSION_RUNNING, remote._SESSION_STOPPING):
         remote._set_session_state(state)
         assert all(not widget.isEnabled() for widget in controls)
+        assert remote.codec.isEnabled()
         assert all(button.isEnabled() for button in remote._remote_control_buttons)
         assert all(widget.isVisibleTo(content) for widget in controls)
     remote._set_session_state(remote._SESSION_IDLE)

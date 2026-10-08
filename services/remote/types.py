@@ -86,3 +86,5 @@ class ScrcpyLaunchPlan:
     messages: list[tuple[str, str]] = field(default_factory=list)
     env: dict[str, str] | None = None
     backend: str = "native"
+    codec: str = "h264"
+    encoder_kind: str = "unknown"

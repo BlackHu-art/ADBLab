@@ -83,6 +83,7 @@ class RemoteDeviceSession:
     stop_requested: bool = False
     stop_inflight: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    launch_plan: ScrcpyLaunchPlan | None = None
 
 
 class RemotePanelScrcpy:
@@ -197,6 +198,7 @@ class RemotePanelScrcpy:
         ):
             return
         sequence = getattr(frame, "_session_key_sequence", 0)
+        session.launch_plan = plan
         frame._session_key_sequence = sequence + 1
         key = f"{frame._process_key}_{sequence}"
         session.key = key
@@ -312,6 +314,34 @@ class RemotePanelScrcpy:
         form = getattr(self._frame, "_form_controller", None)
         if form is not None:
             form.refresh_session_rows()
+        self._refresh_encoding_status()
+
+    def _refresh_encoding_status(self) -> None:
+        """只读显示已接纳的逐台计划，旧设备结果不能覆盖当前选择。"""
+        label = getattr(self._frame, "codec", None)
+        if label is None:
+            return
+        selected = getattr(self._frame, "selected_devices", ())
+        summaries, details = [], []
+        kinds = {"hw": tr("硬件"), "sw": tr("软件"), "hybrid": tr("混合")}
+        for device, session in getattr(self._frame, "_device_sessions", {}).items():
+            plan = getattr(session, "launch_plan", None)
+            if device not in selected or plan is None:
+                continue
+            codec = getattr(plan, "codec", "h264")
+            name = {"h264": "H.264", "h265": "H.265", "av1": "AV1"}.get(codec, "H.264")
+            encoder = getattr(plan, "encoder", None)
+            if isinstance(encoder, str) and encoder:
+                summary = f"{name} · {kinds.get(plan.encoder_kind, tr('自动'))}"
+                details.append(f"{name} · {encoder}")
+            else:
+                summary = tr("{codec} · 默认（未取得列表）").format(codec=name)
+                details.append(summary)
+            if summary not in summaries:
+                summaries.append(summary)
+        label.setText(" / ".join(summaries) if summaries else tr("自动（启动时检测）"))
+        label.setToolTip("\n".join(details) if details else tr("启动时按设备能力自动选择编码器"))
+        label.setAccessibleDescription(label.toolTip())
 
     def _on_scrcpy_output(self, process, line: str) -> None:
         """只有视频纹理或录制开始输出确认可用，进程存在本身不代表就绪。"""
@@ -868,12 +898,11 @@ class RemotePanelScrcpy:
             maxsize=self._frame.maxsize.currentData(),
             fps=self._frame.fps.currentData(),
             bitrate=self._frame.bitrate.currentData(),
-            codec=self._frame.codec.currentData(),
+            codec="auto",
             buffer=self._frame.buffer.currentData(),
             orientation=self._frame.orientation.currentData(),
             prefer_text=True,
             window_title=self._frame._input_engine.window_title(device),
-            hw_encoder=self._frame.chk_hw_encoder.isChecked(),
             fullscreen=self._frame.chk_fullscreen.isChecked(),
             always_on_top=self._frame.chk_aot.isChecked(),
             no_audio=self._frame.chk_noaudio.isChecked(),

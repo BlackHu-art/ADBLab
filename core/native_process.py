@@ -90,12 +90,23 @@ class NativeCommandScope:
             return
         if self._process is not None:
             try:
-                if self._process.poll() is None:
+                if not self._resources_released(self._process):
                     return
             except Exception:
                 return
         self._process = None
         self._token = None
+
+    def _resources_released(self, process: subprocess.Popen) -> bool:
+        """确认自有资源退出；派生作用域可把已登记子客户端纳入同一屏障。"""
+        return process.poll() is not None
+
+    def _cleanup_process(
+        self, process: subprocess.Popen, *, completed: bool, timeout: float,
+    ) -> None:
+        """执行方和后台接管共用清理策略；默认仅回收当前原生客户端。"""
+        if not completed:
+            cancel_and_drain_native(process, timeout=timeout)
 
     def is_running(self) -> bool:
         """启动中、执行方尚未交还或客户端退出状态未知时均保守报告运行中。"""
@@ -121,11 +132,7 @@ class NativeCommandScope:
                 # 同一时刻仅一个后台等待者能接管，其他等待者不触碰该进程。
                 self._owned = True
             try:
-                if isinstance(process, NativeProcess):
-                    process.stop(remaining)
-                elif process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=max(0.0, deadline - time.monotonic()))
+                self._cleanup_process(process, completed=False, timeout=remaining)
                 close_native_pipes(process)
             except Exception:
                 # 清理失败通过仍为 running/返回 False 暴露，不能误报已停止或丢弃句柄。

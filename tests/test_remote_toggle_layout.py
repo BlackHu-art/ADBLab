@@ -16,7 +16,7 @@ remote_layout = test_remote_layout.remote_layout
 _TOGGLES = ("chk_aot", "chk_fullscreen", "chk_showtouches")
 _SWITCHES = (
     "chk_record", "chk_noaudio", "chk_stayawake", "chk_turnscreenoff",
-    "chk_hw_encoder", "chk_noplayback",
+    "chk_noplayback",
 )
 
 

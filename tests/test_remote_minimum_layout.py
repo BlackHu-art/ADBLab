@@ -79,7 +79,7 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
         )
         options = tuple(getattr(remote, name) for name in (
             "chk_record", "chk_fullscreen", "chk_aot", "chk_showtouches", "chk_stayawake",
-            "chk_turnscreenoff", "chk_hw_encoder", "chk_noplayback", "chk_noaudio",
+            "chk_turnscreenoff", "chk_noplayback", "chk_noaudio",
         ))
         for widget in (*parameters, *options, remote.btn_start, *remote._remote_control_buttons):
             assert widget.isVisibleTo(content)

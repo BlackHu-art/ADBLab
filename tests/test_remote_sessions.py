@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QThread
+from PySide6.QtWidgets import QComboBox, QLabel
 
 from gui.panels.side_panel import SidePanel
 from services.remote.types import ScrcpyLaunchPlan
@@ -158,6 +159,37 @@ def remote_session(monkeypatch, qt_application, tmp_path, isolated_app_settings)
         assert remote._remote_input_shutdown.wait(2)
         assert _wait(qt_application, lambda: not service.inflight)
         side.close()
+
+
+def test_encoding_is_read_only_and_saved_codec_cannot_override_auto(remote_session):
+    remote, _service = remote_session
+    remote._settings.set("scrcpy_codec", "h265")
+    assert remote.reload_from_settings()
+    assert isinstance(remote.codec, QLabel)
+    assert not isinstance(remote.codec, QComboBox)
+    assert not hasattr(remote, "chk_hw_encoder")
+    assert remote._scrcpy_config("scrcpy.exe", "fixture-device").codec == "auto"
+    assert remote._settings.get("scrcpy_codec") == "h265"
+
+
+def test_encoding_display_keeps_each_device_detection(remote_session, qt_application):
+    remote, service = remote_session
+    build = service.build_launch_plan
+
+    def prepare(config, **kwargs):
+        plan = build(config, **kwargs)
+        return replace(
+            plan, codec="h264" if config.device == "one" else "h265",
+            encoder=f"c2.fixture.{config.device}.encoder", encoder_kind="hw",
+        )
+
+    service.build_launch_plan = prepare
+    remote.set_target_devices(["one", "two"])
+    remote._start_scrcpy()
+    assert _wait(qt_application, lambda: len(service.started) == 2)
+    assert "H.264" in remote.codec.text() and "H.265" in remote.codec.text()
+    assert "c2.fixture.one.encoder" in remote.codec.toolTip()
+    assert "c2.fixture.two.encoder" in remote.codec.toolTip()
 
 
 def test_fast_device_starts_before_slow_preflight_finishes_in_gui(remote_session, qt_application):
@@ -350,6 +382,42 @@ def test_stop_cancels_warmup_and_shutdown_waits_for_preparation(remote_session, 
     release.set()
     assert _wait(qt_application, lambda: not remote._orphaned_launch_workers)
     assert not service.started
+
+
+def test_shutdown_keeps_probe_residual_after_launch_worker_finished(remote_session):
+    from adblab.application.supervision import StopDisposition, TaskSupervisor
+
+    remote, service = remote_session
+    residual = [True]
+    service.encoder_probes_running = lambda: residual[0]
+    service.request_stop_encoder_probes = Mock()
+    service.wait_encoder_probes = lambda timeout: not residual[0]
+    assert remote._launch_worker is None
+    supervisor = TaskSupervisor()
+    assert remote.register_shutdown_task(supervisor, owner_id="test", task_id="remote")
+    remote.shutdown()
+    assert service.request_stop_encoder_probes.called
+    result = supervisor.stop_all(deadline=0.02)
+    assert result[0].disposition is StopDisposition.TIMED_OUT
+    residual[0] = False
+    result = supervisor.stop_all(deadline=0.2)
+    assert result[0].disposition is StopDisposition.ALREADY_STOPPED
+
+
+def test_direct_shutdown_retains_and_retries_probe_resources(remote_session):
+    remote, service = remote_session
+    residual = [True]
+    service.encoder_probes_running = lambda: residual[0]
+    service.request_stop_encoder_probes = Mock()
+    service.wait_encoder_probes = lambda timeout: not residual[0]
+    remote.shutdown()
+    handle = remote._remote_input_shutdown
+    assert not handle.wait(0.03)
+    assert handle.is_running()
+    assert not handle.force_stop(0.03)
+    residual[0] = False
+    assert handle.force_stop(0.2)
+    assert handle.wait(0.2)
 
 
 def test_stop_cancels_device_warmup_without_retargeting(remote_session, qt_application):
