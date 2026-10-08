@@ -3,6 +3,7 @@
 import subprocess
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -276,7 +277,7 @@ def test_persistent_initial_host_timeout_is_bounded_and_diagnosed(host_transport
     started = clock[0]
     assert runtime.start()
     wait_for_probe(runtime)
-    assert server.budgets == [3.0]
+    assert server.budgets == [0.4]
     assert clock[0] - started == pytest.approx(3.0)
     assert runtime.snapshot().status == "host_timeout"
     assert runtime.snapshot().effective_native_only
@@ -299,7 +300,7 @@ def test_delayed_connection_refusal_bootstraps_once_and_enables_fast_discovery(
     wait_for_probe(runtime)
     assert runtime.snapshot().status == "ready"
     assert runtime.can_scan_fast()
-    assert server.budgets[:2] == [3.0, 3.0]
+    assert server.budgets[:2] == [0.4, 0.4]
     assert server.bootstrap_budgets == [30.0]
     assert "starting_server" in statuses
     assert any("ADB bootstrap status=starting_server" in line for line in diagnostics)
@@ -337,7 +338,7 @@ def test_unavailable_host_recovers_with_slow_warm_response(host_transport, was_a
         runtime.request_device_check()
         wait_for_probe(runtime)
         # 已验证服务的普通健康检查继续只用一秒，失败才进入恢复预算。
-        assert server.budgets[-1] == 1.0
+        assert server.budgets[-1] == 0.4
     else:
         server.response_delay = 4.0
         assert runtime.start()
@@ -355,13 +356,13 @@ def test_unavailable_host_recovers_with_slow_warm_response(host_transport, was_a
     wait_for_probe(runtime)
     assert runtime.snapshot().status == "ready"
     assert runtime.can_scan_fast()
-    assert server.budgets[-1] == 3.0
+    assert server.budgets[-1] == 0.4
     assert len(native) == 1
     assert all("start-server" not in cmd for cmd in native)
     result = runtime.try_run([ADB, "devices"], 5)
     assert result is not None and result.kind == "completed"
     assert result.stdout == b"List of devices attached\n\n"
-    assert server.budgets[-1] == pytest.approx(5.0)
+    assert server.budgets[-1] == 0.4
     assert all(sock.closed for sock in server.sockets)
 
 
@@ -456,8 +457,8 @@ def test_shutdown_cancels_slow_initial_service_bootstrap(host_transport, monkeyp
         release.set()
         wait_for_probe(runtime)
     assert proc.killed and proc.drained
-    assert commands == [[ADB, "start-server"]]
-    assert server.budgets == [3.0]
+    assert commands == [[str(Path(ADB).with_name("adblab-adb.exe")), "start-server"]]
+    assert server.budgets == [0.4]
     assert not runtime.snapshot().checking
     assert runtime.snapshot().status != "starting_server"
     assert not runtime.snapshot().available

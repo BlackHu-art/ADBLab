@@ -37,8 +37,14 @@ def native_capture(
     deadline = time.monotonic() + timeout
     if cancelled() or (command_scope is not None and command_scope._stop_requested()):
         return ExecutionResult(kind="cancelled")
+    if cmd and os.path.basename(cmd[0]).lower() == "adb.exe":
+        from utils.adb_resolver import client_executable
+
+        cmd = [client_executable(cmd[0]), *cmd[1:]]
     adb_debug.command(cmd, backend="native_client", timeout=timeout)
-    hold_adb_lock = bool(cmd) and os.path.basename(cmd[0]).lower() in {"adb", "adb.exe"}
+    hold_adb_lock = bool(cmd) and os.path.basename(cmd[0]).lower() in {
+        "adb", "adb.exe", "adblab-adb.exe",
+    }
     if hold_adb_lock:
         adb_client_lock.acquire()
     token = None
@@ -328,6 +334,15 @@ class AdbRuntime:
             )
         self._publish()
 
+    @staticmethod
+    def _server_needs_start(result: ExecutionResult) -> bool:
+        """端口拒绝，或连接阶段超时，都表示本地服务还没在听。"""
+
+        if result.kind == "unavailable":
+            return True
+        detail = result.diagnostics
+        return result.kind == "timeout" and detail is not None and detail.stage == "connect"
+
     def _service_ready(self) -> None:
         with self._condition:
             first = not self._ready_sent
@@ -497,7 +512,7 @@ class AdbRuntime:
                 initial_timeout=host_timeout,
                 current=lambda: self._current(host, host_epoch) and generation == self._generation,
             )
-            if listing.kind == "unavailable" and self._allow_bootstrap and not stop():
+            if self._server_needs_start(listing) and self._allow_bootstrap and not stop():
                 with self._condition:
                     if not self._current(host, host_epoch) or generation != self._generation:
                         return

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import BinaryIO
 
 CancelCheck = Callable[[], bool]
+# 本机端口无人监听时，连接拒绝大约 2 秒才返回。先到时限就放弃，不要把整段拒绝等完。
+_CONNECT_TIMEOUT = 0.4
 
 # 5037 服务一次只能由一个 adb.exe 拉起。版本检查和 start-server 同时进行时，
 # 后到的连接会被重置，客户端就报 protocol fault / connection reset。
@@ -69,7 +71,12 @@ class Connection:
         self._stage_started = self._started
         with self._phase("connect"):
             self._check_cancelled()
-            self.sock = socket.create_connection(("127.0.0.1", 5037), timeout=timeout)
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            self.sock = socket.create_connection(
+                ("127.0.0.1", 5037), timeout=min(_CONNECT_TIMEOUT, remaining),
+            )
         self._disable_nagle()
 
     @contextmanager
@@ -298,7 +305,11 @@ def capture(
     except CommandCancelled as exc:
         return ExecutionResult(kind="cancelled", diagnostics=getattr(exc, "_adb_diagnostics", None))
     except TimeoutError as exc:
-        return ExecutionResult(kind="timeout", diagnostics=getattr(exc, "_adb_diagnostics", None))
+        diagnostics = getattr(exc, "_adb_diagnostics", None)
+        # 连接还没建立就到时，和端口拒绝一样：服务不在听，不能当成已连上之后的读超时。
+        if diagnostics is not None and diagnostics.stage == "connect":
+            return ExecutionResult(kind="unavailable", diagnostics=diagnostics)
+        return ExecutionResult(kind="timeout", diagnostics=diagnostics)
     except OutputError as exc:
         return ExecutionResult(
             stderr=str(exc).encode("utf-8"),

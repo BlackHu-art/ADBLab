@@ -127,7 +127,7 @@ def _devices_after_server_protocol_fault(
     if listed.kind == "completed" and listed.returncode == 0:
         return listed
     retry = run_native(
-        cmd,
+        _launch_command(cmd),
         isolate=_is_native_tool(cmd),
         capture_output=True,
         text=True,
@@ -158,12 +158,24 @@ def resolve_command(cmd: list[str]) -> list[str]:
     return resolved
 
 
+def _launch_command(cmd: list[str]) -> list[str]:
+    """真正创建进程时再换掉 ``adb.exe`` 文件名，直连准入仍使用解析出的原路径。"""
+
+    if cmd and os.path.basename(cmd[0]).lower() == "adb.exe":
+        from utils.adb_resolver import client_executable
+
+        return [client_executable(cmd[0]), *cmd[1:]]
+    return cmd
+
+
 def _is_native_tool(command: list[str]) -> bool:
     """仅隔离 ADB 和 scrcpy；已选择的改名 ADB 同样处理，本应用 worker 保持原环境。"""
     if not command:
         return False
     program = command[0]
-    if os.path.basename(program).lower() in {"adb", "adb.exe", "scrcpy", "scrcpy.exe"}:
+    if os.path.basename(program).lower() in {
+        "adb", "adb.exe", "adblab-adb.exe", "scrcpy", "scrcpy.exe",
+    }:
         return True
     return bool(_adb_path) and os.path.normcase(os.path.abspath(program)) == os.path.normcase(
         os.path.abspath(_adb_path)
@@ -325,12 +337,14 @@ class CommandRunner:
             else:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
                 run_timeout = remaining if runtime is not None else timeout
-                hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {"adb", "adb.exe"}
+                hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
+                    "adb", "adb.exe", "adblab-adb.exe",
+                }
                 if hold_adb_lock:
                     adb_client_lock.acquire()
                 try:
                     proc = run_native(
-                        resolved_cmd,
+                        _launch_command(resolved_cmd),
                         isolate=native_tool or _is_native_tool(resolved_cmd),
                         capture_output=True,
                         text=True,
@@ -410,13 +424,14 @@ class CommandRunner:
                                 resolved_cmd, backend="native_client", timeout=remaining,
                             )
                             hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
-                                "adb", "adb.exe",
+                                "adb", "adb.exe", "adblab-adb.exe",
                             }
                             if hold_adb_lock:
                                 adb_client_lock.acquire()
                             try:
                                 proc = run_native(
-                                    resolved_cmd, isolate=_is_native_tool(resolved_cmd),
+                                    _launch_command(resolved_cmd),
+                                    isolate=_is_native_tool(resolved_cmd),
                                     stdout=output_file, stderr=subprocess.PIPE,
                                     shell=shell, timeout=remaining, creationflags=CF,
                                 )
@@ -644,8 +659,9 @@ class ProcessRunner:
             popen_kwargs["env"] = env
         resolved_cmd = resolve_command(cmd)
         adb_debug.command(resolved_cmd, backend="native_client")
+        launched = _launch_command(resolved_cmd)
         return popen_native(
-            resolved_cmd, isolate=native_tool or _is_native_tool(resolved_cmd), **popen_kwargs,
+            launched, isolate=native_tool or _is_native_tool(resolved_cmd), **popen_kwargs,
         )
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:

@@ -306,3 +306,16 @@ def test_other_platforms_never_offer_macos_locations(monkeypatch, platform):
     _existing_paths(monkeypatch, ["/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
     assert adb_resolver.list_adb_candidates() == []
     assert adb_resolver.resolve_adb_path() is None
+
+
+def test_windows_client_executable_avoids_adb_exe_name(monkeypatch, tmp_path):
+    source = tmp_path / "adb.exe"
+    source.write_bytes(b"adb-bytes")
+    monkeypatch.setattr(adb_resolver.sys, "platform", "win32")
+
+    launched = adb_resolver.client_executable(str(source))
+
+    assert os.path.basename(launched) == "adblab-adb.exe"
+    assert (tmp_path / "adblab-adb.exe").read_bytes() == b"adb-bytes"
+    assert adb_resolver.client_executable(str(source)) == launched
+    assert adb_resolver.client_executable(str(tmp_path / "other.exe")) == str(tmp_path / "other.exe")

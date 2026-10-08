@@ -25,6 +25,10 @@ CLIENT_SOURCE_TOKENS = frozenset({
 })
 SDK_SOURCE_TOKENS = frozenset({"sdk_home", "sdk_root", "sdk_local", "sdk_macos"})
 _client_preference = CLIENT_PREFERENCE_AUTO
+# 本机策略按进程文件名拦截 adb.exe，每次启动大约 6 秒且几乎不占 CPU。
+# 同目录换名后 DLL 仍能加载，版本检查大约 0.1 秒。
+_FAST_CLIENT_NAME = "adblab-adb.exe"
+_fast_client_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,30 @@ class AdbCandidate:
         if self.source in _PRE_VALIDATED_SOURCES:
             return True
         return bool(self.path) and os.path.isfile(self.path)
+
+
+def client_executable(path: str) -> str:
+    """返回实际用来启动的客户端。Windows 上避开文件名 ``adb.exe``。"""
+
+    if sys.platform != "win32" or not path:
+        return path
+    if os.path.basename(path).lower() != "adb.exe":
+        return path
+    if not os.path.isfile(path):
+        return path
+    target = os.path.join(os.path.dirname(path), _FAST_CLIENT_NAME)
+    try:
+        source_size = os.path.getsize(path)
+    except OSError:
+        return path
+    with _fast_client_lock:
+        try:
+            if os.path.isfile(target) and os.path.getsize(target) == source_size:
+                return target
+            shutil.copyfile(path, target)
+        except OSError:
+            return path
+    return target
 
 
 def set_client_preference(value: object) -> str:

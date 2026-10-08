@@ -215,7 +215,12 @@ class ScrcpyService:
         """配置冻结前验证精确客户端，不允许 scrcpy 再按 PATH 自行选择。"""
         if not path or not os.path.isabs(path) or not os.path.isfile(path):
             raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择客户端后启动投屏。")
-        return path
+        from utils.adb_resolver import client_executable
+
+        launched = client_executable(path)
+        if not os.path.isfile(launched):
+            raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择客户端后启动投屏。")
+        return launched
 
     def build_launch_plan(
         self, config: ScrcpyConfig, *, timeout: float = 20,
