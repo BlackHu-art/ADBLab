@@ -1,13 +1,73 @@
 """提供 Remote 面板的 scrcpy 生命周期与停止所有权管理。"""
 
+import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
 
 from PySide6.QtCore import Qt
 
+from core.diagnostics import redact_diagnostic
 from gui.i18n import tr
-from services.remote import ScrcpyConfig, ScrcpyService
+from services.remote import ScrcpyConfig, ScrcpyLaunchPlan, ScrcpyService
+
+
+@dataclass(frozen=True)
+class _ScrcpyDiagnosticContext:
+    """reader 持有启动时的私密值副本，后续选择、重试及计划变动不能解除脱敏。"""
+
+    paths: tuple[str, ...]
+    devices: tuple[str, ...]
+
+    @classmethod
+    def from_plan(
+        cls, config: ScrcpyConfig, plan: ScrcpyLaunchPlan, known_devices: tuple[str, ...],
+    ):
+        """工具可能在预检中才解析，必须从实际计划取路径，不能依赖原配置的空 exe。"""
+        paths = {config.adb, config.record_path}
+        if plan.args:
+            paths.add(plan.args[0])
+            executable = plan.args[0].replace("\\", "/")
+            if "/" in executable:
+                paths.add(executable.rsplit("/", 1)[0] + "/scrcpy-server")
+        environment = plan.env or {}
+        paths.update(environment.get(key, "") for key in (
+            "ADB", "ADBLAB_SCRCPY_SERVER", "SCRCPY_SERVER_PATH", "SCRCPY_ICON_PATH",
+        ))
+        for index, argument in enumerate(plan.args):
+            if argument in {"--record", "-r"} and index + 1 < len(plan.args):
+                paths.add(plan.args[index + 1])
+            elif argument.startswith("--record="):
+                paths.add(argument.partition("=")[2])
+        variants = {
+            variant for path in paths if "/" in path or "\\" in path
+            for variant in (path, path.replace("\\", "/"), path.replace("/", "\\"))
+        }
+        return cls(
+            tuple(sorted(variants, key=len, reverse=True)),
+            tuple(dict.fromkeys((config.device, *known_devices))),
+        )
+
+    def redact(self, line: str) -> str:
+        """仅确认完整已知路径的边界后保留后缀；未知路径仍由通用规则保守遮蔽。"""
+        for path in self.paths:
+            for quote in ("\"", "'"):
+                line = line.replace(f"{quote}{path}{quote}", f"{quote}<path>{quote}")
+            # 行尾和工具诊断的冒号分隔可确认路径已结束，空格本身不能作为边界。
+            line = re.sub(r"(?<![\w/\\])" + re.escape(path) + r"(?=$|: )", "<path>", line)
+        return redact_diagnostic(line, self.devices)
+
+
+def _scrcpy_log_level(line: str) -> str:
+    """只提升明确错误和警告；普通输出仍保留 DEBUG，避免投屏过程刷屏。"""
+    message = line.removeprefix("[server] ")
+    if re.match(r"(?:ERROR|adb:\s*error):", message, re.IGNORECASE) or message in {
+        "Aborted", "Aborted (core dumped)",
+    }:
+        return "ERROR"
+    if re.match(r"WARN(?:ING)?:", message, re.IGNORECASE):
+        return "WARNING"
+    return "DEBUG"
 
 
 @dataclass
@@ -159,8 +219,20 @@ class RemotePanelScrcpy:
         if plan.device_info:
             frame._remote_control.remember_dimensions(config.device, plan.device_info.split("x"))
         self._refresh_sessions()
-        self._start_process_task(self._read_process_stderr, process)
-        self._start_process_task(self._read_process_stdout, process)
+        # scrcpy 的设备枚举可能含本次目标以外的设备，不能缩小原有已知身份的遮蔽集合。
+        devices = (
+            *getattr(frame, "_session_devices", ()), *getattr(frame, "_device_sessions", {}),
+            *(getattr(frame, "_target_devices", ()) or ()),
+            str(getattr(frame, "_active_device", "") or ""),
+        )
+        diagnostics = _ScrcpyDiagnosticContext.from_plan(config, plan, devices)
+        backend = plan.backend if plan.backend in {"native", "direct"} else "unknown"
+        version = plan.version if re.fullmatch(r"\d+\.\d+(?:\.\d+)?", plan.version) else "unknown"
+        frame.signals.log_message.emit(
+            "DEBUG", f"scrcpy launch backend={backend} version={version}",
+        )
+        self._start_process_task(self._read_process_stderr, process, diagnostics)
+        self._start_process_task(self._read_process_stdout, process, diagnostics)
         if not config.no_window:
             self._start_process_task(self._focus_window_title, config.window_title)
         self._start_process_task(self._warm_device_input, session)
@@ -401,7 +473,7 @@ class RemotePanelScrcpy:
             frame._set_running(False)
             frame._update_status("Error", None)
 
-    def _start_process_task(self, target, argument) -> bool:
+    def _start_process_task(self, target, argument, *extra_arguments) -> bool:
         """保留每个镜像 reader/焦点任务，关闭屏障等待它们退出后再释放面板。"""
         frame = self._frame
         with frame._shutdown_lifecycle_lock():
@@ -412,7 +484,9 @@ class RemotePanelScrcpy:
                 threads = []
                 frame._scrcpy_threads = threads
             try:
-                thread = threading.Thread(target=target, args=(argument,), daemon=True)
+                thread = threading.Thread(
+                    target=target, args=(argument, *extra_arguments), daemon=True,
+                )
                 thread.start()
             except Exception as exc:
                 frame._log("WARNING", f"scrcpy background task failed: {type(exc).__name__}")
@@ -518,17 +592,19 @@ class RemotePanelScrcpy:
         proc = self._frame._process
         self._read_process_stderr(proc)
 
-    def _read_process_stderr(self, proc):
+    def _read_process_stderr(self, proc, diagnostics: _ScrcpyDiagnosticContext | None = None):
         """读取指定进程的诊断流，进程引用不随用户选择变化。"""
         if proc:
-            self._read_process_output(proc, proc.stderr)
+            self._read_process_output(proc, proc.stderr, diagnostics)
 
-    def _read_process_stdout(self, proc):
+    def _read_process_stdout(self, proc, diagnostics: _ScrcpyDiagnosticContext | None = None):
         """scrcpy 的 INFO 与 FPS 位于 stdout，必须单独排空才能取得就绪证据。"""
         if proc:
-            self._read_process_output(proc, proc.stdout)
+            self._read_process_output(proc, proc.stdout, diagnostics)
 
-    def _read_process_output(self, proc, stream):
+    def _read_process_output(
+        self, proc, stream, diagnostics: _ScrcpyDiagnosticContext | None = None,
+    ):
         """两个输出流使用同一进程身份投递事件，关闭屏障分别等待各 reader。"""
         if stream:
             try:
@@ -548,9 +624,15 @@ class RemotePanelScrcpy:
                     elif self._frame._should_ignore_scrcpy_log_line(line):
                         continue
                     else:
-                        self._frame._log(
-                            "DEBUG", f"[scrcpy] {self._frame._redact_remote_diagnostic(line)}"
+                        message = (
+                            diagnostics.redact(line) if diagnostics is not None else
+                            redact_diagnostic(self._frame._redact_remote_diagnostic(line))
                         )
+                        # 原始错误进入统一日志和诊断文件，不为每行触发 Remote 业务通知。
+                        if not getattr(self._frame, "_closing", False):
+                            self._frame.signals.log_message.emit(
+                                _scrcpy_log_level(line), f"[scrcpy] {message}",
+                            )
             finally:
                 # 读取线程独占流的关闭，GUI 与进程清理线程不争抢阻塞读取持有的锁。
                 stream.close()

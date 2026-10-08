@@ -47,6 +47,27 @@ def test_fast_plan_binds_only_scrcpy_child_environment(service, monkeypatch, tmp
     assert os.environ["ADB"] == "unrelated-adb.exe"
 
 
+@pytest.mark.parametrize("client_name", ["adb.exe", "custom-adb.exe"])
+def test_native_scrcpy_preserves_selected_client_identity_for_server_upload(
+    service, monkeypatch, tmp_path, client_name,
+):
+    selected = tmp_path / client_name
+    selected.write_bytes(b"synthetic-adb")
+    (tmp_path / "adblab-adb.exe").write_bytes(b"synthetic-adb")
+    monkeypatch.setattr("utils.adb_resolver.sys.platform", "win32")
+    monkeypatch.setattr("services.remote.scrcpy_service.resolve_scrcpy_bridge", lambda: None)
+    config = _scrcpy_config(
+        exe=str(tmp_path / "scrcpy.exe"),
+        adb=ScrcpyService.require_client(str(selected)),
+    )
+
+    plan = service.build_launch_plan(config)
+
+    assert plan.backend == "native"
+    assert config.adb == str(selected)
+    assert plan.env["ADB"] == str(selected)
+
+
 def test_scrcpy_override_keeps_selected_homebrew_adb_in_native_plan(
     service, monkeypatch, tmp_path,
 ):

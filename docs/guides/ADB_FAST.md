@@ -223,7 +223,10 @@ platform-tools 后无需重启应用。正常 Windows onedir 的资源根是
 
 每台投屏在启动前冻结配置与 ADB 后端。配置和启动计划要求精确、存在的绝对客户端路径；
 缺失时给出重新选择客户端的提示，在建立投屏会话、分配端口和启动 scrcpy 前终止。原生后端
-始终通过子进程 `ADB` 环境变量传入该路径。独立入口
+始终通过子进程 `ADB` 环境变量传入该路径。
+[scrcpy_service.py](../../services/remote/scrcpy_service.py) 保留选定客户端的文件名和路径，
+不将查询用的改名副本传给 scrcpy：不同进程身份可能获得不同文件读取视图，影响 server 上传内容。
+准备阶段的普通查询仍由 CommandRunner 选择执行方式。独立入口
 [scrcpy_adb_bridge.py](../../scripts/scrcpy_adb_bridge.py) 仅通过 scrcpy 子进程的 `ADB` 环境变量
 传入，不修改全局环境或系统监控。它只支持已有服务验证、设备列表、固定 scrcpy-server 上传、
 本会话端口转发和 scrcpy 4.1 的长连接 `app_process`；普通文件传输仍走原边界。

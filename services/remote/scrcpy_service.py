@@ -212,15 +212,12 @@ class ScrcpyService:
 
     @staticmethod
     def require_client(path: str | None) -> str:
-        """配置冻结前验证精确客户端，不允许 scrcpy 再按 PATH 自行选择。"""
+        """冻结用户选定的精确客户端；scrcpy 上传文件时必须保留该进程身份。"""
         if not path or not os.path.isabs(path) or not os.path.isfile(path):
             raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择客户端后启动投屏。")
-        from utils.adb_resolver import client_executable
-
-        launched = client_executable(path)
-        if not os.path.isfile(launched):
-            raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择客户端后启动投屏。")
-        return launched
+        # 相同可执行字节改名后也可能受不同的文件访问规则约束，导致 server 上传成功
+        # 但内容已改变。查询加速由 CommandRunner 管理，不传播到 scrcpy 的文件传输。
+        return path
 
     def build_launch_plan(
         self, config: ScrcpyConfig, *, timeout: float = 20,

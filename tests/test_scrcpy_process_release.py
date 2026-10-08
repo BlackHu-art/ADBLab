@@ -17,6 +17,7 @@ from services.remote.types import ScrcpyLaunchPlan
 def _reader():
     return RemotePanelScrcpy(SimpleNamespace(
         _closing=False, _device_sessions={}, _scrcpy_output_requested=Mock(),
+        signals=SimpleNamespace(log_message=Mock()),
         _scrcpy_service=ScrcpyService(), _should_ignore_scrcpy_log_line=lambda _line: False,
         _redact_remote_diagnostic=lambda line: line, _log=Mock(),
     ))
