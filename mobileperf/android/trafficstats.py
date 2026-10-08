@@ -121,6 +121,7 @@ class NetDevInfo:
         self.rx = 0
         self.tx = 0
         self.available = False
+        self.interfaces = {}
         self._parse()
 
     def _parse(self):
@@ -143,6 +144,7 @@ class NetDevInfo:
                 complete = False
                 continue
             self.available = True
+            self.interfaces[interface] = (rx, tx)
             if is_wifi:
                 self.wifi_rx += rx
                 self.wifi_tx += tx
@@ -325,6 +327,7 @@ class TrafficCollecor:
         except RuntimeError as e:
             logger.error(e)
         self.device_init_net = None
+        device_grow = NetDevInfo("")
         while not self._stop_event.is_set() and time.time() < end_time:
             try:
                 before = time.time()
@@ -332,16 +335,24 @@ class TrafficCollecor:
                     "--------- into _collect_traffic_thread loop thread is : "
                     + str(threading.current_thread().name)
                 )
-                device_cur_net = self._cat_traffic_device_dev()
+                try:
+                    device_cur_net = self._cat_traffic_device_dev()
+                except Exception:
+                    # 失联或不完整快照使接口连续性未知，恢复后先重建基线。
+                    self.device_init_net = None
+                    raise
 
                 if device_cur_net.source == "" or device_cur_net.source is None:
+                    self.device_init_net = None
                     self._wait_for_next_sample(self._interval, end_time)
                     continue
 
-                if self.traffic_init:
-                    self.device_init_net = device_cur_net
-                    self.traffic_init = False
-                device_grow = self.get_net_from_begin(self.device_init_net, device_cur_net)
+                if self.device_init_net is not None:
+                    increment = self.get_net_from_begin(self.device_init_net, device_cur_net)
+                    device_grow.rx += increment.rx
+                    device_grow.tx += increment.tx
+                    device_grow.total = device_grow.rx + device_grow.tx
+                self.device_init_net = device_cur_net
                 collection_time = time.time()
                 logger.debug(" collection time in traffic is : " + str(collection_time))
                 net_row = [
@@ -454,11 +465,18 @@ class TrafficCollecor:
         return traffic_snapshot
 
     def get_net_from_begin(self, begin_net_info, current_net_info):
-        # 计算设备或进程从本次采集开始后的网络增量。
+        """只累计连续存在且收发计数均未回退的接口；新接口或重置只建立基线。"""
         net_info = NetDevInfo("")
-        net_info.total = current_net_info.total - begin_net_info.total
-        net_info.rx = current_net_info.rx - begin_net_info.rx
-        net_info.tx = current_net_info.tx - begin_net_info.tx
+        for interface, (rx, tx) in current_net_info.interfaces.items():
+            previous = begin_net_info.interfaces.get(interface)
+            if previous is None:
+                continue
+            old_rx, old_tx = previous
+            if rx < old_rx or tx < old_tx:
+                continue
+            net_info.rx += rx - old_rx
+            net_info.tx += tx - old_tx
+        net_info.total = net_info.rx + net_info.tx
         return net_info
 
     def stop(self):

@@ -11,6 +11,16 @@ from gui.features.media import ScreenshotPage
 from tests.ui_geometry_helpers import wait_until
 
 
+class _ReaderProxy:
+    """保留真实格式限制，只替换测试需要阻塞或计数的读取方法。"""
+
+    def setFormat(self, value):
+        self.reader.setFormat(value)
+
+    def setAutoDetectImageFormat(self, value):
+        self.reader.setAutoDetectImageFormat(value)
+
+
 def _write_image(path, color=Qt.GlobalColor.blue, size=(64, 96)):
     image = QImage(*size, QImage.Format.Format_RGB32)
     image.fill(color)
@@ -41,7 +51,7 @@ def test_screenshot_decode_leaves_ui_responsive_and_discards_old_navigation(
     main_thread = threading.get_ident()
     reader_threads = []
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, path):
             self.reader = QImageReader(path)
 
@@ -76,7 +86,7 @@ def test_screenshot_large_image_cache_avoids_repeat_decode_and_observes_file_cha
     paths = [_write_image(tmp_path / f"large-{i}.png", size=(1440, 3200)) for i in range(2)]
     reads = Counter()
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, path):
             self.path, self.reader = path, QImageReader(path)
 
@@ -286,7 +296,7 @@ def test_screenshot_current_image_is_published_before_slow_neighbor_finishes(
     paths = [_write_image(tmp_path / f"neighbor-{i}.png") for i in range(2)]
     entered, release = threading.Event(), threading.Event()
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, path):
             self.path, self.reader = path, QImageReader(path)
 
@@ -448,9 +458,10 @@ def test_screenshot_add_validation_runs_off_gui_and_is_owned_until_join(
     main_thread = threading.get_ident()
     calls = []
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, target):
             self.target = target
+            self.reader = QImageReader(target)
 
         def canRead(self):
             calls.append(threading.get_ident())
@@ -487,9 +498,10 @@ def test_screenshot_add_validation_failure_keeps_good_files_and_releases_worker(
     page = ScreenshotPage([])
     notices = []
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, path):
             self.path = path
+            self.reader = QImageReader(path)
 
         def canRead(self):
             if self.path == broken:
@@ -519,9 +531,10 @@ def test_screenshot_add_validation_close_cancels_rest_and_discards_late_result(
     page = ScreenshotPage([])
     main_thread = threading.get_ident()
 
-    class Reader:
+    class Reader(_ReaderProxy):
         def __init__(self, path):
             self.path = path
+            self.reader = QImageReader(path)
 
         def canRead(self):
             calls.append(self.path)

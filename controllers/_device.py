@@ -259,6 +259,15 @@ class ADBDeviceMixin(_ADBControllerBase):
             if self._finish_device_discovery(generation):
                 self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
 
+    def is_device_overview_current(self, device: str, generation: int) -> bool:
+        """接收排队概览时重新校验拓扑；代次仅用于传递，不进入设备存储。"""
+        with self._device_topology_lock:
+            return (
+                not self._shutting_down
+                and generation == self._device_topology_generation
+                and device in self._device_topology
+            )
+
     def _async_update_devices(self, devices: list, *, generation: int):
         """逐台发布当前拓扑的概览快照，最后统一落盘；旧代次与关闭后的结果不发布。"""
         if not devices:
@@ -347,7 +356,9 @@ class ADBDeviceMixin(_ADBControllerBase):
                         if record:
                             records_by_device[ip] = record
                         # 先完成的设备立即发布，不受前面慢设备的查询顺序阻挡。
-                        self.signals.device_info_updated.emit(ip, record)
+                        self.signals.device_info_updated.emit(
+                            ip, {**record, "_overview_generation": generation},
+                        )
                 finally:
                     for future in pending:
                         future.cancel()

@@ -201,7 +201,6 @@ class CpuCollector:
         self._interval = interval
         self._timeout = timeout
         self._stop_event = threading.Event()
-        self.cpu_list = []
         self.sdkversion = self.get_sdkversion()
         # 使用批处理模式，避免 top 交互界面截断进程名。
         self.top_cmd = f"top -b -n 1 -d {self._interval:d}"
@@ -273,12 +272,12 @@ class CpuCollector:
         except RuntimeError as e:
             logger.error(e)
         while not self._stop_event.is_set() and time.time() < end_time:
+            before = time.time()
             try:
                 logger.debug(
                     "---------------cpuinfos, into _collect_package_cpu_thread loop thread is : "
                     + str(threading.current_thread().name)
                 )
-                before = time.time()
                 # top 命令自身包含采样间隔，因此需要扣除命令执行耗时。
                 cpu_info = self._top_cpuinfo()
                 after = time.time()
@@ -286,20 +285,17 @@ class CpuCollector:
                 logger.debug("  ============== time consume for cpu info : " + str(time_consume))
                 if cpu_info is None or cpu_info.source == "" or not cpu_info.package_list:
                     logger.debug("cpuinfos, can't get cpu info, continue")
-                    self._stop_event.wait(self._interval)
                     continue
-                self.cpu_list.extend(
-                    [
-                        TimeUtils.getCurrentTime(),
-                        str(cpu_info.device_cpu_rate),
-                        cpu_info.user_rate,
-                        cpu_info.system_rate,
-                        cpu_info.idle_rate,
-                    ]
-                )
+                cpu_row = [
+                    TimeUtils.getCurrentTime(),
+                    str(cpu_info.device_cpu_rate),
+                    cpu_info.user_rate,
+                    cpu_info.system_rate,
+                    cpu_info.idle_rate,
+                ]
                 for i in range(0, len(self.packages)):
                     if len(cpu_info.package_list) == len(self.packages):
-                        self.cpu_list.extend(
+                        cpu_row.extend(
                             [
                                 cpu_info.package_list[i]["package"],
                                 cpu_info.package_list[i]["pid"],
@@ -307,24 +303,26 @@ class CpuCollector:
                             ]
                         )
                 if len(self.packages) > 1:
-                    self.cpu_list.append(cpu_info.total_pid_cpu)
+                    cpu_row.append(cpu_info.total_pid_cpu)
                 # 按命令耗时校准休眠时间，保持整体采集频率稳定。
-                logger.debug("INFO: CpuMonitor save cpu_device_list: " + str(self.cpu_list))
+                logger.debug("INFO: CpuMonitor save cpu_device_list: " + str(cpu_row))
                 try:
                     with open(cpu_file, "a+", encoding="utf-8") as df:
-                        csv.writer(df, lineterminator="\n").writerow(self.cpu_list)
-                        del self.cpu_list[:]
+                        csv.writer(df, lineterminator="\n").writerow(cpu_row)
                 except RuntimeError as e:
                     logger.error(e)
 
-                delta_inter = self._interval - time_consume
-                if delta_inter > 0:
-                    self._stop_event.wait(delta_inter)
             except Exception as e:
                 logger.error("an exception hanpend in cpu thread , reason unkown!, e:")
                 logger.error(e)
                 s = traceback.format_exc()
                 logger.debug(s)  # 将异常堆栈写入调试日志。
+            finally:
+                # 写入失败也遵守采样预算，独立行不会带入下一轮；停止可立即打断等待。
+                remaining = max(0, end_time - time.time())
+                if remaining:
+                    delay = max(0.01, self._interval - (time.time() - before))
+                    self._stop_event.wait(min(delay, remaining))
         logger.debug("stop event is set or timeout")
 
 

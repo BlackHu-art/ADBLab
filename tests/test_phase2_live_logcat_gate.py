@@ -1384,3 +1384,87 @@ def test_queued_logcat_close_is_cancelled_when_page_is_destroyed(qt_application)
     delete(dialog)
     qt_application.processEvents()
     queued_close.assert_not_called()
+
+
+def test_launch_in_progress_does_not_block_cancel_or_other_resource_shutdown(
+    qt_application, monkeypatch,
+):
+    entered, release, next_stopped = threading.Event(), threading.Event(), threading.Event()
+    worker = LogcatWorker('synthetic-device')
+
+    def held_start(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        raise OSError('synthetic launch failure')
+
+    monkeypatch.setattr(worker._process_runner, 'start', held_start)
+    supervisor = TaskSupervisor()
+    supervisor.register(
+        'logcat', owner_id='page', kind='logcat', request_stop=worker.request_stop,
+        wait=worker.wait_for_stop, is_running=worker.is_active, force_stop=worker.force_stop,
+    )
+    supervisor.register(
+        'next', owner_id='application', kind='synthetic', request_stop=next_stopped.set,
+        wait=lambda timeout: next_stopped.is_set(), is_running=lambda: not next_stopped.is_set(),
+    )
+    adapter = QtTaskSupervisor(supervisor)
+    completed = []
+    adapter.application_stopped.connect(
+        lambda result, residual: completed.append((result, residual)),
+    )
+    worker.start()
+    assert entered.wait(1)
+    adapter.stop_all_async(deadline=.05)
+    try:
+        deadline = time.monotonic() + .5
+        while not completed and time.monotonic() < deadline:
+            qt_application.processEvents()
+            time.sleep(.002)
+        assert completed, 'blocked launch must not hold the shutdown broadcaster'
+        assert next_stopped.is_set()
+        assert worker._stop_event.is_set()
+        assert worker.is_active(), 'pending launch remains owned until it returns'
+    finally:
+        release.set()
+        assert worker.wait(2000)
+        assert adapter._pool.waitForDone(2000)
+        worker.deleteLater()
+        adapter.deleteLater()
+
+
+@pytest.mark.parametrize('late_result', ['process', 'error'])
+def test_cancel_during_spawn_reaps_late_process_without_starting_readers(monkeypatch, late_result):
+    worker = LogcatWorker('synthetic-device')
+    entered, release = threading.Event(), threading.Event()
+    process = BlockingProcess()
+    terminations = []
+    worker.terminated.connect(terminations.append, Qt.ConnectionType.DirectConnection)
+
+    def spawn(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        if late_result == 'error':
+            raise OSError('spawn failed after cancellation')
+        return process
+
+    monkeypatch.setattr('core.exec.resolve_command', lambda command: command)
+    monkeypatch.setattr(worker._process_runner, 'spawn', spawn)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        worker.request_stop()
+        assert worker._stop_event.is_set()
+        assert worker.is_active()
+        release.set()
+        assert worker.wait(2000)
+        if late_result == 'process':
+            assert process.poll() == 0
+            assert process.closed
+        assert worker._reader_thread is None
+        assert terminations[0].kind is LogcatTerminationKind.CANCELLED
+        assert worker.wait_for_stop(0)
+    finally:
+        release.set()
+        assert worker.wait(2000)
+        worker._process_runner.stop(worker._process_key, timeout=0)
+        worker.deleteLater()

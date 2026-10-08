@@ -61,7 +61,7 @@ def _read(path: Path) -> str:
 
 
 def _declared_svg_names() -> set[str]:
-    """提取一方生产源码声明的 SVG 文件名，不依赖宿主文件系统的大小写规则。"""
+    """提取一方生产源码声明的 SVG 资源名及图标别名。"""
 
     paths = [Path("main.py")]
     for root in FIRST_PARTY_PYTHON_PATHS:
@@ -78,6 +78,27 @@ def _declared_svg_names() -> set[str]:
             ):
                 names.add(Path(node.value).name)
     return names
+
+
+def _missing_svg_references(declared: set[str], icon_directory: Path) -> set[str]:
+    """语义别名交给实际注册表解析，仓库资源仍按目录记录的精确大小写校验。"""
+    from gui.styles.icon_loader import ResourceIcon, get_fluent_icon
+
+    available = {path.name for path in icon_directory.iterdir() if path.is_file()}
+    missing = set()
+    for name in declared:
+        try:
+            icon = get_fluent_icon(name)
+        except KeyError:
+            if name not in available:
+                missing.add(name)
+            continue
+        if isinstance(icon, ResourceIcon):
+            resource = Path(icon.path())
+            if (resource.parent.resolve() != icon_directory.resolve()
+                    or resource.name not in available):
+                missing.add(f"{name} -> {resource.name}")
+    return missing
 
 
 def test_all_actions_are_pinned_to_verified_commit_shas():
@@ -113,14 +134,35 @@ def test_build_workflow_forces_utf8_for_all_python_processes():
     assert workflow["env"]["PYTHONIOENCODING"] == "utf-8"
 
 
-def test_build_workflow_does_not_run_pytest_during_packaging():
-    """打包发布只执行静态检查和产物自检，pytest 由开发者按测试指南在本地执行。"""
-
-    workflow = _read(BUILD_WORKFLOW)
-
-    assert "python -m pytest" not in workflow
-    assert "Run fast tests" not in workflow
-    assert "Run tests" not in workflow
+def test_windows_test_failure_blocks_build_and_release(tmp_path):
+    """运行工作流的测试步骤，失败必须传回构建作业并阻断依赖该作业的发布。"""
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    build = workflow["jobs"]["build"]
+    steps = build["steps"]
+    test_steps = [(index, step) for index, step in enumerate(steps)
+                  if "python -m pytest" in step.get("run", "")]
+    assert len(test_steps) == 1
+    index, step = test_steps[0]
+    assert step.get("if") == "runner.os == 'Windows'"
+    assert step.get("env", {}).get("QT_QPA_PLATFORM") == "offscreen"
+    assert not step.get("continue-on-error", False)
+    assert not build.get("continue-on-error", False)
+    assert step["shell"] == "bash"
+    assert index < next(index for index, item in enumerate(steps)
+                        if "python scripts/build_app.py" in item.get("run", ""))
+    release = workflow["jobs"]["release"]
+    assert "build" in release["needs"]
+    assert "needs.build.result == 'success'" in release["if"]
+    bash = shutil.which("bash")
+    assert bash, "The workflow contract requires a bash interpreter"
+    # 只替换测试进程，执行工作流原始脚本，检查没有吞掉其非零退出码。
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
+         'python() { printf "%s\\n" "$@"; return 7; }\n' + step["run"]],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 7
+    assert result.stdout.splitlines() == ["-m", "pytest", "-q", "-m", "not ui"]
 
 
 def test_manual_build_defaults_to_build_only_and_main_push_still_triggers():
@@ -587,13 +629,38 @@ def test_pairing_packaging_checks_png_writer_and_license_without_adb(
 
 
 def test_declared_svg_icons_exist_with_exact_case():
-    """即使在 Windows 上，也按目录记录的精确大小写校验所有图标声明。"""
+    """已注册别名无需同名文件，但其实际资源与直接引用都必须存在且大小写一致。"""
 
-    available = {path.name for path in ICON_DIR.iterdir() if path.is_file()}
     declared = _declared_svg_names()
 
     assert declared
-    assert sorted(declared - available) == []
+    assert sorted(_missing_svg_references(declared, ICON_DIR)) == []
+
+
+@pytest.mark.parametrize(("name", "filename", "mapped_to", "missing"), [
+    ("audit-asset.svg", "audit-asset.svg", None, set()),
+    ("Audit-asset.svg", "audit-asset.svg", None, {"Audit-asset.svg"}),
+    ("audit-missing.svg", "audit-asset.svg", None, {"audit-missing.svg"}),
+    ("audit-action.svg", "audit-asset.svg", "audit-asset.svg", set()),
+    ("audit-action.svg", "Audit-asset.svg", "audit-asset.svg",
+     {"audit-action.svg -> audit-asset.svg"}),
+    ("audit-action.svg", "audit-action.svg", "audit-missing.svg",
+     {"audit-action.svg -> audit-missing.svg"}),
+])
+def test_svg_reference_check_rejects_missing_assets_and_case_mismatches(
+    monkeypatch, tmp_path, name, filename, mapped_to, missing,
+):
+    """别名不会掩盖实际资源缺失，同名占位文件也不能替代别名真正指向的资源。"""
+    from gui.styles import icon_loader
+
+    (tmp_path / filename).write_text("<svg/>", encoding="utf-8")
+    if mapped_to is not None:
+        monkeypatch.setitem(icon_loader._FLUENT_ICONS, name, icon_loader.ResourceIcon(mapped_to))
+        monkeypatch.setattr(
+            icon_loader, "resource_path", lambda relative: str(tmp_path / Path(relative).name),
+        )
+
+    assert _missing_svg_references({name}, tmp_path) == missing
 
 
 def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():

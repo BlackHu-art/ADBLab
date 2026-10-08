@@ -408,11 +408,12 @@ def copy_for_root_pull_command(src: str, dst: str) -> str:
 
 
 def resolve_text_target_command(path: str) -> str:
-    """解析链接的实际普通文件目标；固定标记保护路径首尾空白。"""
+    """用标记包裹 readlink 原始输出，交由调用方剥离单个分隔换行并验证身份。"""
+    quoted = shell_quote(path)
+    # 命令替换会吞掉真实文件名末尾的换行，不能先放入 shell 变量再返回。
     return (
-        f"target=$(readlink -f -- {shell_quote(path)}) && "
-        '[ -f "$target" ] && [ -w "$target" ] && '
-        'printf \'ADBLAB_TARGET:%s:END\' "$target"'
+        f"[ -f {quoted} ] && [ -w {quoted} ] && "
+        f"printf 'ADBLAB_TARGET:' && readlink -f -- {quoted} && printf ':END'"
     )
 
 

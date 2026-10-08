@@ -63,6 +63,7 @@ def _open_file_menu(page, name, qt_application):
     point = page.table.visualItemRect(page.table.item(row, page.NAME_COL)).center()
     QTest.mouseClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseRelease(page.table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     menus = [menu for menu in page.findChildren(RoundMenu) if menu.isVisible()]
     assert len(menus) == 1
     menu = menus[0]
@@ -102,8 +103,8 @@ def test_file_double_click_menu_reaches_transfer_or_inline_preview(
         qt_application.processEvents()
         assert not page._workers
     elif name == "notes.txt":
-        assert worker.args[:2] == ["shell", "-T"]
-        command = shlex.split(worker.args[2])
+        assert worker.args[:-1] == ["exec-out"]
+        command = shlex.split(worker.args[-1])
         assert command[:4] == ["head", "-c", "2097153", remote_path]
         assert command[4:7] == ["&&", "printf", "%s"]
         assert command[7].startswith("ADBLAB_TEXT_END_")

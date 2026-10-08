@@ -1,10 +1,16 @@
 """把 MobilePerf 生成的 CSV 指标文件汇总为 Excel 报告。"""
 
 import os
+import tempfile
 
 from mobileperf.android.excel import Excel
+from mobileperf.android.process_target import process_file_segment
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
+
+
+class ReportError(RuntimeError):
+    """表示采集数据已保留，但最终报告无法完整发布。"""
 
 
 class Report:
@@ -49,13 +55,7 @@ class Report:
                     "y_axis": "mem(MB)",
                     "values": ["pss", "java_heap", "native_heap", "system"],
                 }
-                if ":" in package:
-                    # 子进程包名过长会导致 Excel 工作表写入失败，使用末段缩短名称。
-                    self.summary_csf_file[f"pss_{package.split(':')[-1].split('.')[-1]}.csv"] = (
-                        pss_detail_dic
-                    )
-                else:
-                    self.summary_csf_file[f"pss_{package}.csv"] = pss_detail_dic
+                self.summary_csf_file[f"pss_{process_file_segment(package)}.csv"] = pss_detail_dic
         logger.debug(self.packages)
         logger.debug(self.summary_csf_file)
         logger.info(f"create report for {csv_dir}")
@@ -63,19 +63,24 @@ class Report:
         logger.debug(f"{file_names}")
         if file_names:
             book_name = f"summary_{TimeUtils.getCurrentTimeUnderline()}.xlsx"
-            excel = Excel(os.path.join(csv_dir, book_name))
-            for file_name in file_names:
-                logger.debug(f"get csv {file_name} to excel")
-                values = self.summary_csf_file[file_name]
-                excel.csv_to_xlsx(
-                    os.path.join(csv_dir, file_name),
-                    values["table_name"],
-                    values["x_axis"],
-                    values["y_axis"],
-                    values["values"],
-                )
-            logger.info(f"wait to save {book_name}")
-            excel.save()
+            # 报告与内部 XML 临时文件共用作用域；完整关闭后才发布，失败保留旧报告。
+            with tempfile.TemporaryDirectory(prefix=".summary-", dir=csv_dir) as temporary:
+                staged = os.path.join(temporary, "report.xlsx")
+                with open(staged, "w+b") as stream:
+                    excel = Excel(stream, temp_directory=temporary)
+                    for file_name in file_names:
+                        logger.debug(f"get csv {file_name} to excel")
+                        values = self.summary_csf_file[file_name]
+                        excel.csv_to_xlsx(
+                            os.path.join(csv_dir, file_name),
+                            values["table_name"],
+                            values["x_axis"],
+                            values["y_axis"],
+                            values["values"],
+                        )
+                    logger.info(f"wait to save {book_name}")
+                    excel.save()
+                os.replace(staged, os.path.join(csv_dir, book_name))
 
     def filter_file_names(self, device):
         """返回目录中存在且已配置汇总规则的 CSV 文件名。"""

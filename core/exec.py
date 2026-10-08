@@ -449,24 +449,9 @@ def _program_name(program: str) -> str:
 
 
 def _adb_summary(parts: list[str]) -> str:
-    index = 1
-    if len(parts) > 2 and parts[1] == "-s":
-        index = 3
-    if index >= len(parts):
+    if len(parts) == 1:
         return "adb"
-    command = parts[index]
-    if command != "shell":
-        return f"adb {command}"
-    shell_parts = parts[index + 1 :]
-    if not shell_parts:
-        return "adb shell"
-    first = shell_parts[0]
-    if first == "sh":
-        return "adb shell sh"
-    if first in {"cmd", "dumpsys", "pm", "am", "input", "getprop", "settings", "monkey"}:
-        second = shell_parts[1] if len(shell_parts) > 1 else ""
-        return f"adb shell {first}{(' ' + second) if second else ''}"
-    return f"adb shell {first}"
+    return f"adb {adb_debug.command_summary(parts[1:])}"
 
 
 class ProcessRunner:

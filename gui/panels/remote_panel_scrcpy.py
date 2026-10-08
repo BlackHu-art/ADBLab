@@ -1,6 +1,5 @@
 """提供 Remote 面板的 scrcpy 生命周期与停止所有权管理。"""
 
-import os
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -54,17 +53,8 @@ class RemotePanelScrcpy:
         ]
         if not devices:
             return
-        exe = frame._scrcpy_service.resolve_executable()
-        if os.environ.get("SCRCPY_PATH", "").strip() and (
-            not os.path.isfile(exe) or (os.name != "nt" and not os.access(exe, os.X_OK))
-        ):
-            frame._log("WARNING", tr(
-                "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
-            ))
-            return
-        if not os.path.isfile(exe):
-            frame._log("WARNING", tr("未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。"))
-            return
+        # GUI 只冻结参数；空路径由既有启动 worker 准备工具，避免缓存复制阻塞事件循环。
+        exe = ""
         configs = []
         frozen = getattr(frame, "_frozen_session_config", None)
         try:

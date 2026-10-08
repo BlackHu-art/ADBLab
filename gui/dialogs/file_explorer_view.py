@@ -18,6 +18,7 @@ from gui.i18n import tr
 from gui.styles.fluent import add_menu_action
 from models.file_explorer_worker import TextReadWorker
 from services import file_explorer as explorer_service
+from utils.raster_image import raster_image_reader
 
 MAX_TEXT_VIEW_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_PREVIEW_DIMENSION = 2048
@@ -47,7 +48,10 @@ def _load_image_preview(path: str) -> QPixmap:
     cached = QPixmap()
     if QPixmapCache.find(key, cached) and not cached.isNull():
         return cached
-    reader = QImageReader(path)
+    try:
+        reader = raster_image_reader(path, QImageReader)
+    except OSError:
+        return QPixmap()
     native = reader.size()
     if native.isValid() and not native.isEmpty():
         scale = min(1.0, MAX_IMAGE_PREVIEW_DIMENSION / max(native.width(), native.height()))

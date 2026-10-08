@@ -87,8 +87,8 @@ def event(name: str, **fields: object) -> None:
         service_module.LogService.write_developer_console("DEBUG", message)
 
 
-def _command_category(arguments: list[str]) -> str:
-    """只识别固定命令名，跳过目标和服务参数但绝不保留这些参数的值。"""
+def _command_index(arguments: list[str]) -> int:
+    """跳过目标和服务参数；未知选项不猜测参数数量。"""
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -97,8 +97,40 @@ def _command_category(arguments: list[str]) -> str:
         elif argument in {"-a", "-d", "-e"}:
             index += 1
         else:
-            return argument if argument in _COMMANDS else "other"
-    return "other"
+            break
+    return index
+
+
+def _command_category(arguments: list[str]) -> str:
+    """只识别固定命令名，跳过目标和服务参数但绝不保留这些参数的值。"""
+    index = _command_index(arguments)
+    value = arguments[index] if index < len(arguments) else ""
+    return value if value in _COMMANDS else "other"
+
+
+def command_summary(arguments: list[str]) -> str:
+    """慢命令只保留固定类别；整句 Shell 和动态参数不进入诊断。"""
+    category = _command_category(arguments)
+    if category != "shell":
+        return category
+    shell = arguments[_command_index(arguments) + 1:]
+    if not shell:
+        return "shell"
+    subcommands = {
+        "input": {"text", "tap", "swipe", "keyevent", "motionevent"},
+        "pm": {"list", "path", "install", "uninstall", "clear", "enable", "disable-user"},
+        "am": {"start", "broadcast", "force-stop", "startservice", "stopservice"},
+        "settings": {"get", "put", "delete", "list"},
+        "cmd": {"package", "activity", "appops"},
+        "dumpsys": {"package", "activity", "meminfo", "battery", "window", "gfxinfo"},
+        "getprop": set(), "monkey": set(), "sh": set(),
+    }
+    first = shell[0]
+    if first not in subcommands:
+        return "shell other"
+    second = shell[1] if len(shell) > 1 else ""
+    suffix = f" {second}" if second in subcommands[first] else ""
+    return f"shell {first}{suffix}"
 
 
 def command(

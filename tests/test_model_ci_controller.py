@@ -76,17 +76,25 @@ def test_restart_refresh_does_not_claim_unverified_reboot_completion(success):
 
 
 def test_cross_platform_builds_do_not_run_full_gui_test_suite():
-    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+    """Windows 只运行非 UI 门禁；其他平台保留源码自检，不运行 pytest。"""
+    import shlex
 
-    # a0d9711 起打包流程不再运行 pytest：Windows 只安装静态分析依赖并跑
-    # ruff/pyright，非 Windows 只跑源码自检；pytest 留在独立的开发验证流程。
-    assert (
-        "name: Install static analysis dependencies\n        if: runner.os == 'Windows'"
-        in workflow
+    import yaml
+
+    workflow = yaml.safe_load(
+        Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8"),
     )
-    assert "name: Run tests" not in workflow
-    assert "python -m pytest" not in workflow
-    assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
+    steps = workflow["jobs"]["build"]["steps"]
+    dependency_step = next(step for step in steps
+                           if "pip install -r requirements-dev.txt" in step.get("run", ""))
+    assert dependency_step["if"] == "runner.os == 'Windows'"
+    test_steps = [step for job in workflow["jobs"].values() for step in job.get("steps", [])
+                  if "python -m pytest" in step.get("run", "")]
+    assert len(test_steps) == 1
+    assert test_steps[0]["if"] == "runner.os == 'Windows'"
+    assert shlex.split(test_steps[0]["run"]) == ["python", "-m", "pytest", "-q", "-m", "not ui"]
+    source_check = next(step for step in steps if step.get("name") == "Source self-check")
+    assert source_check["if"] == "runner.os != 'Windows'"
 
 
 def test_release_job_keeps_same_version_immutable_and_prunes_old_tags():
@@ -228,6 +236,7 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     records = upsert.call_args.args[0]
     assert [record["ip"] for record in records] == ["device-1", "device-2"]
     controller.signals.devices_updated.emit.assert_not_called()
+    assert all("_overview_generation" not in record for record in upsert.call_args.args[0])
     metadata_events = controller.signals.device_info_updated.emit.call_args_list
     assert len(metadata_events) == 2
     assert metadata_events[0].args[0] == "device-1"
@@ -537,7 +546,7 @@ def test_device_metadata_is_published_before_later_queries_finish(first_failure)
             assert len(metadata) == 1
             assert metadata[0].args[0] == "device-1"
             if first_failure:
-                assert metadata[0].args[1] == {}
+                assert metadata[0].args[1] == {"_overview_generation": 1}
             else:
                 assert metadata[0].args[1]["Battery Level"] == "90%"
             upsert.assert_not_called()

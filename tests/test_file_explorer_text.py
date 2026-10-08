@@ -13,6 +13,23 @@ from core.exec import CommandResult
 from services import file_explorer as service
 
 
+@pytest.fixture
+def resolved_text_target(monkeypatch):
+    """生命周期测试只替换设备字节响应，仍经生产目标身份解析与验证。"""
+    from models import file_explorer_worker as workers
+
+    def install(target):
+        def capture(argv, output_path, **kwargs):
+            assert argv[3:-1] == ["exec-out"]
+            assert "readlink -f" in argv[-1]
+            Path(output_path).write_bytes(b"ADBLAB_TARGET:" + target.encode() + b"\n:END")
+            return CommandResult(success=True)
+
+        monkeypatch.setattr(workers.CommandRunner, "run_to_file", capture)
+
+    return install
+
+
 @pytest.mark.parametrize("payload", [
     b"    line one\r\nline two \r\n", b"\xef\xbb\xbf text\r\n", b"first\rsecond\r",
     b"mixed\r\nline\nend\r", b"", "a\u2029b".encode(),
@@ -103,13 +120,16 @@ def test_text_reader_preserves_mixed_newlines_on_legacy_shell(monkeypatch, use_r
 
 @pytest.mark.parametrize("use_root", [False, True])
 @pytest.mark.parametrize("outcome", ["success", "push_failed", "cancelled", "publish_failed"])
-def test_save_uses_bounded_arguments_and_cleans_only_owned_staging(monkeypatch, use_root, outcome):
+def test_save_uses_bounded_arguments_and_cleans_only_owned_staging(
+    monkeypatch, resolved_text_target, use_root, outcome,
+):
     from models import file_explorer_worker as workers
 
     payload = b"  content\r\n" * 12000
     calls = []
     uploads = []
     worker = workers.TextSaveWorker("original-device", "/link.txt", payload, use_root)
+    resolved_text_target("/actual/file.txt")
 
     def command(argv, **kwargs):
         calls.append((argv, kwargs))
@@ -122,8 +142,6 @@ def test_save_uses_bounded_arguments_and_cleans_only_owned_staging(monkeypatch, 
                 worker.abort()
             return CommandResult(success=outcome != "push_failed", error="push failure")
         shell = argv[-1]
-        if "readlink" in shell:
-            return CommandResult(success=True, output="ADBLAB_TARGET:/actual/file.txt:END")
         if "mv " in shell:
             assert "cp -p " in shell
             assert "/actual/file.txt" in shell
@@ -189,16 +207,17 @@ def test_page_incomplete_or_invalid_preview_refuses_programmatic_save(
         page.close()
 
 
-def test_cancel_during_remote_reservation_still_attempts_owned_cleanup(monkeypatch):
+def test_cancel_during_remote_reservation_still_attempts_owned_cleanup(
+    monkeypatch, resolved_text_target,
+):
     from models import file_explorer_worker as workers
 
     worker = workers.TextSaveWorker("original-device", "/text.txt", b"text", False)
     cleanup = []
+    resolved_text_target("/text.txt")
 
     def run(argv, **kwargs):
         command = argv[-1]
-        if "readlink" in command:
-            return CommandResult(success=True, output="ADBLAB_TARGET:/text.txt:END")
         if "mkdir " in command:
             worker.abort()
             return CommandResult(success=False, outcome="cancelled")
@@ -209,6 +228,48 @@ def test_cancel_during_remote_reservation_still_attempts_owned_cleanup(monkeypat
     monkeypatch.setattr(workers.CommandRunner, "run", run)
     worker.run()
     assert cleanup and "rm -f " in cleanup[0]
+
+
+@pytest.mark.parametrize("outcome", [
+    "failed", "cancelled", "missing-end", "missing-output", "oversized",
+])
+def test_target_resolution_failure_stops_before_staging_and_cleans_capture(
+    monkeypatch, outcome,
+):
+    from models import file_explorer_worker as workers
+
+    worker = workers.TextSaveWorker("synthetic-device", "/alias.txt", b"edited", False)
+    captures, commands, results = [], [], []
+    worker.result_ready.connect(lambda *args: results.append(args))
+
+    def capture(argv, output_path, **kwargs):
+        captures.append(Path(output_path))
+        if outcome == "oversized":
+            payload = b"ADBLAB_TARGET:/" + b"x" * 8192 + b"\n:END"
+        else:
+            payload = b"ADBLAB_TARGET:/file\n"
+        if outcome != "missing-output":
+            Path(output_path).write_bytes(payload)
+        if outcome == "cancelled":
+            worker.abort()
+        return CommandResult(success=outcome != "failed")
+
+    def command(*args, **kwargs):
+        commands.append(args)
+        return CommandResult(success=False, error="unexpected staging")
+
+    monkeypatch.setattr(workers.CommandRunner, "run_to_file", capture)
+    monkeypatch.setattr(workers.CommandRunner, "run", command)
+
+    worker.run()
+
+    assert captures and all(not path.exists() for path in captures)
+    assert not commands
+    if outcome == "cancelled":
+        assert not results
+    else:
+        assert len(results) == 1 and results[0][1] is True
+        assert "adblab-text-target-" not in results[0][0]
 
 
 @pytest.mark.parametrize("outcome", ["failed", "cancelled"])
@@ -357,7 +418,7 @@ def test_refresh_and_root_change_preserve_displayed_text_edits(qt_application):
 
 
 @pytest.fixture
-def blocked_save(monkeypatch):
+def blocked_save(monkeypatch, resolved_text_target):
     from models import file_explorer_worker as workers
 
     entered = threading.Event()
@@ -366,6 +427,7 @@ def blocked_save(monkeypatch):
     cleanup_release = threading.Event()
     cleanup_release.set()
     calls = []
+    resolved_text_target("/original.txt")
 
     def run(argv, **kwargs):
         calls.append(argv)
@@ -375,8 +437,6 @@ def blocked_save(monkeypatch):
             assert release.wait(3)
             return CommandResult(success=not kwargs["cancelled"](), error="cancelled")
         command = argv[-1]
-        if "readlink" in command:
-            return CommandResult(success=True, output="ADBLAB_TARGET:/original.txt:END")
         if "rm -f " in command:
             cleanup_entered.set()
             assert cleanup_release.wait(3)
@@ -514,6 +574,118 @@ def local_shell():
     return run
 
 
+@pytest.fixture(params=[False, True], ids=["shell-v2", "legacy-shell"])
+def text_save_device(tmp_path, monkeypatch, request):
+    """在合成目录执行真实设备脚本；模拟 su 和 push，不调用 ADB 或提升权限。"""
+    from models import file_explorer_worker as workers
+
+    if os.name == "nt":
+        pytest.skip("Byte-valued POSIX filenames require a POSIX filesystem")
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    calls, captures = [], []
+
+    def script(argv):
+        assert argv[:3] == ["adb", "-s", "synthetic-device"]
+        assert argv[3] in {"shell", "exec-out"}
+        command = argv[-1]
+        words = shlex.split(command)
+        if words[:2] == ["su", "-c"]:
+            assert len(words) == 3
+            command = words[2]
+        return command.replace("/data/local/tmp", str(staging))
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[3] == "push":
+            destination = argv[5].replace("/data/local/tmp", str(staging))
+            shutil.copyfile(argv[4], destination)
+            return CommandResult(success=True)
+        completed = subprocess.run(
+            ["sh", "-c", script(argv)], capture_output=True, timeout=5, check=False,
+        )
+        # 与现有通用命令返回保持一致，避免替身替生产代码保住已丢失的身份字节。
+        output = completed.stdout.decode("utf-8", errors="ignore")
+        output = output.replace("\r\n", "\n").replace("\r", "\n").strip()
+        return CommandResult(
+            success=completed.returncode == 0, output=output,
+            error=completed.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def capture(argv, output_path, **kwargs):
+        calls.append(argv)
+        captures.append(Path(output_path))
+        completed = subprocess.run(
+            ["sh", "-c", script(argv)], capture_output=True, timeout=5, check=False,
+        )
+        raw = completed.stdout
+        # 旧 shell 通道会改写 readlink 的分隔符，exec-out 必须绕开该转换。
+        if request.param and argv[3] == "shell":
+            raw = raw.replace(b"\n", b"\r\n")
+        Path(output_path).write_bytes(raw)
+        return CommandResult(success=completed.returncode == 0)
+
+    monkeypatch.setattr(workers.CommandRunner, "run", run)
+    monkeypatch.setattr(workers.CommandRunner, "run_to_file", capture)
+    return calls, captures
+
+
+@pytest.mark.parametrize("use_root", [False, True])
+@pytest.mark.parametrize("suffix", [b"\n", b"\n\n", b"\r\n", b"\xff"])
+def test_text_save_rejects_unrepresentable_target_without_touching_similar_file(
+    tmp_path, text_save_device, use_root, suffix,
+):
+    from models.file_explorer_worker import TextSaveWorker
+
+    neighbor = tmp_path / "report"
+    neighbor.write_bytes(b"neighbor original")
+    target = os.fsencode(neighbor) + suffix
+    with open(target, "wb") as stream:
+        stream.write(b"target original")
+    alias = tmp_path / "alias.txt"
+    os.symlink(target, alias)
+    calls, captures = text_save_device
+    results = []
+    worker = TextSaveWorker("synthetic-device", str(alias), b"edited", use_root)
+    worker.result_ready.connect(lambda *args: results.append(args))
+
+    worker.run()
+
+    assert results and results[-1][1] is True
+    assert neighbor.read_bytes() == b"neighbor original"
+    with open(target, "rb") as stream:
+        assert stream.read() == b"target original"
+    assert alias.is_symlink()
+    assert not any(argv[3] == "push" for argv in calls)
+    assert not list(tmp_path.rglob("*adblab-save-*"))
+    assert all(not path.exists() for path in captures)
+
+
+@pytest.mark.parametrize("use_root", [False, True])
+def test_text_save_preserves_unicode_and_trailing_spaces_in_link_target(
+    tmp_path, text_save_device, use_root,
+):
+    from models.file_explorer_worker import TextSaveWorker
+
+    target = tmp_path / "资料 ' $(literal)  "
+    target.write_bytes(b"old")
+    target.chmod(0o640)
+    alias = tmp_path / "alias.txt"
+    alias.symlink_to(target)
+    results = []
+    worker = TextSaveWorker("synthetic-device", str(alias), b"new\r\n", use_root)
+    worker.result_ready.connect(lambda *args: results.append(args))
+
+    worker.run()
+
+    assert results == [("OK", False)]
+    assert target.read_bytes() == b"new\r\n"
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert alias.is_symlink()
+    assert not list(tmp_path.rglob("*adblab-save-*"))
+    assert all(not path.exists() for path in text_save_device[1])
+
+
 @pytest.mark.parametrize("linked", [False, True], ids=["regular", "symlink"])
 @pytest.mark.skipif(
     os.name == "nt", reason="POSIX mode and symlink probe requires a POSIX filesystem",
@@ -535,7 +707,7 @@ def test_real_shell_publish_preserves_link_and_target_permissions(local_shell, t
         (link if linked else target).as_posix(),
     ))
     assert resolved.returncode == 0, resolved.stderr
-    actual = resolved.stdout[len("ADBLAB_TARGET:"):-len(":END")]
+    actual = resolved.stdout[len("ADBLAB_TARGET:"):-len("\n:END")]
     prepared = local_shell(service.prepare_text_directory_command(directory.as_posix()))
     assert prepared.returncode == 0, prepared.stderr
     (directory / "upload").write_bytes(b"  new\r\n")

@@ -19,7 +19,8 @@ from mobileperf.android.logcat import LogcatMonitor
 from mobileperf.android.meminfos import MemMonitor
 from mobileperf.android.monkey import Monkey, MonkeyError
 from mobileperf.android.process_status import ProcessStatusSampler
-from mobileperf.android.report import Report
+from mobileperf.android.process_target import is_safe_process_name
+from mobileperf.android.report import Report, ReportError
 from mobileperf.android.thread_num import ThreadNumMonitor
 from mobileperf.android.tools.androiddevice import ADB, AndroidDevice
 from mobileperf.android.trafficstats import TrafficMonitor
@@ -48,20 +49,6 @@ def _split_config_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(";") if item.strip()]
 
 
-_SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9_.]+$")
-
-
-def _is_safe_package(package: str) -> bool:
-    """Android 包名仅允许字母数字、下划线与点；拒绝路径分隔符、.. 与 shell 元字符。"""
-    pkg = (package or "").strip()
-    return (
-        bool(pkg)
-        and _SAFE_PACKAGE_RE.fullmatch(pkg) is not None
-        and ".." not in pkg
-        and not pkg.startswith(".")
-    )
-
-
 class StartUp:
     """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
 
@@ -79,9 +66,12 @@ class StartUp:
         # 显式参数优先于配置文件，便于上层按采集会话覆盖设备、包名和采样频率。
         self.serialnum = device_id if device_id is not None else self.config_dic["serialnum"]
         self.packages = package if package is not None else self.config_dic["package"]
-        self.packages = [p for p in self.packages if _is_safe_package(p)]
-        if not self.packages:
-            raise ValueError("no valid package configured")
+        if not self.packages or any(not is_safe_process_name(p) for p in self.packages):
+            RuntimeData.end_run()
+            raise ValueError("性能采集包含无效的包名或进程名。")
+        if ":" in self.packages[0]:
+            RuntimeData.end_run()
+            raise ValueError("性能采集必须将主进程包名放在第一项。")
         self.frequency = interval if interval is not None else self.config_dic["frequency"]
         self.timeout = self.config_dic["timeout"]
         self.exceptionlog_list = self.config_dic["exceptionlog"]
@@ -462,7 +452,7 @@ class StartUp:
                 if monkey_monitor is not None:
                     # reader 在 stop() 内完成退出，最后检查其晚到的失败结果。
                     monkey_monitor.raise_if_failed()
-        except MonkeyError:
+        except (MonkeyError, ReportError):
             # 先保留已采集的数据并回收其他监控器，再让父进程收到非零退出。
             if not self._stop_called:
                 self.stop()
@@ -502,6 +492,7 @@ class StartUp:
         if self._adb_execution is not None:
             self._adb_execution.begin_cleanup()
         monkey_failure = None
+        report_failure = None
         for monitor in self.monitors:
             try:
                 monitor.stop()
@@ -536,6 +527,7 @@ class StartUp:
         except Exception as e:
             logger.error("create report failed")
             logger.error(e)
+            report_failure = e
         try:
             self.pull_heapdump()
         except Exception as e:
@@ -551,6 +543,8 @@ class StartUp:
         RuntimeData.end_run()
         if monkey_failure is not None:
             raise monkey_failure
+        if report_failure is not None:
+            raise ReportError("性能报告生成失败，已保留采集数据。") from report_failure
 
     def pull_heapdump(self):
         """重试本次精确清单中的堆转储，未知设备文件不参与拉取或清理。"""

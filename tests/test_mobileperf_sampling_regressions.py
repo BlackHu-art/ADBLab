@@ -118,8 +118,8 @@ def test_traffic_missing_pid_keeps_package_columns_across_process_restart(monkey
     collector = TrafficCollecor(SimpleNamespace(adb=SimpleNamespace(
         get_sdk_version=lambda: 34, get_pid_from_pck=pid,
     )), ["com.example.app"], interval=1, timeout=5, traffic_queue=queue.Queue())
-    collector._cat_traffic_device_dev = lambda: SimpleNamespace(
-        source="ok", total=100, rx=50, tx=50,
+    collector._cat_traffic_device_dev = lambda: trafficstats.NetDevInfo(
+        "wlan0: 50 0 0 0 0 0 0 0 50 0 0 0 0 0 0 0\n",
     )
     original_wait = collector._stop_event.wait
 
@@ -156,8 +156,8 @@ def test_traffic_missing_first_package_keeps_sampling_and_columns(monkeypatch, r
         get_sdk_version=lambda: 34, get_pid_from_pck=pid,
     )), ["com.example.first", "com.example.second"], interval=1, timeout=3,
         traffic_queue=queue.Queue())
-    collector._cat_traffic_device_dev = lambda: SimpleNamespace(
-        source="ok", total=100, rx=50, tx=50,
+    collector._cat_traffic_device_dev = lambda: trafficstats.NetDevInfo(
+        "wlan0: 50 0 0 0 0 0 0 0 50 0 0 0 0 0 0 0\n",
     )
     original_wait = collector._stop_event.wait
 
@@ -185,8 +185,8 @@ def test_traffic_collector_restarts_with_new_device_baseline(monkeypatch, runtim
         get_sdk_version=lambda: 34,
         get_pid_from_pck=lambda _package: 42,
     )), ["com.example.app"], interval=1, timeout=2, traffic_queue=queue.Queue())
-    collector._cat_traffic_device_dev = lambda: SimpleNamespace(
-        source="ok", total=clock[0] * 1000, rx=clock[0] * 500, tx=clock[0] * 500,
+    collector._cat_traffic_device_dev = lambda: trafficstats.NetDevInfo(
+        f"wlan0: {int(clock[0] * 500)} 0 0 0 0 0 0 0 {int(clock[0] * 500)} 0 0 0 0 0 0 0\n",
     )
     original_wait = collector._stop_event.wait
 

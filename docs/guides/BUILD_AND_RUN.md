@@ -312,8 +312,11 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    xcb 除光标库外还依赖 shape、randr、xfixes、ICCCM 和 X11 键盘等库，
    依据见 [Qt 6.8 X11 要求](https://doc.qt.io/qt-6.8/linux-requirements.html)。安装后对当前 Python 的
    `libqxcb.so` 执行 `ldd`，列出依赖并在出现 `not found` 时立即失败；仅安装 Python wheel 无法补齐系统库。
-3. 准备当前平台工具。Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
-   `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
+3. Windows 额外安装 `requirements-dev.txt`，顺序运行 `python -m ruff check .`、`python -m pyright`
+   和 `python -m pytest -q -m "not ui"`；pytest 使用 `QT_QPA_PLATFORM=offscreen`，失败会阻止
+   该作业继续打包，发布仍要求全部构建成功。该选择包含 integration，并不等同于纯单元测试，
+   GUI 与完整套件的本地验收条件见 [测试指南](TESTING_GUIDE.md#增量验证策略)。随后准备当前平台
+   工具；macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、
    `macos-15` 构建 arm64；Python 显式选择架构并核对 machine，helper 与主程序用 file/lipo 核对架构。
 5. 三平台通过 `scripts/check_build_artifacts.py frozen` 显式等待产物退出并校验退出码，避免 Windows
@@ -367,8 +370,9 @@ python3 scripts/check_build_artifacts.py release --directory release_artifacts -
 不能代替 Windows/macOS 原生运行、桌面交互及投屏实机验收。
 
 CI 侧只保留 Build（编译发布）与 Retention Audit（手动只读审计）两个工作流；Build 在推送 main
-或手动触发时执行文本完整性、Windows 静态检查、三平台构建与产物自检，并在依赖安装及源码导入前
-检查文本完整性。CI 不运行 pytest，测试由开发者按 [测试指南](TESTING_GUIDE.md) 在本地选择执行；
+或手动触发时配置文本完整性、Windows 静态检查与 `not ui` 测试、三平台构建与产物自检，并在
+依赖安装及源码导入前检查文本完整性。上述为工作流配置，实际远端运行结果需查看对应 Actions
+记录；GUI 与完整套件仍由开发者按 [测试指南](TESTING_GUIDE.md) 在本地选择执行。
 pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints 的变化。
 
 ### 提交版本规则
@@ -384,7 +388,8 @@ pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints �
 - 主版本和次版本只按明确的发布计划调整；当前值直接读取 `utils/app_metadata.py`。
 - 不允许把多次推送共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
 - 推送前应先比较上次推送时的版本，确认本次版本已递增；本地验证继续按增量策略选择，推送 main
-  本身不触发本地全量测试。发布验收按完整门禁执行；CI Build 只执行静态检查、打包和产物自检。
+  本身不触发本地全量测试。发布验收按完整门禁执行；CI Build 的范围见
+  [Build 工作流](#build-工作流)，不能代替完整门禁。
 
 ### Auto-Clean 工作流
 

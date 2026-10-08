@@ -8,13 +8,15 @@ class ScrcpyToolError(RuntimeError):
 
     code = "scrcpy_unavailable"
 
-    def __init__(self):
-        super().__init__("无法运行 scrcpy，请检查工具执行权限、CPU 架构或系统运行库。")
+    def __init__(
+        self, message: str = "无法运行 scrcpy，请检查工具执行权限、CPU 架构或系统运行库。",
+    ):
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
 class ScrcpyConfig:
-    """描述一次 scrcpy 启动所需的可执行文件、设备和视频选项。"""
+    """描述一次启动的设备和视频选项；exe 为空时由后台预检解析工具。"""
 
     exe: str
     adb: str

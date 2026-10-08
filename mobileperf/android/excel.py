@@ -3,6 +3,7 @@
 import csv
 import os
 import re
+import traceback
 
 from mobileperf.common.log import logger
 from mobileperf.extlib import xlsxwriter
@@ -14,9 +15,10 @@ _WORKSHEET_NAME_LIMIT = 31
 class Excel:
     """封装工作簿、工作表名称归一化和趋势图生成。"""
 
-    def __init__(self, excel_file):
+    def __init__(self, excel_file, *, temp_directory=None):
+        """由调用方持有输出流及可选临时目录，报告失败时仍能统一回收文件。"""
         self.excel_file = excel_file
-        self.workbook = xlsxwriter.Workbook(excel_file)
+        self.workbook = xlsxwriter.Workbook(excel_file, {"tmpdir": temp_directory})
         self.color_list = ["blue", "green", "red", "yellow", "purple"]
         self._worksheet_names = set()
 
@@ -43,7 +45,13 @@ class Excel:
 
     def save(self):
         """关闭工作簿并将内容保存到目标文件。"""
-        self.workbook.close()
+        try:
+            self.workbook.close()
+        except Exception as error:
+            # 旧版写入器异常栈持有未关闭的 ZIP；先释放退出栈中的局部引用，
+            # 使句柄在调用方关闭输出流、清理临时目录前归还，仍保留原始异常与栈位置。
+            traceback.clear_frames(error.__traceback__)
+            raise
 
     def csv_to_xlsx(self, csv_file, sheet_name, x_axis, y_axis, y_fields=[]):
         """将 CSV 数据写入工作表，并为指定纵轴字段生成趋势图。

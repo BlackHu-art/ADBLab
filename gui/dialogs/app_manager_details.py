@@ -37,7 +37,7 @@ from gui.i18n import tr
 from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role, apply_reading_surface
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from models.app_manager_worker import AppManagerWorker
@@ -116,7 +116,7 @@ class AppDetailsPage(QWidget):
         self.back_btn = PushButton(tr("返回列表"))
         self.back_btn.setToolTip(tr("返回已安装应用列表"))
         self.back_btn.setAccessibleName(tr("返回应用列表"))
-        self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
+        self.back_btn.setIcon(get_fluent_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.clicked.connect(self.back_requested)
         self.package_label = apply_label_role(
@@ -164,12 +164,12 @@ class AppDetailsPage(QWidget):
         self.grant_btn = PushButton()
         self.grant_btn.setText(tr("授权所选"))
         self.grant_btn.setToolTip(tr("授予选中的运行时权限"))
-        self.grant_btn.setIcon(get_themed_icon("check-circle.svg"))
+        self.grant_btn.setIcon(get_fluent_icon("check-circle.svg"))
         self.grant_btn.setIconSize(QSize(14, 14))
         self.revoke_btn = PushButton()
         self.revoke_btn.setText(tr("撤销所选"))
         self.revoke_btn.setToolTip(tr("撤销选中的运行时权限"))
-        self.revoke_btn.setIcon(get_themed_icon("x-circle.svg"))
+        self.revoke_btn.setIcon(get_fluent_icon("x-circle.svg"))
         self.revoke_btn.setIconSize(QSize(14, 14))
         self.grant_btn.clicked.connect(lambda: self._mp("grant"))
         self.revoke_btn.clicked.connect(lambda: self._mp("revoke"))
@@ -198,7 +198,7 @@ class AppDetailsPage(QWidget):
             sb = PushButton()
             sb.setText(tr("全选 / 全不选"))
             sb.setToolTip(tr("切换此列表的全部权限选择"))
-            sb.setIcon(get_themed_icon("check-square.svg"))
+            sb.setIcon(get_fluent_icon("check-square.svg"))
             sb.setIconSize(QSize(14, 14))
             sb.setMinimumWidth(130)
             sb.setProperty("adaptiveBaseHeight", 28)

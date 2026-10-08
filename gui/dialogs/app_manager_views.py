@@ -16,7 +16,7 @@ from gui.dialogs.lifecycle import (
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.typography import FontRole
 
 
@@ -455,7 +455,7 @@ class AppManagerViews:
         self._frame._view_mode = not self._frame._view_mode
         self._frame.stack.setCurrentIndex(1 if self._frame._view_mode else 0)
         self._frame.view_toggle.setIcon(
-            get_themed_icon("list-bullets.svg" if self._frame._view_mode else "squares-four.svg")
+            get_fluent_icon("list-bullets.svg" if self._frame._view_mode else "squares-four.svg")
         )
         tooltip = tr("切换为列表视图") if self._frame._view_mode else tr("切换为图标视图")
         self._frame.view_toggle.setToolTip(tooltip)

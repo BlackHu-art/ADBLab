@@ -12,6 +12,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
+from utils.raster_image import raster_image_reader
 
 ImageKey = tuple[str, int, int]
 
@@ -93,7 +94,7 @@ class ScreenshotReadWorker(QThread):
                 key = (path, stat.st_mtime_ns, stat.st_size)
                 image = self.cache.get(key)
                 if image is None:
-                    image = self.reader_factory(path).read()
+                    image = raster_image_reader(path, self.reader_factory).read()
                 current = os.stat(path)
                 if (current.st_mtime_ns, current.st_size) != key[1:]:
                     result = (path, None, QImage(), "changed")
@@ -177,7 +178,9 @@ class ScreenshotValidateWorker(QThread):
             if self.cancelled or self.isInterruptionRequested():
                 break
             try:
-                valid = os.path.isfile(path) and self.reader_factory(path).canRead()
+                valid = os.path.isfile(path) and raster_image_reader(
+                    path, self.reader_factory,
+                ).canRead()
             except (OSError, RuntimeError):
                 valid = False
             if self.cancelled or self.isInterruptionRequested():

@@ -158,3 +158,58 @@ def test_legacy_traffic_csv_preserves_uid_scoped_increments(monkeypatch, tmp_pat
     assert sample["uid"] == "10123"
     assert sample["uid_total(KB)"] == sample["rx(KB)"] == "100.0"
     assert sample["tx(KB)"] == "0.0"
+
+
+@pytest.mark.parametrize("snapshots, expected", [
+    ([{"wlan0": (1000, 500)}, {"wlan0": (10, 5)}, {"wlan0": (20, 10)}],
+     [(0, 0, 0), (0, 0, 0), (15, 10, 5)]),
+    ([{"wlan0": (100, 0), "rmnet_data0": (900, 0)}, {"wlan0": (110, 0)},
+      {"wlan0": (120, 0), "rmnet_data0": (910, 0)},
+      {"wlan0": (130, 0), "rmnet_data0": (920, 0)}],
+     [(0, 0, 0), (10, 10, 0), (20, 20, 0), (40, 40, 0)]),
+    ([{"wlan0": (100, 0)}, {"wlan0": (110, 0), "rmnet_data0": (900, 0)},
+      {"wlan0": (120, 0), "rmnet_data0": (910, 0)}],
+     [(0, 0, 0), (10, 10, 0), (30, 30, 0)]),
+    ([{"wlan0": (100, 50)}, {"wlan0": (110, 60)}, {},
+      {"wlan0": (1000, 500)}, {"wlan0": (1010, 510)}],
+     [(0, 0, 0), (20, 10, 10), (20, 10, 10), (40, 20, 20)]),
+    ([{"wlan0": (100, 50)}, {"wlan0": (110, 60)}, {"wlan0": (120, 5)},
+      {"wlan0": (130, 10)}],
+     [(0, 0, 0), (20, 10, 10), (20, 10, 10), (35, 20, 15)]),
+], ids=["counter-reset", "removed-and-returned", "interface-added", "missing-sample",
+        "one-counter-reset"])
+def test_device_traffic_accumulates_only_continuous_interface_epochs(
+    monkeypatch, tmp_path, snapshots, expected,
+):
+    clock = [0.0]
+    monkeypatch.setattr(trafficstats, "time", SimpleNamespace(time=lambda: clock[0]))
+
+    def query(command):
+        assert command == "cat /proc/net/dev"
+        counters = snapshots[int(clock[0])]
+        return "".join(
+            f"{name}: {rx * 1024} 0 0 0 0 0 0 0 {tx * 1024} 0 0 0 0 0 0 0\n"
+            for name, (rx, tx) in counters.items()
+        )
+
+    collector = TrafficCollecor(SimpleNamespace(adb=SimpleNamespace(
+        get_sdk_version=lambda: 34, run_shell_cmd=query, get_pid_from_pck=lambda package: 42,
+    )), ["com.example.app"], interval=1, timeout=len(snapshots))
+    collector._stop_event.wait = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    RuntimeData.begin_run()
+    RuntimeData.package_save_path = str(tmp_path)
+    try:
+        collector._collect_traffic_thread("unused")
+    finally:
+        RuntimeData.end_run()
+
+    with (tmp_path / "traffic.csv").open() as stream:
+        rows = list(csv.DictReader(stream))
+    assert [tuple(float(row[key]) for key in (
+        "device_total(KB)", "device_receive(KB)", "device_transport(KB)",
+    )) for row in rows] == expected
+    assert all(row["pid_total(KB)"] == "" for row in rows)
+    metrics = load_result_metrics(str(tmp_path))
+    assert [value for _when, value in metrics["traffic_total"].values] == [
+        total for total, _rx, _tx in expected
+    ]

@@ -9,6 +9,7 @@ from PySide6.QtCore import QSize, QThread
 from PySide6.QtGui import QImage, QImageReader
 
 from services.file_explorer import PreviewVersion
+from utils.raster_image import raster_image_reader
 
 MAX_IMAGE_PREVIEW_DIMENSION = 2048
 PreviewIdentity = tuple[str, str, bool, int]
@@ -91,7 +92,7 @@ class PreviewReadWorker(QThread):
         if self._aborted.is_set():
             return
         try:
-            reader = QImageReader(self.path)
+            reader = raster_image_reader(self.path, QImageReader)
             native = reader.size()
             self.native_size = QSize(native)
             if native.isValid() and not native.isEmpty():

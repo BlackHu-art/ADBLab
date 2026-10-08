@@ -103,6 +103,50 @@ def test_download_tree_keeps_binary_empty_and_quoted_files(tmp_path, shell_devic
     assert not list(destination.rglob(".adblab-pull-*"))
 
 
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_download_keeps_symlink_parent_semantics(tmp_path, shell_device, directory):
+    logical = tmp_path / "logical"
+    logical.mkdir()
+    physical = tmp_path / "physical"
+    (physical / "nested").mkdir(parents=True)
+    (logical / "alias").symlink_to(physical / "nested", target_is_directory=True)
+    if directory:
+        (logical / "files").mkdir()
+        (physical / "files").mkdir()
+        name = "files/note.txt"
+        remote = f"{logical}/alias/../files/"
+    else:
+        name = "note.txt"
+        remote = f"{logical}/alias/../note.txt"
+    (logical / name).write_bytes(b"wrong logical target")
+    (physical / name).write_bytes(b"expected physical target")
+    destination = tmp_path / "download"
+
+    SafeFileDownload("synthetic-device", lambda: False, lambda _: None).download(
+        remote, str(destination),
+    )
+
+    saved = destination / "note.txt" if directory else destination
+    assert saved.read_bytes() == b"expected physical target"
+    assert (logical / name).read_bytes() == b"wrong logical target"
+
+
+def test_download_does_not_remove_missing_parent_component(tmp_path, shell_device):
+    remote = tmp_path / "device"
+    remote.mkdir()
+    (remote / "note.txt").write_bytes(b"must not be downloaded")
+    destination = tmp_path / "saved.txt"
+    destination.write_bytes(b"original local content")
+
+    with pytest.raises(OSError):
+        SafeFileDownload("synthetic-device", lambda: False, lambda _: None).download(
+            f"{remote}/missing/../note.txt", str(destination),
+        )
+
+    assert destination.read_bytes() == b"original local content"
+    assert not list(tmp_path.glob(".adblab-pull-*"))
+
+
 def test_local_symlink_cannot_redirect_recursive_download(tmp_path, shell_device):
     remote = tmp_path / "device"
     remote.mkdir()

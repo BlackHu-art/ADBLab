@@ -231,6 +231,34 @@ def test_bitrate_preset_moves_handle_with_value_without_resizing(remote_layout, 
     assert slider.handle.x() == slider.grooveLength
 
 
+@pytest.mark.parametrize("font_size", (12, 22))
+def test_bitrate_readout_keeps_one_line_for_every_value(
+    remote_layout, qt_application, font_size,
+):
+    panel, remote, scroll, content, _settings = remote_layout
+    current = BaseStyles.current_font_config()
+    config = FontConfig(
+        ui_family="Arial", ui_size=font_size,
+        log_size=current.log_size, mono_family=current.mono_family,
+    )
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    _resize_feature_viewport(qt_application, panel, remote, scroll, 1280)
+    editor = remote.bitrate_slider.parentWidget()
+    label = editor.value_label
+    remote.bitrate.setCurrentIndex(0)
+    wait_for_stable_geometry(qt_application, (editor, label, remote.btn_start))
+    single_line_height = label.sizeHint().height()
+    positions = (mapped_rect(editor, content), mapped_rect(remote.btn_start, content))
+    for index in range(remote.bitrate.count()):
+        remote.bitrate.setCurrentIndex(index)
+        wait_for_stable_geometry(qt_application, (editor, label, remote.btn_start))
+        assert label.text() == f"{remote.bitrate.currentData()} Mbps"
+        assert label.sizeHint().height() == single_line_height
+        assert label.contentsRect().width() >= label.fontMetrics().horizontalAdvance(label.text())
+        assert (mapped_rect(editor, content), mapped_rect(remote.btn_start, content)) == positions
+
+
 @pytest.mark.parametrize("selector_name", ("preset_selector", "fps_selector"))
 def test_parameter_focus_and_selection_keep_option_geometry(
     remote_layout, qt_application, selector_name,

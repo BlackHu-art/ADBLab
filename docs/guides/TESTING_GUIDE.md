@@ -60,7 +60,8 @@
 2. 当前任务是正式发布验收，或已有明确的合并验收要求指定完整快照。
 3. 已沿调用链分析，但共享核心改动的影响范围仍无法可靠界定；说明具体无法界定的边界。
 4. 需要人工建立一次整体基线，例如合并前验收或距上次全量已久。
-   CI 与本地 pre-commit 都不运行 pytest；普通局部修改及 dev 推送 main 本身不强制本地全量。
+   CI 的 Windows 构建配置了 `not ui` 测试门禁，本地 pre-commit 不运行 pytest；GUI 与完整套件
+   仍按上述条件在本地选择，普通局部修改及 dev 推送 main 本身不强制本地全量。
 
 执行全量前记录触发项、关联验证结论和代码已稳定的依据。多 agent 各自只跑直接与关联测试，
 主任务合并检查清单并决定一次集成验证，避免每个子任务重复全量。
@@ -217,5 +218,9 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
   文档链接校验四个本地钩子；首次使用执行
   `.\.venv\Scripts\python.exe -m pre_commit install`。
 
-当前 pre-commit 三个钩子使用全目录静态检查且不接收文件名，未运行 pytest；Build 也只有静态
-检查、构建与自检。这里描述现状，不把本地钩子范围复制为每次编辑后的验证要求。
+当前 pre-commit 钩子使用全目录静态检查且不接收文件名，不运行 pytest。Build 的 Windows 作业
+在打包前配置 `python -m pytest -q -m "not ui"`，设置 `QT_QPA_PLATFORM=offscreen` 并顺序执行；
+测试失败阻止该作业继续构建，发布仍要求所有构建成功。`not ui` 包含 integration 和其他未标为
+UI 的测试，不代替 GUI 与完整套件的本地验收；具体流程见
+[Build 工作流](BUILD_AND_RUN.md#build-工作流)。这里描述门禁配置，不代表远端运行已经通过，
+也不把 CI 或本地钩子范围复制为每次编辑后的验证要求。

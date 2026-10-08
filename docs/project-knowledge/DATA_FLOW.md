@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-29
+last_verified: 2026-10-08
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -133,7 +133,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
 | 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；结果与方案参数拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 等设备身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` 与 `clients/` 归属记录 | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native；归属记录保存本次进程身份与未释放远端义务 | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor`、`core.owned_process` | 每次运行独立临时目录；模式和客户端记录通过同目录临时文件原子发布 | 进程、reader、模式线程与清理义务确认释放后清理；停止未确认保留目录，详见 [进程归属](ARCHITECTURE.md#运行时并发模型)；配置包含设备/包/路径，模式不进入用户设置 |
-| MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
+| MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | CSV 等文件独立写入；XLSX 完整关闭后原子发布，失败保留原报告 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
 | 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录；默认按第一层条目类型和文件大小校验，scrcpy 桥接使用 `verify_tree` 递归比较大小与 SHA-256 内容摘要；失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
 
@@ -191,11 +191,16 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
   设备接口统计包含 `wlanN`、`rmnetN`、`rmnet_dataN`，不叠加 VPN、回环或堆叠虚拟接口；
   没有识别到受支持接口，或任一受支持接口计数不完整时，整份设备总量表示不可用，
   不输出伪造的零流量或用部分总量作为增量基线。
+  累计值按每个接口的连续采样区间相加；新增接口、计数回退、消失后返回及缺样恢复先建立
+  新基线，避免负流量或把接口已有累计值计入本次采集。
 - gfxinfo 按当前窗口的表头定位 `Flags`、`IntendedVsync`、`Vsync`、`FrameCompleted`，
   不依赖 Android 版本之间变化的固定列号；缺列、目标窗口缺失、仅有损坏记录时表示不可用，
   未完成帧不进入有效 FPS 样本。
 - 结果图同时接受 ISO 时间与采集器既有的 `YYYY_MM_DD_HH_MM_SS` 时间，按完整日期计算跨度，
   不把下划线时间当作数值时间戳。
+
+子进程 PSS 文件以完整进程身份编码冒号和大写字母，避免 Windows 非法文件名、同尾段及
+大小写不敏感文件系统碰撞；主进程既有文件名保留。报告读取复用同一命名规则。
 
 ### 性能运行元数据
 

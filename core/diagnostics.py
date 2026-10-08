@@ -17,8 +17,15 @@ def _redact_with_sorted(text: str, sorted_values: tuple[str, ...]) -> str:
 
     for value in sorted_values:
         text = text.replace(value, "<device>")
+    # 带引号的值可含空格或转义引号；认证方案和凭据必须一并遮蔽。
+    quoted = r'''(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$))'''
     text = re.sub(
-        r"(?i)\b(password|passwd|token|secret|authorization|serial)\s*[:=]\s*[^\s,;]+",
+        r"(?i)\b(authorization)\s*[:=][ \t]*[^\r\n]*",
+        r"\1=<redacted>",
+        text,
+    )
+    text = re.sub(
+        rf"(?i)\b(password|passwd|token|secret|serial)\s*[:=]\s*(?:{quoted}|[^\s,;]+)",
         r"\1=<redacted>",
         text,
     )

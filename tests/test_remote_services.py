@@ -903,21 +903,24 @@ def test_scrcpy_other_platforms_never_use_homebrew(monkeypatch, system):
 def test_remote_invalid_scrcpy_override_reports_actionable_error_without_starting(
     monkeypatch, tmp_path, exists, executable,
 ):
-    panel = _remote_batch_panel()
-    panel._session_state = RemotePanel._SESSION_IDLE
-    panel._scrcpy_service = ScrcpyService()
-    panel._scrcpy_config = Mock()
+    from gui.panels.remote_panel import ScrcpyLaunchWorker
+
+    service = ScrcpyService()
     monkeypatch.setenv("SCRCPY_PATH", str(tmp_path / "private/scrcpy"))
-    monkeypatch.setattr(os.path, "isfile", lambda _path: exists)
+    monkeypatch.setattr(os.path, "isfile", lambda path: path == _TEST_ADB or exists)
     monkeypatch.setattr(os, "access", lambda *_args: executable)
     monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
-
-    panel._start_scrcpy()
-
-    panel._scrcpy_config.assert_not_called()
-    panel._log.assert_called_once_with(
-        "WARNING", "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
-    )
+    worker = ScrcpyLaunchWorker(_scrcpy_config(exe=""), service=service)
+    messages, failures, plans = [], [], []
+    worker.log_message.connect(lambda level, text: messages.append((level, text)))
+    worker.plan_failed.connect(lambda config, error: failures.append(error))
+    worker.plan_ready.connect(lambda *_: plans.append(True))
+    worker.run()
+    assert not plans
+    assert failures == ["scrcpy_unavailable"]
+    assert messages == [(
+        "ERROR", "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
+    )]
 
 
 def test_scrcpy_service_start_and_stop_delegate_to_process_runner():
@@ -2678,22 +2681,21 @@ def test_remote_panel_shutdown_detaches_launch_worker_without_blocking():
     panel._adb.close_input_sessions.assert_called_once()
 
 
-def test_remote_panel_start_scrcpy_resolves_executable_via_service():
-    panel = RemotePanel.__new__(RemotePanel)
-    panel._process = None
-    panel._launch_worker = None
-    panel._scrcpy_service = Mock()
-    panel._scrcpy_service.resolve_executable.return_value = "C:/tools/scrcpy.exe"
-    panel._log = Mock()
-    panel.panel = Mock(selected_devices=["device-1"])
+def test_remote_background_preflight_reports_missing_executable():
+    from services.remote.types import ScrcpyToolError
 
-    with patch("gui.panels.remote_panel.os.path.isfile", return_value=False):
-        RemotePanel._start_scrcpy(panel)
-
-    panel._scrcpy_service.resolve_executable.assert_called_once_with()
-    panel._log.assert_called_once_with(
-        "WARNING", "未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。",
-    )
+    service = ScrcpyService()
+    with (
+        patch.object(service, "resolve_executable", return_value="missing-scrcpy") as resolve,
+        patch(
+            "services.remote.scrcpy_service.os.path.isfile",
+            side_effect=lambda path: path == _TEST_ADB,
+        ),
+        patch.dict(os.environ, {"SCRCPY_PATH": ""}),
+        pytest.raises(ScrcpyToolError, match="未找到 scrcpy"),
+    ):
+        service.build_launch_plan(_scrcpy_config(exe=""))
+    resolve.assert_called_once_with()
 
 
 def test_remote_panel_start_ignores_shortcut_while_stopping_after_worker_exits():
@@ -2845,3 +2847,66 @@ def test_remote_panel_launch_finished_only_recycles_stale_worker():
     panel._set_running.assert_not_called()
     panel._update_status.assert_not_called()
     stale_worker.deleteLater.assert_called_once_with()
+
+
+@pytest.mark.parametrize('outcome', ['ready', 'cancel'])
+def test_remote_queues_tool_resolution_without_blocking_gui(qt_application, monkeypatch, outcome):
+    from gui.panels.remote_panel import ScrcpyLaunchWorker
+
+    entered, release = threading.Event(), threading.Event()
+    service = ScrcpyService()
+    command = Mock(return_value=CommandResult(True, 'scrcpy 3.3.4'))
+    monkeypatch.setattr(service, 'run_command', command)
+    monkeypatch.setattr(
+        service, 'preflight_check', Mock(return_value=Mock(success=False, messages=[])),
+    )
+    monkeypatch.setattr(service, '_launch_backend', lambda *_: {})
+
+    def resolve():
+        assert QThread.currentThread() != qt_application.thread()
+        entered.set()
+        assert release.wait(2)
+        return _TEST_ADB
+
+    monkeypatch.setattr(service, 'resolve_executable', resolve)
+    panel = _remote_batch_panel()
+    panel._session_state = RemotePanel._SESSION_IDLE
+    panel._scrcpy_service = service
+    panel._scrcpy_config = lambda exe, device: _scrcpy_config(exe=exe, device=device)
+    panel._on_device_plan_ready = Mock()
+    workers = []
+    plans = []
+
+    class TrackedLaunchWorker(ScrcpyLaunchWorker):
+        def __init__(self, config, service):
+            super().__init__(config, service=service)
+            workers.append(self)
+            self.plan_ready.connect(
+                lambda config, plan: plans.append((config, plan)),
+                Qt.ConnectionType.DirectConnection,
+            )
+
+    with patch('gui.panels.remote_panel.ScrcpyLaunchWorker', TrackedLaunchWorker):
+        try:
+            panel._start_scrcpy()
+            assert entered.wait(1), 'resolution must run in the queued worker'
+            assert not release.is_set()
+            panel._start_scrcpy()
+            assert len(workers) == 1
+            if outcome == 'cancel':
+                workers[0].requestInterruption()
+            release.set()
+            assert workers[0].wait(2000)
+            if outcome == 'cancel':
+                command.assert_not_called()
+                assert not plans
+            else:
+                assert {config.device for config, _ in plans} == {'device-1', 'device-2'}
+                assert all(plan.args[0] == _TEST_ADB for _, plan in plans)
+        finally:
+            release.set()
+            for worker in workers:
+                worker.requestInterruption()
+                assert worker.wait(2000)
+                panel._disconnect_launch_worker(worker)
+                worker.deleteLater()

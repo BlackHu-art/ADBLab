@@ -40,7 +40,7 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import apply_focus_indicator, apply_label_role, create_transient_menu
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.typography import FontRole
 
 
@@ -226,12 +226,12 @@ class AppManagerForm:
         self._frame.view_toggle.setToolTip(tr("切换为列表视图"))
         self._frame.view_toggle.setAccessibleName(tr("切换为列表视图"))
         self._frame.view_toggle.clicked.connect(self._frame._toggle_view)
-        self._frame.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
+        self._frame.view_toggle.setIcon(get_fluent_icon("list-bullets.svg"))
         self._frame.view_toggle.setIconSize(QSize(16, 16))
         self._frame.refresh_btn = PushButton()
         self._frame.refresh_btn.setText(tr("刷新"))
         self._frame.refresh_btn.setToolTip(tr("刷新应用列表并重试未读取的图标"))
-        self._frame.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self._frame.refresh_btn.setIcon(get_fluent_icon("arrows-clockwise.svg"))
         self._frame.refresh_btn.setIconSize(QSize(14, 14))
         self._frame.refresh_btn.clicked.connect(self._frame._load_apps)
         self._frame.refresh_btn.setProperty("adaptiveBaseHeight", 28)
@@ -266,7 +266,7 @@ class AppManagerForm:
         self._frame.retry_btn = PushButton(tr("重试"))
         self._frame.retry_btn.setToolTip(tr("重新尝试加载应用列表"))
         self._frame.retry_btn.setAccessibleName(tr("重试加载应用"))
-        self._frame.retry_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self._frame.retry_btn.setIcon(get_fluent_icon("arrows-clockwise.svg"))
         self._frame.retry_btn.setIconSize(QSize(14, 14))
         self._frame.retry_btn.setProperty("adaptiveBaseHeight", 28)
         self._frame.retry_btn.clicked.connect(self._frame.retry_load)
@@ -437,7 +437,9 @@ class AppManagerForm:
         ]):
             if index in (4, 6):
                 bar.addSeparator()
-            action = QAction(get_themed_icon(icon), t, bar)
+            # 原生 QAction 使用 Qt SVG 引擎，主题变化由 _apply_theme 重绑；
+            # 避免 Python QIconEngine 随已销毁的按钮包装对象进入延迟 GC。
+            action = QAction(get_fluent_icon(icon).icon(), t, bar)
             action.setToolTip(tooltip)
             action.setProperty("requiresDevice", requires_device)
             action.setProperty("requiresSelection", requires_selection)
@@ -507,7 +509,7 @@ class AppManagerForm:
         editor.setMinimumHeight(max(33, editor.sizeHint().height(), metrics.height() + 12))
         self._frame._command_bar.setFont(ui_font)
         for action, icon in self._frame._command_icons:
-            action.setIcon(get_themed_icon(icon))
+            action.setIcon(get_fluent_icon(icon).icon())
         view_hint = self._frame.view_toggle.minimumSizeHint()
         self._frame.view_toggle.setFixedSize(
             max(28, view_hint.width()), max(28, view_hint.height())

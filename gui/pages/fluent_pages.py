@@ -1306,10 +1306,15 @@ class SettingsPage(ScrollArea):
             for label in card.findChildren(QLabel):
                 self._set_setting_font(label, FontRole.UI_SMALL)
             for label in (card.card.titleLabel, card.card.contentLabel):
-                # 字号放大后标题可能比 HeaderSettingCard 原算高度高 1-2px，这里补齐。
-                label.setMinimumHeight(
-                    max(label.height(), label.heightForWidth(max(1, label.width())))
-                )
+                # 使用最终字体度量，避免沿用上次字号的固定最小高度。
+                label.setMinimumHeight(label.sizeHint().height())
+            card.card.hBoxLayout.invalidate()
+            header_height = max(70, card.card.hBoxLayout.minimumSize().height())
+            card.card.setFixedHeight(header_height)
+            # 展开动画以 viewport 顶部边距为表头基线，必须与实际表头同步。
+            card.setViewportMargins(0, header_height, 0, 0)
+            if not card.isExpand:
+                card.setFixedHeight(header_height)
             card._adjustViewSize()
         for presentation in self._card_presentations:
             card, control = presentation.card, presentation.control

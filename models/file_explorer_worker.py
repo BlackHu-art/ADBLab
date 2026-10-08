@@ -180,6 +180,39 @@ class TextSaveWorker(ADBWorker):
             cancelled=None if cleanup else self._aborted.is_set,
         )
 
+    def _resolve_target(self) -> str:
+        """按原始字节验证真实目标；取消或失败清理暂存，绝不使用有损解码的近似路径。"""
+        command = explorer_service.root_command(
+            explorer_service.resolve_text_target_command(self.path), self.use_root,
+        )
+        try:
+            with tempfile.TemporaryDirectory(prefix="adblab-text-target-") as temporary:
+                output = Path(temporary) / "target"
+                # 与读取正文一致使用 exec-out，防止旧 adbd 改写 readlink 的路径分隔符。
+                result = CommandRunner.run_to_file(
+                    ["adb", "-s", self.device_ip, "exec-out", command], str(output),
+                    timeout=30, cancelled=self._aborted.is_set,
+                )
+                if self._aborted.is_set():
+                    raise InterruptedError("Text save cancelled")
+                if not result.success:
+                    raise OSError("Unable to resolve writable text file")
+                with output.open("rb") as stream:
+                    raw = stream.read(8193)
+        except OSError as exc:
+            raise OSError("Unable to resolve writable text file") from exc
+        prefix, suffix = b"ADBLAB_TARGET:", b"\n:END"
+        if len(raw) > 8192 or not raw.startswith(prefix) or not raw.endswith(suffix):
+            raise OSError("Unable to resolve writable text file")
+        # suffix 只移除 readlink 的一个分隔换行；文件名自身的换行必须保留至拒绝。
+        try:
+            target = raw[len(prefix):-len(suffix)].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise OSError("Invalid text file target") from exc
+        if not target.startswith("/") or any(char in target for char in "\0\r\n"):
+            raise OSError("Invalid text file target")
+        return target
+
     def run(self):
         """上传正文不进入 argv；发布前任一步失败保留原文件，终态晚于清理。"""
         if self._aborted.is_set():
@@ -187,17 +220,7 @@ class TextSaveWorker(ADBWorker):
         owned: list[tuple[str, bool]] = []
         error = ""
         try:
-            resolved = self._shell(
-                explorer_service.resolve_text_target_command(self.path), root=self.use_root,
-            )
-            if not resolved.success:
-                raise OSError(resolved.error or "Unable to resolve writable text file")
-            if (not resolved.output.startswith("ADBLAB_TARGET:")
-                    or not resolved.output.endswith(":END")):
-                raise OSError("Unable to resolve writable text file")
-            target = resolved.output[len("ADBLAB_TARGET:"):-len(":END")]
-            if not target.startswith("/") or any(char in target for char in "\0\r\n"):
-                raise OSError("Invalid text file target")
+            target = self._resolve_target()
             token = uuid.uuid4().hex
             directory = posixpath.join(posixpath.dirname(target), f".adblab-save-{token}")
             upload_directory = (

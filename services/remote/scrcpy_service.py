@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from core.adb_dimensions import parse_wm_size
@@ -222,9 +222,22 @@ class ScrcpyService:
         cancelled: Callable[[], bool] | None = None,
     ) -> ScrcpyLaunchPlan:
         """在单次预算内完成预检；取消和预算耗尽直接终止，不发布启动计划。"""
-        self.require_client(config.adb)
         deadline = time.monotonic() + max(0, timeout)
         self._check_budget(deadline, cancelled)
+        self.require_client(config.adb)
+        if not config.exe:
+            exe = self.resolve_executable()
+            # 工具复制不能中途打断，但取消后不得继续探测或发布启动计划。
+            self._check_budget(deadline, cancelled)
+            if os.environ.get("SCRCPY_PATH", "").strip() and (
+                not os.path.isfile(exe) or (os.name != "nt" and not os.access(exe, os.X_OK))
+            ):
+                raise ScrcpyToolError(
+                    "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
+                )
+            if not os.path.isfile(exe):
+                raise ScrcpyToolError("未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。")
+            config = replace(config, exe=exe)
         messages: list[tuple[str, str]] = []
         version = self.version(config.exe, deadline=deadline, cancelled=cancelled)
         messages.append(("INFO", f"scrcpy v{version}"))

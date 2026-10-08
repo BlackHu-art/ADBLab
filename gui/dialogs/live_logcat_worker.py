@@ -87,7 +87,6 @@ class LogcatWorker(QThread):
         self._proc = None
         self._stop_event = threading.Event()
         self._finished_event = threading.Event()
-        self._launch_lock = threading.Lock()
         self._batch_lock = threading.Lock()
         self._package_lock = threading.Lock()
         self._package_changed_event = threading.Event()
@@ -121,17 +120,16 @@ class LogcatWorker(QThread):
 
     def request_stop(self):
         """向 logcat 线程和受跟踪进程发送幂等停止请求。"""
-        with self._launch_lock:
-            self._stop_event.set()
-            self._package_changed_event.set()
-            self._process_runner.request_stop(self._process_key)
+        # 启动可能仍在解析工具或创建进程；取消意图不能等待启动返回。
+        self._stop_event.set()
+        self._package_changed_event.set()
+        self._process_runner.request_stop(self._process_key)
 
     def force_stop(self, timeout_seconds: float) -> bool:
         """在给定预算内强制终止受跟踪进程。"""
-        with self._launch_lock:
-            self._stop_event.set()
-            self._package_changed_event.set()
-            return self._process_runner.force_stop(self._process_key, timeout_seconds)
+        self._stop_event.set()
+        self._package_changed_event.set()
+        return self._process_runner.force_stop(self._process_key, timeout_seconds)
 
     def stop(self):
         """保留兼容停止入口；这里只请求停止，不等待进程退出。"""
@@ -347,20 +345,23 @@ class LogcatWorker(QThread):
                     if self.package == package:
                         self.package = normalized
             self.status_changed.emit("正在启动日志采集…")
-            with self._launch_lock:
-                if self._stop_event.is_set():
-                    termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
-                    return
-                self._proc = self._process_runner.start(
-                    self._process_key,
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    encoding="utf-8",
-                    errors="ignore",
-                )
+            if self._stop_event.is_set():
+                termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
+                return
+            self._proc = self._process_runner.start(
+                self._process_key,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            # 取消早于句柄登记时，由启动线程收口晚到进程；监督仍持有本 worker。
+            if self._stop_event.is_set():
+                termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
+                return
             proc = self._proc
             assert proc is not None  # start() 返回后进程句柄非空
             stdout = proc.stdout
@@ -441,13 +442,18 @@ class LogcatWorker(QThread):
         except Exception as exc:
             termination = LogcatTermination(
                 (
-                    LogcatTerminationKind.START_FAILED
-                    if self._proc is None
-                    else LogcatTerminationKind.UNEXPECTED_EXIT
+                    LogcatTerminationKind.CANCELLED
+                    if self._stop_event.is_set()
+                    else (
+                        LogcatTerminationKind.START_FAILED
+                        if self._proc is None
+                        else LogcatTerminationKind.UNEXPECTED_EXIT
+                    )
                 ),
                 error_type=type(exc).__name__,
             )
-            self.status_changed.emit("日志采集无法继续，请检查设备连接后重试")
+            if not self._stop_event.is_set():
+                self.status_changed.emit("日志采集无法继续，请检查设备连接后重试")
         finally:
             try:
                 if termination is None:

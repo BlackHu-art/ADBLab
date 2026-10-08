@@ -10,6 +10,7 @@ import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
+from mobileperf.android.process_target import process_file_segment
 from mobileperf.android.tools.androiddevice import AndroidDevice, _shq
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
@@ -192,8 +193,7 @@ class MemInfoPackageCollector:
         """采集指定进程的详细内存信息，通常在一秒内完成。"""
         time_old = time.time()
         out = self.device.adb.run_shell_cmd(f"dumpsys meminfo {_shq(process)}")
-        # Windows 文件名不能包含冒号，因此对子进程分隔符进行替换。
-        process_rename = process.replace(":", "_")
+        process_rename = process_file_segment(process)
         meminfo_file = os.path.join(
             RuntimeData.package_save_path, f"dumpsys_meminfo_{process_rename}.txt"
         )
@@ -228,16 +228,9 @@ class MemInfoPackageCollector:
         mem_file = os.path.join(RuntimeData.package_save_path, "meminfo.csv")
         pid_file = os.path.join(RuntimeData.package_save_path, "pid_change.csv")
         for package in self.packages:
-            # 子进程名可能过长，因此缩短文件名以满足 Excel 工作表名长度限制。
-            if ":" in package:
-                pss_detail_file = os.path.join(
-                    RuntimeData.package_save_path,
-                    f"pss_{package.split(':')[-1].split('.')[-1]}.csv",
-                )
-            else:
-                pss_detail_file = os.path.join(
-                    RuntimeData.package_save_path, f"pss_{package}.csv"
-                )
+            pss_detail_file = os.path.join(
+                RuntimeData.package_save_path, f"pss_{process_file_segment(package)}.csv"
+            )
             with open(pss_detail_file, "a+", encoding="utf-8") as df:
                 csv.writer(df, lineterminator="\n").writerow(pss_detail_titile)
         try:
@@ -275,15 +268,9 @@ class MemInfoPackageCollector:
                     if 0 == mem_pck_snapshot.totalPSS:
                         logger.error(f"package total pss is 0:{package}")
                         continue
-                    if ":" in package:
-                        pss_detail_file = os.path.join(
-                            RuntimeData.package_save_path,
-                            f"pss_{package.split(':')[-1].split('.')[-1]}.csv",
-                        )
-                    else:
-                        pss_detail_file = os.path.join(
-                            RuntimeData.package_save_path, f"pss_{package}.csv"
-                        )
+                    pss_detail_file = os.path.join(
+                        RuntimeData.package_save_path, f"pss_{process_file_segment(package)}.csv"
+                    )
                     pss_detail_list = [
                         TimeUtils.formatTimeStamp(collection_time),
                         package,

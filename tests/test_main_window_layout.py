@@ -2915,15 +2915,17 @@ def test_frameless_resize_zone_reports_native_start_result(qt_application, start
     qt_application.processEvents()
 
     zone = controller._zones["right"]
-    QTest.mousePress(zone, Qt.MouseButton.LeftButton)
-
-    handle.startSystemResize.assert_called_once_with(Qt.Edge.RightEdge)
-    if started:
-        on_started.assert_called_once_with()
-        on_cancelled.assert_not_called()
-    else:
-        on_started.assert_called_once_with()
-        on_cancelled.assert_called_once_with()
+    try:
+        QTest.mousePress(zone, Qt.MouseButton.LeftButton)
+        handle.startSystemResize.assert_called_once_with(Qt.Edge.RightEdge)
+        if started:
+            on_started.assert_called_once_with()
+            on_cancelled.assert_not_called()
+        else:
+            on_started.assert_called_once_with()
+            on_cancelled.assert_called_once_with()
+    finally:
+        QTest.mouseRelease(zone, Qt.MouseButton.LeftButton)
 
 
 def test_frameless_resize_zone_cancels_when_window_handle_is_missing(qt_application):

@@ -176,6 +176,8 @@ class RemoteBitrateEditor(QWidget):
         super().__init__(parent)
         self.combo = combo
         self.value_label = value_label
+        # 数值与单位必须保持单行，否则切换两位数会折行并推移下方操作按钮。
+        self.value_label.setWordWrap(False)
         combo.setParent(self)
         combo.hide()
         self.slider = Slider(Qt.Orientation.Horizontal, self)
@@ -198,7 +200,9 @@ class RemoteBitrateEditor(QWidget):
     def refresh_metrics(self) -> None:
         """按全部合法值保留读数宽度，切换一位与两位码率不挤动滑轨。"""
         self.value_label.setMinimumWidth(max(
-            self.value_label.fontMetrics().horizontalAdvance(f"{self.combo.itemData(index)} Mbps")
+            self.value_label.fontMetrics().size(
+                Qt.TextFlag.TextSingleLine, f"{self.combo.itemData(index)} Mbps",
+            ).width()
             for index in range(self.combo.count())
         ))
 

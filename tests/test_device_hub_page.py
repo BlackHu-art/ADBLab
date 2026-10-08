@@ -324,10 +324,13 @@ def test_double_click_device_text_or_background_toggles_once_without_replacing_r
     target = card if target_name == "card" else getattr(card, target_name)
     point = QPoint(card.width() // 2, 2) if target_name == "card" else target.rect().center()
     QTest.mouseDClick(target, Qt.MouseButton.LeftButton, pos=point)
+    # mouseDClick 不包含最后一次释放；遗留按下状态会阻断后续窗口的悬停事件。
+    QTest.mouseRelease(target, Qt.MouseButton.LeftButton, pos=point)
     assert requests.count() == 1
     assert card.selection.isChecked()
     assert page.device_cards == cards
     QTest.mouseDClick(target, Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseRelease(target, Qt.MouseButton.LeftButton, pos=point)
     assert requests.count() == 2
     assert not card.selection.isChecked()
 
@@ -352,6 +355,7 @@ def test_device_action_double_click_does_not_toggle_batch_target(
     assert card.selection.isChecked() == selected
     button.setEnabled(False)
     QTest.mouseDClick(button, Qt.MouseButton.LeftButton)
+    QTest.mouseRelease(button, Qt.MouseButton.LeftButton)
     assert requests.count() == 0
 
 
@@ -397,6 +401,7 @@ def test_checkbox_single_click_and_double_click_removal_keep_sender_alive(qt_app
         lambda _selected: page.set_device_context([], ["demo-usb-a"], "ready")
     )
     QTest.mouseDClick(card.name_label, Qt.MouseButton.LeftButton)
+    QTest.mouseRelease(card.name_label, Qt.MouseButton.LeftButton)
     assert requests.count() == 2
     assert destroyed.count() == 0 and isValid(card)
     assert card.isHidden() and "离线" in card.status_label.text()
@@ -444,6 +449,7 @@ def test_each_cached_device_row_reports_uncertain_connection_and_blocks_selectio
         assert not card.selection.isEnabled()
         assert not card.files_button.isEnabled()
         QTest.mouseDClick(card.name_label, Qt.MouseButton.LeftButton)
+        QTest.mouseRelease(card.name_label, Qt.MouseButton.LeftButton)
     assert requests.count() == 0
 
 
@@ -814,7 +820,9 @@ def test_copy_details_keeps_full_identifier_and_omits_missing_or_raw_metadata(
     ]
     requests = QSignalSpy(page.selection_requested)
     QTest.mouseDClick(card.copy_details_button, Qt.MouseButton.LeftButton)
+    QTest.mouseRelease(card.copy_details_button, Qt.MouseButton.LeftButton)
     assert requests.count() == 0
+    assert qt_application.mouseButtons() == Qt.MouseButton.NoButton
 
 
 @pytest.mark.parametrize("width", [380, 860])

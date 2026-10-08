@@ -206,15 +206,15 @@ def test_image_reader_decodes_on_worker_and_preserves_original_dimensions(
     assert not worker.error
 
 
-def test_cancelled_decode_discards_pixels(qt_application, monkeypatch):
+def test_cancelled_decode_discards_pixels(qt_application, monkeypatch, tmp_path):
     from gui.dialogs import file_explorer_preview_tasks as tasks
 
     entered = threading.Event()
     release = threading.Event()
 
-    class Reader:
+    class Reader(tasks.QImageReader):
         def __init__(self, path):
-            pass
+            super().__init__(path)
 
         def size(self):
             return QImage(4, 4, QImage.Format.Format_RGB32).size()
@@ -225,7 +225,11 @@ def test_cancelled_decode_discards_pixels(qt_application, monkeypatch):
             return QImage(4, 4, QImage.Format.Format_RGB32)
 
     monkeypatch.setattr(tasks, "QImageReader", Reader)
-    worker = tasks.PreviewReadWorker("unused.png")
+    path = tmp_path / "cancel.png"
+    image = QImage(4, 4, QImage.Format.Format_RGB32)
+    image.fill(0xFF123456)
+    assert image.save(str(path))
+    worker = tasks.PreviewReadWorker(str(path))
     worker.start()
     try:
         assert entered.wait(3)

@@ -84,7 +84,7 @@ class SafeFileDownload:
         """destination 为精确目标路径，既有目录直接合并，不额外附加设备 basename。"""
         if not remote.startswith("/") or any(char in remote for char in "\0\r\n"):
             raise ValueError("设备路径无效，请刷新文件列表。")
-        remote = posixpath.normpath("/" + remote.lstrip("/"))
+        # 符号链接后的 .. 由设备文件系统解析；宿主词法归一化会下载另一个对象。
         target = Path(destination).absolute()
         # 单文件另存为可采用用户命名，但现有链接仍不能改变落盘归属。
         target = Path(local_child_path(str(target.parent), target.name, check_existing=True))

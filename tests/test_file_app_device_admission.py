@@ -137,6 +137,7 @@ def test_cached_file_rows_remain_scrollable_without_operation_access(
         context_requested = QSignalSpy(table.customContextMenuRequested)
         QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
         QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        QTest.mouseRelease(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
         context_event = QContextMenuEvent(
             QContextMenuEvent.Reason.Mouse, point, table.viewport().mapToGlobal(point),
         )

@@ -258,6 +258,7 @@ class _ScanThread(QThread):
                     if remaining <= 0:
                         return None
                     try:
+                        # 持续排空两个管道，避免大量设备或诊断输出反向阻塞客户端。
                         stdout, _stderr = proc.communicate(timeout=min(0.1, remaining))
                     except subprocess.TimeoutExpired:
                         continue
@@ -1983,6 +1984,11 @@ class MainFrame(FluentWindow):
         if (
             self._closing
             or device not in self.left_panel.device_context_snapshot().connected_devices
+        ):
+            return
+        generation = info.get("_overview_generation")
+        if generation is not None and not self.adb_controller.is_device_overview_current(
+            device, generation,
         ):
             return
         metrics = (

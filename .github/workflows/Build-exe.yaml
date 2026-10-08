@@ -206,6 +206,13 @@ jobs:
         shell: bash
         run: python -m pyright
 
+      - name: Run non-UI tests
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -m "not ui"
+
       - name: Prepare platform tools
         shell: bash
         run: python scripts/prepare_runtime_tools.py
