@@ -355,7 +355,9 @@ def test_scan_waits_for_host_without_opening_another_native_client(monkeypatch, 
 @pytest.mark.parametrize("wait_seconds", [12.0, 16.0])
 def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_seconds):
     clock = [100.0]
-    monkeypatch.setattr("gui.main_frame.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    timer = SimpleNamespace(monotonic=lambda: clock[0])
+    monkeypatch.setattr("gui.main_frame.time", timer)
+    monkeypatch.setattr("core.adb_transport.time", timer)
     runtime = Mock()
     runtime.can_scan_fast.return_value = False
 

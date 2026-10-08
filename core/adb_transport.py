@@ -25,6 +25,38 @@ class CommandCancelled(Exception):
     """调用方请求取消；与设备端命令失败分开处理。"""
 
 
+class AdbClientTimeout(TimeoutError):
+    """客户端排队或启动准备耗尽预算；与无法确认进程退出的清理失败分开。"""
+
+
+def acquire_adb_client(deadline: float, cancelled: CancelCheck | None = None) -> None:
+    """在请求截止时间内取得客户端锁；排队及取得锁后都复核取消。
+
+    成功后由调用方释放锁；失败抛出 CommandCancelled 或 AdbClientTimeout，且不持有锁。
+    排队共享命令预算，不能因另一个设备的长任务阻止停止或延长本次请求。
+    """
+
+    while True:
+        if cancelled is not None and cancelled():
+            raise CommandCancelled
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AdbClientTimeout
+        if not adb_client_lock.acquire(timeout=min(0.1, remaining)):
+            continue
+        admitted = False
+        try:
+            if cancelled is not None and cancelled():
+                raise CommandCancelled
+            if time.monotonic() >= deadline:
+                raise AdbClientTimeout
+            admitted = True
+            return
+        finally:
+            if not admitted:
+                adb_client_lock.release()
+
+
 @dataclass(frozen=True)
 class ExecutionDiagnostics:
     """单次请求的失败快照；只保存固定原因、耗时和计数，不保存请求或响应内容。"""
@@ -61,7 +93,10 @@ class OutputError(AdbError):
 class Connection:
     """拥有一次请求的连接；所有网络读写共享总超时，不重连或重放命令。"""
 
-    def __init__(self, timeout: float, cancelled: CancelCheck | None = None):
+    def __init__(
+        self, timeout: float, cancelled: CancelCheck | None = None, *,
+        connect_timeout: float | None = None,
+    ):
         self.cancelled = cancelled
         self._started = time.monotonic()
         self.deadline = self._started + timeout
@@ -75,7 +110,8 @@ class Connection:
             if remaining <= 0:
                 raise TimeoutError
             self.sock = socket.create_connection(
-                ("127.0.0.1", 5037), timeout=min(_CONNECT_TIMEOUT, remaining),
+                ("127.0.0.1", 5037),
+                timeout=remaining if connect_timeout is None else min(connect_timeout, remaining),
             )
         self._disable_nagle()
 
@@ -214,11 +250,12 @@ def execute(
     stdout: BinaryIO,
     stderr: BinaryIO,
     cancelled: CancelCheck | None = None,
+    connect_timeout: float | None = None,
 ) -> int:
     """执行已验证参数并流式返回输出和远端退出码；不接收 stdin 或分配终端。"""
     if command == "mdns" and (serial is not None or args not in (["check"], ["services"])):
         raise AdbError("Unsupported mDNS query.")
-    connection = Connection(timeout, cancelled)
+    connection = Connection(timeout, cancelled, connect_timeout=connect_timeout)
     try:
         if command not in {"devices", "shell", "mdns"}:
             raise AdbError("Unsupported command.")
@@ -293,6 +330,7 @@ def capture(
             stdout=stdout,
             stderr=stderr,
             cancelled=cancelled,
+            connect_timeout=_CONNECT_TIMEOUT,
         )
         output = (
             stdout.getvalue() if isinstance(stdout, io.BytesIO) and stdout_sink is None else b""
@@ -305,11 +343,7 @@ def capture(
     except CommandCancelled as exc:
         return ExecutionResult(kind="cancelled", diagnostics=getattr(exc, "_adb_diagnostics", None))
     except TimeoutError as exc:
-        diagnostics = getattr(exc, "_adb_diagnostics", None)
-        # 连接还没建立就到时，和端口拒绝一样：服务不在听，不能当成已连上之后的读超时。
-        if diagnostics is not None and diagnostics.stage == "connect":
-            return ExecutionResult(kind="unavailable", diagnostics=diagnostics)
-        return ExecutionResult(kind="timeout", diagnostics=diagnostics)
+        return ExecutionResult(kind="timeout", diagnostics=getattr(exc, "_adb_diagnostics", None))
     except OutputError as exc:
         return ExecutionResult(
             stderr=str(exc).encode("utf-8"),

@@ -43,8 +43,14 @@ from adblab.presentation.qt_app_update import QtAppUpdate
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from controllers.action_catalog import ACTION_SIGNALS
+from core.adb_runtime import local_server_environment
+from core.adb_transport import CommandCancelled, acquire_adb_client
 from core.exec import (
-    CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_client_lock, adb_runtime,
+    CREATE_NEW_CONSOLE,
+    CommandRunner,
+    ProcessRunner,
+    adb_client_lock,
+    adb_runtime,
 )
 from core.log_service import LogService
 from core.native_process import cancel_and_drain_native, close_native_pipes
@@ -196,8 +202,15 @@ class _ScanThread(QThread):
                 else:
                     if runner is None:
                         runner = ProcessRunner()
-                    with adb_client_lock:
-                        output = self._run_devices_scan(runner, deadline=deadline)
+                    try:
+                        acquire_adb_client(deadline, lambda: self._stop_flag)
+                    except (CommandCancelled, TimeoutError):
+                        output = None
+                    else:
+                        try:
+                            output = self._run_devices_scan(runner, deadline=deadline)
+                        finally:
+                            adb_client_lock.release()
                 if self._stop_flag:
                     return
                 if output is None:
@@ -268,12 +281,16 @@ class _ScanThread(QThread):
                     completed = True
                     if proc.returncode == 0:
                         return stdout
-                    if stderr and "failed to check server version" in stderr:
+                    if (stderr and "failed to check server version" in stderr
+                            and local_server_environment() and not self._stop_flag):
                         from core.adb_transport import capture
 
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return None
                         listed = capture(
                             "devices", [], serial=None,
-                            timeout=max(1.0, deadline - time.monotonic()),
+                            timeout=remaining, cancelled=lambda: self._stop_flag,
                         )
                         if listed.kind == "completed" and listed.returncode == 0:
                             return listed.stdout.decode("utf-8", errors="ignore")

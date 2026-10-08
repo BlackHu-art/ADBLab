@@ -72,6 +72,53 @@ class _UnconfirmedClient:
         return "", ""
 
 
+def test_scan_protocol_fault_preserves_custom_server(scan_cleanup_boundary, monkeypatch):
+    from core import adb_transport
+
+    monkeypatch.setenv("ADB_SERVER_SOCKET", "tcp:127.0.0.1:15037")
+    client = _UnconfirmedClient("wait")
+    client.returncode = 1
+    monkeypatch.setattr(client, "communicate", lambda **_: ("", "failed to check server version"))
+    monkeypatch.setattr(
+        scan_cleanup_boundary.execution, "popen_native", lambda *_args, **_kw: client,
+    )
+    calls = []
+
+    def local_devices(*_args, **_kwargs):
+        calls.append(True)
+        return adb_transport.ExecutionResult(stdout=b"fixture-local\tdevice\n")
+
+    monkeypatch.setattr(adb_transport, "capture", local_devices)
+    result = scan_cleanup_boundary.scan._run_devices_scan(
+        scan_cleanup_boundary.execution.ProcessRunner(),
+    )
+
+    assert result is None
+    assert not calls
+
+
+@pytest.mark.parametrize("stop_kind", ["timeout", "cancel"])
+def test_scan_waiting_for_client_can_stop(scan_cleanup_boundary, monkeypatch, stop_kind):
+    from core import adb_transport
+    from gui import main_frame
+    from tests.test_adb_client_admission import _ObservedLock, _while_client_busy
+
+    lock = _ObservedLock()
+    monkeypatch.setattr(adb_transport, "adb_client_lock", lock)
+    monkeypatch.setattr(main_frame, "adb_client_lock", lock)
+    scan = scan_cleanup_boundary.scan
+    scan.SCAN_CALL_TIMEOUT_S = 0.05 if stop_kind == "timeout" else 10
+    calls = []
+    monkeypatch.setattr(scan, "_run_devices_scan", lambda *_args, **_kwargs: calls.append(True))
+
+    completed, _ = _while_client_busy(
+        SimpleNamespace(lock=lock), scan.run, scan.stop if stop_kind == "cancel" else None,
+    )
+
+    assert completed
+    assert not calls
+
+
 @pytest.mark.parametrize("failure", ["kill", "wait"])
 def test_scan_retains_unconfirmed_client_until_exact_instance_exits(
     scan_cleanup_boundary, monkeypatch, failure,

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QFont, QWheelEvent
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QBoxLayout
+from PySide6.QtWidgets import QBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     ComboBox,
@@ -15,6 +15,7 @@ from qfluentwidgets import (
     ProgressBar,
     PushButton,
     RoundMenu,
+    ScrollArea,
     SegmentedWidget,
     SmoothScrollArea,
     TableWidget,
@@ -30,12 +31,40 @@ from gui.styles.fluent import (
     configure_button,
     configure_fluent_control,
     refresh_fluent_widget_style,
+    use_instant_scroll,
 )
 from gui.widgets.responsive_layout import RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY
 
 
 def _font_size(font) -> int:
     return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
+
+
+@pytest.mark.parametrize("area_class", [ScrollArea, SmoothScrollArea])
+@pytest.mark.parametrize("orientation", [Qt.Orientation.Vertical, Qt.Orientation.Horizontal])
+def test_instant_scroll_moves_on_first_wheel_event(qt_application, area_class, orientation):
+    area = use_instant_scroll(area_class())
+    area.resize(400, 200)
+    content = QWidget()
+    content.resize(1600, 1600)
+    area.setWidget(content)
+    area.show()
+    qt_application.processEvents()
+    vertical = orientation == Qt.Orientation.Vertical
+    bar = area.verticalScrollBar() if vertical else area.horizontalScrollBar()
+    delta = QPoint(0, -120) if vertical else QPoint(-120, 0)
+    event = QWheelEvent(
+        QPointF(20, 20), QPointF(20, 20), QPoint(), delta,
+        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+    try:
+        assert bar.maximum() > 0
+        qt_application.sendEvent(area.viewport(), event)
+        assert bar.value() > 0
+    finally:
+        area.close()
+        area.deleteLater()
 
 
 def test_direct_button_configuration_contract(qt_application):

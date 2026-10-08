@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -385,11 +386,17 @@ def test_native_capture_reports_unconfirmed_cleanup_as_transport_failure(monkeyp
             raise subprocess.TimeoutExpired("test-client", timeout)
 
     process = UnconfirmedProcess()
-    monkeypatch.setattr(adb_runtime, "popen_native", lambda *_args, **_kwargs: process)
-    cancellation = iter((False, True))
-    result = adb_runtime.native_capture(["test-client"], 1, lambda: next(cancellation))
+    cancellation = threading.Event()
+
+    def spawn(*_args, **_kwargs):
+        cancellation.set()
+        return process
+
+    monkeypatch.setattr(adb_runtime, "popen_native", spawn)
+    result = adb_runtime.native_capture(["test-client"], 1, cancellation.is_set)
     assert result.kind == "transport"
     assert result.stderr == b"ADB process failed"
+    assert process.killed
 
 
 @pytest.mark.parametrize("isolated", [False, True])

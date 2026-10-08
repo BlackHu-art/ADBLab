@@ -18,8 +18,13 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
-from core.adb_runtime import AdbRuntime, native_capture
-from core.adb_transport import ExecutionResult, adb_client_lock
+from core.adb_runtime import AdbRuntime, local_server_environment, native_capture
+from core.adb_transport import (
+    AdbClientTimeout,
+    ExecutionResult,
+    acquire_adb_client,
+    adb_client_lock,
+)
 from core.native_process import NativeCommandScope, popen_native, run_native, stop_native_process
 from core.owned_process import OwnedWorkerProcess
 from core.process_utils import kill_process_tree
@@ -115,23 +120,33 @@ def _devices_after_server_protocol_fault(
     """
 
     args = cmd[1:]
-    if not args or args[0] != "devices":
+    if not args or args[0] != "devices" or not local_server_environment():
         return None
     if b"failed to check server version" not in native.stderr:
         return None
     from core.adb_transport import capture
 
-    # 失败的那次客户端往往已经把服务拉起来了，稍等再读，不要把重置当成没有设备。
-    time.sleep(min(0.8, max(0.0, timeout)))
-    listed = capture("devices", args[1:], serial=None, timeout=timeout)
+    # 仅恢复默认本机服务的只读列表；等待、直连与重试共用原请求的剩余预算。
+    deadline = time.monotonic() + max(0.0, timeout)
+    time.sleep(min(0.8, max(0.0, deadline - time.monotonic())))
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return ExecutionResult(kind="timeout")
+    listed = capture("devices", args[1:], serial=None, timeout=remaining)
     if listed.kind == "completed" and listed.returncode == 0:
         return listed
+    if deadline <= time.monotonic():
+        return ExecutionResult(kind="timeout")
+    launched = _launch_command(cmd)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return ExecutionResult(kind="timeout")
     retry = run_native(
-        _launch_command(cmd),
+        launched,
         isolate=_is_native_tool(cmd),
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=remaining,
         encoding="utf-8",
         errors="ignore",
         creationflags=CF,
@@ -319,9 +334,7 @@ class CommandRunner:
                 )
             elif runtime is not None and not shell and not native_only and not scoped_native:
                 raw = runtime.try_run(resolved_cmd, timeout, cancelled)
-            remaining = timeout
-            if runtime is not None or cancelled is not None or scoped_native:
-                remaining -= perf_counter() - started_at
+            remaining = timeout - (perf_counter() - started_at)
             if raw is None and remaining <= 0:
                 raw = ExecutionResult(kind="timeout")
             if raw is None and not shell and (cancelled is not None or scoped_native):
@@ -336,15 +349,19 @@ class CommandRunner:
                 result = _normalise_result(raw, timeout)
             else:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
-                run_timeout = remaining if runtime is not None else timeout
+                deadline = time.monotonic() + remaining
                 hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
                     "adb", "adb.exe", "adblab-adb.exe",
                 }
                 if hold_adb_lock:
-                    adb_client_lock.acquire()
+                    acquire_adb_client(deadline)
                 try:
+                    launched = _launch_command(resolved_cmd)
+                    run_timeout = deadline - time.monotonic()
+                    if run_timeout <= 0:
+                        raise AdbClientTimeout
                     proc = run_native(
-                        _launch_command(resolved_cmd),
+                        launched,
                         isolate=native_tool or _is_native_tool(resolved_cmd),
                         capture_output=True,
                         text=True,
@@ -356,7 +373,8 @@ class CommandRunner:
                     )
                     if adb_debug.enabled():
                         adb_debug.command(
-                            resolved_cmd, backend="native_client", phase="finish", status="completed",
+                            resolved_cmd, backend="native_client", phase="finish",
+                            status="completed",
                             returncode=proc.returncode,
                         )
                     native_result = ExecutionResult(
@@ -365,13 +383,13 @@ class CommandRunner:
                         proc.returncode,
                     )
                     recovered = _devices_after_server_protocol_fault(
-                        resolved_cmd, native_result, max(0.001, run_timeout),
+                        resolved_cmd, native_result, max(0.0, deadline - time.monotonic()),
                     )
                     result = _normalise_result(recovered or native_result, timeout)
                 finally:
                     if hold_adb_lock:
                         adb_client_lock.release()
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, AdbClientTimeout):
             result = CommandResult(
                 success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
             )
@@ -427,10 +445,14 @@ class CommandRunner:
                                 "adb", "adb.exe", "adblab-adb.exe",
                             }
                             if hold_adb_lock:
-                                adb_client_lock.acquire()
+                                acquire_adb_client(deadline)
                             try:
+                                launched = _launch_command(resolved_cmd)
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise AdbClientTimeout
                                 proc = run_native(
-                                    _launch_command(resolved_cmd),
+                                    launched,
                                     isolate=_is_native_tool(resolved_cmd),
                                     stdout=output_file, stderr=subprocess.PIPE,
                                     shell=shell, timeout=remaining, creationflags=CF,
@@ -444,7 +466,7 @@ class CommandRunner:
                 result = _normalise_result(raw, timeout)
                 if result.success:
                     result.output = output_path
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, AdbClientTimeout):
             result = CommandResult(
                 success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
             )

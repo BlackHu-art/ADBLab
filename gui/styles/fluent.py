@@ -13,7 +13,7 @@ from typing import TypeVar
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QFont, QIcon
 from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
-from qfluentwidgets import PrimaryPushButton, PushButton, RoundMenu, setCustomStyleSheet
+from qfluentwidgets import PrimaryPushButton, PushButton, RoundMenu, SmoothMode, setCustomStyleSheet
 
 from gui.i18n import tr
 from gui.styles.fonts import FontMixin
@@ -26,7 +26,7 @@ _WidgetT = TypeVar("_WidgetT", bound=QWidget)
 _ButtonT = TypeVar("_ButtonT", bound=QAbstractButton)
 
 
-def use_instant_scroll(area):
+def use_instant_scroll(area: _WidgetT) -> _WidgetT:
     """滚轮直接到位，不走默认的最长 500 毫秒缓动。
 
     页面铺在半透明云母上，缓动的每一帧都会重绘整页，看起来像掉帧。
@@ -37,6 +37,10 @@ def use_instant_scroll(area):
         setter(Qt.Orientation.Vertical, 0)
         setter(Qt.Orientation.Horizontal, 0)
         return area
+    smooth_setter = getattr(area, "setSmoothMode", None)
+    if callable(smooth_setter):
+        smooth_setter(SmoothMode.NO_SMOOTH, Qt.Orientation.Vertical)
+        smooth_setter(SmoothMode.NO_SMOOTH, Qt.Orientation.Horizontal)
     delegate = getattr(area, "scrollDelagate", None) or getattr(area, "delegate", None)
     if delegate is not None:
         delegate.vScrollBar.setScrollAnimation(0)

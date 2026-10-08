@@ -1,9 +1,12 @@
 """按内置工具、显式环境变量、Android SDK 和系统 PATH 的顺序解析 ADB 路径。"""
 
+import hashlib
+import logging
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 
@@ -29,6 +32,7 @@ _client_preference = CLIENT_PREFERENCE_AUTO
 # 同目录换名后 DLL 仍能加载，版本检查大约 0.1 秒。
 _FAST_CLIENT_NAME = "adblab-adb.exe"
 _fast_client_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,18 @@ class AdbCandidate:
         return bool(self.path) and os.path.isfile(self.path)
 
 
+def _client_digest(path: str) -> bytes:
+    """校验实际可执行内容，避免同大小更新或错误副本被当作当前客户端。"""
+
+    with open(path, "rb") as source:
+        return hashlib.file_digest(source, "sha256").digest()
+
+
 def client_executable(path: str) -> str:
-    """返回实际用来启动的客户端。Windows 上避开文件名 ``adb.exe``。"""
+    """返回 Windows 同目录换名副本；校验内容后原子发布，失败保留原客户端。
+
+    临时文件归本次调用所有，发布前不可被其他进程当作可执行副本；原文件及 DLL 不改写。
+    """
 
     if sys.platform != "win32" or not path:
         return path
@@ -57,17 +71,31 @@ def client_executable(path: str) -> str:
     if not os.path.isfile(path):
         return path
     target = os.path.join(os.path.dirname(path), _FAST_CLIENT_NAME)
-    try:
-        source_size = os.path.getsize(path)
-    except OSError:
-        return path
     with _fast_client_lock:
+        temporary: str | None = None
         try:
-            if os.path.isfile(target) and os.path.getsize(target) == source_size:
+            source_digest = _client_digest(path)
+            if os.path.isfile(target) and _client_digest(target) == source_digest:
                 return target
-            shutil.copyfile(path, target)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=f".{_FAST_CLIENT_NAME}.", suffix=".tmp", dir=os.path.dirname(path) or ".",
+            )
+            os.close(descriptor)
+            shutil.copyfile(path, temporary)
+            if _client_digest(temporary) != _client_digest(path):
+                return path
+            os.replace(temporary, target)
+            temporary = None
         except OSError:
             return path
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    _logger.warning("无法清理 ADB 客户端临时副本。")
     return target
 
 

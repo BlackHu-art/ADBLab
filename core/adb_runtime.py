@@ -10,7 +10,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 
-from core.adb_transport import CancelCheck, ExecutionResult, adb_client_lock, capture
+from core.adb_transport import (
+    CancelCheck,
+    CommandCancelled,
+    ExecutionResult,
+    acquire_adb_client,
+    adb_client_lock,
+    capture,
+)
 from core.native_process import (
     NativeCommandScope,
     cancel_and_drain_native,
@@ -45,10 +52,25 @@ def native_capture(
     hold_adb_lock = bool(cmd) and os.path.basename(cmd[0]).lower() in {
         "adb", "adb.exe", "adblab-adb.exe",
     }
-    if hold_adb_lock:
-        adb_client_lock.acquire()
+    held_adb_lock = False
     token = None
     try:
+        def stop() -> bool:
+            """作用域关闭与请求取消共用准入条件，不允许排队后再创建客户端。"""
+            return cancelled() or bool(command_scope and command_scope._stop_requested())
+
+        if hold_adb_lock:
+            try:
+                acquire_adb_client(deadline, stop)
+            except CommandCancelled:
+                return ExecutionResult(kind="cancelled")
+            except TimeoutError:
+                return ExecutionResult(kind="timeout")
+            held_adb_lock = True
+        if stop():
+            return ExecutionResult(kind="cancelled")
+        if time.monotonic() >= deadline:
+            return ExecutionResult(kind="timeout")
         if command_scope is not None:
             token = command_scope._begin_command()
             if token is None:
@@ -110,7 +132,7 @@ def native_capture(
     finally:
         if command_scope is not None and token is not None:
             command_scope._finish_command(token)
-        if hold_adb_lock:
+        if held_adb_lock:
             adb_client_lock.release()
 
 
@@ -491,7 +513,7 @@ class AdbRuntime:
                 self._condition.notify_all()
                 host = self._host
                 host_epoch = host.epoch
-                # 未就绪服务需要完整连接窗口，避免延迟拒绝被拆分预算误判为超时。
+                # 未就绪服务保留完整能力预算；连接建立时限由传输层独立约束。
                 host_timeout = self.SOCKET_TIMEOUT if host.available else self.CAPABILITY_BUDGET
                 generation = self._generation
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
@@ -540,7 +562,8 @@ class AdbRuntime:
                 host.checked = True
                 if listing.kind != "completed":
                     self._invalidate(host)
-                    self._status = f"host_{listing.kind}"
+                    status = "unavailable" if self._server_needs_start(listing) else listing.kind
+                    self._status = f"host_{status}"
                     self._diagnostic(f"ADB capability devices status={listing.kind}")
                     return
                 restored = not host.available and host.preference is not None
@@ -619,7 +642,8 @@ class AdbRuntime:
             command, result, attempt=1, elapsed=elapsed, budget=budget,
             remaining=remaining, current=current,
         )
-        if retry and result.kind in {"timeout", "transport"} and not stop() and remaining > 0:
+        if (retry and result.kind in {"timeout", "transport"}
+                and not self._server_needs_start(result) and not stop() and remaining > 0):
             with self._condition:
                 if not current():
                     return result, elapsed
@@ -1172,7 +1196,12 @@ class AdbRuntime:
                     cmd, backend="server_direct", phase="finish", status=result.kind,
                     returncode=result.returncode, client_spawned=False,
                 )
-            failed = result.kind in {"unavailable", "protocol", "transport"}
+            # 仅连接尚未建立的超时允许原生接管；保留 timeout 分类及在途请求不重放契约。
+            preconnect_timeout = (
+                result.kind == "timeout" and result.diagnostics is not None
+                and result.diagnostics.stage == "connect"
+            )
+            failed = result.kind in {"unavailable", "protocol", "transport"} or preconnect_timeout
             with self._condition:
                 current = (
                     self._current(host, host_epoch)
@@ -1187,7 +1216,8 @@ class AdbRuntime:
                     return ExecutionResult(kind="stale")
                 if current and failed:
                     self._invalidate(state)
-                    self._status = f"host_{result.kind}" if state is host else "shell_unavailable"
+                    status = "unavailable" if preconnect_timeout else result.kind
+                    self._status = f"host_{status}" if state is host else "shell_unavailable"
                 elif (
                     current and result.kind == "completed"
                     and command == "devices" and args == ["-l"]
@@ -1202,7 +1232,7 @@ class AdbRuntime:
                 )
                 self._publish()
             if (
-                result.kind == "unavailable"
+                (result.kind == "unavailable" or preconnect_timeout)
                 and not event.is_set()
                 and not (cancelled and cancelled())
             ):

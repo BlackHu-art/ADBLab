@@ -318,4 +318,50 @@ def test_windows_client_executable_avoids_adb_exe_name(monkeypatch, tmp_path):
     assert os.path.basename(launched) == "adblab-adb.exe"
     assert (tmp_path / "adblab-adb.exe").read_bytes() == b"adb-bytes"
     assert adb_resolver.client_executable(str(source)) == launched
-    assert adb_resolver.client_executable(str(tmp_path / "other.exe")) == str(tmp_path / "other.exe")
+    other = str(tmp_path / "other.exe")
+    assert adb_resolver.client_executable(other) == other
+
+
+def test_windows_client_refreshes_same_size_source_update(monkeypatch, tmp_path):
+    monkeypatch.setattr(adb_resolver.sys, "platform", "win32")
+    source = tmp_path / "adb.exe"
+    source.write_bytes(b"version1")
+    launched = adb_resolver.client_executable(str(source))
+    source.write_bytes(b"version2")
+
+    assert adb_resolver.client_executable(str(source)) == launched
+    assert (tmp_path / "adblab-adb.exe").read_bytes() == b"version2"
+
+
+def test_windows_client_copy_failure_never_publishes_partial_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(adb_resolver.sys, "platform", "win32")
+    source = tmp_path / "adb.exe"
+    source.write_bytes(b"valid-adb")
+
+    def fail_copy(_source, target):
+        from pathlib import Path
+        Path(target).write_bytes(b"brokenadb")
+        raise OSError("synthetic copy failure")
+
+    with monkeypatch.context() as copying:
+        copying.setattr(adb_resolver.shutil, "copyfile", fail_copy)
+        assert adb_resolver.client_executable(str(source)) == str(source)
+    assert not (tmp_path / "adblab-adb.exe").exists()
+    launched = adb_resolver.client_executable(str(source))
+    assert os.path.basename(launched) == "adblab-adb.exe"
+    assert (tmp_path / "adblab-adb.exe").read_bytes() == b"valid-adb"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["adb.exe", "adblab-adb.exe"]
+
+
+def test_windows_client_read_only_directory_preserves_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(adb_resolver.sys, "platform", "win32")
+    source = tmp_path / "adb.exe"
+    source.write_bytes(b"valid-adb")
+    def denied_copy(*_):
+        raise PermissionError("synthetic read-only directory")
+
+    monkeypatch.setattr(adb_resolver.shutil, "copyfile", denied_copy)
+
+    assert adb_resolver.client_executable(str(source)) == str(source)
+    assert source.read_bytes() == b"valid-adb"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["adb.exe"]
