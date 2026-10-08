@@ -199,6 +199,12 @@ class _ShrinkableDeviceBody(QWidget):
 class _ShrinkableActionScroll(SmoothScrollArea):
     """只传播动作区安全高度，横向不足由自身滚动条承接。"""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from gui.styles.fluent import use_instant_scroll
+
+        use_instant_scroll(self)
+
     def sizeHint(self) -> QSize:
         return QSize(0, max(0, self.minimumHeight()))
 

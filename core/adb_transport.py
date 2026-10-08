@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import socket
 import struct
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -12,6 +13,10 @@ from dataclasses import dataclass, field
 from typing import BinaryIO
 
 CancelCheck = Callable[[], bool]
+
+# 5037 服务一次只能由一个 adb.exe 拉起。版本检查和 start-server 同时进行时，
+# 后到的连接会被重置，客户端就报 protocol fault / connection reset。
+adb_client_lock = threading.Lock()
 
 
 class CommandCancelled(Exception):

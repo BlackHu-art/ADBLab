@@ -7,7 +7,7 @@ from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
 
 from gui.i18n import tr
 from gui.styles import FontRole
-from gui.styles.fluent import apply_label_role
+from gui.styles.fluent import apply_label_role, use_instant_scroll
 from gui.styles.icon_loader import get_themed_icon
 
 
@@ -25,7 +25,7 @@ class FileExplorerImagePreview(QWidget):
         self._fit_timer.timeout.connect(self._refit_image)
 
         layout = QVBoxLayout(self)
-        self.image_viewport = SmoothScrollArea()
+        self.image_viewport = use_instant_scroll(SmoothScrollArea())
         self.image_viewport.setWidgetResizable(False)
         self.image_viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label = ImageLabel()

@@ -39,7 +39,9 @@ from qfluentwidgets import (
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_focus_indicator, apply_font_role, apply_label_role
+from gui.styles.fluent import (
+    apply_focus_indicator, apply_font_role, apply_label_role, use_instant_scroll,
+)
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from utils.adb_targets import normalize_adb_connect_target
 
@@ -164,7 +166,7 @@ class _AddressForm(QWidget):
         history_layout.setContentsMargins(0, 0, 0, 0)
         history_layout.setSpacing(8)
         history_layout.addWidget(StrongBodyLabel(tr("设备连接历史"), self.history_box))
-        self.history_scroll = SmoothScrollArea(self.history_box)
+        self.history_scroll = use_instant_scroll(SmoothScrollArea(self.history_box))
         self.history_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.history_scroll.setWidgetResizable(True)
         self.history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

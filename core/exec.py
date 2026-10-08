@@ -19,7 +19,7 @@ from time import perf_counter
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from core.adb_runtime import AdbRuntime, native_capture
-from core.adb_transport import ExecutionResult
+from core.adb_transport import ExecutionResult, adb_client_lock
 from core.native_process import NativeCommandScope, popen_native, run_native, stop_native_process
 from core.owned_process import OwnedWorkerProcess
 from core.process_utils import kill_process_tree
@@ -102,6 +102,47 @@ def reset_adb_program_cache() -> None:
     with _adb_path_lock:
         _adb_path = None
         _adb_path_resolved = False
+
+
+def _devices_after_server_protocol_fault(
+    cmd: list[str], native: ExecutionResult, timeout: float,
+) -> ExecutionResult | None:
+    """adb.exe 版本检查失败时，改向已经在跑的 5037 服务读设备列表。
+
+    服务被半关闭连接卡住时，新启动的客户端会报
+    ``failed to check server version: protocol``。这时直连读列表仍然有效，
+    不能把这次握手失败当成没有设备。
+    """
+
+    args = cmd[1:]
+    if not args or args[0] != "devices":
+        return None
+    if b"failed to check server version" not in native.stderr:
+        return None
+    from core.adb_transport import capture
+
+    # 失败的那次客户端往往已经把服务拉起来了，稍等再读，不要把重置当成没有设备。
+    time.sleep(min(0.8, max(0.0, timeout)))
+    listed = capture("devices", args[1:], serial=None, timeout=timeout)
+    if listed.kind == "completed" and listed.returncode == 0:
+        return listed
+    retry = run_native(
+        cmd,
+        isolate=_is_native_tool(cmd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        encoding="utf-8",
+        errors="ignore",
+        creationflags=CF,
+    )
+    if retry.returncode == 0:
+        return ExecutionResult(
+            (retry.stdout or "").encode("utf-8"),
+            (retry.stderr or "").encode("utf-8"),
+            0,
+        )
+    return None
 
 
 def resolve_command(cmd: list[str]) -> list[str]:
@@ -283,30 +324,39 @@ class CommandRunner:
                 result = _normalise_result(raw, timeout)
             else:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
-                proc = run_native(
-                    resolved_cmd,
-                    isolate=native_tool or _is_native_tool(resolved_cmd),
-                    capture_output=True,
-                    text=True,
-                    shell=shell,
-                    timeout=remaining if runtime is not None else timeout,
-                    encoding="utf-8",
-                    errors="ignore",
-                    creationflags=CF,
-                )
-                if adb_debug.enabled():
-                    adb_debug.command(
-                        resolved_cmd, backend="native_client", phase="finish", status="completed",
-                        returncode=proc.returncode,
+                run_timeout = remaining if runtime is not None else timeout
+                hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {"adb", "adb.exe"}
+                if hold_adb_lock:
+                    adb_client_lock.acquire()
+                try:
+                    proc = run_native(
+                        resolved_cmd,
+                        isolate=native_tool or _is_native_tool(resolved_cmd),
+                        capture_output=True,
+                        text=True,
+                        shell=shell,
+                        timeout=run_timeout,
+                        encoding="utf-8",
+                        errors="ignore",
+                        creationflags=CF,
                     )
-                result = _normalise_result(
-                    ExecutionResult(
+                    if adb_debug.enabled():
+                        adb_debug.command(
+                            resolved_cmd, backend="native_client", phase="finish", status="completed",
+                            returncode=proc.returncode,
+                        )
+                    native_result = ExecutionResult(
                         (proc.stdout or "").encode("utf-8"),
                         (proc.stderr or "").encode("utf-8"),
                         proc.returncode,
-                    ),
-                    timeout,
-                )
+                    )
+                    recovered = _devices_after_server_protocol_fault(
+                        resolved_cmd, native_result, max(0.001, run_timeout),
+                    )
+                    result = _normalise_result(recovered or native_result, timeout)
+                finally:
+                    if hold_adb_lock:
+                        adb_client_lock.release()
         except subprocess.TimeoutExpired:
             result = CommandResult(
                 success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
@@ -359,14 +409,23 @@ class CommandRunner:
                             adb_debug.command(
                                 resolved_cmd, backend="native_client", timeout=remaining,
                             )
-                            proc = run_native(
-                                resolved_cmd, isolate=_is_native_tool(resolved_cmd),
-                                stdout=output_file, stderr=subprocess.PIPE,
-                                shell=shell, timeout=remaining, creationflags=CF,
-                            )
-                            raw = ExecutionResult(
-                                stderr=proc.stderr or b"", returncode=proc.returncode,
-                            )
+                            hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
+                                "adb", "adb.exe",
+                            }
+                            if hold_adb_lock:
+                                adb_client_lock.acquire()
+                            try:
+                                proc = run_native(
+                                    resolved_cmd, isolate=_is_native_tool(resolved_cmd),
+                                    stdout=output_file, stderr=subprocess.PIPE,
+                                    shell=shell, timeout=remaining, creationflags=CF,
+                                )
+                                raw = ExecutionResult(
+                                    stderr=proc.stderr or b"", returncode=proc.returncode,
+                                )
+                            finally:
+                                if hold_adb_lock:
+                                    adb_client_lock.release()
                 result = _normalise_result(raw, timeout)
                 if result.success:
                     result.output = output_path

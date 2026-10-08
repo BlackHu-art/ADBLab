@@ -47,7 +47,7 @@ from adblab.application.operations import OperationManager, OperationSnapshot, O
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_font_role, apply_label_role, configure_button
+from gui.styles.fluent import apply_font_role, apply_label_role, configure_button, use_instant_scroll
 from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.content_section import ContentSection
 from gui.widgets.run_results import RunResultsWidget
@@ -306,7 +306,7 @@ class TaskCenterPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._scroll = SmoothScrollArea()
+        self._scroll = use_instant_scroll(SmoothScrollArea())
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")

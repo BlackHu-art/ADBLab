@@ -26,6 +26,24 @@ _WidgetT = TypeVar("_WidgetT", bound=QWidget)
 _ButtonT = TypeVar("_ButtonT", bound=QAbstractButton)
 
 
+def use_instant_scroll(area):
+    """滚轮直接到位，不走默认的最长 500 毫秒缓动。
+
+    页面铺在半透明云母上，缓动的每一帧都会重绘整页，看起来像掉帧。
+    """
+
+    setter = getattr(area, "setScrollAnimation", None)
+    if callable(setter):
+        setter(Qt.Orientation.Vertical, 0)
+        setter(Qt.Orientation.Horizontal, 0)
+        return area
+    delegate = getattr(area, "scrollDelagate", None) or getattr(area, "delegate", None)
+    if delegate is not None:
+        delegate.vScrollBar.setScrollAnimation(0)
+        delegate.hScrollBar.setScrollAnimation(0)
+    return area
+
+
 def font_qss(font: QFont) -> str:
     """把项目 QFont 转为可覆盖第三方显式字体 QSS 的声明。"""
 

@@ -58,7 +58,9 @@ from gui.notifications import show_toast
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from gui.styles.combo_menu import configure_combo_menu
-from gui.styles.fluent import apply_font_role, apply_label_role, set_fluent_font_rule
+from gui.styles.fluent import (
+    apply_font_role, apply_label_role, set_fluent_font_rule, use_instant_scroll,
+)
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adb_client_card import AdbClientSettingCard, AdbEnvironmentSettingCard
 from gui.widgets.home_banner import HomeBanner
@@ -100,7 +102,7 @@ class GalleryPage(QWidget):
         layout.setSpacing(0)
 
         if scroll:
-            body = scroll_area or SmoothScrollArea(self)
+            body = use_instant_scroll(scroll_area or SmoothScrollArea(self))
             body.setObjectName(f"{route_key}ScrollArea")
             body.setWidgetResizable(True)
             body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -498,7 +500,7 @@ class WorkspaceSectionPage(QWidget):
             content.show()
             self.body = content
             return
-        body = scroll_area or SmoothScrollArea(self)
+        body = use_instant_scroll(scroll_area or SmoothScrollArea(self))
         body.setWidgetResizable(True)
         body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -719,6 +721,7 @@ class HomePage(ScrollArea):
 
     def __init__(self, frame, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        use_instant_scroll(self)
         self._top_left_radius = 0
         self.setObjectName("homePage")
         self.setAccessibleName(tr("首页"))
@@ -918,6 +921,7 @@ class SettingsPage(ScrollArea):
         self, frame, parent: QWidget | None = None, *, defer_startup_detection: bool = False,
     ) -> None:
         super().__init__(parent)
+        use_instant_scroll(self)
         self._frame = frame
         self._settings = AppSettings.instance()
         self._startup_detection_scheduled = False

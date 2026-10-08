@@ -37,7 +37,7 @@ from qfluentwidgets import (
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.i18n import tr
-from gui.styles.fluent import apply_label_role, configure_button
+from gui.styles.fluent import apply_label_role, configure_button, use_instant_scroll
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
 from gui.widgets.content_section import ContentSection
@@ -505,7 +505,7 @@ class PerformanceLauncherForm:
         content_layout.addWidget(self._frame.header_card)
         content_layout.addWidget(self._frame._configuration_group)
         content_layout.addWidget(self._frame._results_group, 1)
-        self._frame._config_scroll = SmoothScrollArea()
+        self._frame._config_scroll = use_instant_scroll(SmoothScrollArea())
         # 独立页面为悬浮滚动条保留通道，移交工作区后由嵌入边距替代。
         content_layout.setContentsMargins(
             0, 0, self._frame._config_scroll.delegate.vScrollBar.width() + 4, 0

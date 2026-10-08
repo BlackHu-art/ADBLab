@@ -43,7 +43,9 @@ from adblab.presentation.qt_app_update import QtAppUpdate
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from controllers.action_catalog import ACTION_SIGNALS
-from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
+from core.exec import (
+    CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_client_lock, adb_runtime,
+)
 from core.log_service import LogService
 from core.native_process import cancel_and_drain_native, close_native_pipes
 from core.settings_manager import AppSettings, set_error_sink
@@ -85,7 +87,7 @@ from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole
-from .styles.fluent import refresh_fluent_widget_style
+from .styles.fluent import refresh_fluent_widget_style, use_instant_scroll
 from .styles.theme import apply_dark_title_bar
 
 
@@ -194,7 +196,8 @@ class _ScanThread(QThread):
                 else:
                     if runner is None:
                         runner = ProcessRunner()
-                    output = self._run_devices_scan(runner, deadline=deadline)
+                    with adb_client_lock:
+                        output = self._run_devices_scan(runner, deadline=deadline)
                 if self._stop_flag:
                     return
                 if output is None:
@@ -259,11 +262,22 @@ class _ScanThread(QThread):
                         return None
                     try:
                         # 持续排空两个管道，避免大量设备或诊断输出反向阻塞客户端。
-                        stdout, _stderr = proc.communicate(timeout=min(0.1, remaining))
+                        stdout, stderr = proc.communicate(timeout=min(0.1, remaining))
                     except subprocess.TimeoutExpired:
                         continue
                     completed = True
-                    return stdout if proc.returncode == 0 else None
+                    if proc.returncode == 0:
+                        return stdout
+                    if stderr and "failed to check server version" in stderr:
+                        from core.adb_transport import capture
+
+                        listed = capture(
+                            "devices", [], serial=None,
+                            timeout=max(1.0, deadline - time.monotonic()),
+                        )
+                        if listed.kind == "completed" and listed.returncode == 0:
+                            return listed.stdout.decode("utf-8", errors="ignore")
+                    return None
                 return None
             finally:
                 try:
@@ -1086,7 +1100,7 @@ class MainFrame(FluentWindow):
         self.left_panel.device_widget.setParent(self.left_panel)
         self.left_panel.device_widget.hide()
 
-        device_scroll = SmoothScrollArea(self)
+        device_scroll = use_instant_scroll(SmoothScrollArea(self))
         device_scroll.setObjectName("deviceScrollArea")
         device_scroll.setWidgetResizable(True)
         device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1371,7 +1385,8 @@ class MainFrame(FluentWindow):
         self._sync_material_surface_styles()
         yield WindowStartupStage.HOME_PAGE
 
-        self.navigationInterface.setAcrylicEnabled(True)
+        # 导航亚克力会在云母上再做一层实时模糊，拖动和滚动时容易掉帧。
+        self.navigationInterface.setAcrylicEnabled(False)
         self.addSubInterface(self._home_page, FluentIcon.HOME, tr("首页"))
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
         self._workspace_navigation_page_keys: dict[str, str] = {}

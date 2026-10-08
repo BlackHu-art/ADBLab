@@ -17,6 +17,7 @@ from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import use_instant_scroll
 from gui.styles.icon_loader import get_fluent_icon
 from gui.widgets.responsive_controller import (
     _EVENT_REASONS,
@@ -100,7 +101,7 @@ class SidePanel(QWidget):
         self._ensure_tab_loaded(0)
 
     def _create_tab_scroll_area(self) -> SmoothScrollArea:
-        scroll = SmoothScrollArea(self)
+        scroll = use_instant_scroll(SmoothScrollArea(self))
         # 挂载前仍可独立展示；窗口标志不解除 QObject 所有权，布局接管时会重新设父对象。
         scroll.setWindowFlag(Qt.WindowType.Window)
         scroll.setWidgetResizable(True)

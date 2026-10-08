@@ -32,7 +32,7 @@ from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.features.contracts import optional_callback
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_font_role, apply_label_role
+from gui.styles.fluent import apply_font_role, apply_label_role, use_instant_scroll
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from gui.widgets.layout_settle import settle_widget_layout
@@ -332,7 +332,7 @@ class WorkspaceFeatureHost(QWidget):
         toolbar_layout.addWidget(self.session_badge)
         toolbar_layout.addWidget(self.close_session_button)
 
-        self.content_scroll = SmoothScrollArea(self)
+        self.content_scroll = use_instant_scroll(SmoothScrollArea(self))
         self.content_scroll.setObjectName(f"{self.section_key}FeatureScroll")
         self.content_scroll.setWidgetResizable(True)
         self.content_scroll.setHorizontalScrollBarPolicy(

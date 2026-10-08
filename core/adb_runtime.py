@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 
-from core.adb_transport import CancelCheck, ExecutionResult, capture
+from core.adb_transport import CancelCheck, ExecutionResult, adb_client_lock, capture
 from core.native_process import (
     NativeCommandScope,
     cancel_and_drain_native,
@@ -38,6 +38,9 @@ def native_capture(
     if cancelled() or (command_scope is not None and command_scope._stop_requested()):
         return ExecutionResult(kind="cancelled")
     adb_debug.command(cmd, backend="native_client", timeout=timeout)
+    hold_adb_lock = bool(cmd) and os.path.basename(cmd[0]).lower() in {"adb", "adb.exe"}
+    if hold_adb_lock:
+        adb_client_lock.acquire()
     token = None
     try:
         if command_scope is not None:
@@ -101,6 +104,8 @@ def native_capture(
     finally:
         if command_scope is not None and token is not None:
             command_scope._finish_command(token)
+        if hold_adb_lock:
+            adb_client_lock.release()
 
 
 @dataclass(frozen=True)
