@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-07
+last_verified: 2026-10-09
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -55,6 +55,8 @@ flowchart LR
   [设置生命周期](DATA_FLOW.md#设置与设备存储生命周期)。连接历史加载
   完成信号到达后才创建 MainFrame、设备下拉框和 ADBController，避免 GUI 等待 DeviceStore
   的读写锁。组合根显式跳过 Controller 的重复加载；直接构造的默认同步契约保持不变。
+  设置回写或历史加载发生普通异常时，记录警告并继续使用内存快照；阶段构建异常则进入启动
+  中止。后台准备任务的完成只表示线程已退出，是否降级由入口阶段生成器决定。
   取消会中断历史锁等待、唤醒读取重试、阻止后续快照发布，并等待任务实际退出；已进入的
   系统 I/O 需自然返回。
 - `core/startup_diagnostics.py` 在设置加载前缓冲有界脱敏摘要，记录入口模块就绪至图标首帧、
@@ -122,7 +124,8 @@ flowchart LR
   [设备目标规则](BUSINESS_FLOW.md#workspace-路由目录)。
 - 显式关闭调用 `request_dispose()`；worker 与 supervisor owner 未归零前保留关闭屏障，旧代次
   不得重激活。宿主拥有延迟尺寸刷新 QTimer，页面销毁后不能再收到尺寸回调。
-  registry 在发布会话前校验可选生命周期及设备准入回调；未声明或 `None` 保持兼容，显式声明
+  registry 通过 `gui/features/contracts.py::optional_callback()` 在发布会话前校验可选生命周期
+  及设备准入回调；未声明或 `None` 保持兼容，显式声明
   必须可调用。异步释放必须提供可连接的 `dispose_ready`；缺少完成信号时报告契约错误并保留
   关闭屏障，不能把未知资源状态视为成功。裸 QWidget 和同步释放页面仍可使用原工厂入口。
 - App Manager、File Explorer、Live Logcat、Performance、Screenshot 为内嵌功能页，公开入口在
@@ -177,7 +180,9 @@ flowchart LR
   [ADB 自动适配](../guides/ADB_FAST.md#remote-投屏与输入)。
   外部命令与参数校验边界见 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - OperationManager 管业务身份、进度、终态与取消意图，不拥有线程/进程；TaskSupervisor 管资源
-  停止、等待及 residual，不判断业务成功。任务中心的取消覆盖见
+  停止、等待及 residual，不判断业务成功。`QtTaskSupervisor` 将停止工作转交后台并通过信号
+  回到 GUI；进入应用关闭后拒绝新的 owner 级清理，调用方改等应用级完成信号，不能继续等待
+  不会发出的 owner 完成信号。任务中心的取消覆盖见
   [任务中心](BUSINESS_FLOW.md#9-任务中心)。
 - 无线配对由 `services/adb_pairing.py` 执行不依赖 Qt 的单轮协议，`QtAdbPairing` 拥有一个 QThread、
   固定客户端/环境快照、请求编号和环境代次。进度只交付固定状态，二维码以 PNG 在内存传递；
@@ -196,6 +201,7 @@ flowchart LR
 | 执行单元 | 用途与收口 |
 | --- | --- |
 | Qt 主线程 | 控件、信号槽和渲染；后台结果经 Qt 信号回主线程 |
+| StartupTask / 启动显示子进程 | 设置回写和连接历史各用一个单次 QThread，先后执行；协调器等待线程退出后继续阶段或取消。独立 Qt 进程承担启动图标绘制，交接后异步回收，退出时有界兜底 |
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
 | `ADBAdvanced._record_pool` | 双槽池等待录屏完成并保存，超过槽位的保存请求排队；模型关闭同时等待运行与排队任务收口 |
 | `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
@@ -220,8 +226,10 @@ File Explorer 的传输协调器由页面持有，文件删除、复制和移动
 页面主线程读写，关闭预览释放控件当前像素，页面关闭再清空缓存；业务新鲜度与下载归属见
 [文件浏览与传输](BUSINESS_FLOW.md#6-文件浏览与传输)。
 
-MobilePerf 的异步 ADB 客户端显式加入本次临时作用域，由轻量 helper 持有直接进程和
-PID/创建时间身份。worker 退出后 helper 仍确认客户端停止，不向独立 ADB 服务扩散终止。
+MobilePerf 的异步 ADB 客户端显式加入 `core/owned_process.py` 管理的本次临时作用域，由轻量
+helper 持有直接进程和 PID/创建时间身份。worker 退出后 helper 仍确认客户端停止，不向独立
+ADB 服务扩散终止。`OwnedWorkerProcess.poll()` 在本机资源集合退出后返回业务退出码；
+`resources_released()` 另行确认远端租约，不能用 `poll()` 已返回代替清理完成。
 同步采样沿用短命令预算与取消，不为每次查询创建 helper。未释放的远端 Monkey 租约在同一
 作用域保留标记：本机集合结束后可以交付失败终态，但 `ProcessRunner` 仍保留清理义务及
 临时目录，并拒绝在原 Runner 上覆盖启动；应用关闭不能把它报告为资源归零。

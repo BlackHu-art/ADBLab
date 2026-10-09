@@ -48,5 +48,21 @@
 
 历史阶段与验收索引见 [archive/README](archive/README.md)。
 
+## 保留的历史方案
+
+`superpowers/` 中已有的设计与计划保留原位置及当时状态，供理解实现缘由，不作为待执行任务或
+当前验收要求：
+
+- 无线配对：[设计](superpowers/specs/2026-09-25-wireless-adb-pairing-design.md)、
+  [交互方案](superpowers/specs/2026-09-25-wireless-adb-pairing-interaction.md)、
+  [实施计划](superpowers/plans/2026-09-25-wireless-adb-pairing.md)。
+- 页内连接：[实施计划](superpowers/plans/2026-09-25-inline-device-connection.md)。
+
+当前连接行为以 [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md#2-连接设备与读取信息) 为准，
+历史验证边界见归档中的[无线配对](archive/ledgers/2026-09-25-wireless-pairing.md)和
+[页内连接](archive/ledgers/2026-09-25-inline-device-connection.md)验收记录。
+
+## 文档验证
+
 文档修改后运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py` 和 `git diff --check`；
 链接/frontmatter 校验不能替代正文与代码的核对。

@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 
+from core.adb_discovery import recover_local_emulators
 from core.adb_transport import (
     CancelCheck,
     CommandCancelled,
@@ -218,6 +219,8 @@ class AdbRuntime:
         self._closed = False
         self._draining = False
         self._checking = False
+        # 设备查询只等待发现阶段；后续能力验证和测速不能挡住已取得的列表。
+        self._discovering = False
         self._native_only = False
         self._mode = "auto"
         self._status = "idle"
@@ -302,8 +305,10 @@ class AdbRuntime:
                     state.epoch += 1
             if self._checking:
                 self._pending_recheck = True
+                self._discovering = True
             else:
                 self._checking = True
+                self._discovering = True
                 self._probe_checked = set()
                 self._full_probe = force
                 self._allow_bootstrap = self._bootstrap_pending
@@ -447,6 +452,7 @@ class AdbRuntime:
                         self._allow_bootstrap = False
                         self._status = "checking"
                     self._active_probe_revision = self._probe_revision
+                    self._discovering = True
                 self._probe_once()
                 with self._condition:
                     if self._pending_recheck and not self._closed and not self._draining:
@@ -464,6 +470,7 @@ class AdbRuntime:
                         self._full_probe = False
                         continue
                     self._checking = False
+                    self._discovering = False
                     if self._status in {"checking", "retrying", "starting_server"}:
                         self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
@@ -475,6 +482,7 @@ class AdbRuntime:
                 # 新一轮可能已取得准入并在 join 当前线程，旧收尾不能清除其 checking。
                 if self._thread is threading.current_thread():
                     self._checking = False
+                    self._discovering = False
                     if self._status in {"checking", "retrying", "starting_server"}:
                         self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
@@ -558,6 +566,21 @@ class AdbRuntime:
                         self._current(host, host_epoch) and generation == self._generation
                     ),
                 )
+            if self._probe_serial is None and self._valid_listing(listing):
+                def discovery_cancelled() -> bool:
+                    with self._condition:
+                        return (
+                            stop() or revision != self._probe_revision
+                            or not self._current(host, host_epoch)
+                            or generation != self._generation
+                            or not local_server_environment()
+                        )
+
+                # ADB 启动后不会全量重扫新模拟器；只补登记本机监听端口，保留共享服务。
+                listing = recover_local_emulators(
+                    listing, timeout=self.SOCKET_TIMEOUT,
+                    cancelled=discovery_cancelled, diagnostic=self._diagnostic,
+                )
             with self._condition:
                 if not self._current(host, host_epoch) or generation != self._generation:
                     return
@@ -571,6 +594,7 @@ class AdbRuntime:
                 restored = not host.available and host.preference is not None
                 host.available = True
                 self._status = "ready"
+                self._discovering = False
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
                 self._condition.notify_all()
                 self.observe_devices(listing.stdout.decode("utf-8", errors="ignore"))
@@ -954,7 +978,7 @@ class AdbRuntime:
         *,
         adb_path: str | None = None,
     ) -> ExecutionResult | None:
-        """在调用预算内等待发现准入，不执行设备命令，也不等待已就绪服务的测速。
+        """在调用预算内等待主机与模拟器发现，不执行设备命令，也不等待后续测速。
 
         ``adb_path`` 省略时表示应用默认扫描入口；显式其他路径仍交还原生执行。
         路径尚未发布时先等当前解析，之后重新核对路径和能力。返回 ``None`` 仅表示
@@ -977,7 +1001,9 @@ class AdbRuntime:
                 if not requested and (adb_path is None or self._path is not None):
                     self.request_device_check()
                     requested = True
-                if not self._checking or (self._path is not None and self._host.available):
+                if not self._checking or (
+                    self._path is not None and self._host.available and not self._discovering
+                ):
                     return None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

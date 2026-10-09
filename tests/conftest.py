@@ -10,6 +10,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _APPLICATION_REFERENCES = []
 
 
+@pytest.fixture(autouse=True)
+def isolated_local_emulator_discovery(monkeypatch):
+    """普通测试不枚举或登记本机模拟器；专项测试显式提供合成监听快照。"""
+    from core import adb_discovery
+
+    monkeypatch.setattr(adb_discovery, "_listening_emulator_ports", lambda: set())
+
+
 @pytest.fixture
 def isolated_app_settings(tmp_path, monkeypatch):
     """保留真实设置行为，隔离配置、迁移来源、单例和延迟写入生命周期。"""

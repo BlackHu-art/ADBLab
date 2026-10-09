@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-25
+last_verified: 2026-10-09
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -10,12 +10,15 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 [BUSINESS_FLOW](BUSINESS_FLOW.md)，线程与生命周期见 [ARCHITECTURE](ARCHITECTURE.md)，外部依赖见
 [DEPENDENCY_MAP](DEPENDENCY_MAP.md)。测试列均相对于 `tests/`，只列代表性入口，不维护文件数量。
 
+## 启动、界面与功能宿主
+
 | 区域 | 当前职责与边界 | 主要入口 | 代表性测试 |
 | --- | --- | --- | --- |
-| 启动与元数据 | CLI 分派、GUI 比例预加载、QApplication 初始化、诊断转交、版本，以及不创建主窗口的打包自检；自检对内嵌应用词库同时验证路径存在与 Qt 可解码性 | `main.py`、`utils/app_metadata.py` | `test_gui_bootstrap.py`、`test_model_meta.py`、`test_runtime_tools.py` |
+| 入口与元数据 | CLI 分派、GUI 比例预加载、版本，以及不创建主窗口的自检；packaging 自检验证资源、翻译解码和外部工具边界 | `main.py`、`utils/app_metadata.py` | `test_gui_bootstrap.py`、`test_model_meta.py`、`test_runtime_tools.py` |
+| GUI 启动与早期诊断 | 启动图标首帧门禁、设置回写与历史加载、分阶段主窗构建、首帧交接和中止清理；独立显示进程失败时回退本地图标，诊断覆盖日志服务尚未就绪的失败 | `main.py`、`gui/startup.py`、`gui/startup_task.py`、`gui/startup_stages.py`、`gui/startup_process.py`、`gui/startup_worker.py`、`gui/widgets/startup_splash.py`、`core/startup_diagnostics.py` | `test_gui_startup.py`、`test_mainframe_startup.py`、`test_startup_process.py`、`test_startup_splash.py`、`test_startup_diagnostics.py` |
 | 界面语言 | 创建页面前安装 Qt、Fluent 与应用翻译；设置页保存语言偏好，显示文案和稳定业务值分离；静态资源模块注册 `.qm`，加载失败保留源文案并记录诊断 | `gui/i18n.py`、`gui/generated/translations_rc.py`、`resources/i18n/`、`gui/pages/fluent_pages.py` | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_gui_bootstrap.py` |
 | 主窗口与顶层页面 | FluentWindow 组合根；负责页面注册、主题与屏幕适配、设备扫描、信号接线和异步关闭 | `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`、`gui/close_controller.py` | `test_main_window_layout.py`、`test_phase2_mainframe_shutdown_gate.py` |
-| 内嵌功能路由与会话 | WorkspaceRoute 映射、会话设备、内容宿主，以及页面的懒创建、激活、停用与释放 | `gui/pages/workspace_features.py`、`gui/features/base.py` | `test_workspace_feature_host.py`、`test_workspace_route_payload.py`、`test_workspace_device_recovery.py` |
+| 内嵌功能路由与会话 | WorkspaceRoute 映射、会话设备、内容宿主，以及页面的懒创建、激活、停用与释放；可选回调在会话发布前校验，异步释放要求完成信号 | `gui/pages/workspace_features.py`、`gui/features/base.py`、`gui/features/contracts.py` | `test_workspace_feature_host.py`、`test_workspace_route_payload.py`、`test_workspace_device_recovery.py`、`test_feature_contracts.py` |
 | 设备操作准入 | 固定会话的新命令要求设备已选且在线；停止使用原任务目标 | `gui/pages/workspace_features.py`、各功能页的 `set_device_selected` 与提交边界 | `test_session_device_admission.py`、`test_file_app_device_admission.py` |
 | 全局设备上下文与概览 | 功能页设备栏与会话投影；概览页内连接刷新、缓存元数据、设备卡选择与单设备工具入口 | `adblab/application/device_context.py`、`gui/panels/side_panel.py`、`gui/widgets/device_context_bar.py`、`gui/pages/device_hub.py` | `test_global_device_context.py`、`test_device_hub_page.py` |
 | 无线 ADB 配对 | 可收起的页内连接区、二维码/六位码配对、精确 GUID 在线确认与补填地址续连；环境失效、取消和客户端退出屏障 | `gui/widgets/device_connection.py`、`adblab/presentation/qt_adb_pairing.py`、`services/adb_pairing.py`、`controllers/_device.py`、`core/native_process.py` | `test_adb_pairing.py`、`test_qt_adb_pairing.py`、`test_device_connection.py`、`test_wireless_pairing_flow.py`、`test_wireless_pairing_layout.py`、`test_wireless_connection_history.py`、`test_native_command_scope.py` |
@@ -27,18 +30,31 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 业务面板与分类布局 | DeviceManager、AppPanel、SystemPanel 和 RemotePanel 的内容、信号、设备上下文和响应式布局 | `gui/panels/`、`gui/widgets/category_stack.py`、`gui/widgets/responsive_*.py` | `test_app_panel_categories.py`、`test_system_panel_categories.py`、`test_responsive_panels.py`、`test_model_panels.py` |
 | 内嵌功能页 | App Manager、File Explorer、Live Logcat、Performance、Screenshot 与 Settings About 页面 | `gui/features/`、`gui/dialogs/app_manager*.py`、`gui/dialogs/file_explorer*.py`、`gui/dialogs/live_logcat*.py`、`gui/dialogs/performance_launcher*.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/screenshot_viewer_*.py` | `test_app_manager_selection.py`、`test_screenshot_page.py`、`test_model_performance_launcher.py` |
 | 瞬态交互与样式 | 窗口内非模态消息、模态输入与短操作表单、系统文件选择器，以及主题、字体、无边框内容分区和复合控件 | `gui/notifications.py`、`gui/dialogs/fluent_dialog.py`、`gui/styles/`、`gui/widgets/content_section.py`、`gui/widgets/preset_spin_box.py` | `test_fluent_dialog_contract.py`、`test_fluent_components.py`、`test_content_section.py`、`test_feature_typography.py` |
+
+## 业务协调、执行与资源生命周期
+
+| 区域 | 当前职责与边界 | 主要入口 | 代表性测试 |
+| --- | --- | --- | --- |
 | Controller 与业务用例 | Qt 信号路由、结果聚合、operation 身份/所有权/代次、批次状态机和录屏保存重试身份；不直接实现 UI | `controllers/`、`adblab/application/` | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_gate.py`、`test_recording_publication.py` |
+| 任务资源监督与关闭 | 资源登记、单任务及 owner 停止、应用关闭准入、共享截止时间和残留快照；GUI 停止阶段与后台设置/归档收尾分开，业务终态不等于资源已退出 | `adblab/application/supervision.py`、`adblab/presentation/qt_task_supervisor.py`、`gui/close_controller.py` | `test_phase2_mainframe_shutdown_gate.py`、`test_window_lifecycle.py`、`test_model_shutdown_admission.py`、`test_run_library_integration.py` |
 | Monkey 业务批次 | 纯应用层维护批次、停止屏障及一次性归档交付，Controller 适配模型与信号 | `adblab/application/monkey_batch.py`、`controllers/_app_monkey.py` | `test_monkey_batch_state.py`、`test_monkey_batch_cancellation.py`、`test_monkey_library.py` |
+| 进程与远端租约归属 | Monkey 按 PID/starttime 精确停止；MobilePerf worker、显式客户端与远端租约分别确认退出，不把独立 ADB 服务纳入终止目标 | `core/monkey_process.py`、`core/owned_process.py`、`core/native_process.py` | `test_monkey_process_ownership.py`、`test_monkey_lease_shell.py`、`test_mobileperf_owned_processes.py`、`test_mobileperf_monkey_lifecycle.py` |
 | ADB model 与执行层 | 设备、应用、系统、网络、测试命令；短命令和长进程统一结果/停止边界 | `models/adb_*.py`、`core/exec.py`、`core/adb_bridge.py` | `test_model_*.py`、`test_process_utils.py`、`test_adb_execution_selection.py` |
-| ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_runtime.py`、`core/adb_query.py`、`utils/adb_resolver.py`、`services/adb_clients.py`、`gui/widgets/adb_client_card.py`（客户端卡与执行环境卡）、`adblab/presentation/qt_adb_runtime.py`、`utils/adb_debug.py`、`scripts/adb_fast.py` | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_adb_debug.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
+| ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_discovery.py`、`core/adb_runtime.py`、`core/adb_query.py`、`utils/adb_resolver.py`、`services/adb_clients.py`、`gui/widgets/adb_client_card.py`（客户端卡与执行环境卡）、`adblab/presentation/qt_adb_runtime.py`、`utils/adb_debug.py`、`scripts/adb_fast.py` | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_adb_discovery.py`、`test_adb_debug.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
 | 设置、日志与设备存储 | schema 化 JSON 设置、内存/UI 日志、脱敏应用诊断、性能追踪、设备 YAML 原子读写 | `core/settings_manager.py`、`core/log_service.py`、`core/diagnostics.py`、`models/device_store.py`、`utils/console_colors.py` | `test_console_colors.py`、`test_settings_persistence.py`、`test_logging_contract.py`、`test_diagnostics.py`、`test_device_store_concurrency.py` |
 | 应用更新检查 | 设置 About 卡片、公开正式发布解析、异步检查和关闭清理 | `gui/features/about.py`、`services/app_update.py`、`adblab/presentation/qt_app_update.py`、`utils/app_metadata.py` | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` |
 | 应用名称与图标 | 临时 DEX 批量查询 PackageManager 元数据或渲染 Drawable；共用部署与清理边界，可见文字优先、图标按身份增量缓存 | `services/app_metadata.py`、`services/app_icons.py`、`gui/dialogs/app_manager_views.py`、`gui/dialogs/app_manager_icons.py`、`tools/app_icons/Main.java` | `test_app_metadata.py`、`test_app_metadata_worker.py`、`test_app_manager_metadata.py`、`test_app_icons_service.py`、`test_app_icons_inline.py`、`test_app_manager_icons.py` |
-| 文件与 Remote 服务 | 文件命令、页面串行传输、后台图片解码与文本原始字节读写、scrcpy 多设备并发预检与会话启停（含自然退出的进程身份释放）、直连/持久输入和 Remote 生命周期 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer_transfers.py`、`gui/dialogs/file_explorer_preview_tasks.py`、`services/remote/` | `test_file_explorer_service.py`、`test_file_explorer_preview.py`、`test_file_explorer_text.py`、`test_scrcpy_process_release.py`、`test_remote_services.py`、`test_remote_sessions.py`、`test_remote_input_backend.py`、`test_remote_input_shutdown.py` |
+| 文件服务与传输 | 文件命令、页面串行传输、后台图片解码与文本原始字节读写、传输取消及准备资源归还 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer_transfers.py`、`gui/dialogs/file_explorer_preview_tasks.py` | `test_file_explorer_service.py`、`test_file_explorer_preview.py`、`test_file_explorer_text.py` |
+| Remote 视图与服务 | scrcpy 多设备并发预检与会话启停（含自然退出的进程身份释放）、直连/持久输入和关闭屏障；按键、手势及参数由面板分工承接 | `gui/panels/remote_panel.py`、`gui/panels/remote_panel_controls.py`、`gui/panels/remote_panel_input.py`、`gui/panels/remote_panel_scrcpy.py`、`services/remote/` | `test_scrcpy_process_release.py`、`test_remote_services.py`、`test_remote_sessions.py`、`test_remote_input_backend.py`、`test_remote_input_shutdown.py` |
 | scrcpy 专用 ADB | 限定协议、独立 CLI、父进程观察、会话端口归属与租约清理 | `core/scrcpy_adb_protocol.py`、`core/scrcpy_session.py`、`scripts/scrcpy_adb_bridge.py`、`utils/scrcpy_bridge.py` | `test_scrcpy_adb_protocol.py`、`test_scrcpy_adb_bridge.py`、`test_scrcpy_session.py`、`test_scrcpy_backend.py` |
 | MobilePerf | GUI 适配层管理隔离子进程；移植内核负责指标采样和报告 | `services/mobileperf_runner.py`、`mobileperf/android/` | `test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` |
 | 性能进度、会话与图表 | 各设备参数和运行状态投影、估算进度、后台结果发现与有界 CSV 指标解析、QtCharts 单位轴和可滚动图表 | `gui/widgets/performance_sessions.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/performance_launcher_run.py`、`gui/dialogs/performance_result_tasks.py`、`services/perf_chart_data.py`、`gui/widgets/perf_chart_view.py` | `test_performance_sessions.py`、`test_performance_progress.py`、`test_perf_chart_data.py`、`test_performance_result_loading.py`、`test_performance_responsive.py` |
 | 堆转储归属 | 生成前登记设备与任务命名空间、成功拉取后精确清理 | `mobileperf/android/heap_ownership.py`、`mobileperf/android/tools/androiddevice.py` | `test_mobileperf_heap_ownership.py` |
+
+## 工具与交付
+
+| 区域 | 当前职责与边界 | 主要入口 | 代表性测试 |
+| --- | --- | --- | --- |
 | 工具、构建与发布 | 用户/资源/ADB 路径、ZIP 安全、输入校验、PyInstaller 与 GitHub Actions | `utils/`、`scripts/packaging_manifest.py`、`scripts/build_app.py`、`scripts/check_source_text.py`、`ADBLab.spec`、`.github/workflows/` | `test_runtime_tools.py`、`test_ci_contracts.py`、`test_build_app.py`、`test_source_text.py` |
 
 当前 UI 代码只使用安装的 PySide6-Fluent-Widgets；上游源码定位规则见

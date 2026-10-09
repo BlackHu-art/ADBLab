@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-08
+last_verified: 2026-10-09
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -23,12 +23,12 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | 应用图标 | 同一临时 DEX helper 读取原生 Drawable | service 校验有界 PNG 字节及同次渲染的元数据身份；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；刷新隔离旧代次，元数据验证身份相同才复用图标；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |
 | 截图/录屏 | 设备 screencap/screenrecord | 截图二进制流写同目录临时文件，完整 PNG 解码后原子发布；录屏先拉取到目标同目录临时文件再原子发布，失败保留每设备一份原批次身份供重试（最多 64 份）；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 截图文件持续存在直到用户单张或全部删除，删除失败项保留；设备端录屏只在保存成功后删除，下载失败不删除；重试身份只存在于内存、不跨重启；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
-| MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
+| MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 确认进程、reader 和清理义务全部释放后才清理；停止未确认时保留临时目录 |
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
 | 操作结果 | 用户入口、异步命令原始返回、已验证 Operation 单元 | ActionResults 固定请求与目标，完成全部命令后汇总；正文不依赖日志截断 | 任务中心保存快照；Toast 通知终态；报告和诊断呈现专用内容 | 当前会话有界保留，导出才写入用户指定文件 |
 | 测试结果与方案 | Monkey 设备终态、性能采集退出快照、用户保存的参数 | `RunRecord` / `RunPreset` 经 `RunLibraryController` 后台串行校验和原子写入；Qt 信号更新页面 | 用户配置 `test_runs.json`、任务中心测试结果、两页方案栏 | 跨重启；索引有界，原始产物由用户保管；不自动绑定或执行历史设备 |
-| 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时按版本检查第一层条目类型和文件大小，失配时覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
+| 运行时工具缓存 | PyInstaller onefile bundle | 按版本校验并复制，普通工具与 scrcpy 桥接使用不同校验深度，见下方文件型存储表 | 平台 cache 目录 `runtime/<version>` | 跨进程复用；开发/onedir 不复制 |
 
 ## 设备发现与元数据流
 
@@ -78,7 +78,10 @@ sequenceDiagram
 缓存与同端点历史合并有效品牌、型号、系统版本，保留历史别名；不为落盘额外查询 ADB。
 无法获得合法连接端点时只刷新设备列表；历史保存失败记录固定诊断，不撤销已确认的连接。
 DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
-兼容状态源，全局栏提交选择，DeviceHubPage 只显示快照。单设备会话的选择独立于该复选集合。
+兼容状态源，全局栏和 DeviceHubPage 都将选择交回同一 DeviceManager，再接收更新后的快照。
+会话身份与操作目标分别保存；单选弹层通过 `MainFrame._select_operation_devices()` 一次同步二者，
+清空目标保留原会话缓存和停止入口，不能改变在途任务的设备归属。交互规则见
+[统一操作设备入口](../guides/OPERATION_RESULTS.md#统一操作设备入口)。
 DeviceContextBar 在进程内分配固定显示编号，组合根向概览、Monkey、性能列表及 ActionResults
 投影设备名称。操作提交将名称冻结进结果快照；编号映射不持久化，也不参与准入或命令选路。
 
@@ -131,7 +134,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
-| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；结果与方案参数拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 等设备身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
+| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；参数顶层拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 四个身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` 与 `clients/` 归属记录 | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native；归属记录保存本次进程身份与未释放远端义务 | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor`、`core.owned_process` | 每次运行独立临时目录；模式和客户端记录通过同目录临时文件原子发布 | 进程、reader、模式线程与清理义务确认释放后清理；停止未确认保留目录，详见 [进程归属](ARCHITECTURE.md#运行时并发模型)；配置包含设备/包/路径，模式不进入用户设置 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | CSV 等文件独立写入；XLSX 完整关闭后原子发布，失败保留原报告 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
@@ -145,6 +148,9 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 从方案重复启动则继续遵守所选随机/固定模式。相同种子不保证不同设备状态下重现相同结果。
 性能参数保留基础输出目录，实际设备后缀由当前会话重新生成。记录只收录新运行，不自动扫描旧目录。
 记录附件使用本地绝对路径；打开前在后台检查，文件被移动或删除时明确提示，不从消息文本猜测路径。
+容量淘汰只删除结果索引；方案达到 50 个时拒绝新增，仍可更新同类型同名方案或显式删除旧方案。
+加载失败、格式损坏或不支持的版本会使本次库实例进入只读保护；须处理原文件并重启后再保存，
+不会自动清空重建。写入失败保留原磁盘文件与已发布的内存快照。
 
 主窗口的普通操作由 `ActionResults` 保留当次请求；Monkey 和性能结果由 `RunLibrary` 持久化。
 `TaskHistoryStore` 仅供未注入 `RunLibrary` 的任务中心兼容分支使用；主窗口虽然仍构造并传入该
@@ -242,10 +248,9 @@ flowchart TD
 
 ## 数据保留与删除
 
-- 通用结果正文、显示预览及应用异常采用独立边界，容量、导出和保存位置见
-  [操作结果与应用诊断](../guides/OPERATION_RESULTS.md)。LogService 的技术传输缓冲上限仍为
-  5,000 条，溢出累计计数由 `dropped_count` 提供；页面不再依赖全局日志看板。诊断摘要在后台
-  原子写入用户数据目录的 `logs/application-diagnostics.log`（`gui/run_library.py`）。
+- 通用结果正文、显示预览及应用异常的容量、导出和保存位置统一见
+  [操作结果与应用诊断](../guides/OPERATION_RESULTS.md#状态与资源边界)。日志技术缓冲见
+  [日志架构](ARCHITECTURE.md#主题字体与日志)。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 在建立本次结果目录后才调用 `StartUp.clear_heapdump()`，仅处理该目录归属清单中

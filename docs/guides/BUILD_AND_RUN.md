@@ -70,11 +70,8 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
   `bundled` 与 `runtime_cache` 兼容源码和 onefile 间的内置选择，不迁移用户设置。
   界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
   缓存并重新检测；所选客户端缺失时按选择如实失败，不会静默改用其它 adb。
-  自动选项及折叠摘要显示宿主系统，如「Windows 下自动选择」「Ubuntu 下自动选择」
-  「macOS 下自动选择」；其他 Linux 发行版或发行版信息不可读时显示 Linux。自动模式的摘要按命令执行边界
-  已选定的绝对路径显示来源与已有版本；SDK 等未列出的候选仅显示缩略路径，悬停可查看完整路径；未找到可执行
-  文件时提示检查安装环境。切换客户端后后台刷新摘要，不改变原有选择优先级。该名称只说明当前桌面环境，
-  不改变下方执行环境的能力检测、测速及后端选择。
+  客户端摘要显示宿主系统、已选路径的来源与已识别版本；它只说明使用哪个客户端，不代表快速
+  后端已通过检测。执行模式、能力探测及失败后的接管条件统一见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - Remote 非空 `SCRCPY_PATH` 显式覆盖 scrcpy 路径，支持 `~` 和相对文件路径；该值是单个文件路径，
   不能附加启动参数。无效覆盖会报错，不会静默回退。未配置时优先使用当前平台内置 scrcpy；
   Linux 内置包未准备时及未提供内置包的平台使用 PATH；macOS 最后检查两个 Homebrew 标准前缀。
@@ -281,12 +278,12 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 .\.venv\Scripts\python.exe scripts/check_build_artifacts.py frozen --executable dist/ADBLab/ADBLab.exe --timeout 60
 ```
 
-`ADBLab.spec`：
+`ADBLab.spec` 与 CI 的 CLI 入口共用 `scripts/packaging_manifest.py`；以下说明概括收集边界，
+具体文件以清单为准：
 
 - 入口为 `main.py`。
-- 通过白名单收集图标、`resources/images/gallery_header.png`、图库许可、迁移种子、Bugreport JAR、
-  应用图标 DEX 工具、二维码、第三方许可、`icon.ico` 和当前平台工具目录，不把旧演示图或无关
-  文档带入产物。
+- 通过白名单收集图标、首页图片、启动图标、迁移种子、Bugreport JAR、应用图标 DEX 工具、
+  捐赠二维码与第三方许可，以及当前平台工具和构建后的 `runtime-helpers` 目录。
 - 通过 hidden imports 收集全部 `mobileperf` 与 `qfluentwidgets` 子模块，不再把 `mobileperf/`
   源码目录作为 data 重复打包；运行配置由 `MobilePerfRunner` 临时生成。
 - 生成 windowed、onedir 的 `ADBLab`。
@@ -395,10 +392,15 @@ pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints �
 
 `.github/workflows/Auto-Clean.yaml` 已改为手动只读的 **Retention Audit**：只列出 workflow runs
 和 releases，不带 schedule、不删除 run/release/tag，权限为 `actions: read` 和 `contents: read`。
-真正的保留期删除若未来需要，必须另行设计审批和保护环境。
+它不执行保留期删除；发布后的版本 tag/Release 删除由上述 [Build 工作流](#build-工作流) 执行。
+若未来给 Retention Audit 增加删除能力，需另行设计审批和保护环境。
 
 ## 调试方法
 
+- 启动停顿或主窗出现前失败：先检查 `StartupDiagnostics` 的阶段记录，区分启动画面首帧、
+  模块导入与主窗构造。日志服务就绪后记录进入应用诊断；早期失败保存到用户数据目录的
+  `logs/startup-diagnostics.log`，无需主窗成功打开。正常启动和 Debug 启动需分别测量，不把
+  单次耗时当作固定性能指标；启动时序见 [ARCHITECTURE](../project-knowledge/ARCHITECTURE.md#启动与组合根)。
 - 普通 ADB 失败：packaging self-check 可确认依赖与打包资源存在，Windows/Linux 还执行内置工具
   版本命令；它不验证设备连接。继续查看任务中心“本次操作”的错误详情及设置页 ADB 维护状态；
   实时采集内容保留在对应功能页，归属见 [OPERATION_RESULTS](OPERATION_RESULTS.md)。应用自身异常在设置页导出诊断。

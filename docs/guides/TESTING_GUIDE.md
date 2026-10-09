@@ -9,7 +9,8 @@
 - Windows 离屏平台若未提供系统字体库，测试夹具只读注册现有 Windows 字体，确保中文字形和
   实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
 - 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
-- `ui` 与 `integration` marker 以 `tests/conftest.py` 的集中登记（`_UI_TEST_FUNCTIONS`）为主，
+- `ui` 与 `integration` marker 以 `tests/conftest.py` 的集中登记为主：`_UI_TEST_FILES` 标记整份
+  Qt 测试文件，`_UI_TEST_FUNCTIONS` 标记混合文件中的 Qt 节点，`_INTEGRATION_TEST_FILES` 标记集成文件；
   少数文件在文件内就地 `pytestmark` 或函数级 `@pytest.mark` 标注；新增 Qt 测试文件时同步登记，
   混合文件按节点标记 Qt 用例，不能因为文件名像纯逻辑就漏标。
   `unit` marker 已注册但尚未系统分配，不能把 `not ui` 等同为显式 unit 集。
@@ -24,6 +25,7 @@
 | --- | --- | --- |
 | 执行、配置与存储 | `test_model_*.py`、`test_settings_persistence.py`、`test_device_store_concurrency.py` | CommandRunner/ProcessRunner、ADB model、设置迁移、原子写与故障恢复 |
 | ADB 执行环境与快速命令 | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_qt_adb_runtime.py`、`test_adb_fast.py` | 客户端候选解析与偏好、只跑 `adb version` 的来源识别与失败分类、能力探测、双后端选择、恢复代次、超时/取消、不重放命令和 Qt 状态投递；业务调用方另选对应 model/service 测试 |
+| 原生客户端准入与设备扫描 | `test_adb_client_admission.py`、`test_device_scan_lifecycle.py`、`test_device_scan_cleanup.py`、`test_native_launcher.py` | 排队计入总预算、超时/取消后不启动、失败不伪造空设备快照、自定义服务不被本机恢复替代，以及直接客户端退出与清理未确认的区别 |
 | 应用更新检查 | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` | 正式版本与链接校验、受控网络响应、超时/限流/关闭、主窗口显式触发和多语言卡片；后两者纳入 `ui` marker，测试不依赖外网 |
 | 无线配对 | `test_adb_pairing.py`、`test_native_command_scope.py`、`test_qt_adb_pairing.py`、`test_device_connection.py`、`test_wireless_connection_history.py`、`test_wireless_pairing_layout.py` | 服务使用脚本化命令与时钟，Qt 使用离屏窗口；覆盖精确身份、秘密、预算、取消/关闭、历史保存及三语言布局，不默认连接真实手机 |
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
@@ -35,6 +37,7 @@
 | 界面语言与材质 | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_navigation_rendering.py` | 词库与格式参数、实际主导航及业务页语言、显示标签与设备参数隔离、共享材质及动画中间帧；这些 Qt 用例纳入 `ui` marker |
 | App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py`、`test_screenshot_io.py` | 应用管理、路径/传输、截图批次、后台解码缓存、删除快照和页面释放 |
 | Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空；采样预算与周期共享见 `test_mobileperf_query_budget.py`、`test_mobileperf_sampling.py`，结果图表见 `test_perf_chart_data.py` |
+| 远端进程归属与停止 | `test_monkey_process_ownership.py`、`test_monkey_lease_shell.py`、`test_recording_ownership.py`、`test_mobileperf_owned_processes.py`、`test_mobileperf_monkey_lifecycle.py` | 按本次任务的 PID/starttime 和租约停止、取消后保留未确认义务、宿主 worker 退出后的客户端收尾；不把本机进程退出等同于设备任务已释放 |
 | 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`test_gui_startup.py`、`test_mainframe_startup.py`、`test_startup_splash.py`、`test_startup_process.py`、`test_startup_diagnostics.py`、`live_logcat_close_probe.py` | 关闭准入、启动首帧与历史加载门禁、早期失败诊断与清理错误优先级、父 GUI 阻塞时动画刷新、QObject 晚到回调、线程/进程释放；启动相关 Qt 测试归入 `ui` marker |
 | 静态与构建契约 | `test_ci_contracts.py`、`test_comment_language.py`、`test_doc_links.py`、`test_runtime_tools.py` | workflow 权限、注释/文档检查器、资源和打包路径 |
 
@@ -105,6 +108,8 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
 - pytest `monkeypatch` 替换 subprocess、路径解析、设置和 platform/frozen 状态。
 - fake process 实现 `poll/terminate/kill/wait/stdout` 等协议，验证 ProcessRunner 和 MobilePerfRunner。
 - `tmp_path` 隔离 JSON/YAML/截图/报告/临时配置。
+- 需要真实 AppSettings 读写语义时显式使用 `isolated_app_settings`，它隔离配置路径、旧配置路径和
+  单例，并在结束时取消、等待延迟保存 Timer；轻量页面替身仍可按需替换 `AppSettings.instance()`。
 - 全局 `isolated_run_library_storage` 夹具把归档服务及已加载 Qt 协调器的存储入口指向 `tmp_path`；
   第一次 Qt 用例按需加载并隔离协调器，不为纯逻辑测试主动导入 GUI。
   其他设置、设备历史及导出路径仍须由具体测试替换，不能由该夹具推断所有用户数据已隔离。

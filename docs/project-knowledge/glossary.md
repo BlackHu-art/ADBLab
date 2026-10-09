@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-22
+last_verified: 2026-10-09
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -33,13 +33,15 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | handler map | 合并各 Controller mixin 的 `_handlers` 注册表，按异步 model method 名称选择 `_process_*_result` 处理器 | `controllers/_base.py` |
 | `async_command` | 把 model 方法包装成 QRunnable 并发出 `command_finished` | `models/adb_model.py` |
 | CommandRunner | 短命令统一执行边界；根据当前 ADB 运行策略选择原生进程或已验证的直连后端，返回 CommandResult | `core/exec.py` |
-| CommandResult | 含 success/output/error/returncode 及 stale 标记的命令结果；stale 表示过期设备快照，应保留当前状态而非发布故障 | `core/exec.py` |
+| CommandResult / CommandOutcome | 命令输出、退出码及结构化终态；outcome 区分成功、失败、取消、超时和过期，stale 设备快照不覆盖当前状态 | `core/exec.py` |
 | ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `core/exec.py` |
+| NativeCommandScope | 串行原生命令的停止与资源归属；启动中和未确认退出的客户端阻止下一次准入 | `core/native_process.py` |
+| OwnedClientProcess / OwnedWorkerProcess | MobilePerf 异步客户端及 worker 的显式进程归属；本机进程退出与远端清理义务解除分别确认，不拥有独立 ADB Server | `core/owned_process.py` |
 | AdbRuntime / QtAdbRuntime | 当前进程的 ADB 能力探测、后端选择和在途请求生命周期；Qt 适配器提供延迟启动及信号投递 | `core/adb_runtime.py`、`adblab/presentation/qt_adb_runtime.py` |
 | ADBBridge | ADB shell 适配，支持持久输入 session | `core/adb_bridge.py` |
 | ADBInputSession | 每设备持久 `adb shell`，用于低延迟 input 命令 | `core/adb_bridge.py` |
 | ADB 客户端选择 | 设置页固定的本地 ADB 客户端（`auto` 或命名来源/绝对路径）；未配置的来源不显示，切换后清两层路径缓存并重新检测 | `utils/adb_resolver.py::set_client_preference`、`gui/widgets/adb_client_card.py::AdbClientSettingCard` |
-| 客户端探测 | 只对候选执行一次 `adb version` 的来源识别，不连接 5037 服务，失败结果不入缓存 | `services/adb_clients.py::detect_clients` |
+| 客户端探测 | 通过 `adb version` 识别候选，不连接 5037 服务；成功结果可按文件元数据缓存，失败或取消不入缓存 | `services/adb_clients.py::detect_clients` |
 | 执行模式 | 本次运行的执行方式三选一（自动选择/手动快速/手动原生），只影响后续命令 | `gui/widgets/adb_client_card.py::AdbEnvironmentSettingCard` |
 | DeviceStore | 按 alias 保存含 `ip` 标识和属性的 YAML 元数据存储；历史记录不代表当前在线设备或复选目标 | `models/device_store.py` |
 | RunLibrary / RunLibraryController | 跨重启测试结果与参数方案；Qt 控制器串行执行存储操作 | `services/run_library.py`、`gui/run_library.py` |
@@ -50,7 +52,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | TaskSupervisor / QtTaskSupervisor | 资源登记、停止、等待与残留快照；不判断业务成功 | `adblab/application/supervision.py`、`adblab/presentation/qt_task_supervisor.py` |
 | AppSettings | 应用设置单例和 JSON 存储 | `core/settings_manager.py` |
 | LogService | 线程安全缓冲、批量向 Qt 发日志信号的服务 | `core/log_service.py` |
-| DiagnosticJournal | 当前会话的有界警告/错误摘要，负责显示前遮蔽；不持有线程或文件 I/O，落盘交给结果库队列 | `core/diagnostics.py`、`gui/run_library.py` |
+| DiagnosticJournal | 当前会话的有界异常摘要，可显式纳入运行时 INFO；负责显示前遮蔽，不持有线程或文件 I/O，落盘交给结果库队列 | `core/diagnostics.py`、`gui/run_library.py` |
 | DeviceBatchUseCase | 卸载、清数据、重启、当前 Activity 等多设备批次的状态与汇总用例 | `adblab/application/device_batch.py` |
 | OperationManager | 管理业务操作身份、状态机、进度、取消意图和结果汇总的纯 Python registry，不拥有线程/进程 | `adblab/application/operations.py` |
 | OperationMetadata | `async_command` 为 operation 调用组装的信封：operation/unit/task/target 身份、预期 artifact、owner/generation token | `adblab/application/envelope.py` |
@@ -62,3 +64,4 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | MobilePerfRunConfig | 运行参数数据类，可写临时 config | `services/mobileperf_runner.py` |
 | RuntimeData | MobilePerf 每运行一份的运行时状态；类属性读写经元类代理转发到当前运行实例，调用点保持兼容 | `mobileperf/android/globaldata.py` |
 | Monkey | Android 随机事件压力工具；项目有普通测试模式和 MobilePerf 可选 monitor | `models/adb_testing.py`、`mobileperf/android/monkey.py` |
+| MonkeyProcessLease | Monkey 单次启动的远端身份与停止契约；按独占目录中的 PID/starttime 核验，确认退出后才释放本次清理义务 | `core/monkey_process.py` |

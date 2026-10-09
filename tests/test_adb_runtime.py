@@ -29,6 +29,130 @@ def selected_adb_file(tmp_path, monkeypatch):
     monkeypatch.setitem(globals(), "ADB", str(path))
 
 
+@pytest.mark.parametrize("already_connected", [False, True])
+def test_health_check_discovers_late_emulator_without_restarting_server(
+    backend, monkeypatch, already_connected,
+):
+    runtime, clock, native, _ = backend
+    initial = LISTING if already_connected else b"List of devices attached\n"
+    recovered = initial + b"emulator-5554\tdevice transport_id:2\n"
+    state = SimpleNamespace(started=False, registered=False, recoveries=0)
+
+    def capture(command, _args, **_kwargs):
+        if command == "devices":
+            return ExecutionResult(recovered if state.registered else initial)
+        return PROBE
+
+    def recover(listing, *, timeout, cancelled, diagnostic):
+        assert 0 < timeout <= 1.0 and not cancelled()
+        state.recoveries += 1
+        if state.started:
+            state.registered = True
+            return ExecutionResult(recovered)
+        return listing
+
+    monkeypatch.setattr(module, "capture", capture)
+    monkeypatch.setattr(module, "recover_local_emulators", recover, raising=False)
+    assert runtime.start() and runtime.wait(2)
+    assert not runtime.can_shell_fast(ADB, "emulator-5554")
+    state.started = True
+    clock[0] += 11
+    runtime.request_device_check()
+    assert runtime.wait(2)
+    assert runtime.can_shell_fast(ADB, "emulator-5554")
+    assert state.recoveries >= 2
+    assert not any("start-server" in cmd or "kill-server" in cmd for cmd in native)
+    before = state.recoveries
+    runtime.request_device_check()
+    assert runtime.wait(2)
+    assert state.recoveries == before
+
+
+def test_warm_discovery_waits_for_emulator_recovery_but_not_benchmark(backend, monkeypatch):
+    runtime, clock, _, _ = backend
+    prepare(runtime)
+    recovering, release = threading.Event(), threading.Event()
+    benchmarking, finish = threading.Event(), threading.Event()
+    waiting = threading.Event()
+    results = []
+
+    def recover(listing, **_kwargs):
+        recovering.set()
+        assert release.wait(2)
+        return listing
+
+    def benchmark(*_args):
+        benchmarking.set()
+        assert finish.wait(2)
+
+    original_wait = runtime._condition.wait
+
+    def wait(timeout):
+        waiting.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(module, "recover_local_emulators", recover, raising=False)
+    monkeypatch.setattr(runtime, "_probe_backends", benchmark)
+    monkeypatch.setattr(runtime._condition, "wait", wait)
+    clock[0] += 11
+    reader = threading.Thread(target=lambda: results.append(runtime.wait_for_device_check(1)))
+    try:
+        runtime.request_device_check()
+        assert recovering.wait(1)
+        reader.start()
+        assert waiting.wait(1)
+        assert results == []
+        release.set()
+        assert benchmarking.wait(1)
+        reader.join(1)
+        assert not reader.is_alive() and results == [None]
+        assert runtime.snapshot().checking
+    finally:
+        release.set()
+        finish.set()
+        if reader.ident is not None:
+            reader.join(2)
+        assert runtime.wait(2)
+
+
+@pytest.mark.parametrize("action", ["close", "prepare_shutdown", "recheck"])
+def test_emulator_recovery_stops_before_publishing_obsolete_topology(backend, monkeypatch, action):
+    runtime, _, _, _ = backend
+    invoked = []
+
+    def recover(listing, *, cancelled, **_kwargs):
+        invoked.append(True)
+        if len(invoked) == 1:
+            assert not cancelled()
+            getattr(runtime, action)()
+            assert cancelled()
+            return ExecutionResult(b"List of devices attached\nstale-emulator device\n")
+        return listing
+
+    monkeypatch.setattr(module, "recover_local_emulators", recover, raising=False)
+    assert runtime.start() and runtime.wait(2)
+    assert invoked
+    assert "stale-emulator" not in runtime._topology
+    assert not runtime.is_running()
+
+
+@pytest.mark.parametrize("scope", ["custom_server", "single_device", "unavailable"])
+def test_emulator_recovery_does_not_cross_detection_scope(backend, monkeypatch, scope):
+    runtime, _, _, _ = backend
+    recover = Mock(side_effect=AssertionError("unexpected emulator discovery"))
+    monkeypatch.setattr(module, "recover_local_emulators", recover, raising=False)
+    if scope == "custom_server":
+        monkeypatch.setenv("ADB_SERVER_SOCKET", "tcp:example.invalid:5040")
+    elif scope == "single_device":
+        runtime._probe_serial = "fake-device"
+    else:
+        monkeypatch.setattr(
+            module, "capture", lambda *_args, **_kwargs: ExecutionResult(kind="protocol"),
+        )
+    assert runtime.start() and runtime.wait(2)
+    recover.assert_not_called()
+
+
 @pytest.fixture
 def pending_discovery(monkeypatch):
     """固定路径解析、主机验证或启动窗口，并把后续测速保持为未结束。"""
@@ -1536,29 +1660,50 @@ def test_old_capability_probe_cannot_restore_newly_failed_backend(backend, monke
     prepare(runtime)
     original = module.capture
     entered, release = threading.Event(), threading.Event()
+    business_entered, business_release = threading.Event(), threading.Event()
+    results = []
+    worker = None
 
     def capture(target, args, **kwargs):
         if target == command and args in (["-l"], [AdbRuntime.PROBE_COMMAND]):
             entered.set()
             assert release.wait(2)
         if not args or args == ["fail"]:
+            if command == "devices":
+                business_entered.set()
+                assert business_release.wait(2)
             return ExecutionResult(kind="transport")
         return original(target, args, **kwargs)
 
     monkeypatch.setattr(module, "capture", capture)
     try:
-        assert runtime.start(force=True)
-        assert entered.wait(2)
         cmd = [ADB, "devices"] if command == "devices" else [
             ADB, "-s", "fake-device", "shell", "fail",
         ]
-        assert runtime.try_run(cmd, 5).kind == "transport"
+        if command == "devices":
+            # 新列表查询会等发现阶段；用已经发送的查询验证健康探测不能覆盖其晚到失败。
+            worker = threading.Thread(target=lambda: results.append(runtime.try_run(cmd, 5)))
+            worker.start()
+            assert business_entered.wait(1)
+            assert runtime.start(force=False)
+            assert entered.wait(1)
+            business_release.set()
+            worker.join(1)
+            assert not worker.is_alive()
+            assert results[0].kind == "transport"
+        else:
+            assert runtime.start(force=True)
+            assert entered.wait(2)
+            assert runtime.try_run(cmd, 5).kind == "transport"
         release.set()
         assert runtime.wait(2)
         snapshot = runtime.snapshot()
         assert not (snapshot.fast_devices if command == "devices" else snapshot.fast_shell_devices)
     finally:
+        business_release.set()
         release.set()
+        if worker is not None:
+            worker.join(2)
         assert runtime.wait(2)
 
 

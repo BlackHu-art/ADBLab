@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-08
+last_verified: 2026-10-09
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -8,13 +8,15 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 ## 内部依赖方向
 
-正常主链路的依赖方向为：
+传统设备操作的主要调用链为：
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-复杂功能页是例外：`gui/features` 的页面实现和 `gui/panels/remote_panel.py` 会直接依赖 `models`
-或 `services` 中的 worker/service。部分页面组合控制器仍位于 `gui/dialogs/*.py`，但它们由 Workspace 作为 QWidget
-承载，不代表独立窗口边界。`core` 仅 `log_service.py` 依赖 Qt；设置层错误日志经
+这不是全仓库的严格导入层级：Controller 还组合 `adblab/application` 的纯 Python 用例与结果
+状态，`adblab/presentation` 为运行时服务提供 Qt 适配。`gui/features` 的页面实现和
+`gui/panels/remote_panel.py` 会直接依赖 `models` 或 `services` 中的 worker/service；主窗口也
+负责组装存储、执行与关闭服务。部分页面组合控制器仍位于 `gui/dialogs/*.py`，但它们由
+Workspace 作为 QWidget 承载，不代表独立窗口边界。`core` 仅 `log_service.py` 直接导入 Qt；设置层错误日志经
 `set_error_sink` 注入。`CommandRunner`/`ProcessRunner` 位于 `core/exec.py`，`core` 不反向依赖
 `models`。
 
@@ -33,7 +35,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
 | Segno | 内存生成无线 ADB 配对 PNG；固定整数模块尺寸与白色静区，不读写二维码文件 | `services/adb_pairing.py`；版本见运行依赖与约束，BSD-3-Clause 原文随包收集 |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
-| psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
+| psutil | TCP 端口占用查找、进程终止，以及 PID/创建时间组成的进程身份核验 | `core/process_utils.py`、`core/native_process.py`、`core/owned_process.py` |
 | PySide6-Fluent-Widgets (qfluentwidgets) | 窗口、导航、控件、主题和消息 | `requirements.txt`、`gui/`；许可记录见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) |
 | PySideSix-Frameless-Window (qframelesswindow) | 项目直接使用的无边框对话框 | `requirements.txt`、`gui/dialogs/fluent_dialog.py`；显式声明，避免依赖 Fluent 的传递安装行为 |
 | XlsxWriter 移植副本 | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
@@ -58,14 +60,15 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 外部依赖 | 用途 | 解析/调用位置 | 缺失行为 |
 | --- | --- | --- | --- |
-| ADB | 几乎所有设备操作 | `utils/adb_resolver.py`（当前平台内置 → `ADB_PATH` → Android SDK platform-tools → PATH，进程内缓存，重新检测可失效；可用配置 `adb_client` 固定客户端）、`services/adb_clients.py`（候选只跑一次 `adb version`，不连 5037 服务）、CommandRunner、MobilePerf ADB | 操作失败，由设置页提示未找到客户端，不阻止窗口启动；支持内置包的平台自检文件、权限和版本命令 |
+| ADB | 几乎所有设备操作 | `utils/adb_resolver.py` 解析或固定客户端，`services/adb_clients.py` 识别版本，CommandRunner/MobilePerf 执行；平台顺序、缓存与模式见 [ADB_FAST](../guides/ADB_FAST.md#客户端选择与执行模式) | 操作失败，由设置页提示未找到客户端，不阻止窗口启动；支持内置包的平台自检文件、权限和版本命令 |
 | scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py`、`utils/tool_manifest.py` | Remote 启动失败；工具准备和平台范围见 [构建指南](../guides/BUILD_AND_RUN.md#linux-本地开发) |
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
 | Android `app_process` + `resources/app-icon-helper.jar` | 在设备端批量读取应用名称、版本或图标 | `services/app_metadata.py`、`services/app_icons.py`、`tools/app_icons/Main.java` | 图标保留占位；元数据仅在明确不支持时执行有限兼容查询；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
 | Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |
-| GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 只影响 CI/CD |
+| GitHub 公共 Releases API | 用户触发的应用更新检查 | `services/app_update.py`、`adblab/presentation/qt_app_update.py` | 检查报告网络或服务错误，不影响已有设备功能 |
+| GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 影响 CI/CD |
 
 ## 外部边界与命令接口
 
@@ -99,7 +102,7 @@ service/model 构造。
 | 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | 截图在工作线程完整解码 PNG，未取消才原子发布；仅客户端明确不支持 `exec-out` 时兼容回退。录屏启动前校验时长/码率/成对宽高，pull 与远端 cleanup 分离报告，结果携带 `batch_id` |
 | 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 独立参数/配置解析及 ADB 执行边界，不能假设经过主应用 Controller |
 | Shell、Intent 与 Android 设置 | SystemPanel、`ADBAdvanced`、`ADBSystemMixin` | `adb shell ...`、`am start/broadcast`、`settings` | 用户命令或字段 | CommandResult | 自定义 Shell 按用户命令执行；结构化 Intent 的组件/URI/字符串 extras 及设置 namespace/key/value 使用 `shlex.quote` 保持参数边界 |
-| Monkey | `ADBTesting` | `monkey`、`am force-stop` | package/events/throttle/flags | CommandResult | 前台探测 fail-closed；`_wait_for_monkey_abort` 短轮询探测中止 |
+| Monkey | `ADBTesting`、MobilePerf `Monkey` | `monkey`、`/proc/<pid>/stat`、精确 `kill`；普通测试的应用恢复另用 `am force-stop` | package/events/throttle/flags | 批次结果或采集状态 | 前台探测 fail-closed；`MonkeyProcessLease` 按本次 PID/starttime 确认停止，不按进程名清理外部任务，未确认则保留清理义务 |
 
 ### scrcpy 进程接口
 
@@ -123,7 +126,9 @@ CLI 仅依赖 Python 标准库，构建复用现有 PyInstaller，不新增生�
 
 MobilePerf 的有限超时同步 shell 由单次运行拥有的 `MobilePerfAdbExecutor` 复用核心双后端，保留
 采样所需的原始双流和文本转换；异步调用、文件传输、合并输出和无限等待仍使用原生
-Popen/ADB（参数数组、`shell=False`）。5037 端口清理由 `core.process_utils` 负责；
+Popen/ADB（参数数组、`shell=False`）。worker 内的异步客户端另经 `core/owned_process.py`
+登记本次进程归属，不能把停止 worker 等同于停止共享 ADB Server。显式服务器启动的 5037
+端口清理由 `core.process_utils` 负责；
 `get_adb_path()` 的最终回退走 `utils.adb_resolver`。进程环境与收尾准入见
 [ADB_FAST](../guides/ADB_FAST.md#mobileperf-采集进程)。
 未闭环的执行、平台与许可问题只在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md) 维护。
