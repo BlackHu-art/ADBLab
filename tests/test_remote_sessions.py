@@ -190,13 +190,13 @@ def test_encoding_display_keeps_each_device_detection(remote_session, qt_applica
     assert "H.264" in remote.codec.text() and "H.265" in remote.codec.text()
     assert "c2.fixture.one.encoder" in remote.codec.toolTip()
     assert "c2.fixture.two.encoder" in remote.codec.toolTip()
-    assert remote.advanced_options.isHidden()
-    assert "H.264" in remote._advanced_summary.text()
-    assert "H.265" in remote._advanced_summary.text()
+    assert not remote.advanced_options.isHidden()
+    assert remote.codec.accessibleDescription() == remote.codec.toolTip()
     remote.set_target_devices([])
-    assert remote.codec.text() == "自动（启动时检测）"
-    assert "H.264" not in remote._advanced_summary.text()
-    assert "H.265" not in remote._advanced_summary.text()
+    assert remote.codec.text() == "自动"
+    assert "启动时" in remote.codec.accessibleDescription()
+    assert "c2.fixture" not in remote.codec.toolTip()
+    assert remote.codec.accessibleDescription() == remote.codec.toolTip()
 
 
 def test_fast_device_starts_before_slow_preflight_finishes_in_gui(remote_session, qt_application):

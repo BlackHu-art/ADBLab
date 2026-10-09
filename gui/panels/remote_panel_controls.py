@@ -1,9 +1,18 @@
 """把远程参数的既有下拉数据投影为原生 Fluent 选择器，保留配置与信号契约。"""
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSignalBlocker, QSize, Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, Slot
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QStackedLayout,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
+    BodyLabel,
     ComboBox,
+    HorizontalSeparator,
     Pivot,
     PushButton,
     Slider,
@@ -16,76 +25,109 @@ from qfluentwidgets import (
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
     apply_font_role,
+    apply_label_role,
     configure_fluent_control,
     font_qss,
     set_fluent_font_rule,
     set_function_tooltip,
 )
+from gui.styles.material import ensure_material_observer
 
 
-class RemoteWorkspace(QWidget):
-    """分隔线只占栏间留白，不参与宽度规划；切为单栏时自动隐藏。"""
+def _refresh_session_surface(widget: QWidget, mica: bool) -> None:
+    """会话底板随实际宿主材质更新；半透明色沿用原生 Fluent 卡片。"""
+    dark = BaseStyles.resolved_theme() == "Dark"
+    background = (
+        f"rgba(255, 255, 255, {13 if dark else 170})" if mica
+        else BaseStyles.color("PANEL_BG")
+    )
+    border = (
+        "rgba(255, 255, 255, 28)" if dark else "rgba(0, 0, 0, 24)"
+    ) if mica else BaseStyles.color("BORDER_COLOR")
+    widget.setStyleSheet(
+        "RemoteSection[remoteSectionSurface=true] {"
+        f"background: {background}; border: 1px solid {border}; border-radius: 6px; }}"
+    )
 
-    def __init__(self, mirroring: QWidget, controls: QWidget, parent=None) -> None:
+
+class RemoteWorkspaceDivider(VerticalSeparator):
+    """双栏时分隔操作和参数；依据实际几何跟随回流，不占布局宽度。"""
+
+    def __init__(self, parent: QWidget, sections: tuple[QWidget, ...]) -> None:
         super().__init__(parent)
-        self._sections = (mirroring, controls)
-        self.separator = VerticalSeparator(self)
-        self.separator.setObjectName("remoteWorkspaceSeparator")
-        self.separator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.separator.hide()
-        for section in self._sections:
+        self.setObjectName("remoteWorkspaceDivider")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._sections = sections
+        for section in sections:
             section.installEventFilter(self)
+        parent.installEventFilter(self)
+        self.hide()
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
-            self._place_separator()
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.Show):
+            left, right, *lower = (section.geometry() for section in self._sections)
+            separate = right.left() > left.right() and abs(right.top() - left.top()) <= 2
+            self.setVisible(separate)
+            if separate:
+                bottom = max(rect.bottom() for rect in (left, right, *lower))
+                self.setGeometry(
+                    (left.right() + right.left()) // 2 - 1, left.top(),
+                    3, bottom - left.top() + 1,
+                )
         return super().eventFilter(watched, event)
 
-    def _place_separator(self) -> None:
-        left, right = (
-            QRect(section.mapTo(self, QPoint()), section.size()) for section in self._sections
-        )
-        side_by_side = left.right() < right.left() and left.top() == right.top()
-        self.separator.setVisible(side_by_side)
-        if side_by_side:
-            top, bottom = min(left.top(), right.top()), max(left.bottom(), right.bottom())
-            center = (left.right() + right.left()) // 2
-            self.separator.setGeometry(center - 1, top, 3, bottom - top + 1)
-            self.separator.raise_()
 
+class RemoteSection(QWidget):
+    """开放分区保留原有布局接口；仅会话区绘制底板，主题连接随控件销毁。"""
 
-class RemoteCommandSeparators(QObject):
-    """相邻动作同排时显示短竖线，换行后不在行首尾遗留装饰或占据网格列。"""
+    def __init__(
+        self, title: str, parent=None, *, surface: bool = False, divider: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self.setAccessibleName(title)
+        self.setProperty("fontRole", FontRole.UI.value)
+        self.setProperty("remoteSectionSurface", surface)
+        self.headerView = QWidget(self)
+        self.headerView.setMinimumHeight(36)
+        self.headerView.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.headerLayout = QHBoxLayout(self.headerView)
+        self.headerLayout.setContentsMargins(0, 0, 0, 0)
+        self.headerLayout.setSpacing(12)
+        self.headerLabel = BodyLabel(title, self.headerView)
+        self.headerLabel.setWordWrap(True)
+        apply_label_role(self.headerLabel, FontRole.UI, color_key="TITLE_COLOR", bold=True)
+        self.headerLayout.addWidget(self.headerLabel)
+        self.headerLayout.addStretch(1)
+        self.view = QWidget(self)
+        self.viewLayout = QVBoxLayout(self.view)
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(16)
+        self.viewLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.vBoxLayout = QVBoxLayout(self)
+        inset = 12 if surface else 0
+        self.vBoxLayout.setContentsMargins(inset, inset, inset, inset)
+        self.vBoxLayout.setSpacing(8)
+        self.separator = HorizontalSeparator(self)
+        if divider:
+            self.vBoxLayout.addWidget(self.separator)
+            self.vBoxLayout.addSpacing(8)
+        else:
+            self.separator.hide()
+        self.vBoxLayout.addWidget(self.headerView)
+        self.vBoxLayout.addWidget(self.view, 1)
+        BaseStyles.fonts_changed.connect(self._refresh_header)
+        if surface:
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            ensure_material_observer(self, _refresh_session_surface)
 
-    def __init__(self, container: QWidget, buttons: tuple[QWidget, ...]) -> None:
-        super().__init__(container)
-        self._container = container
-        self._buttons = buttons
-        self._separators = []
-        for _ in buttons[1:]:
-            separator = VerticalSeparator(container)
-            separator.setObjectName("remoteCommandSeparator")
-            separator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            separator.setFixedHeight(14)
-            separator.hide()
-            self._separators.append(separator)
-        for button in buttons:
-            button.installEventFilter(self)
-
-    def eventFilter(self, watched, event) -> bool:
-        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
-            for before, after, separator in zip(
-                self._buttons, self._buttons[1:], self._separators,
-            ):
-                left, right = before.geometry(), after.geometry()
-                same_row = left.top() == right.top() and left.right() < right.left()
-                separator.setVisible(same_row)
-                if same_row:
-                    center = (left.right() + right.left()) // 2
-                    separator.setGeometry(center - 1, left.center().y() - 7, 3, 14)
-                    separator.raise_()
-        return super().eventFilter(watched, event)
-
+    @Slot()
+    def _refresh_header(self) -> None:
+        # 宿主先更新所有 fontRole 字体，此处恢复分区标题的强调并使隐藏页重新度量。
+        apply_label_role(self.headerLabel, FontRole.UI, color_key="TITLE_COLOR", bold=True)
+        self.headerLabel.updateGeometry()
+        self.headerLayout.invalidate()
+        self.headerLayout.activate()
+        self.updateGeometry()
 
 class RemoteWindowToggle(TransparentTogglePushButton):
     """透明选中态沿用普通图标配色，避免原生强调色底板的反色图标失去对比度。"""
@@ -143,6 +185,8 @@ class RemoteChoiceEditor(QWidget):
         combo.setParent(self)
         self.pivot = _ParameterPivot(self)
         self.pivot.setAccessibleName(combo.accessibleName())
+        self.pivot.hBoxLayout.setSpacing(6)
+        self.pivot.setIndicatorLength(0)
         for index in range(combo.count()):
             value = str(combo.itemData(index))
             self.pivot.addItem(value, combo.itemText(index))
@@ -179,18 +223,25 @@ class RemoteChoiceEditor(QWidget):
     def refresh_metrics(self) -> None:
         """覆盖原生选项的固定像素字体，并按当前字号重新决定展开或下拉。"""
         for item in self.pivot.items.values():
-            # Pivot 用原生指示条表示选中，按钮焦点边框会改变内容尺寸并让整栏跳动。
             apply_font_role(item)
             set_function_tooltip(item, item.text())
             item.setAccessibleName(item.text())
             font = BaseStyles.font_for_role(FontRole.UI)
             set_fluent_font_rule(item, (
-                f"PivotItem {{ {font_qss(font)} padding-top: 5px; padding-bottom: 6px; }}"
-                f"PivotItem:focus {{ color: {themeColor().name()}; }}"
+                f"PivotItem {{ {font_qss(font)} padding: 5px 10px 6px;"
+                f"border: 1px solid {BaseStyles.color('BORDER_COLOR')}; border-radius: 6px;"
+                f"background: {BaseStyles.color('BUTTON_BG')};"
+                f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
+                f"PivotItem:hover {{ background: {BaseStyles.color('BUTTON_HOVER')}; }}"
+                "PivotItem[isSelected=true] {"
+                f"background: {BaseStyles.color('SELECTION_BG')};"
+                f"color: {BaseStyles.color('SELECTION_TEXT')}; }}"
+                f"PivotItem:focus {{ border-color: {themeColor().name()}; }}"
+                f"PivotItem:disabled {{ color: {BaseStyles.color('TEXT_DISABLED')}; }}"
             ))
-            # 默认上下各 10 像素会让隐藏的 Pivot 撑高下拉框；保留文字与底线所需
-            # 空间，并和相邻原生下拉框使用同一行高，切换模式无需改变外层字段高度。
+            # 隐藏的 Pivot 仍参与堆叠布局高度；FPS 保留原度量，不抬高相邻下拉字段。
             item.setMinimumHeight(max(
+                0 if self._prefer_combo else 36,
                 self.combo.minimumHeight(), item.fontMetrics().height() + 11,
             ))
         self.setMinimumWidth(self.combo.minimumWidth())
@@ -224,6 +275,7 @@ class RemoteBitrateEditor(QWidget):
         super().__init__(parent)
         self.combo = combo
         self.value_label = value_label
+        self.title_label = title_label
         # 数值与单位必须保持单行，否则切换两位数会折行并推移下方操作按钮。
         self.value_label.setWordWrap(False)
         combo.setParent(self)
@@ -237,6 +289,7 @@ class RemoteBitrateEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         if title_label is not None:
+            title_label.setWordWrap(False)
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
             header.addWidget(title_label, 1)
@@ -261,6 +314,11 @@ class RemoteBitrateEditor(QWidget):
             ).width()
             for index in range(self.combo.count())
         ))
+        if self.title_label is not None:
+            title_width = self.title_label.fontMetrics().horizontalAdvance(self.title_label.text())
+            self.title_label.setMinimumWidth(title_width)
+            self.setMinimumWidth(max(80, title_width + self.value_label.minimumWidth() + 4))
+            self.slider.setFixedHeight(max(36, self.value_label.fontMetrics().height() + 14))
 
     def sync_selection(self, _index: int = -1) -> None:
         """同步码率及原生圆点；同索引回写不发出下拉变化，保持预设归属。"""

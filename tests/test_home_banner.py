@@ -229,6 +229,7 @@ def test_home_banner_font_change_preserves_shortcut_focus_and_routes(
     assert frame._open_workspace_feature.call_args_list == [
         call("apps", "manager"),
         call("devices", "files"),
+        call("devices", "remote"),
         call("system", "logcat"),
         call("system", "performance"),
     ]

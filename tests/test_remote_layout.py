@@ -6,9 +6,9 @@ from concurrent.futures import Future
 import pytest
 from qfluentwidgets import (
     Pivot,
+    PrimaryPushButton,
     Slider,
     SwitchButton,
-    TransparentPushButton,
     themeColor,
 )
 
@@ -59,19 +59,14 @@ _OPTION_NAMES = (
 
 
 def expand_remote_options(remote, content, qt_application):
-    """先验证默认收纳，再通过真实入口展开，以保留全部参数的几何覆盖。"""
-    for button, container, controls in (
-        (remote.btn_advanced, remote.advanced_options,
+    """兼容既有测试入口，并验证高级参数和更多选项无需操作即可访问。"""
+    for container, controls in (
+        (remote.advanced_options,
          (remote.codec, remote.buffer, remote.orientation)),
-        (remote.btn_more_options, remote.more_options,
+        (remote.more_options,
          (remote.chk_turnscreenoff, remote.chk_noplayback)),
     ):
-        assert not button.isChecked()
-        assert not container.isVisibleTo(content)
-        assert all(not control.isVisibleTo(content) for control in controls)
-        button.click()
-        wait_for_stable_geometry(qt_application, (container, button, *controls))
-        assert button.isChecked()
+        wait_for_stable_geometry(qt_application, (container, *controls))
         assert container.isVisibleTo(content)
         assert all(control.isVisibleTo(content) for control in controls)
 
@@ -96,16 +91,26 @@ def remote_layout(qt_application, monkeypatch, isolated_app_settings):
         _close_feature_panel(panel)
 
 
-def test_wide_remote_page_shows_mirroring_and_controls_side_by_side(
+def test_wide_remote_page_aligns_equal_columns_and_lower_sections(
     remote_layout, qt_application,
 ):
     _panel, remote, _scroll, content, _settings = remote_layout
-    expand_remote_options(remote, content, qt_application)
-    mirroring, controls = remote._remote_section_groups
-    left, right = mapped_rect(mirroring, content), mapped_rect(controls, content)
+    controls, mirroring = remote._remote_section_groups
+    left, right = mapped_rect(controls, content), mapped_rect(mirroring, content)
 
-    assert left.right() < right.left(), "宽窗口应同时展示左右两栏，不能继续上下堆叠"
-    assert abs(left.top() - right.top()) <= 2
+    assert abs(left.top() - right.top()) <= 2, "宽窗操作和参数应在同一行"
+    assert left.right() < right.left()
+    assert abs(left.width() - right.width()) <= 2
+    system, recording = (
+        mapped_rect(section, content) for section in remote._remote_bottom_sections
+    )
+    assert abs(system.top() - recording.top()) <= 2
+    assert system.top() > max(left.bottom(), right.bottom())
+    assert abs(system.left() - left.left()) <= 2
+    assert abs(recording.left() - right.left()) <= 2
+    assert abs(system.width() - recording.width()) <= 2
+    assert remote.advanced_options.isVisibleTo(content)
+    assert remote.more_options.isVisibleTo(content)
     assert isinstance(remote.preset_selector, Pivot)
     assert remote.fps.isVisibleTo(content)
     assert not remote.fps_selector.isVisibleTo(content)
@@ -125,26 +130,86 @@ def test_wide_remote_page_shows_mirroring_and_controls_side_by_side(
         assert_positive_geometry(widget, content)
 
 
-def test_remote_middle_separator_tracks_two_columns_and_hides_in_one_column(
+def test_session_summary_stays_above_controls_and_settings_through_resizing(
     remote_layout, qt_application,
 ):
     from PySide6.QtWidgets import QWidget
 
     panel, remote, scroll, content, _settings = remote_layout
-    separator = content.findChild(QWidget, "remoteWorkspaceSeparator")
-    assert separator is not None
+    session = content.findChild(QWidget, "remoteMirrorSession")
+    assert session is not None
     for width in (780, 420, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
         left, right = (mapped_rect(section, content) for section in remote._remote_section_groups)
-        if width == 420:
-            assert not separator.isVisibleTo(content)
+        top = mapped_rect(session, content)
+        assert top.bottom() < min(left.top(), right.top())
+        assert top.left() <= min(left.left(), right.left())
+        assert top.right() >= max(left.right(), right.right())
+        assert scroll.horizontalScrollBar().maximum() == 0
+        if left.top() == right.top():
+            assert left.right() < right.left()
+            assert abs(left.width() - right.width()) <= 2
         else:
-            line = mapped_rect(separator, content)
-            assert separator.isVisibleTo(content)
-            assert abs(right.left() - left.right() - 1 - 32) <= 2
-            assert left.right() < line.left() < line.right() < right.left()
-            assert abs(line.top() - min(left.top(), right.top())) <= 1
-            assert abs(line.bottom() - max(left.bottom(), right.bottom())) <= 1
+            assert left.bottom() < right.top()
+            assert abs(left.left() - right.left()) <= 2
+        for control in (remote.btn_start, remote.btn_stop, remote._mirror_hint):
+            assert session.isAncestorOf(control)
+            assert_scroll_target_reachable(scroll, control)
+
+
+def test_workspace_dividers_follow_two_column_layout_and_keep_lower_sections_separate(
+    remote_layout, qt_application,
+):
+    from PySide6.QtWidgets import QWidget
+
+    panel, remote, scroll, content, _settings = remote_layout
+    divider = content.findChild(QWidget, "remoteWorkspaceDivider")
+    assert divider is not None, "双栏工作区应有设计稿中的中央分割线"
+    for width in (1280, 320, 1280):
+        _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+        left, right = (mapped_rect(section, content) for section in remote._remote_section_groups)
+        if width == 320:
+            assert not divider.isVisibleTo(content), "单栏回流后中央分割线应隐藏"
+        else:
+            assert divider.isVisibleTo(content)
+            rect = mapped_rect(divider, content)
+            assert left.right() < rect.left() <= rect.right() < right.left()
+            gap_center = (left.right() + right.left()) / 2
+            assert abs(rect.center().x() - gap_center) <= 2
+            assert rect.top() <= min(left.top(), right.top()) + 1
+            lower_bottom = max(mapped_rect(section, content).bottom()
+                               for section in remote._remote_bottom_sections)
+            assert rect.bottom() >= lower_bottom - 1
+        for section in remote._remote_bottom_sections:
+            assert section.separator.isVisibleTo(content)
+            separator = mapped_rect(section.separator, content)
+            header = mapped_rect(section.headerView, content)
+            assert separator.bottom() < header.top()
+            assert abs(separator.width() - section.width()) <= 2
+        assert scroll.horizontalScrollBar().maximum() == 0
+
+
+def test_group_heading_emphasis_survives_runtime_font_changes(remote_layout, qt_application):
+    from PySide6.QtWidgets import QLabel
+
+    panel, remote, scroll, content, _settings = remote_layout
+    headings = {label.text(): label for label in content.findChildren(QLabel)
+                if label.text() in ("滑动手势", "音量与媒体", "高级参数")}
+    assert set(headings) == {"滑动手势", "音量与媒体", "高级参数"}
+    current = BaseStyles.current_font_config()
+    for size in (12, 22, 12):
+        config = FontConfig(
+            ui_family="Segoe UI", ui_size=size,
+            log_size=current.log_size, mono_family=current.mono_family,
+        )
+        BaseStyles._sync_legacy_values(config)
+        typography_manager.apply(config)
+        _resize_feature_viewport(qt_application, panel, remote, scroll, 1280)
+        for label in headings.values():
+            assert label.font().family() == "Segoe UI"
+            assert label.font().pointSize() == size
+            assert label.font().bold(), f"{label.text()} 不应在改变字体后丢失标题字重"
+            assert label.height() >= label.fontMetrics().height()
 
 
 def test_parameter_selectors_save_stable_values_and_custom_clears_preset(remote_layout):
@@ -194,19 +259,21 @@ def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_la
         (remote._remote_media_binding, ("MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT")),
     )
     for binding, codes in groups:
-        assert tuple(button.property("remoteKey") for button in binding.widgets()) == codes
-    actions = remote._remote_action_binding.widgets()
+        assert tuple(button.property("remoteKey") for button in binding.widgets()
+                     if button.property("remoteKey")) == codes
+    actions = remote._remote_action_buttons
     assert tuple(button.property("remoteAction") for button in actions) == (
         "swipe_up", "swipe_down", "swipe_left", "swipe_right",
         "notif_expand", "notif_collapse", "rotate_portrait", "rotate_landscape",
     )
-    assert remote._remote_action_binding.applied_plan.mode.columns == 2
+    assert remote._remote_action_binding.applied_plan.mode.columns == 3
     by_code = {button.property("remoteKey"): button for button in remote._remote_key_buttons}
     assert by_code["ENTER"].text() == "回车"
     assert by_code["DEL"].text() == "退格"
-    assert by_code["MEDIA_PLAY"].text() == "播放/暂停"
-    assert mapped_rect(by_code["POWER"], content).top() > max(
-        mapped_rect(button, content).bottom() for button in actions
+    assert by_code["MEDIA_PLAY"].accessibleName() == "播放/暂停"
+    assert by_code["POWER"] not in remote._remote_navigation_binding.widgets()
+    assert mapped_rect(by_code["POWER"], content).bottom() < min(
+        mapped_rect(button, content).top() for button in actions
     )
     assert all(button.iconSize().width() >= 16 for button in remote._remote_control_buttons)
 
@@ -352,9 +419,7 @@ def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(
     for name in _OPTION_NAMES:
         assert isinstance(getattr(remote, name), SwitchButton)
     assert remote.chk_noaudio.isChecked()
-    assert all(isinstance(button, TransparentPushButton) for button in (
-        remote.btn_start, remote.btn_stop, *remote._remote_control_buttons,
-    ))
+    assert isinstance(remote.btn_start, PrimaryPushButton)
     remote.set_target_devices(["synthetic-device"])
     controls = (
         remote.preset_selector, remote.fps, remote.bitrate_slider,
@@ -391,17 +456,19 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
 
     identities = tuple(id(widget) for widget in tracked())
     checks = tuple(getattr(remote, name).isChecked() for name in _OPTION_NAMES)
-    mirroring, controls = remote._remote_section_groups
-    for width in (420, 1280):
+    controls, mirroring = remote._remote_section_groups
+    for width in (320, 420, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
         assert panel._responsive_coordinator.diagnostics.fallback_reason is None
-        left, right = mapped_rect(mirroring, content), mapped_rect(controls, content)
-        if width == 420:
+        left, right = mapped_rect(controls, content), mapped_rect(mirroring, content)
+        if width <= 420:
             assert left.bottom() < right.top()
             assert abs(left.left() - right.left()) <= 2
         else:
-            assert left.right() < right.left()
             assert abs(left.top() - right.top()) <= 2
+            assert left.right() < right.left()
+            assert abs(left.width() - right.width()) <= 2
+        assert scroll.horizontalScrollBar().maximum() == 0
         assert tuple(id(widget) for widget in tracked()) == identities
         assert tuple(getattr(remote, name).isChecked() for name in _OPTION_NAMES) == checks
         assert tuple(combo.currentData() for combo in (

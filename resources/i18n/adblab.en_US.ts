@@ -7433,5 +7433,61 @@ Android device management, apps and diagnostics</translation>
             <source>音量 −</source>
             <translation>Volume −</translation>
         </message>
+        <message>
+            <source>遥控台</source>
+            <translation>Device controls</translation>
+        </message>
+        <message>
+            <source>镜像设置</source>
+            <translation>Mirroring settings</translation>
+        </message>
+        <message>
+            <source>展开设置</source>
+            <translation>Expand settings</translation>
+        </message>
+        <message>
+            <source>收起设置</source>
+            <translation>Collapse settings</translation>
+        </message>
+        <message>
+            <source>自定义</source>
+            <translation>Custom</translation>
+        </message>
+        <message>
+            <source>{preset} · {size} · {fps} FPS · {bitrate} Mbps</source>
+            <translation>{preset} · {size} · {fps} FPS · {bitrate} Mbps</translation>
+        </message>
+        <message>
+            <source>{action}（作用于已选设备）</source>
+            <translation>{action} (selected devices)</translation>
+        </message>
+        <message>
+            <source>镜像参数</source>
+            <translation>Mirroring parameters</translation>
+        </message>
+        <message>
+            <source>启动时生效</source>
+            <translation>Applies on start</translation>
+        </message>
+        <message>
+            <source>滑动手势</source>
+            <translation>Swipe gestures</translation>
+        </message>
+        <message>
+            <source>音量</source>
+            <translation>Volume</translation>
+        </message>
+        <message>
+            <source>码率</source>
+            <translation>Bit rate</translation>
+        </message>
+        <message>
+            <source>关闭屏幕</source>
+            <translation>Turn off screen</translation>
+        </message>
+        <message>
+            <source>显示手指在设备屏幕上的触点，不显示电脑鼠标点击</source>
+            <translation>Show finger touches on the device screen, not computer mouse clicks</translation>
+        </message>
     </context>
 </TS>

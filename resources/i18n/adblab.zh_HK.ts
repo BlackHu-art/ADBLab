@@ -7433,5 +7433,61 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>音量 −</source>
             <translation>音量 −</translation>
         </message>
+        <message>
+            <source>遥控台</source>
+            <translation>遙控台</translation>
+        </message>
+        <message>
+            <source>镜像设置</source>
+            <translation>鏡像設定</translation>
+        </message>
+        <message>
+            <source>展开设置</source>
+            <translation>展開設定</translation>
+        </message>
+        <message>
+            <source>收起设置</source>
+            <translation>收起設定</translation>
+        </message>
+        <message>
+            <source>自定义</source>
+            <translation>自訂</translation>
+        </message>
+        <message>
+            <source>{preset} · {size} · {fps} FPS · {bitrate} Mbps</source>
+            <translation>{preset} · {size} · {fps} FPS · {bitrate} Mbps</translation>
+        </message>
+        <message>
+            <source>{action}（作用于已选设备）</source>
+            <translation>{action}（作用於已選裝置）</translation>
+        </message>
+        <message>
+            <source>镜像参数</source>
+            <translation>鏡像參數</translation>
+        </message>
+        <message>
+            <source>启动时生效</source>
+            <translation>啟動時生效</translation>
+        </message>
+        <message>
+            <source>滑动手势</source>
+            <translation>滑動手勢</translation>
+        </message>
+        <message>
+            <source>音量</source>
+            <translation>音量</translation>
+        </message>
+        <message>
+            <source>码率</source>
+            <translation>碼率</translation>
+        </message>
+        <message>
+            <source>关闭屏幕</source>
+            <translation>關閉螢幕</translation>
+        </message>
+        <message>
+            <source>显示手指在设备屏幕上的触点，不显示电脑鼠标点击</source>
+            <translation>顯示手指在裝置螢幕上的觸點，不顯示電腦滑鼠點擊</translation>
+        </message>
     </context>
 </TS>

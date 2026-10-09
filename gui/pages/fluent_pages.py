@@ -769,6 +769,13 @@ class HomePage(ScrollArea):
                 lambda: frame._open_workspace_feature("devices", "files"),
             ),
             (
+                "remote",
+                FluentIcon.PROJECTOR,
+                tr("远程控制"),
+                tr("屏幕镜像、按键和手势在同一页面操作"),
+                lambda: frame._open_workspace_feature("devices", "remote"),
+            ),
+            (
                 "logcat",
                 FluentIcon.SCROLL,
                 tr("实时 Logcat"),

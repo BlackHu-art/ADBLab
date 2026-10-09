@@ -1,5 +1,6 @@
 """根据 Remote 配置纯函数式构造 scrcpy 启动参数。"""
 
+from .audio_encoder import AudioEncoder
 from .types import ScrcpyConfig
 
 
@@ -7,7 +8,9 @@ def _size_value(size: str) -> str:
     return size.replace("p", "")
 
 
-def build_scrcpy_args(config: ScrcpyConfig, encoder: str | None = None) -> list[str]:
+def build_scrcpy_args(
+    config: ScrcpyConfig, encoder: str | None = None, *, audio_encoder: AudioEncoder | None = None,
+) -> list[str]:
     """按显式配置构造 scrcpy 参数列表，不执行外部命令。"""
     args = [config.exe, "-s", config.device]
 
@@ -37,6 +40,8 @@ def build_scrcpy_args(config: ScrcpyConfig, encoder: str | None = None) -> list[
         args.append("--always-on-top")
     if config.no_audio:
         args.append("--no-audio")
+    elif audio_encoder is not None:
+        args.extend(["--audio-codec", audio_encoder.codec, "--audio-encoder", audio_encoder.name])
     if config.show_touches:
         args.append("--show-touches")
     if config.stay_awake:

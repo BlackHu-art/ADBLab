@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWidget.closeEvent。
+    QAbstractButton,
     QComboBox,
     QLabel,
     QPushButton,
@@ -299,7 +300,8 @@ class RemotePanel(BasePanel):
     panel_header: QWidget
     category_stack: "AdaptiveCategoryStack"
     _remote_section_groups: list[QWidget]
-    _remote_control_buttons: list[QPushButton]
+    _remote_control_buttons: list[QAbstractButton]
+    _remote_action_buttons: list[QAbstractButton]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
         "Could not inject char u+",
         "libpng warning: iCCP: known incorrect sRGB profile",
@@ -505,54 +507,67 @@ class RemotePanel(BasePanel):
         return changed or previous != tuple(widget.minimumWidth() for widget in widgets)
 
     def _responsive_context(self, container):
-        """两栏内网格只消费所属分区的宽度，不能借用相邻栏的 viewport 空间。"""
+        """从本代双栏计划向内传递宽度，避免子网格借用整页空间或上一帧几何。"""
         context = super()._responsive_context(container)
-        sections = getattr(self, "_remote_section_groups", ())
+        sections = (
+            *getattr(self, "_remote_section_groups", ()),
+            *getattr(self, "_remote_bottom_sections", ()),
+        )
         if container.objectName() == "remoteWorkspaceRow":
-            # 分栏由 viewport 决定，但单栏仍需把内层不可再收缩的控件宽度传给
-            # 滚动容器。只读取最保守计划，避免上一帧多列宽度反向锁住下一次分栏。
-            # 正常 860px 最小窗口保留双栏；字号增长由栏内网格减列承接，
-            # 不同比放大外层断点。更窄工作区仍可退为单栏，并保留真实内容下限。
-            column_minimum = min(context.width, 320)
             for section in sections:
+                required = max((
+                    binding.conservative_responsive_plan(context).required_width
+                    for binding, (row, _widgets) in zip(
+                        self._responsive_rows, self._responsive_row_owners,
+                    ) if section.view.isAncestorOf(row)
+                ), default=0)
+                section.setMinimumWidth(max(
+                    min(context.width, 320), required, section.headerView.minimumSizeHint().width(),
+                ))
+            return context
+        for section in sections:
+            if section.view.isAncestorOf(container):
+                workspace = getattr(self, "_remote_workspace_binding", None)
+                width = section.view.width()
+                if workspace is not None:
+                    workspace_context = self._responsive_context(section.parentWidget())
+                    plan = workspace.responsive_plan(workspace_context)
+                    width = max(0, (
+                        workspace_context.width - plan.spacing * (plan.mode.columns - 1)
+                    ) // plan.mode.columns)
+                context = replace(context, width=min(context.width, width))
+                break
+        regions = getattr(self, "_remote_action_regions", ())
+        if container.objectName() == "remoteActionRegionsRow":
+            # 只从保守计划传播不可再收缩的下限，避免上一帧三列方向盘锁住窄窗。
+            for region in regions:
                 required_width = max((
                     binding.conservative_responsive_plan(context).required_width
                     for binding, (row, _widgets) in zip(
                         self._responsive_rows, self._responsive_row_owners,
                     )
-                    if section.view.isAncestorOf(row) and not any(
-                        group is not None and group.isHidden() and group.isAncestorOf(row)
-                        for group in (
-                            getattr(self, "advanced_options", None),
-                            getattr(self, "more_options", None),
-                        )
-                    )
+                    if region.isAncestorOf(row)
                 ), default=0)
-                margins = section.viewLayout.contentsMargins()
-                minimum = max(
-                    column_minimum, required_width + margins.left() + margins.right(),
-                    section.headerView.minimumSizeHint().width(),
-                )
-                if section.minimumWidth() != minimum:
-                    section.setMinimumWidth(minimum)
+                minimum = max(min(context.width, 124), required_width)
+                if region.minimumWidth() != minimum:
+                    region.setMinimumWidth(minimum)
             return context
-        for section in sections:
-            if section.view.isAncestorOf(container):
-                margins = section.viewLayout.contentsMargins()
-                section_width = section.view.width()
-                workspace_binding = getattr(self, "_remote_workspace_binding", None)
-                if workspace_binding is not None:
-                    # 本轮候选分栏已由 viewport 确定；不等上一帧 section 几何扩宽，
-                    # 否则外层、内层和滚动条会依次反馈并耗尽同一代的收敛轮次。
-                    workspace_context = self._responsive_context(section.parentWidget())
-                    workspace_plan = workspace_binding.responsive_plan(workspace_context)
-                    columns = workspace_plan.mode.columns
-                    section_width = max(0, (
-                        workspace_context.width - workspace_plan.spacing * (columns - 1)
+        for region in regions:
+            if region.isAncestorOf(container):
+                region_width = region.width()
+                binding = getattr(self, "_remote_action_regions_binding", None)
+                if binding is not None:
+                    # 使用本代外层候选宽度，不读取尚未应用的新分栏几何。
+                    regions_context = self._responsive_context(region.parentWidget())
+                    plan = binding.responsive_plan(regions_context)
+                    columns = plan.mode.columns
+                    region_width = max(0, (
+                        regions_context.width - plan.spacing * (columns - 1)
                     ) // columns)
-                return replace(context, width=min(
-                    context.width, max(0, section_width - margins.left() - margins.right()),
-                ))
+                width = min(context.width, region_width)
+                if container.objectName() == "remoteDirectionPadRow":
+                    width = min(width, self._remote_action_buttons[0].height() * 3 + 16)
+                return replace(context, width=width)
         return context
 
     def get_remote_session_devices(self) -> list[str]:
@@ -815,6 +830,15 @@ class RemotePanel(BasePanel):
         self._mirror_error_label.setVisible(bool(error))
         self.btn_mirror_diagnostics.setVisible(bool(error))
         self._mirror_diagnostic_label.setText(diagnostic)
+        # 摘要内容变化时刷新 Qt 网格项，状态轮询不重复触发布局。
+        layout_state = (
+            self._status_label.text(), self._mirror_device_label.text(),
+            self._mirror_connection_label.text(), hint,
+            error, diagnostic, len(sessions), self.btn_start.text(), self.btn_stop.text(),
+        )
+        if layout_state != getattr(self, "_mirror_layout_state", None):
+            self._mirror_layout_state = layout_state
+            self._form_controller.refresh_session_summary()
 
     # ── 按键与输入事件 ──────────────────────────────────────────────────
 

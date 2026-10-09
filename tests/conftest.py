@@ -98,8 +98,8 @@ def isolated_ui_state_probe():
 
 
 @pytest.fixture
-def isolated_ui_state(qt_application, isolated_ui_state_probe):
-    """恢复每个用例改动过的全局 UI 状态并清理其顶层窗口。"""
+def isolated_ui_state(qt_application, isolated_ui_state_probe, isolated_app_settings):
+    """在设置隔离仍有效时销毁窗口、恢复 UI，最后由设置夹具停止持久化计时器。"""
     from PySide6.QtCore import QCoreApplication, QEvent, QTimer
     from PySide6.QtGui import QFont
     from shiboken6 import isValid
@@ -161,6 +161,8 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe):
             # close 不代表 QObject 已释放；失败及已关闭窗口也必须完成释放。
             if isValid(window):
                 window.deleteLater()
+    # 先销毁主题订阅者；恢复信号不能再让已结束窗口安排新的设置写入。
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     if BaseStyles.current_font_config() != initial_font_config:
         BaseStyles._sync_legacy_values(initial_font_config)
         typography_manager.apply(initial_font_config)

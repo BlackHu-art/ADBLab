@@ -1,4 +1,4 @@
-"""验证远程页首次进入及再次切入时，每次可见绘制都使用稳定的字段几何。"""
+"""验证远程页首次进入及再次切入时，常显参数与遥控保持稳定的可见几何。"""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import QEvent, QObject, QSize
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 
 from gui.styles import BaseStyles
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
@@ -66,10 +67,10 @@ def test_remote_entry_keeps_parameter_geometry_from_first_visible_paint(
     try:
         remote = frame.left_panel.remote_panel
         content = frame.left_panel._tab_scroll_areas[2].widget()
-        tracked = (
-            remote.preset.parentWidget(), remote.fps.parentWidget(),
-            remote.maxsize, remote.bitrate_slider, remote.btn_start,
-        )
+        tracked = (remote.btn_start, remote.btn_stop, remote.preset.parentWidget(),
+                   remote.fps, remote.maxsize, remote.bitrate_slider, remote.buffer,
+                   remote.orientation, remote.chk_turnscreenoff,
+                   *remote._remote_control_buttons)
         probe = _VisiblePaintGeometry(content, tracked)
         frame.show()
         wait_until(
@@ -87,12 +88,29 @@ def test_remote_entry_keeps_parameter_geometry_from_first_visible_paint(
             QTest.qWait(350)
             assert remote.fps.isVisibleTo(content)
             assert not remote.fps_selector.isVisibleTo(content)
-            assert not remote.advanced_options.isVisibleTo(content)
-            assert not remote.more_options.isVisibleTo(content)
-            assert probe.samples, "远程参数必须实际绘制，不能只检查隐藏控件的几何"
+            assert remote.advanced_options.isVisibleTo(content)
+            assert remote.more_options.isVisibleTo(content)
+            assert probe.samples, "远程操作必须实际绘制，不能只检查隐藏控件的几何"
             phases.append(tuple(probe.samples))
         for samples in phases:
             assert all(sample == samples[0] for sample in samples), samples
+        frame._on_devices_updated(["synthetic-device"])
+        session = content.findChild(QWidget, "remoteMirrorSession")
+        assert session is not None
+        heights = []
+        for selected in (["synthetic-device"], [], ["synthetic-device"]):
+            frame.left_panel._devices_tab.set_selected_devices(selected)
+            QTest.qWait(160)
+            heights.append(session.height())
+            for label in (remote._mirror_device_label, remote._mirror_hint, remote._status_label):
+                if label.isHidden():
+                    continue
+                assert label.height() >= max(
+                    label.fontMetrics().height(), label.heightForWidth(label.width()),
+                ), f"选择设备后，会话文字应保留足够高度：{label.text()}"
+                assert session.rect().contains(mapped_rect(label, session))
+        assert heights[0] == heights[2]
+        assert heights[1] < heights[0], "清空设备后摘要高度应恢复"
     finally:
         frame.left_panel.shutdown()
         frame._unbind_window_screen()

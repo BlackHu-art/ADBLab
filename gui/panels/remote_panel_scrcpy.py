@@ -344,12 +344,9 @@ class RemotePanelScrcpy:
                 details.append(summary)
             if summary not in summaries:
                 summaries.append(summary)
-        label.setText(" / ".join(summaries) if summaries else tr("自动（启动时检测）"))
+        label.setText(" / ".join(summaries) if summaries else tr("自动"))
         label.setToolTip("\n".join(details) if details else tr("启动时按设备能力自动选择编码器"))
         label.setAccessibleDescription(label.toolTip())
-        form = getattr(self._frame, "_form_controller", None)
-        if form is not None:
-            form._refresh_advanced_summary()
 
     def _on_scrcpy_output(self, process, line: str) -> None:
         """只有视频纹理或录制开始输出确认可用，进程存在本身不代表就绪。"""

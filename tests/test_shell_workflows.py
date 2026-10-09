@@ -5,10 +5,11 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtTest import QSignalSpy, QTest
 from qfluentwidgets import FluentIcon, PrimaryPushButton
 
 from controllers.signals import ADBControllerSignals
+from gui.pages.workspace_features import WorkspaceRoute
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import DEVICE_ICON, get_fluent_icon, get_themed_icon
@@ -16,7 +17,10 @@ from tests.test_main_window_layout import build_main_frame
 
 
 @pytest.fixture
-def frame(qt_application):
+def frame(qt_application, monkeypatch):
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
     window = build_main_frame()
     window.show()
     qt_application.processEvents()
@@ -24,6 +28,38 @@ def frame(qt_application):
     window._unbind_window_screen()
     window._close_ready = True
     window.close()
+
+
+@pytest.mark.parametrize("selected_devices", ([], ["demo-a", "demo-b"]))
+def test_home_remote_card_opens_existing_page_and_preserves_targets(
+    frame, qt_application, selected_devices,
+):
+    """首页必须能直达远程页，无设备也可进入，已有选择不因导航而改变。"""
+    frame._on_devices_updated(selected_devices)
+    frame._global_device_bar.selection_requested.emit(selected_devices)
+    frame._on_nav_requested("home")
+    qt_application.processEvents()
+    home = frame._home_page
+    card = home.tool_cards.get("remote")
+    assert card is not None, "首页常用工具缺少远程控制入口"
+    assert card.isVisibleTo(frame) and card.isEnabled()
+    assert card.accessibleName() == "远程控制"
+    remote = frame.left_panel.remote_panel
+    assert remote is not None
+    card.setFocus(Qt.FocusReason.TabFocusReason)
+    assert card.hasFocus()
+    QTest.keyClick(card, Qt.Key.Key_Return)
+    qt_application.processEvents()
+
+    assert frame.stackedWidget.currentWidget() is frame._devices_page
+    assert frame._devices_page.current_route == WorkspaceRoute("devices", "remote")
+    assert frame.navigationInterface.panel.currentItem() is (
+        frame.navigationInterface.widget("remotePage")
+    )
+    assert remote.btn_start.isVisibleTo(frame)
+    assert frame.left_panel.remote_panel is remote
+    assert frame.left_panel.selected_devices == selected_devices
+    assert remote.selected_devices == selected_devices
 
 
 def test_device_bar_visibility_follows_page_without_retargeting(

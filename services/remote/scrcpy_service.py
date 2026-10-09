@@ -23,6 +23,7 @@ from utils.scrcpy_bridge import resolve_scrcpy_bridge
 from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
 from utils.user_data import user_data_root
 
+from .audio_encoder import select_audio_encoder
 from .encoder_probe import ENCODER_SCOPE_ENV, ScrcpyEncoderScope
 from .scrcpy_args import build_scrcpy_args
 from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan, ScrcpyToolError
@@ -227,9 +228,17 @@ class ScrcpyService:
         self, config: ScrcpyConfig, *, deadline: float,
         cancelled: Callable[[], bool] | None = None,
     ) -> VideoEncoder | None:
-        """后台列举设备实际编码器，共享启动预算并使用选定的原客户端。
+        """保留视频查询接口，复用同一受控查询与取消、清理边界。"""
+        listing = self._encoder_listing(config, deadline=deadline, cancelled=cancelled)
+        return select_video_encoder(listing or "")
 
-        查询只改变本次子进程环境；列表失败退回 H.264 默认选择，取消或到期直接终止。
+    def _encoder_listing(
+        self, config: ScrcpyConfig, *, deadline: float,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> str | None:
+        """后台一次列举视频与音频编码器，共享启动预算并使用选定的原客户端。
+
+        查询只改变本次子进程环境；失败不接受部分列表，取消或到期直接终止。
         """
         environment = dict(os.environ)
         environment["ADB"] = config.adb
@@ -262,7 +271,7 @@ class ScrcpyService:
                     self._encoder_scopes.discard(scope)
             if running:
                 raise OSError("编码器查询尚未完成清理，不能启动投屏。")
-        return select_video_encoder(result.output or "") if result.success else None
+        return (result.output or "") if result.success else None
 
     def encoder_probes_running(self) -> bool:
         """残留查询独立于启动 worker 保留，直到进程退出得到确认。"""
@@ -336,9 +345,10 @@ class ScrcpyService:
                 config.adb, config.device, deadline=deadline, cancelled=cancelled,
             )
 
-        selected = self.detect_video_encoder(
+        listing = self._encoder_listing(
             config, deadline=deadline, cancelled=cancelled,
         ) if preflight.success else None
+        selected = select_video_encoder(listing or "")
         encoder = selected.name if selected is not None else None
         config = replace(config, codec=selected.codec if selected else "h264", hw_encoder=False)
         if encoder:
@@ -346,8 +356,22 @@ class ScrcpyService:
         else:
             messages.append(("WARNING", "Video encoder list unavailable, using default H.264"))
 
+        # 显式音频参数优先；未知能力仍交给 scrcpy 报告真实失败，不自动关闭声音。
+        audio_override = any(
+            argument.partition("=")[0] in {"--no-audio", "--audio-codec", "--audio-encoder"}
+            for argument in config.extra_args
+        )
+        audio_encoder = (
+            select_audio_encoder(listing or "")
+            if not config.no_audio and not audio_override else None
+        )
+        if audio_encoder is not None:
+            messages.append((
+                "INFO", f"Using audio encoder: {audio_encoder.name} ({audio_encoder.codec})",
+            ))
+
         return ScrcpyLaunchPlan(
-            args=build_scrcpy_args(config, encoder),
+            args=build_scrcpy_args(config, encoder, audio_encoder=audio_encoder),
             device_info=device_info,
             version=version,
             encoder=encoder,

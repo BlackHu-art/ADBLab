@@ -3,7 +3,7 @@
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt
 from PySide6.QtTest import QTest
-from qfluentwidgets import SwitchButton
+from qfluentwidgets import SwitchButton, TransparentPushButton
 
 from gui.styles import BaseStyles
 from gui.styles.typography import FontConfig, typography_manager
@@ -107,6 +107,8 @@ def test_switch_clicks_preserve_every_row_geometry_and_unclipped_text(
     before = _geometry(widgets, content)
     probe = _PaintGeometry(widgets, content)
     for switch in switches:
+        _scroll.ensureWidgetVisible(switch)
+        wait_for_stable_geometry(qt_application, switch)
         checked = switch.isChecked()
         QTest.mouseClick(switch.indicator, Qt.MouseButton.LeftButton)
         assert switch.isChecked() != checked
@@ -124,12 +126,15 @@ def test_switch_clicks_preserve_every_row_geometry_and_unclipped_text(
         )
         assert switch.label.height() >= switch.label.fontMetrics().height()
         assert switch.indicator.geometry().right() < switch.label.geometry().left()
-        assert switch.label.geometry().left() - switch.indicator.geometry().right() <= 16
+        assert 4 <= switch.label.geometry().left() - switch.indicator.geometry().right() <= 12
     assert probe.samples
     assert all(sample == before for sample in probe.samples)
     common = switches[:6]
-    for column in (common[::2], common[1::2]):
-        assert len({mapped_rect(s.indicator, content).left() for s in column}) == 1
+    rows = {}
+    for switch in common:
+        rows.setdefault(mapped_rect(switch, content).top(), []).append(switch)
+    for row in rows.values():
+        assert len({mapped_rect(s.indicator, content).top() for s in row}) == 1
 
 
 def test_switch_keyboard_focus_has_visible_text_feedback(remote_layout):
@@ -144,6 +149,60 @@ def test_switch_keyboard_focus_has_visible_text_feedback(remote_layout):
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_session_surface_follows_mica_backdrop_changes(qt_application, theme):
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QWidget
+
+    from gui.panels.remote_panel_controls import RemoteSection
+
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    host.resize(360, 160)
+    host.setAutoFillBackground(True)
+    mica = False
+    host.isMicaEffectEnabled = lambda: mica
+    session = RemoteSection("", host, surface=True)
+    session.setGeometry(10, 10, 340, 140)
+    session.headerView.hide()
+    session.view.hide()
+
+    def sample(color):
+        palette = host.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(color))
+        host.setPalette(palette)
+        host.update()
+        QTest.qWait(30)
+        return _pixel(host.grab().toImage(), 180, 80)
+
+    try:
+        host.show()
+        opaque = sample("#204038")
+        assert sample("#384060") == opaque
+        mica = True
+        first_backdrop = sample("#204038")
+        assert sample("#384060") != first_backdrop, "云母会话底板应透出宿主色系"
+        mica = False
+        assert sample("#204038") == opaque
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+def test_regular_remote_actions_keep_a_visible_boundary_in_light_theme(remote_layout):
+    _panel, remote, scroll, content, _settings = remote_layout
+    BaseStyles.switch_theme("Light")
+    remote.set_target_devices(["synthetic-device"])
+    for button in (remote._remote_key_buttons[1], remote._remote_action_buttons[0]):
+        scroll.ensureWidgetVisible(button)
+        button.clearFocus()
+        QTest.mouseMove(content, QPoint(0, 0))
+        picture = button.grab().toImage()
+        assert _pixel(picture, 1, button.height() // 2) != _pixel(
+            picture, button.width() // 2, 4,
+        ), "普通遥控按钮应与浅色操作面有可辨识边界"
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
 def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
     remote_layout, qt_application, theme,
 ):
@@ -151,7 +210,7 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
     BaseStyles.switch_theme(theme)
     remote.set_target_devices(["synthetic-device"])
     for button in (
-        remote.btn_start, remote.btn_stop, remote.btn_advanced, remote.btn_more_options,
+        remote.btn_start, remote.btn_stop,
         *remote._remote_control_buttons,
     ):
         button.setEnabled(True)
@@ -161,7 +220,10 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         wait_for_stable_geometry(qt_application, button)
         original_hint = button.minimumSizeHint()
         original_geometry = button.geometry()
-        idle = _assert_no_rectangular_border(button)
+        idle = (
+            _assert_no_rectangular_border(button) if isinstance(button, TransparentPushButton)
+            else button.grab().toImage()
+        )
         # QWidget 的 mouseMove 在离屏后端可能只移动位置而不生成 Enter；窗口事件
         # 路径仍经过 Qt 命中测试，必须由实际按钮接收悬停，不能直接设置 isHover。
         QTest.mouseMove(_scroll.windowHandle(), button.mapTo(_scroll, button.rect().center()))
@@ -177,7 +239,7 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         QTest.mousePress(button, Qt.MouseButton.LeftButton)
         assert button.minimumSizeHint() == original_hint
         assert button.geometry() == original_geometry
-        # 在按钮外释放，验证按压绘制而不触发真实动作或折叠切换。
+        # 在按钮外释放，验证按压绘制而不触发真实动作。
         QTest.mouseRelease(button, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
         QTest.mouseMove(_scroll.windowHandle(), QPoint(_scroll.width() - 2, 2))
         button.setFocus(Qt.FocusReason.TabFocusReason)
@@ -185,4 +247,4 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         focused = button.grab().toImage()
         assert button.minimumSizeHint() == original_hint
         assert button.geometry() == original_geometry
-        assert focused != idle, "键盘焦点必须具有可见反馈"
+        assert focused != idle, f"{button.text()}的键盘焦点必须具有可见反馈"

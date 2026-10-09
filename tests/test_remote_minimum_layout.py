@@ -1,4 +1,4 @@
-"""验证正常最小主窗口保留远程双栏，字体增长由栏内重排和纵向滚动承接。"""
+"""验证正常最小主窗口保留会话区与远程双栏，字体增长由重排和纵向滚动承接。"""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.ui
 
 
 @pytest.mark.parametrize("font_size", (12, 16, 22))
-def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_scroll(
+def test_remote_normal_minimum_window_keeps_session_and_columns_without_horizontal_scroll(
     qt_application, monkeypatch, isolated_app_settings, font_size,
 ):
     isolated_app_settings.set_many({
@@ -70,16 +70,27 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
         wait_for_stable_geometry(qt_application, (frame, content, *remote._remote_section_groups))
         assert frame.size() == QSize(860, 500)
         left, right = (mapped_rect(section, content) for section in remote._remote_section_groups)
-        assert left.top() == right.top()
-        assert left.right() < right.left(), "正常最小窗口应保持屏幕镜像与远程按键两栏"
+        if font_size == 12:
+            assert abs(left.top() - right.top()) <= 2
+            assert left.right() < right.left()
+            assert abs(left.width() - right.width()) <= 2
+            system, recording = (mapped_rect(section, content)
+                                 for section in remote._remote_bottom_sections)
+            assert abs(system.top() - recording.top()) <= 2
+        elif left.top() != right.top():
+            assert left.bottom() < right.top()
+            assert left.left() == right.left()
         assert_non_overlapping(remote._remote_section_groups, content)
-        separator = content.findChild(QWidget, "remoteWorkspaceSeparator")
-        assert separator is not None and separator.isVisibleTo(content)
-        line = mapped_rect(separator, content)
-        assert left.right() < line.left() < line.right() < right.left()
-        assert abs(right.left() - left.right() - 1 - 32) <= 2
+        session = content.findChild(QWidget, "remoteMirrorSession")
+        assert session is not None and session.isVisibleTo(content)
+        top = mapped_rect(session, content)
+        assert top.bottom() < min(left.top(), right.top())
+        assert top.left() <= left.left() and top.right() >= right.right()
         assert scroll.horizontalScrollBar().maximum() == 0
         if font_size == 12:
+            assert remote.window_options_binding.applied_plan.mode.columns == 3, (
+                "默认字体下，常用开关也应保持每行三个"
+            )
             media = remote._remote_media_binding.widgets()
             assert remote._remote_media_binding.applied_plan.mode.columns == 3
             assert len({mapped_rect(button, content).top() for button in media}) == 1

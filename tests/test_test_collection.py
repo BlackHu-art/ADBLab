@@ -221,6 +221,92 @@ def test_ui_fixture_dispatch_preserves_state_and_storage_between_test_kinds(tmp_
     assert len(result["passed"]) == 4
 
 
+def test_ui_fixture_keeps_preferences_and_late_theme_callbacks_inside_test_storage(tmp_path):
+    """真实窗口构造后的保存与夹具恢复信号均不得回写模拟用户偏好。"""
+    probe = tmp_path / "test_settings_isolation.py"
+    probe.write_text(textwrap.dedent("""
+        import json
+        from pathlib import Path
+        from core import settings_manager
+
+        state = {}
+
+        def test_seed_fake_user_preferences():
+            path = Path(settings_manager.SETTINGS_FILE)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            original = json.dumps({
+                "schema_version": settings_manager.CURRENT_SCHEMA_VERSION,
+                "mica_enabled": True, "theme": "Dark",
+            })
+            path.write_text(original, encoding="utf-8")
+            state.update(user_path=path, original=original)
+
+        def test_mainframe_theme_change(qt_application, monkeypatch):
+            from gui.styles import BaseStyles
+            from tests.test_main_window_layout import build_main_frame
+
+            monkeypatch.setattr(
+                "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection",
+                lambda _self: None,
+            )
+            window = build_main_frame()
+            try:
+                BaseStyles.switch_theme(
+                    "Light" if BaseStyles.current_theme() != "Light" else "Dark",
+                )
+                state["settings"] = settings_manager.AppSettings.instance()
+            finally:
+                window.left_panel.shutdown()
+                window._unbind_window_screen()
+                window._close_ready = True
+                window.close()
+
+        def test_mainframe_did_not_save_user_preferences():
+            timer = state["settings"]._save_timer
+            if timer is not None:
+                assert not timer.is_alive()
+                timer.join(timeout=2)
+            assert state["user_path"].read_text(encoding="utf-8") == state["original"]
+
+        def test_late_theme_window(qt_application, isolated_app_settings):
+            from PySide6.QtCore import Slot
+            from PySide6.QtWidgets import QWidget
+            from gui.styles import BaseStyles
+
+            class ThemeWriter(QWidget):
+                @Slot(str)
+                def save_theme(self, theme):
+                    state["theme_callbacks"].append(theme)
+                    settings_manager.AppSettings.instance().set("theme", theme)
+
+            state["theme_callbacks"] = []
+            state["settings"] = isolated_app_settings
+            isolated_app_settings.set("mica_enabled", False)
+            state["window"] = window = ThemeWriter()
+            BaseStyles.theme_changed.connect(window.save_theme)
+            BaseStyles.switch_theme(
+                "Light" if BaseStyles.current_theme() != "Light" else "Dark",
+            )
+            assert len(state["theme_callbacks"]) == 1
+
+        def test_restoration_did_not_wake_deleted_window_or_leak_timer():
+            from shiboken6 import isValid
+
+            timer = state["settings"]._save_timer
+            if timer is not None:
+                assert not timer.is_alive()
+                timer.join(timeout=2)
+            assert not isValid(state["window"])
+            assert len(state["theme_callbacks"]) == 1
+            assert state["user_path"].read_text(encoding="utf-8") == state["original"]
+    """), encoding="utf-8")
+    result = _run_pytest(tmp_path, [
+        "-q", "-p", "tests.conftest", "--confcutdir", str(tmp_path), str(probe),
+    ])
+    assert len(result["passed"]) == 5
+    assert not result["has_settings_singleton"]
+
+
 def test_registered_ui_functions_exist_and_carry_the_ui_marker(tmp_path):
     """按函数名登记的 Qt 用例改名或漏登记后，必须在收集期失败而不是静默失去隔离。"""
 

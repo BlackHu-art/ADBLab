@@ -1,6 +1,7 @@
 """自动编码选择遵守设备能力、启动预算和精确客户端选择。"""
 
 import threading
+from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
@@ -90,6 +91,76 @@ def test_failed_or_unknown_probe_uses_explicit_h264_default(config, listing, suc
     assert "--video-codec" not in plan.args
     assert "--video-encoder" not in plan.args
     assert any(level == "WARNING" for level, _message in plan.messages)
+
+
+@pytest.mark.parametrize("listing,codec,encoder", [
+    (
+        "--audio-codec=aac --audio-encoder=OMX.google.aac.encoder\n"
+        "--audio-codec=flac --audio-encoder=OMX.google.flac.encoder",
+        "aac", "OMX.google.aac.encoder",
+    ),
+    (
+        "--audio-codec=aac --audio-encoder=OMX.google.aac.encoder (sw)\n"
+        "--audio-codec=opus --audio-encoder=c2.android.opus.encoder (sw)",
+        "opus", "c2.android.opus.encoder",
+    ),
+    (
+        "--audio-codec=aac --audio-encoder='c2.android.aac.encoder' (sw)",
+        "aac", "c2.android.aac.encoder",
+    ),
+])
+def test_plan_selects_available_audio_encoder_without_disabling_sound(
+    config, listing, codec, encoder,
+):
+    runner = _runner(
+        "--video-codec=h264 --video-encoder=OMX.google.h264.encoder\n" + listing,
+    )
+    plan = ScrcpyService(command_runner=runner).build_launch_plan(replace(config, no_audio=False))
+
+    assert "--audio-codec" in plan.args, "不能在设备无 Opus 编码器时继续隐式请求 Opus"
+    assert plan.args[plan.args.index("--audio-codec") + 1] == codec
+    assert plan.args[plan.args.index("--audio-encoder") + 1] == encoder
+    assert "--no-audio" not in plan.args
+    assert plan.encoder == "OMX.google.h264.encoder"
+    assert sum("--list-encoders" in call.args[0] for call in runner.run.call_args_list) == 1
+
+
+@pytest.mark.parametrize("no_audio,extra_args", [
+    (True, []),
+    (False, ["--no-audio"]),
+    (False, ["--audio-codec=flac"]),
+    (False, ["--audio-codec", "raw"]),
+    (False, ["--audio-encoder=custom.audio.encoder"]),
+    (False, ["--audio-encoder", "custom.audio.encoder"]),
+])
+def test_automatic_audio_selection_preserves_muting_and_explicit_arguments(
+    config, no_audio, extra_args,
+):
+    plan = ScrcpyService(command_runner=_runner(
+        "--audio-codec=aac --audio-encoder=OMX.google.aac.encoder",
+    )).build_launch_plan(replace(config, no_audio=no_audio, extra_args=extra_args))
+
+    assert "OMX.google.aac.encoder" not in plan.args
+    assert "aac" not in plan.args
+    if extra_args:
+        assert plan.args[-len(extra_args) - 1:-1] == extra_args
+    assert ("--no-audio" in plan.args) == (no_audio or "--no-audio" in extra_args)
+
+
+@pytest.mark.parametrize("listing,success", [
+    ("--audio-codec=aac --audio-encoder=OMX.google.aac.encoder", False),
+    ("--video-codec=h264 --video-encoder=OMX.google.h264.encoder", True),
+    ("--audio-codec=flac --audio-encoder=OMX.google.flac.encoder", True),
+    ("--audio-codec=aac --audio-encoder=invalid;name", True),
+])
+def test_unknown_audio_capabilities_keep_requested_audio_enabled(config, listing, success):
+    plan = ScrcpyService(command_runner=_runner(listing, success=success)).build_launch_plan(
+        replace(config, no_audio=False),
+    )
+
+    assert "--audio-codec" not in plan.args
+    assert "--audio-encoder" not in plan.args
+    assert "--no-audio" not in plan.args
 
 
 def test_encoder_probe_cancellation_prevents_plan_publication(config):
