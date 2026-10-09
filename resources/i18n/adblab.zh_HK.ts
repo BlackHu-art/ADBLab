@@ -7305,5 +7305,133 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>{codec} · 默认（未取得列表）</source>
             <translation>{codec} · 預設（未取得列表）</translation>
         </message>
+        <message>
+            <source>镜像中</source>
+            <translation>鏡像中</translation>
+        </message>
+        <message>
+            <source>录制中</source>
+            <translation>錄製中</translation>
+        </message>
+        <message>
+            <source>连接失败</source>
+            <translation>連線失敗</translation>
+        </message>
+        <message>
+            <source>未选设备</source>
+            <translation>未選裝置</translation>
+        </message>
+        <message>
+            <source>镜像设备 · {count} 台</source>
+            <translation>鏡像裝置 · {count} 台</translation>
+        </message>
+        <message>
+            <source>当前操作目标 · {count} 台</source>
+            <translation>目前操作目標 · {count} 台</translation>
+        </message>
+        <message>
+            <source>已选择</source>
+            <translation>已選擇</translation>
+        </message>
+        <message>
+            <source>请从右上角选择操作设备</source>
+            <translation>請從右上角選擇操作裝置</translation>
+        </message>
+        <message>
+            <source>正在释放镜像资源，请稍候</source>
+            <translation>正在釋放鏡像資源，請稍候</translation>
+        </message>
+        <message>
+            <source>正在准备服务并建立连接</source>
+            <translation>正在準備服務並建立連線</translation>
+        </message>
+        <message>
+            <source>停止后可调整镜像设置</source>
+            <translation>停止後可調整鏡像設定</translation>
+        </message>
+        <message>
+            <source>重新尝试</source>
+            <translation>重新嘗試</translation>
+        </message>
+        <message>
+            <source>停止全部</source>
+            <translation>停止全部</translation>
+        </message>
+        <message>
+            <source>取消启动</source>
+            <translation>取消啟動</translation>
+        </message>
+        <message>
+            <source>部分镜像尚未停止，请再次停止。</source>
+            <translation>部分鏡像尚未停止，請再次停止。</translation>
+        </message>
+        <message>
+            <source>{count} 台连接失败，其余镜像继续运行。</source>
+            <translation>{count} 台連線失敗，其餘鏡像繼續執行。</translation>
+        </message>
+        <message>
+            <source>未能建立镜像连接，请重试。</source>
+            <translation>未能建立鏡像連線，請重試。</translation>
+        </message>
+        <message>
+            <source>进程或清理资源尚未退出</source>
+            <translation>程序或清理資源尚未退出</translation>
+        </message>
+        <message>
+            <source>未找到可用的运行工具</source>
+            <translation>未找到可用的執行工具</translation>
+        </message>
+        <message>
+            <source>运行工具访问被拒绝</source>
+            <translation>執行工具存取被拒絕</translation>
+        </message>
+        <message>
+            <source>准备或连接超时</source>
+            <translation>準備或連線逾時</translation>
+        </message>
+        <message>
+            <source>镜像启动或连接未完成</source>
+            <translation>鏡像啟動或連線未完成</translation>
+        </message>
+        <message>
+            <source>可在应用日志中查看具体错误。</source>
+            <translation>可在應用程式日誌中查看具體錯誤。</translation>
+        </message>
+        <message>
+            <source>查看诊断详情</source>
+            <translation>查看診斷詳情</translation>
+        </message>
+        <message>
+            <source>展开或收起设置选项</source>
+            <translation>展開或收起設定選項</translation>
+        </message>
+        <message>
+            <source>收起诊断详情</source>
+            <translation>收起診斷詳情</translation>
+        </message>
+        <message>
+            <source>展开或收起镜像诊断详情</source>
+            <translation>展開或收起鏡像診斷詳情</translation>
+        </message>
+        <message>
+            <source>画质设置</source>
+            <translation>畫質設定</translation>
+        </message>
+        <message>
+            <source>更多选项</source>
+            <translation>更多選項</translation>
+        </message>
+        <message>
+            <source>按键与手势</source>
+            <translation>按鍵與手勢</translation>
+        </message>
+        <message>
+            <source>音量 +</source>
+            <translation>音量 +</translation>
+        </message>
+        <message>
+            <source>音量 −</source>
+            <translation>音量 −</translation>
+        </message>
     </context>
 </TS>

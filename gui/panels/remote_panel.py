@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWi
     QSizePolicy,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
+from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel, SwitchButton
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
@@ -358,6 +358,14 @@ class RemotePanel(BasePanel):
     bitrate: QComboBox
     orientation: QComboBox
     _status_label: QLabel
+    _mirror_device_label: BodyLabel
+    _mirror_connection_label: BodyLabel
+    _mirror_error_label: BodyLabel
+    _mirror_diagnostic_label: BodyLabel
+    btn_mirror_diagnostics: QPushButton
+    chk_noplayback: SwitchButton
+    _mirror_hint: BodyLabel
+    _session_list: QWidget
 
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
@@ -477,6 +485,7 @@ class RemotePanel(BasePanel):
             str(device).strip() for device in devices if str(device).strip()
         ))
         if targets != getattr(self, "_target_devices", None):
+            self._last_mirror_status = ""
             self._invalidate_device_admission()
         self._target_devices = targets
         self._update_action_states()
@@ -511,7 +520,13 @@ class RemotePanel(BasePanel):
                     for binding, (row, _widgets) in zip(
                         self._responsive_rows, self._responsive_row_owners,
                     )
-                    if section.view.isAncestorOf(row)
+                    if section.view.isAncestorOf(row) and not any(
+                        group is not None and group.isHidden() and group.isAncestorOf(row)
+                        for group in (
+                            getattr(self, "advanced_options", None),
+                            getattr(self, "more_options", None),
+                        )
+                    )
                 ), default=0)
                 margins = section.viewLayout.contentsMargins()
                 minimum = max(
@@ -642,6 +657,10 @@ class RemotePanel(BasePanel):
     # ── 状态指示 ────────────────────────────────────────────────────────
 
     def _update_status(self, text: str, color: str | None):
+        if hasattr(self, "_mirror_device_label"):
+            self._last_mirror_status = text
+            self._refresh_mirror_presentation()
+            return
         # 字重只在缺失时补写：轮询每 500ms 调用一次，重复设置样式表会触发全量样式重算。
         if self._status_label.styleSheet() != "font-weight: bold;":
             self._status_label.setStyleSheet("font-weight: bold;")
@@ -665,6 +684,137 @@ class RemotePanel(BasePanel):
         )
         self._status_label.setToolTip(details)
         self._status_label.setAccessibleDescription(details)
+
+    def _mirror_device_name(self, device: str) -> str:
+        """复用设备栏缓存的展示名称，禁止为界面刷新执行查询或暴露设备身份。"""
+        bar = getattr(self.panel.window(), "_global_device_bar", None)
+        if bar is not None:
+            return bar.device_label(device)
+        known = list(dict.fromkeys((
+            *getattr(self, "_device_sessions", {}), *self.selected_devices,
+        )))
+        return tr("设备 {number}").format(number=known.index(device) + 1)
+
+    def _refresh_mirror_presentation(self) -> None:
+        """仅投影既有会话，不改变启动准入、资源所有权或逐设备停止/重试行为。"""
+        if not hasattr(self, "_mirror_device_label"):
+            return
+        sessions = getattr(self, "_device_sessions", {})
+        selected = self.selected_devices
+        active = {
+            device: session for device, session in sessions.items()
+            if session.resource_owned or session.state == "preparing"
+        }
+        failed = {
+            device: session for device, session in sessions.items()
+            if (device in selected or device in active)
+            and (session.state == "failed" or (
+                session.resource_owned and session.error_type == "StopFailed"
+            ))
+        }
+        stop_failed = any(
+            s.resource_owned and s.error_type == "StopFailed" for s in failed.values()
+        )
+        ready = any(s.state == "ready" for s in active.values())
+        preparing = any(s.state == "preparing" for s in active.values())
+        connecting = any(s.state == "connecting" for s in active.values())
+        stopping = self._session_state == self._SESSION_STOPPING
+        generic_error = not active and getattr(self, "_last_mirror_status", "") == "Error"
+        if stopping:
+            status = tr("正在停止…")
+        elif stop_failed:
+            status = tr("停止失败")
+        elif ready:
+            status = tr("镜像中")
+            if all(s.config.no_window for s in active.values()):
+                status = tr("录制中")
+        elif connecting:
+            status = tr("连接中")
+        elif preparing or self._session_state == self._SESSION_STARTING:
+            status = tr("准备中")
+        elif failed or generic_error:
+            status = tr("连接失败")
+        elif self._session_state == self._SESSION_RUNNING:
+            status = tr("镜像中")
+        else:
+            status = tr("空闲") if selected else tr("未选设备")
+        self._status_label.setText(status)
+        description = tr("状态：{localized}").format(localized=status)
+        if len(active) == 1:
+            session = next(iter(active.values()))
+            if session.state == "ready" and not session.cancel_event.is_set() and session.last_fps:
+                description += f"\n{session.last_fps}"
+        self._status_label.setToolTip(description)
+        self._status_label.setAccessibleDescription(description)
+
+        devices = list(active) or selected
+        self._mirror_device_label.setVisible(bool(devices))
+        self._mirror_connection_label.setVisible(bool(devices))
+        self._mirror_device_label.setText(
+            self._mirror_device_name(devices[0]) if len(devices) == 1 else
+            tr("镜像设备 · {count} 台").format(count=len(devices)) if devices else ""
+        )
+        self._mirror_connection_label.setText(
+            tr("当前操作目标 · {count} 台").format(count=len(selected))
+            if active and set(active) != set(selected) else tr("已选择")
+        )
+        if not devices:
+            hint = tr("请从右上角选择操作设备")
+        elif stopping:
+            hint = tr("正在释放镜像资源，请稍候")
+        elif stop_failed:
+            hint = tr("部分镜像尚未停止，请再次停止。")
+        elif preparing or connecting:
+            hint = tr("正在准备服务并建立连接")
+        elif active:
+            hint = tr("停止后可调整镜像设置")
+        else:
+            hint = (
+                tr("仅录制，不打开镜像窗口") if self.chk_noplayback.isChecked()
+                else tr("镜像将在独立窗口打开")
+            )
+        self._mirror_hint.setText(hint)
+        retry = bool(failed or generic_error) and self._session_state == self._SESSION_IDLE
+        self.btn_start.setText(
+            tr("重新尝试") if retry else
+            tr("追加镜像") if active and self.btn_start.isEnabled() else tr("开始镜像")
+        )
+        self.btn_stop.setText(
+            tr("停止全部") if len(active) > 1 else
+            tr("停止镜像") if stop_failed else
+            tr("取消启动") if not ready and (preparing or connecting) else tr("停止镜像")
+        )
+        # 单台会话的同名状态与动作由顶部承接；多台保留原设备归属的行内操作。
+        self._session_list.setVisible(len(sessions) > 1)
+
+        error = ""
+        if stop_failed:
+            error = tr("部分镜像尚未停止，请再次停止。")
+        elif failed or generic_error:
+            error = (
+                tr("{count} 台连接失败，其余镜像继续运行。").format(count=len(failed))
+                if ready else tr("未能建立镜像连接，请重试。")
+            )
+        details = []
+        for device, session in failed.items():
+            reason = {
+                "StopFailed": tr("进程或清理资源尚未退出"),
+                "FileNotFoundError": tr("未找到可用的运行工具"),
+                "PermissionError": tr("运行工具访问被拒绝"),
+                "TimeoutError": tr("准备或连接超时"),
+            }.get(session.error_type, tr("镜像启动或连接未完成"))
+            details.append(f"{self._mirror_device_name(device)}：{reason}")
+        if error:
+            details.append(tr("可在应用日志中查看具体错误。"))
+        diagnostic = "\n".join(details)
+        if diagnostic != self._mirror_diagnostic_label.text() or not error:
+            self._mirror_diagnostic_label.hide()
+            self.btn_mirror_diagnostics.setChecked(False)
+            self.btn_mirror_diagnostics.setText(tr("查看诊断详情"))
+        self._mirror_error_label.setText(error)
+        self._mirror_error_label.setVisible(bool(error))
+        self.btn_mirror_diagnostics.setVisible(bool(error))
+        self._mirror_diagnostic_label.setText(diagnostic)
 
     # ── 按键与输入事件 ──────────────────────────────────────────────────
 
@@ -1402,6 +1552,9 @@ class RemotePanel(BasePanel):
         result = (
             getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
         )._set_session_state(state)
+        if state != self._SESSION_IDLE:
+            self._last_mirror_status = ""
+        RemotePanel._refresh_mirror_presentation(self)
         self.workspace_target_lock_changed.emit(state != self._SESSION_IDLE)
         return result
 

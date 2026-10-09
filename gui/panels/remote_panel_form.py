@@ -21,6 +21,7 @@ from gui.i18n import tr
 from gui.panels.remote_panel_controls import (
     RemoteBitrateEditor,
     RemoteChoiceEditor,
+    RemoteCommandSeparators,
     RemoteSwitchButton,
     RemoteWindowToggle,
     RemoteWorkspace,
@@ -64,6 +65,7 @@ class RemotePanelForm(QObject):
         self._fields = []
         self._switches = []
         self._toggle_buttons = []
+        self._command_separator_owners = []
         self._build_header(lo)
         self._frame._feedback_received.connect(self._show_feedback)
         mirroring = self._frame._build_mirroring()
@@ -77,7 +79,7 @@ class RemotePanelForm(QObject):
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._frame._remote_workspace_binding = self._frame._add_responsive_row(
-            workspace_layout, mirroring, control, spacing=56, adaptive_spacing=False,
+            workspace_layout, mirroring, control, spacing=32, adaptive_spacing=False,
             policies=(WidthPolicy.SHRINKABLE, WidthPolicy.SHRINKABLE),
             modes=(
                 GridMode("two", 2, 0, column_stretches=(1, 1)),
@@ -157,7 +159,7 @@ class RemotePanelForm(QObject):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
         label = self._frame._label(text)
         label.setMinimumWidth(label.fontMetrics().horizontalAdvance(text))
         label.setBuddy(control)
@@ -169,9 +171,8 @@ class RemotePanelForm(QObject):
         return container
 
     def _group_title(self, layout, text: str) -> None:
-        layout.addSpacing(8)
-        layout.addWidget(HorizontalSeparator())
         layout.addSpacing(4)
+        layout.addWidget(HorizontalSeparator())
         layout.addWidget(apply_label_role(
             BodyLabel(tr(text)), FontRole.UI, color_key="TEXT_SECONDARY", bold=True,
         ))
@@ -223,7 +224,7 @@ class RemotePanelForm(QObject):
             ))
             switch.setFixedHeight(max(28, switch.label.sizeHint().height() + 8))
             switch.updateGeometry()
-        # 录屏提示显隐不能先挤缩开关再等待滚动内容增高；空文案也保留一行字体高度。
+        # 录屏提示显隐预留同一行字体高度，避免大字号时挤缩已展开的参数与开关。
         self._frame.record_path.setFixedHeight(self._frame.record_path.fontMetrics().height())
         for editor in self._editors:
             editor.refresh_metrics()
@@ -247,34 +248,91 @@ class RemotePanelForm(QObject):
         self._frame.apply_responsive_width(0)
 
     def _style_transparent_button(self, button, *, accented: bool = False) -> None:
-        """本页以文字和底线反馈交互，各状态保留相同边距，避免焦点框挤动内容。"""
-        accent = themeColor().name()
-        disabled = BaseStyles.color("TEXT_DISABLED")
-        normal = accent if accented else BaseStyles.color("TEXT_PRIMARY")
+        """保留 Fluent 原生悬停、按压与焦点反馈，主操作只覆盖文字强调色。"""
         selector = type(button).__name__
-        states = ", ".join(selector + state for state in (
-            "", ":hover", ":pressed", ":focus", ":checked", ":checked:hover",
-            ":checked:pressed", ":checked:focus", ":disabled", ":checked:disabled",
-        ))
-        set_fluent_font_rule(button, (
-            f"{states} {{ background: transparent; border: 0px solid transparent; "
-            f"border-bottom: 2px solid transparent; border-radius: 0px; }}"
-            f"{selector} {{ color: {normal}; }}"
-            f"{selector}:hover, {selector}:pressed {{ color: {accent}; }}"
-            f"{selector}:checked, {selector}:checked:hover, {selector}:checked:pressed, "
-            f"{selector}:checked:focus, "
-            f"{selector}:focus {{ color: {accent}; border-bottom-color: {accent}; }}"
-            f"{selector}:disabled, {selector}:checked:disabled {{ color: {disabled}; "
-            f"border-bottom-color: transparent; }}"
-        ))
+        # 原生透明按钮没有边框，项目焦点框为 2px；常态预留同样边界并从
+        # 垂直内边距扣回，避免展开后转移焦点时令整栏高度变化。
+        rule = (
+            f"{selector}:!focus {{ border: 2px solid transparent; }}"
+            f"{selector} {{ padding-top: 3px; padding-bottom: 4px; }}"
+        ) + (
+            f"{selector}:enabled {{ color: {themeColor().name()}; }}"
+            if accented else ""
+        )
+        set_fluent_font_rule(button, rule)
         apply_font_role(button, ensure_height=True)
+
+    def _command_separators(self, binding) -> None:
+        container = binding._container_ref()
+        self._command_separator_owners.append(RemoteCommandSeparators(
+            container, binding.widgets(),
+        ))
+
+    def _disclosure(self, layout, title: str, name: str) -> QVBoxLayout:
+        """收纳低频参数，折叠只改变可见性，原控件仍持有设置和会话快照。"""
+        frame = self._frame
+        button = frame._b(
+            tr(title), "caret-right.svg", "ghost", tooltip=tr("展开或收起设置选项"),
+        )
+        button.setCheckable(True)
+        button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._toggle_buttons.append(button)
+        content = QWidget()
+        content.setObjectName(name)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(6)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(button)
+        if name == "advanced_options":
+            frame._advanced_summary = apply_label_role(
+                BodyLabel(""), FontRole.UI, color_key="TEXT_SECONDARY",
+            )
+            frame._advanced_summary.setMinimumWidth(0)
+            frame._advanced_summary.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred,
+            )
+            frame._advanced_summary.setAlignment(Qt.AlignmentFlag.AlignRight)
+            header.addWidget(frame._advanced_summary, 1)
+        else:
+            header.addStretch(1)
+        layout.addLayout(header)
+        layout.addWidget(content)
+        content.hide()
+
+        def toggle(checked: bool) -> None:
+            content.setVisible(checked)
+            icon = "arrow-down.svg" if checked else "caret-right.svg"
+            button.setIcon(get_fluent_icon(icon))
+            button.setProperty("iconName", icon)
+            frame.apply_responsive_width(0)
+
+        button.toggled.connect(toggle)
+        setattr(frame, name, content)
+        setattr(frame, "btn_advanced" if name == "advanced_options" else "btn_more_options", button)
+        return content_layout
+
+    def _refresh_advanced_summary(self, _index: int = -1) -> None:
+        """折叠摘要复用已接纳的自动编码结果，不重新检测设备或保存显示值。"""
+        frame = self._frame
+        text = f"{frame.codec.text()} · {tr('缓冲：')}{frame.buffer.currentText()} ms"
+        frame._advanced_summary.setText(text)
+        frame._advanced_summary.setToolTip(text)
+
+    def _toggle_mirror_diagnostics(self) -> None:
+        frame = self._frame
+        expanded = frame._mirror_diagnostic_label.isHidden()
+        frame._mirror_diagnostic_label.setVisible(expanded)
+        frame.btn_mirror_diagnostics.setText(tr("收起诊断详情") if expanded else tr("查看诊断详情"))
+        frame.apply_responsive_width(0)
 
     @Slot()
     def _update_mirror_hint(self) -> None:
         record_only = self._frame.chk_noplayback.isChecked()
-        self._frame._mirror_hint.setText(
-            tr("仅录制，不打开镜像窗口") if record_only else tr("镜像将在独立窗口打开")
-        )
+        if record_only:
+            self._frame.chk_record.setChecked(True)
+        self._frame._refresh_mirror_presentation()
 
     def _sync_parameter_editors(self) -> None:
         for editor in getattr(self, "_editors", ()):
@@ -285,8 +343,87 @@ class RemotePanelForm(QObject):
         g = frame._card(tr("屏幕镜像"))
         g.setObjectName("remoteMirroringSection")
         gl = g.viewLayout
-        gl.setSpacing(10)
+        gl.setContentsMargins(0, 4, 0, 4)
+        gl.setSpacing(6)
         gl.setAlignment(Qt.AlignmentFlag.AlignTop)
+        frame._status_label = frame._status_text(tr("状态：空闲"))
+        frame._status_label.setAccessibleName(tr("远程会话状态"))
+        frame._status_label.setToolTip(tr("状态：空闲"))
+        frame._status_label.setAccessibleDescription(tr("状态：空闲"))
+        frame._status_label.setMinimumWidth(0)
+        frame._status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        g.headerLayout.addWidget(frame._status_label, 1)
+        device_row = QHBoxLayout()
+        device_row.setSpacing(8)
+        frame._mirror_device_label = apply_label_role(
+            BodyLabel(tr("未选择设备")), FontRole.UI, color_key="TEXT_SECONDARY",
+        )
+        frame._mirror_device_label.setMinimumWidth(0)
+        frame._mirror_device_label.setWordWrap(True)
+        frame._mirror_device_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred,
+        )
+        frame._mirror_connection_label = apply_label_role(
+            BodyLabel(""), FontRole.UI, color_key="TEXT_SECONDARY",
+        )
+        device_row.addWidget(frame._mirror_device_label, 1)
+        device_row.addWidget(frame._mirror_connection_label)
+        gl.addLayout(device_row)
+        frame.btn_start = frame._b(
+            tr("开始镜像"), "monitor-play.svg", "ghost", tooltip=tr("开始屏幕镜像（Ctrl+Enter）"),
+        )
+        frame.btn_stop = frame._b(
+            tr("停止镜像"), "stop-circle.svg", "ghost",
+            tooltip=tr("停止屏幕镜像（Ctrl+Shift+Return）"),
+        )
+        frame.btn_stop.setEnabled(False)
+        actions = frame._add_responsive_row(
+            gl, frame.btn_start, frame.btn_stop, spacing=12,
+            compact_columns=1, medium_columns=2, wide_columns=2,
+        )
+        self._command_separators(actions)
+        frame._mirror_hint = apply_label_role(
+            BodyLabel(tr("镜像将在独立窗口打开")), FontRole.UI, color_key="TEXT_SECONDARY",
+        )
+        frame._mirror_hint.setWordWrap(True)
+        gl.addWidget(frame._mirror_hint)
+        frame._mirror_error_label = apply_label_role(
+            BodyLabel(""), FontRole.UI, color_key="TEXT_PRIMARY",
+        )
+        frame._mirror_error_label.setWordWrap(True)
+        gl.addWidget(frame._mirror_error_label)
+        frame._mirror_error_label.hide()
+        frame.btn_mirror_diagnostics = frame._b(
+            tr("查看诊断详情"), "info.svg", "ghost", tooltip=tr("展开或收起镜像诊断详情"),
+        )
+        frame.btn_mirror_diagnostics.clicked.connect(self._toggle_mirror_diagnostics)
+        frame.btn_mirror_diagnostics.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed,
+        )
+        self._toggle_buttons.append(frame.btn_mirror_diagnostics)
+        gl.addWidget(frame.btn_mirror_diagnostics, 0, Qt.AlignmentFlag.AlignLeft)
+        frame.btn_mirror_diagnostics.hide()
+        frame._mirror_diagnostic_label = apply_label_role(
+            BodyLabel(""), FontRole.UI, color_key="TEXT_SECONDARY",
+        )
+        frame._mirror_diagnostic_label.setWordWrap(True)
+        frame._mirror_diagnostic_label.setTextFormat(Qt.TextFormat.PlainText)
+        frame._mirror_diagnostic_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse,
+        )
+        gl.addWidget(frame._mirror_diagnostic_label)
+        frame._mirror_diagnostic_label.hide()
+        frame._session_list = QWidget(g)
+        frame._session_list.setObjectName("remoteSessionList")
+        frame._session_list_layout = QVBoxLayout(frame._session_list)
+        frame._session_list_layout.setContentsMargins(0, 0, 0, 0)
+        frame._session_list_layout.setSpacing(4)
+        # 多设备行的操作按钮由各自会话持有，始终保持自然高度和原设备目标。
+        frame._session_list_layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
+        frame._session_rows = {}
+        gl.addWidget(frame._session_list)
+        frame._session_list.hide()
+        self._group_title(gl, tr("画质设置"))
         frame._parameter_labels = []
         for name, items in (
             ("preset", frame._PRESET_NAMES), ("maxsize", frame._SIZES),
@@ -294,6 +431,12 @@ class RemotePanelForm(QObject):
             ("bitrate", frame._BITRATES), ("orientation", frame._ORIENTATIONS),
         ):
             combo = frame._combo(items)
+            # 项目焦点框比原生下拉边框多一像素，提前从内边距预留，防止 Tab
+            # 焦点使字段 sizeHint 增长并带动整栏位移；颜色和悬停仍沿用原生样式。
+            set_fluent_font_rule(combo, (
+                "ComboBox, ComboBox:hover, ComboBox:pressed, ComboBox:disabled, "
+                "ComboBox:focus { border-width: 2px; padding: 4px 30px 5px 10px; }"
+            ))
             saved_index = combo.findData(frame._load(name))
             if name == "preset" or saved_index >= 0:
                 combo.setCurrentIndex(saved_index)
@@ -303,23 +446,27 @@ class RemotePanelForm(QObject):
         frame.preset.setAccessibleName(tr("预设："))
         frame.fps.setAccessibleName("FPS")
         frame.bitrate.setAccessibleName(tr("码率："))
-        preset_editor = RemoteChoiceEditor(frame.preset)
-        fps_editor = RemoteChoiceEditor(frame.fps)
+        preset_editor = RemoteChoiceEditor(frame.preset, separators=True)
+        fps_editor = RemoteChoiceEditor(frame.fps, prefer_combo=True)
         bitrate_value = frame._label("")
-        bitrate_editor = RemoteBitrateEditor(frame.bitrate, bitrate_value)
+        bitrate_title = frame._label(tr("码率："))
+        bitrate_editor = RemoteBitrateEditor(
+            frame.bitrate, bitrate_value, title_label=bitrate_title,
+        )
+        bitrate_title.setBuddy(bitrate_editor.slider)
         self._editors.extend((preset_editor, fps_editor, bitrate_editor))
         frame.preset_selector = preset_editor.pivot
         frame.fps_selector = fps_editor.pivot
         frame.bitrate_slider = bitrate_editor.slider
         frame.preset_binding = frame._add_responsive_row(
-            gl, self._field(tr("预设："), preset_editor), wide_columns=1,
+            gl, preset_editor, wide_columns=1,
         )
         frame.mirroring_binding = frame._add_responsive_row(
             gl, self._field(tr("尺寸："), frame.maxsize), self._field("FPS", fps_editor),
             spacing=12, compact_columns=1, medium_columns=2, wide_columns=2,
         )
         frame.parameter_binding = frame.mirroring_binding
-        frame._add_responsive_row(gl, self._field(tr("码率："), bitrate_editor), wide_columns=1)
+        frame._add_responsive_row(gl, bitrate_editor, wide_columns=1)
         frame.codec = frame._status_text(tr("自动（启动时检测）"))
         frame.codec.setWordWrap(True)
         frame.codec.setAccessibleName(tr("自动视频编码"))
@@ -327,48 +474,42 @@ class RemotePanelForm(QObject):
         frame.codec.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         frame.codec.setToolTip(tr("启动时按设备能力自动选择视频编码与编码器"))
         frame.codec.setAccessibleDescription(frame.codec.toolTip())
+        advanced = self._disclosure(gl, "高级参数", "advanced_options")
         frame._add_responsive_row(
-            gl, self._field(tr("编码："), frame.codec),
+            advanced, self._field(tr("编码："), frame.codec),
             self._field(tr("缓冲："), frame.buffer),
             self._field(tr("方向："), frame.orientation),
             spacing=10, compact_columns=1, medium_columns=2, wide_columns=3,
         )
         frame.orientation.setToolTip(tr("锁定屏幕方向（0 为自动）"))
-        frame._status_label = frame._status_text(tr("状态：空闲"))
-        frame._status_label.setAccessibleName(tr("远程会话状态"))
-        frame._status_label.setToolTip(tr("状态：空闲"))
-        frame._status_label.setAccessibleDescription(tr("状态：空闲"))
-        frame._status_label.setMinimumWidth(0)
-        frame._status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        g.headerLayout.addWidget(frame._status_label, 1)
+        frame.buffer.currentIndexChanged.connect(self._refresh_advanced_summary)
+        self._refresh_advanced_summary()
         frame._remote_queue_label = frame._status_text(tr("队列：0"))
         frame._remote_queue_label.setAccessibleName(tr("远程输入队列状态"))
         frame._remote_queue_label.setToolTip(tr("排队：0 · 已发送：0 · 失败：0"))
         frame._remote_queue_label.setAccessibleDescription(frame._remote_queue_label.toolTip())
         self._group_title(gl, tr("窗口与录制"))
-        frame.chk_aot = self._window_toggle(
-            "窗口置顶", "map-pin.svg", "让镜像窗口保持在其他窗口上方",
-        )
-        frame.chk_fullscreen = self._window_toggle("全屏", "frame-corners.svg", "以全屏模式启动")
-        frame.chk_showtouches = self._window_toggle(
-            "显示触点", "radio-button.svg", "在屏幕上显示触摸位置",
-        )
-        frame._add_responsive_row(
-            gl, frame.chk_aot, frame.chk_fullscreen, frame.chk_showtouches,
-            spacing=6, compact_columns=1, medium_columns=2, wide_columns=3,
-        )
+        frame.chk_aot = self._switch("窗口置顶", "让镜像窗口保持在其他窗口上方")
+        frame.chk_fullscreen = self._switch("全屏", "以全屏模式启动")
+        frame.chk_showtouches = self._switch("显示触点", "在屏幕上显示触摸位置")
         frame.chk_record = self._switch("保存录屏", "将镜像画面录制到文件")
         frame.chk_record.checkedChanged.connect(frame._on_record_toggled)
         frame.chk_noaudio = self._switch("禁用音频", "不转发设备音频")
         frame.chk_noaudio.setChecked(True)
         frame.chk_stayawake = self._switch("保持唤醒", "镜像期间保持设备屏幕唤醒")
+        frame._add_responsive_row(
+            gl, frame.chk_aot, frame.chk_fullscreen, frame.chk_record, frame.chk_noaudio,
+            frame.chk_showtouches, frame.chk_stayawake,
+            spacing=4, adaptive_spacing=False, compact_columns=1, medium_columns=2, wide_columns=2,
+            policies=(WidthPolicy.NATURAL,) * 6,
+        )
+        more = self._disclosure(gl, "更多选项", "more_options")
         frame.chk_turnscreenoff = self._switch("关闭设备屏幕", "连接后关闭设备屏幕")
         frame.chk_noplayback = self._switch("仅录制", "只录制文件，不显示镜像窗口")
         frame._add_responsive_row(
-            gl, frame.chk_record, frame.chk_noaudio, frame.chk_stayawake,
-            frame.chk_turnscreenoff, frame.chk_noplayback,
-            spacing=12, compact_columns=1, medium_columns=2, wide_columns=2,
-            policies=(WidthPolicy.NATURAL,) * 5,
+            more, frame.chk_turnscreenoff, frame.chk_noplayback,
+            spacing=4, adaptive_spacing=False, compact_columns=1, medium_columns=2, wide_columns=2,
+            policies=(WidthPolicy.NATURAL,) * 2,
         )
         frame.record_path = frame._status_text("")
         frame.record_path.setAccessibleName(tr("录屏保存路径"))
@@ -380,34 +521,7 @@ class RemotePanelForm(QObject):
         frame.record_path.setMinimumWidth(0)
         gl.addWidget(frame.record_path)
         frame.record_path.hide()
-        frame.btn_start = frame._b(
-            tr("开始镜像"), "monitor-play.svg", "ghost", tooltip=tr("开始屏幕镜像（Ctrl+Enter）"),
-        )
-        frame.btn_stop = frame._b(
-            tr("停止镜像"), "stop-circle.svg", "ghost",
-            tooltip=tr("停止屏幕镜像（Ctrl+Shift+Return）"),
-        )
-        frame.btn_stop.setEnabled(False)
-        frame._add_responsive_row(
-            gl, frame.btn_start, frame.btn_stop, spacing=8,
-            compact_columns=1, medium_columns=2, wide_columns=2,
-        )
-        frame._mirror_hint = apply_label_role(
-            BodyLabel(tr("镜像将在独立窗口打开")), FontRole.UI, color_key="TEXT_SECONDARY",
-        )
-        frame._mirror_hint.setWordWrap(True)
-        gl.addWidget(frame._mirror_hint)
         frame.chk_noplayback.checkedChanged.connect(self._update_mirror_hint)
-        frame._session_list = QWidget(g)
-        frame._session_list.setObjectName("remoteSessionList")
-        frame._session_list_layout = QVBoxLayout(frame._session_list)
-        frame._session_list_layout.setContentsMargins(0, 4, 0, 0)
-        frame._session_list_layout.setSpacing(6)
-        # 动态会话行的按钮不可压缩；将列表下限传给嵌套分栏，避免行高小于按钮高度。
-        frame._session_list_layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
-        frame._session_rows = {}
-        gl.addWidget(frame._session_list)
-        frame._session_list.hide()
         return g
 
 
@@ -466,7 +580,8 @@ class RemotePanelForm(QObject):
             action.setAccessibleName(
                 tr("{device}：{action}").format(device=label, action=action.text())
             )
-        frame._session_list.setVisible(bool(sessions))
+        frame._session_list.setVisible(len(sessions) > 1)
+        frame._refresh_mirror_presentation()
 
     def _session_action(self, device: str) -> None:
         session = getattr(self._frame, "_device_sessions", {}).get(device)
@@ -501,21 +616,31 @@ class RemotePanelForm(QObject):
 
     def _build_control(self) -> QWidget:
         frame = self._frame
-        g = frame._card(tr("远程按键与手势"))
+        g = frame._card(tr("按键与手势"))
         g.setObjectName("remoteControlSection")
         outer = g.viewLayout
-        outer.setSpacing(8)
+        outer.setContentsMargins(0, 4, 0, 4)
+        outer.setSpacing(6)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
         frame._remote_control_buttons = []
         frame._remote_key_buttons = []
         frame._remote_action_buttons = []
 
-        def key_group(specs, *, column_counts=(3, 2, 1), equal_columns=True):
+        hint = apply_label_role(
+            BodyLabel(tr("按键与手势可独立使用，无需启动镜像。")),
+            FontRole.UI, color_key="TEXT_SECONDARY",
+        )
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        def key_group(
+            specs, *, column_counts=(3, 2, 1), equal_columns=True, separators=False,
+        ):
             buttons = tuple(frame._remote_key_button(
                 tr(label), code, tr("发送按键事件 {code}").format(code=code),
             ) for label, code in specs)
             binding = frame._add_responsive_row(
-                outer, *buttons, spacing=6,
+                outer, *buttons, spacing=12 if separators else 4, adaptive_spacing=False,
                 policies=(WidthPolicy.NATURAL,) * len(buttons),
                 modes=tuple(GridMode(
                     str(count), count, rank, column_stretches=(1,) * count,
@@ -524,26 +649,21 @@ class RemotePanelForm(QObject):
                     ),
                 ) for rank, count in enumerate(column_counts)),
             )
+            if separators:
+                self._command_separators(binding)
             return buttons, binding
 
         navigation, frame._remote_navigation_binding = key_group(
             (("返回", "BACK"), ("主页", "HOME"), ("最近", "RECENTS")),
+            separators=True,
         )
-        for button in navigation:
-            button.setIconSize(QSize(20, 20))
-            button.setMinimumHeight(48)
-        self._group_title(outer, tr("系统按键"))
-        system, frame._remote_key_binding = key_group((
-            ("菜单", "MENU"), ("回车", "ENTER"), ("退格", "DEL"),
-            ("设置", "SETTINGS"), ("相机", "CAMERA"), ("搜索", "SEARCH"),
-        ))
         self._group_title(outer, tr("音量与媒体"))
         volume, frame._remote_volume_binding = key_group((
-            ("VOL-", "VOL_DOWN"), ("VOL+", "VOL_UP"),
+            ("音量 −", "VOL_DOWN"), ("音量 +", "VOL_UP"),
         ), column_counts=(2, 1))
         media, frame._remote_media_binding = key_group((
             ("上一个", "MEDIA_PREV"), ("播放/暂停", "MEDIA_PLAY"), ("下一个", "MEDIA_NEXT"),
-        ), column_counts=(3, 1), equal_columns=False)
+        ), column_counts=(3, 1), equal_columns=False, separators=True)
         frame._remote_media_buttons = (*volume, *media)
         self._group_title(outer, tr("手势与方向"))
         specs = (
@@ -559,13 +679,18 @@ class RemotePanelForm(QObject):
         for label, action, tooltip in specs:
             frame._remote_action_button(tr(label), action, tr(tooltip))
         frame._remote_action_binding = frame._add_responsive_row(
-            outer, *frame._remote_action_buttons, spacing=6,
+            outer, *frame._remote_action_buttons, spacing=4, adaptive_spacing=False,
             policies=(WidthPolicy.NATURAL,) * 8,
             modes=tuple(GridMode(
                 str(count), count, rank, column_stretches=(1,) * count,
                 equal_column_groups=(tuple(range(count)),) if count > 1 else (),
             ) for rank, count in enumerate((2, 1))),
         )
+        self._group_title(outer, tr("系统按键"))
+        system, frame._remote_key_binding = key_group((
+            ("菜单", "MENU"), ("回车", "ENTER"), ("退格", "DEL"),
+            ("设置", "SETTINGS"), ("相机", "CAMERA"), ("搜索", "SEARCH"),
+        ))
         outer.addWidget(HorizontalSeparator())
         frame._remote_queue_label.setWordWrap(True)
         frame._remote_queue_label.setMinimumWidth(0)
@@ -580,12 +705,6 @@ class RemotePanelForm(QObject):
         footer.addWidget(power)
         outer.addLayout(footer)
         frame._remote_primary_key_buttons = (*navigation, *system, power)
-        hint = apply_label_role(
-            BodyLabel(tr("按键与手势可独立使用，无需启动镜像。")),
-            FontRole.UI, color_key="TEXT_SECONDARY",
-        )
-        hint.setWordWrap(True)
-        outer.addWidget(hint)
         frame.remote_control_bindings = (
             frame._remote_navigation_binding, frame._remote_key_binding,
             frame._remote_volume_binding, frame._remote_media_binding, frame._remote_action_binding,
@@ -700,6 +819,7 @@ class RemotePanelForm(QObject):
 
     def _on_record_toggled(self, checked: bool):
         if not checked:
+            self._frame.chk_noplayback.setChecked(False)
             self._frame.record_path.setText("")
             self._frame.record_path.setToolTip("")
             self._frame.record_path.setAccessibleDescription("")

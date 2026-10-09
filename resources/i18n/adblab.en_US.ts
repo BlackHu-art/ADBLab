@@ -7305,5 +7305,133 @@ Android device management, apps and diagnostics</translation>
             <source>{codec} · 默认（未取得列表）</source>
             <translation>{codec} · Default (encoder list unavailable)</translation>
         </message>
+        <message>
+            <source>镜像中</source>
+            <translation>Mirroring</translation>
+        </message>
+        <message>
+            <source>录制中</source>
+            <translation>Recording</translation>
+        </message>
+        <message>
+            <source>连接失败</source>
+            <translation>Connection failed</translation>
+        </message>
+        <message>
+            <source>未选设备</source>
+            <translation>No device selected</translation>
+        </message>
+        <message>
+            <source>镜像设备 · {count} 台</source>
+            <translation>Mirroring devices · {count}</translation>
+        </message>
+        <message>
+            <source>当前操作目标 · {count} 台</source>
+            <translation>Current targets · {count}</translation>
+        </message>
+        <message>
+            <source>已选择</source>
+            <translation>Selected</translation>
+        </message>
+        <message>
+            <source>请从右上角选择操作设备</source>
+            <translation>Select target devices at the top right</translation>
+        </message>
+        <message>
+            <source>正在释放镜像资源，请稍候</source>
+            <translation>Releasing mirroring resources, please wait</translation>
+        </message>
+        <message>
+            <source>正在准备服务并建立连接</source>
+            <translation>Preparing the service and connecting</translation>
+        </message>
+        <message>
+            <source>停止后可调整镜像设置</source>
+            <translation>Stop mirroring to adjust settings</translation>
+        </message>
+        <message>
+            <source>重新尝试</source>
+            <translation>Retry</translation>
+        </message>
+        <message>
+            <source>停止全部</source>
+            <translation>Stop all</translation>
+        </message>
+        <message>
+            <source>取消启动</source>
+            <translation>Cancel startup</translation>
+        </message>
+        <message>
+            <source>部分镜像尚未停止，请再次停止。</source>
+            <translation>Some mirrors have not stopped. Try stopping again.</translation>
+        </message>
+        <message>
+            <source>{count} 台连接失败，其余镜像继续运行。</source>
+            <translation>{count} connections failed; other mirrors are still running.</translation>
+        </message>
+        <message>
+            <source>未能建立镜像连接，请重试。</source>
+            <translation>Could not establish the mirroring connection. Please retry.</translation>
+        </message>
+        <message>
+            <source>进程或清理资源尚未退出</source>
+            <translation>The process or resource cleanup is still active</translation>
+        </message>
+        <message>
+            <source>未找到可用的运行工具</source>
+            <translation>No available runtime tool found</translation>
+        </message>
+        <message>
+            <source>运行工具访问被拒绝</source>
+            <translation>Access to the runtime tool was denied</translation>
+        </message>
+        <message>
+            <source>准备或连接超时</source>
+            <translation>Preparation or connection timed out</translation>
+        </message>
+        <message>
+            <source>镜像启动或连接未完成</source>
+            <translation>Mirroring startup or connection did not complete</translation>
+        </message>
+        <message>
+            <source>可在应用日志中查看具体错误。</source>
+            <translation>See the application log for error details.</translation>
+        </message>
+        <message>
+            <source>查看诊断详情</source>
+            <translation>View diagnostics</translation>
+        </message>
+        <message>
+            <source>展开或收起设置选项</source>
+            <translation>Expand or collapse settings</translation>
+        </message>
+        <message>
+            <source>收起诊断详情</source>
+            <translation>Hide diagnostics</translation>
+        </message>
+        <message>
+            <source>展开或收起镜像诊断详情</source>
+            <translation>Expand or collapse mirroring diagnostics</translation>
+        </message>
+        <message>
+            <source>画质设置</source>
+            <translation>Video quality</translation>
+        </message>
+        <message>
+            <source>更多选项</source>
+            <translation>More options</translation>
+        </message>
+        <message>
+            <source>按键与手势</source>
+            <translation>Keys and gestures</translation>
+        </message>
+        <message>
+            <source>音量 +</source>
+            <translation>Volume +</translation>
+        </message>
+        <message>
+            <source>音量 −</source>
+            <translation>Volume −</translation>
+        </message>
     </context>
 </TS>

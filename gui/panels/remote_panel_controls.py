@@ -1,7 +1,7 @@
 """把远程参数的既有下拉数据投影为原生 Fluent 选择器，保留配置与信号契约。"""
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSignalBlocker, QSize, Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QWidget
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSignalBlocker, QSize, Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     ComboBox,
     Pivot,
@@ -54,6 +54,39 @@ class RemoteWorkspace(QWidget):
             self.separator.raise_()
 
 
+class RemoteCommandSeparators(QObject):
+    """相邻动作同排时显示短竖线，换行后不在行首尾遗留装饰或占据网格列。"""
+
+    def __init__(self, container: QWidget, buttons: tuple[QWidget, ...]) -> None:
+        super().__init__(container)
+        self._container = container
+        self._buttons = buttons
+        self._separators = []
+        for _ in buttons[1:]:
+            separator = VerticalSeparator(container)
+            separator.setObjectName("remoteCommandSeparator")
+            separator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            separator.setFixedHeight(14)
+            separator.hide()
+            self._separators.append(separator)
+        for button in buttons:
+            button.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
+            for before, after, separator in zip(
+                self._buttons, self._buttons[1:], self._separators,
+            ):
+                left, right = before.geometry(), after.geometry()
+                same_row = left.top() == right.top() and left.right() < right.left()
+                separator.setVisible(same_row)
+                if same_row:
+                    center = (left.right() + right.left()) // 2
+                    separator.setGeometry(center - 1, left.center().y() - 7, 3, 14)
+                    separator.raise_()
+        return super().eventFilter(watched, event)
+
+
 class RemoteWindowToggle(TransparentTogglePushButton):
     """透明选中态沿用普通图标配色，避免原生强调色底板的反色图标失去对比度。"""
 
@@ -100,8 +133,12 @@ class _ParameterPivot(Pivot):
 class RemoteChoiceEditor(QWidget):
     """宽度足够时展开全部选项，窄窗使用同一下拉框；配置始终只有一个来源。"""
 
-    def __init__(self, combo: ComboBox, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, combo: ComboBox, parent: QWidget | None = None,
+        *, prefer_combo: bool = False, separators: bool = False,
+    ) -> None:
         super().__init__(parent)
+        self._prefer_combo = prefer_combo
         self.combo = combo
         combo.setParent(self)
         self.pivot = _ParameterPivot(self)
@@ -109,6 +146,14 @@ class RemoteChoiceEditor(QWidget):
         for index in range(combo.count()):
             value = str(combo.itemData(index))
             self.pivot.addItem(value, combo.itemText(index))
+        if separators:
+            for index in range(1, combo.count()):
+                separator = VerticalSeparator(self.pivot)
+                separator.setObjectName("remoteCommandSeparator")
+                separator.setFixedHeight(14)
+                self.pivot.hBoxLayout.insertWidget(
+                    2 * index - 1, separator, 0, Qt.AlignmentFlag.AlignVCenter,
+                )
         # 两种显示共用同一尺寸，切换不让父布局观察到双份高度或短暂空布局。
         self._layout = QStackedLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -153,7 +198,7 @@ class RemoteChoiceEditor(QWidget):
         self.updateGeometry()
 
     def _update_mode(self) -> None:
-        expanded = self.width() >= self.pivot.minimumSizeHint().width()
+        expanded = not self._prefer_combo and self.width() >= self.pivot.minimumSizeHint().width()
         self._layout.setCurrentWidget(self.pivot if expanded else self.combo)
         # 显隐发生在 resizeEvent 内，需把尺寸失效同步传到外层字段；只更新自身会让
         # 同一网格的兄弟字段保留旧尺寸，窄窗放大时甚至缓存为零高度。
@@ -172,7 +217,10 @@ class RemoteChoiceEditor(QWidget):
 class RemoteBitrateEditor(QWidget):
     """滑块索引映射既有码率枚举，不引入新的持久化值或命令参数。"""
 
-    def __init__(self, combo: ComboBox, value_label: QLabel, parent=None) -> None:
+    def __init__(
+        self, combo: ComboBox, value_label: QLabel, parent=None,
+        *, title_label: QLabel | None = None,
+    ) -> None:
         super().__init__(parent)
         self.combo = combo
         self.value_label = value_label
@@ -185,11 +233,19 @@ class RemoteBitrateEditor(QWidget):
         self.slider.setRange(0, combo.count() - 1)
         self.slider.setAccessibleName(combo.accessibleName())
         self.slider.setMinimumWidth(80)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self) if title_label is not None else QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        layout.addWidget(self.slider, 1)
-        layout.addWidget(value_label)
+        layout.setSpacing(4)
+        if title_label is not None:
+            header = QHBoxLayout()
+            header.setContentsMargins(0, 0, 0, 0)
+            header.addWidget(title_label, 1)
+            header.addWidget(value_label)
+            layout.addLayout(header)
+            layout.addWidget(self.slider)
+        else:
+            layout.addWidget(self.slider, 1)
+            layout.addWidget(value_label)
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         combo.currentIndexChanged.connect(self.sync_selection)

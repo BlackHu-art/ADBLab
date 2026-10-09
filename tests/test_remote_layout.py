@@ -9,7 +9,6 @@ from qfluentwidgets import (
     Slider,
     SwitchButton,
     TransparentPushButton,
-    TransparentTogglePushButton,
     themeColor,
 )
 
@@ -59,6 +58,24 @@ _OPTION_NAMES = (
 )
 
 
+def expand_remote_options(remote, content, qt_application):
+    """先验证默认收纳，再通过真实入口展开，以保留全部参数的几何覆盖。"""
+    for button, container, controls in (
+        (remote.btn_advanced, remote.advanced_options,
+         (remote.codec, remote.buffer, remote.orientation)),
+        (remote.btn_more_options, remote.more_options,
+         (remote.chk_turnscreenoff, remote.chk_noplayback)),
+    ):
+        assert not button.isChecked()
+        assert not container.isVisibleTo(content)
+        assert all(not control.isVisibleTo(content) for control in controls)
+        button.click()
+        wait_for_stable_geometry(qt_application, (container, button, *controls))
+        assert button.isChecked()
+        assert container.isVisibleTo(content)
+        assert all(control.isVisibleTo(content) for control in controls)
+
+
 @pytest.fixture
 def remote_layout(qt_application, monkeypatch, isolated_app_settings):
     current = BaseStyles.current_font_config()
@@ -79,23 +96,27 @@ def remote_layout(qt_application, monkeypatch, isolated_app_settings):
         _close_feature_panel(panel)
 
 
-def test_wide_remote_page_shows_mirroring_and_controls_side_by_side(remote_layout):
+def test_wide_remote_page_shows_mirroring_and_controls_side_by_side(
+    remote_layout, qt_application,
+):
     _panel, remote, _scroll, content, _settings = remote_layout
+    expand_remote_options(remote, content, qt_application)
     mirroring, controls = remote._remote_section_groups
     left, right = mapped_rect(mirroring, content), mapped_rect(controls, content)
 
     assert left.right() < right.left(), "宽窗口应同时展示左右两栏，不能继续上下堆叠"
     assert abs(left.top() - right.top()) <= 2
     assert isinstance(remote.preset_selector, Pivot)
-    assert isinstance(remote.fps_selector, Pivot)
+    assert remote.fps.isVisibleTo(content)
+    assert not remote.fps_selector.isVisibleTo(content)
     assert isinstance(remote.bitrate_slider, Slider)
-    for selector in (remote.preset_selector, remote.fps_selector):
+    for selector in (remote.preset_selector,):
         for item in selector.items.values():
             assert item.font().pointSize() == 12
             assert item.height() >= item.fontMetrics().height()
             assert item.width() >= item.fontMetrics().horizontalAdvance(item.text())
     for widget in (
-        remote.preset_selector, remote.fps_selector, remote.bitrate_slider,
+        remote.preset_selector, remote.fps, remote.bitrate_slider,
         remote.maxsize, remote.codec, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
         *remote._remote_control_buttons,
@@ -120,7 +141,7 @@ def test_remote_middle_separator_tracks_two_columns_and_hides_in_one_column(
         else:
             line = mapped_rect(separator, content)
             assert separator.isVisibleTo(content)
-            assert right.left() - left.right() - 1 >= 56
+            assert abs(right.left() - left.right() - 1 - 32) <= 2
             assert left.right() < line.left() < line.right() < right.left()
             assert abs(line.top() - min(left.top(), right.top())) <= 1
             assert abs(line.bottom() - max(left.bottom(), right.bottom())) <= 1
@@ -139,7 +160,7 @@ def test_parameter_selectors_save_stable_values_and_custom_clears_preset(remote_
     assert remote.bitrate_slider.value() == 4
     assert settings.get("scrcpy_preset") == "Quality"
 
-    remote.fps_selector.items["120"].click()
+    remote.fps.setCurrentIndex(remote.fps.findData("120"))
     assert remote.fps.currentData() == "120"
     assert settings.get("scrcpy_fps") == "120"
     assert settings.get("scrcpy_preset") == "Custom"
@@ -261,21 +282,23 @@ def test_bitrate_readout_keeps_one_line_for_every_value(
         assert (mapped_rect(editor, content), mapped_rect(remote.btn_start, content)) == positions
 
 
-@pytest.mark.parametrize("selector_name", ("preset_selector", "fps_selector"))
+@pytest.mark.parametrize("selector_name", ("preset_selector", "fps"))
 def test_parameter_focus_and_selection_keep_option_geometry(
     remote_layout, qt_application, selector_name,
 ):
     from PySide6.QtCore import QEvent, QObject, Qt
     from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
 
     _panel, remote, _scroll, content, _settings = remote_layout
     selector = getattr(remote, selector_name)
-    items = tuple(selector.items.values())
+    is_preset = selector_name == "preset_selector"
+    items = tuple(selector.items.values()) if is_preset else (selector,)
     for item in items:
         item.clearFocus()
     wait_for_stable_geometry(qt_application, (selector, *items))
     before = tuple((item.geometry(), item.sizeHint()) for item in items)
-    watched = (remote.preset_selector, remote.maxsize, remote.fps_selector, remote.btn_start)
+    watched = (remote.preset_selector, remote.maxsize, remote.fps, remote.btn_start)
     positions = tuple(mapped_rect(widget, content) for widget in watched)
     samples = []
 
@@ -289,20 +312,44 @@ def test_parameter_focus_and_selection_keep_option_geometry(
     for widget in watched:
         widget.installEventFilter(probe)
     # 连续切换后再返回，覆盖焦点边框与布局防抖在中间帧产生的来回抖动。
-    for item in (*items, items[1], items[0]):
-        item.setFocus(Qt.FocusReason.MouseFocusReason)
-        QTest.mouseClick(item, Qt.MouseButton.LeftButton)
-        QTest.qWait(selector.slideAni.currentAni.duration() + 60)
+    if is_preset:
+        for item in (*items, items[1], items[0]):
+            item.setFocus(Qt.FocusReason.MouseFocusReason)
+            QTest.mouseClick(item, Qt.MouseButton.LeftButton)
+            QTest.qWait(selector.slideAni.currentAni.duration() + 60)
+            assert tuple((item.geometry(), item.sizeHint()) for item in items) == before
+    else:
+        assert selector.isVisibleTo(content)
+        assert not remote.fps_selector.isVisibleTo(content)
+        selector.setFocus(Qt.FocusReason.TabFocusReason)
+        assert selector.hasFocus()
+        QTest.qWait(100)
         assert tuple((item.geometry(), item.sizeHint()) for item in items) == before
+        for index in (*range(selector.count()), 1, 0):
+            selector.setCurrentIndex(index)
+            QTest.qWait(100)
+            assert selector.geometry() == before[0][0]
+            assert selector.sizeHint().height() == before[0][1].height()
+            assert selector.width() >= selector.sizeHint().width()
+            option = QStyleOptionButton()
+            selector.initStyleOption(option)
+            text_rect = selector.style().subElementRect(
+                QStyle.SubElement.SE_PushButtonContents, option, selector,
+            )
+            text_width = selector.fontMetrics().horizontalAdvance(selector.currentText())
+            assert text_rect.width() >= text_width
+            # 安装版 Fluent ComboBox 的箭头绘制在右侧 22px 处，文本必须保持间隔。
+            assert text_rect.left() + text_width < selector.width() - 22
     assert samples
     assert all(sample == positions for sample in samples)
 
 
-def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(remote_layout):
+def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(
+    remote_layout, qt_application,
+):
     _panel, remote, _scroll, content, _settings = remote_layout
-    for name in ("chk_fullscreen", "chk_aot", "chk_showtouches"):
-        assert isinstance(getattr(remote, name), TransparentTogglePushButton)
-    for name in set(_OPTION_NAMES) - {"chk_fullscreen", "chk_aot", "chk_showtouches"}:
+    expand_remote_options(remote, content, qt_application)
+    for name in _OPTION_NAMES:
         assert isinstance(getattr(remote, name), SwitchButton)
     assert remote.chk_noaudio.isChecked()
     assert all(isinstance(button, TransparentPushButton) for button in (
@@ -310,7 +357,7 @@ def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(remote_
     ))
     remote.set_target_devices(["synthetic-device"])
     controls = (
-        remote.preset_selector, remote.fps_selector, remote.bitrate_slider,
+        remote.preset_selector, remote.fps, remote.bitrate_slider,
         remote.maxsize, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
     )
@@ -328,6 +375,7 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
     remote_layout, qt_application,
 ):
     panel, remote, scroll, content, _settings = remote_layout
+    expand_remote_options(remote, content, qt_application)
     remote.preset_selector.items["Quality"].click()
     remote.chk_fullscreen.setChecked(True)
     remote.chk_record.setChecked(True)
@@ -367,6 +415,7 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
 
 def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_application):
     panel, remote, scroll, content, _settings = remote_layout
+    expand_remote_options(remote, content, qt_application)
     current = BaseStyles.current_font_config()
     config = FontConfig(
         ui_family="Arial", ui_size=22,
@@ -377,14 +426,14 @@ def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_a
     _resize_feature_viewport(qt_application, panel, remote, scroll, 292)
     wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
     wait_for_stable_geometry(qt_application, (content, *remote._remote_section_groups))
-    for selector, combo in (
-        (remote.preset_selector, remote.preset), (remote.fps_selector, remote.fps),
-    ):
+    for selector, combo in ((remote.preset_selector, remote.preset),):
         shown = [widget for widget in (selector, combo) if widget.isVisibleTo(content)]
         assert len(shown) == 1
         assert_scroll_target_reachable(scroll, shown[0])
+    assert remote.fps.isVisibleTo(content)
+    assert not remote.fps_selector.isVisibleTo(content)
     for widget in (
-        remote.maxsize, remote.codec, remote.buffer, remote.orientation,
+        remote.maxsize, remote.fps, remote.codec, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
         *remote._remote_control_buttons,
     ):

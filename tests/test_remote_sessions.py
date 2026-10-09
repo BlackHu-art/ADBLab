@@ -190,6 +190,13 @@ def test_encoding_display_keeps_each_device_detection(remote_session, qt_applica
     assert "H.264" in remote.codec.text() and "H.265" in remote.codec.text()
     assert "c2.fixture.one.encoder" in remote.codec.toolTip()
     assert "c2.fixture.two.encoder" in remote.codec.toolTip()
+    assert remote.advanced_options.isHidden()
+    assert "H.264" in remote._advanced_summary.text()
+    assert "H.265" in remote._advanced_summary.text()
+    remote.set_target_devices([])
+    assert remote.codec.text() == "自动（启动时检测）"
+    assert "H.264" not in remote._advanced_summary.text()
+    assert "H.265" not in remote._advanced_summary.text()
 
 
 def test_fast_device_starts_before_slow_preflight_finishes_in_gui(remote_session, qt_application):
@@ -201,6 +208,119 @@ def test_fast_device_starts_before_slow_preflight_finishes_in_gui(remote_session
     assert not gate.is_set()
     assert service.started == ["fast"]
     assert service.start_threads == [qt_application.thread()]
+
+
+def test_compact_header_tracks_readiness_and_keeps_stop_after_deselection(
+    remote_session, qt_application,
+):
+    remote, service = remote_session
+    remote.set_target_devices([])
+    assert remote._status_label.text() == "未选设备"
+    assert not remote.btn_start.isEnabled()
+    assert "选择" in remote._mirror_hint.text()
+
+    remote.set_target_devices(["private-device"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: "private-device" in service.started)
+    assert remote._status_label.text() == "连接中"
+    assert remote.btn_stop.text() == "取消启动"
+    assert "private-device" not in remote._mirror_device_label.text()
+    assert remote._session_list.isHidden()
+    remote._on_scrcpy_output(service.processes["private-device"], "INFO: Texture: 1080x2400")
+    assert remote._status_label.text() == "镜像中"
+    assert remote.btn_stop.text() == "停止镜像"
+
+    remote.set_target_devices([])
+    assert remote.btn_stop.isEnabled()
+    assert not remote.btn_start.isEnabled()
+    assert not remote._mirror_device_label.isHidden()
+    assert remote._status_label.text() == "镜像中"
+
+
+def test_compact_failure_details_collapse_when_retry_begins(remote_session, qt_application):
+    remote, service = remote_session
+    service.failures.add("private-device")
+    remote.set_target_devices(["private-device"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: (
+        remote._device_sessions["private-device"].state == "failed"
+        and remote._launch_worker is None
+    ))
+    assert remote._status_label.text() == "连接失败"
+    assert remote.btn_start.text() == "重新尝试"
+    assert not remote._mirror_error_label.isHidden()
+    assert not remote.btn_mirror_diagnostics.isHidden()
+    assert remote._mirror_diagnostic_label.isHidden()
+    remote.btn_mirror_diagnostics.click()
+    assert not remote._mirror_diagnostic_label.isHidden()
+    assert remote._mirror_diagnostic_label.text()
+    assert "private-device" not in remote._mirror_diagnostic_label.text()
+
+    service.failures.clear()
+    remote.btn_start.click()
+    assert remote._mirror_error_label.isHidden()
+    assert remote._mirror_diagnostic_label.isHidden()
+    assert _wait(qt_application, lambda: "private-device" in service.started)
+
+
+def test_icon_warning_does_not_replace_real_mirror_readiness(remote_session, qt_application):
+    remote, service = remote_session
+    remote.set_target_devices(["first"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: "first" in service.started)
+    process = service.processes["first"]
+    remote._on_scrcpy_output(process, "ERROR: [FFmpeg] Invalid PNG signature")
+    remote._on_scrcpy_output(process, "ERROR: Could not load icon")
+    assert remote._status_label.text() == "连接中"
+    assert remote._mirror_error_label.isHidden()
+    remote._on_scrcpy_output(process, "INFO: Texture: 470x1024")
+    assert remote._status_label.text() == "镜像中"
+    assert remote._mirror_error_label.isHidden()
+
+
+def test_configuration_failure_after_stopped_session_remains_visible(
+    remote_session, qt_application, monkeypatch,
+):
+    remote, service = remote_session
+    remote.set_target_devices(["first"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: service.started == ["first"])
+    remote.btn_stop.click()
+    assert _wait(qt_application, lambda: remote._session_state == remote._SESSION_IDLE)
+    assert remote._device_sessions["first"].state == "stopped"
+
+    monkeypatch.setattr(remote, "_scrcpy_config", Mock(side_effect=ValueError("invalid config")))
+    remote.btn_start.click()
+    assert remote._status_label.text() == "连接失败"
+    assert remote.btn_start.text() == "重新尝试"
+    assert not remote._mirror_error_label.isHidden()
+    remote.set_target_devices(["second"])
+    assert remote._status_label.text() == "空闲"
+    assert remote._mirror_error_label.isHidden()
+
+
+def test_cancelled_new_target_does_not_inherit_an_unselected_failure(
+    remote_session, qt_application,
+):
+    remote, service = remote_session
+    service.failures.add("first")
+    remote.set_target_devices(["first"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: (
+        remote._device_sessions["first"].state == "failed" and remote._launch_worker is None
+    ))
+
+    service.gates["second"] = threading.Event()
+    remote.set_target_devices(["second"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: "second" in service.prepared)
+    remote.btn_stop.click()
+    assert _wait(qt_application, lambda: remote._session_state == remote._SESSION_IDLE)
+    assert remote._device_sessions["first"].state == "failed"
+    assert remote._device_sessions["second"].state == "stopped"
+    assert remote._status_label.text() == "空闲"
+    assert remote._mirror_error_label.isHidden()
+    assert remote.btn_start.text() == "开始镜像"
 
 
 def test_preflight_limits_parallelism_to_three_devices(remote_session, qt_application):
@@ -511,11 +631,28 @@ def test_late_fps_from_stopped_process_cannot_replace_idle_status(remote_session
     remote._start_scrcpy()
     assert _wait(qt_application, lambda: service.started == ["first"])
     process = service.processes["first"]
+    remote._on_scrcpy_output(process, "INFO: Texture: 1080x2400")
+    remote._on_scrcpy_output(process, "60 fps")
+    assert remote._status_label.text() == "镜像中"
+    assert "60 fps" in remote._status_label.toolTip()
+    assert "60 fps" in remote._status_label.accessibleDescription()
+    remote._scrcpy_controller._poll_process()
+    assert "60 fps" in remote._status_label.toolTip()
     remote._stop_scrcpy()
     assert _wait(qt_application, lambda: remote._session_state == remote._SESSION_IDLE)
     status = remote._status_label.text()
     remote._scrcpy_controller._read_process_output(process, io.StringIO("60 fps"))
+    qt_application.processEvents()
     assert remote._status_label.text() == status
+    assert "fps" not in remote._status_label.toolTip()
+
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: len(service.started) == 2)
+    current = service.processes["first"]
+    remote._on_scrcpy_output(current, "INFO: Texture: 1080x2400")
+    remote._on_scrcpy_output(process, "60 fps")
+    assert remote._status_label.text() == "镜像中"
+    assert "fps" not in remote._status_label.toolTip()
 
 
 @pytest.mark.parametrize("no_window", [False, True])
@@ -552,11 +689,19 @@ def test_successful_stop_retry_clears_previous_stop_error(remote_session, qt_app
     service.stop = Mock(side_effect=OSError("synthetic stop failure"))
     remote._session_rows["first"][2].click()
     assert _wait(qt_application, lambda: remote._session_rows["first"][1].text() == "停止失败")
+    assert remote._status_label.text() == "停止失败"
+    assert remote.btn_stop.text() == "停止镜像"
+    assert "准备" not in remote._mirror_hint.text()
+    assert not remote._mirror_error_label.isHidden()
     service.stop = original
     remote._session_rows["first"][2].click()
     assert _wait(qt_application, lambda: not remote._processes)
     assert remote._session_rows["first"][1].text() == "已停止"
     assert remote._session_rows["first"][2].text() == "重试"
+    assert remote._status_label.text() == "空闲"
+    assert remote._mirror_error_label.isHidden()
+    assert remote._mirror_diagnostic_label.isHidden()
+    assert remote.btn_mirror_diagnostics.isHidden()
 
 
 @pytest.mark.parametrize(("width", "font_size"), [(420, 12), (640, 22), (1024, 12)])

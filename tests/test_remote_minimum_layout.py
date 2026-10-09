@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QWidget
 
 from gui.styles import BaseStyles
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.test_remote_layout import expand_remote_options
 from tests.ui_geometry_helpers import (
     assert_non_overlapping,
     assert_positive_geometry,
@@ -40,7 +41,11 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
     monkeypatch.setattr(
         "gui.panels.remote_panel.ADBBridge", lambda: SimpleNamespace(path="synthetic-adb"),
     )
-    for name in ("ScrcpyService", "RemoteControlService", "RemoteInputEngine"):
+    monkeypatch.setattr("gui.panels.remote_panel.ScrcpyService", lambda: Mock(
+        encoder_probes_running=Mock(return_value=False),
+        wait_encoder_probes=Mock(return_value=True),
+    ))
+    for name in ("RemoteControlService", "RemoteInputEngine"):
         monkeypatch.setattr(f"gui.panels.remote_panel.{name}", Mock())
     BaseStyles.reload_from_settings()
     frame = build_main_frame(
@@ -58,6 +63,11 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
             qt_application, lambda: frame.left_panel._responsive_coordinator.diagnostics.stable,
         )
         wait_for_stable_geometry(qt_application, (frame, content, *remote._remote_section_groups))
+        expand_remote_options(remote, content, qt_application)
+        wait_until(
+            qt_application, lambda: frame.left_panel._responsive_coordinator.diagnostics.stable,
+        )
+        wait_for_stable_geometry(qt_application, (frame, content, *remote._remote_section_groups))
         assert frame.size() == QSize(860, 500)
         left, right = (mapped_rect(section, content) for section in remote._remote_section_groups)
         assert left.top() == right.top()
@@ -67,7 +77,7 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
         assert separator is not None and separator.isVisibleTo(content)
         line = mapped_rect(separator, content)
         assert left.right() < line.left() < line.right() < right.left()
-        assert right.left() - left.right() - 1 >= 56
+        assert abs(right.left() - left.right() - 1 - 32) <= 2
         assert scroll.horizontalScrollBar().maximum() == 0
         if font_size == 12:
             media = remote._remote_media_binding.widgets()
@@ -77,6 +87,8 @@ def test_remote_normal_minimum_window_keeps_divided_columns_without_horizontal_s
             remote.preset.parentWidget(), remote.maxsize, remote.fps.parentWidget(),
             remote.bitrate_slider, remote.codec, remote.buffer, remote.orientation,
         )
+        assert remote.fps.isVisibleTo(content)
+        assert not remote.fps_selector.isVisibleTo(content)
         options = tuple(getattr(remote, name) for name in (
             "chk_record", "chk_fullscreen", "chk_aot", "chk_showtouches", "chk_stayawake",
             "chk_turnscreenoff", "chk_noplayback", "chk_noaudio",

@@ -52,7 +52,11 @@ def test_remote_entry_keeps_parameter_geometry_from_first_visible_paint(
     monkeypatch.setattr(
         "gui.panels.remote_panel.ADBBridge", lambda: SimpleNamespace(path="synthetic-adb"),
     )
-    for name in ("ScrcpyService", "RemoteControlService", "RemoteInputEngine"):
+    monkeypatch.setattr("gui.panels.remote_panel.ScrcpyService", lambda: Mock(
+        encoder_probes_running=Mock(return_value=False),
+        wait_encoder_probes=Mock(return_value=True),
+    ))
+    for name in ("RemoteControlService", "RemoteInputEngine"):
         monkeypatch.setattr(f"gui.panels.remote_panel.{name}", Mock())
     BaseStyles.reload_from_settings()
     frame = build_main_frame(
@@ -81,6 +85,10 @@ def test_remote_entry_keeps_parameter_geometry_from_first_visible_paint(
             assert frame._open_workspace_feature("devices", "remote")
             # 覆盖原生切页动画与布局防抖；每次 Paint 都已在过滤器中记录。
             QTest.qWait(350)
+            assert remote.fps.isVisibleTo(content)
+            assert not remote.fps_selector.isVisibleTo(content)
+            assert not remote.advanced_options.isVisibleTo(content)
+            assert not remote.more_options.isVisibleTo(content)
             assert probe.samples, "远程参数必须实际绘制，不能只检查隐藏控件的几何"
             phases.append(tuple(probe.samples))
         for samples in phases:

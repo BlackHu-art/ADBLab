@@ -80,6 +80,7 @@ class RemoteDeviceSession:
     process: object | None = None
     resource_owned: bool = False
     error_type: str = ""
+    last_fps: str = ""
     stop_requested: bool = False
     stop_inflight: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
@@ -304,7 +305,11 @@ class RemotePanelScrcpy:
             status = "Checking..."
         else:
             frame._set_session_state(frame._SESSION_IDLE)
-            status = "Error" if any(s.state == "failed" for s in sessions.values()) else "Idle"
+            # 历史失败仍保留在各设备行中，不能污染当前目标取消或正常退出后的摘要。
+            status = "Error" if any(
+                session.state == "failed" and device in frame.selected_devices
+                for device, session in sessions.items()
+            ) else "Idle"
             frame._frozen_session_config = None
             frame._watchdog.stop()
         # 行状态已由上面的 _set_session_state 刷新；这里不再重复整表重写。
@@ -342,6 +347,9 @@ class RemotePanelScrcpy:
         label.setText(" / ".join(summaries) if summaries else tr("自动（启动时检测）"))
         label.setToolTip("\n".join(details) if details else tr("启动时按设备能力自动选择编码器"))
         label.setAccessibleDescription(label.toolTip())
+        form = getattr(self._frame, "_form_controller", None)
+        if form is not None:
+            form._refresh_advanced_summary()
 
     def _on_scrcpy_output(self, process, line: str) -> None:
         """只有视频纹理或录制开始输出确认可用，进程存在本身不代表就绪。"""
@@ -358,6 +366,7 @@ class RemotePanelScrcpy:
                 self._refresh_sessions()
             fps = self._frame._scrcpy_service.parse_fps(line)
             if fps:
+                session.last_fps = fps
                 self._frame._update_status(fps, None)
             break
 
