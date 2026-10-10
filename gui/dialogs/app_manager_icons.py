@@ -1,5 +1,6 @@
 """应用图标的可见区加载与会话缓存；后台仅返回 PNG，Qt 图像归 GUI 线程所有。"""
 
+import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,12 @@ if TYPE_CHECKING:
 
 def _safe_failure_reason(error: str) -> str:
     """只翻译服务已定义的固定分类；原始执行错误不能进入页面或会话缓存。"""
+    diagnostic = re.fullmatch(
+        r"应用图标渲染失败 \[(METADATA|LOAD|DRAW|ENCODE)/"
+        r"(SECURITY|ARGUMENT|STATE|RESOURCE|MEMORY|OTHER)\]", error,
+    )
+    if diagnostic:
+        return tr("应用图标渲染失败") + f" [{diagnostic[1]}/{diagnostic[2]}]"
     return {
         "当前用户未安装此应用": tr("当前用户未安装此应用"),
         "设备不支持读取应用图标": tr("设备不支持读取应用图标"),

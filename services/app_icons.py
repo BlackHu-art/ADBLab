@@ -129,7 +129,16 @@ def _parse_output(
         if kind == "ERROR":
             if len(parts) != 3:
                 return failure
-            results[package] = (b"", _ERRORS.get(parts[2], "应用图标读取失败"))
+            diagnostic = re.fullmatch(
+                r"RENDER_FAILED:(METADATA|LOAD|DRAW|ENCODE):"
+                r"(SECURITY|ARGUMENT|STATE|RESOURCE|MEMORY|OTHER)", parts[2],
+            )
+            # 只透传固定阶段和类别，不能让设备异常正文或堆栈进入界面。
+            error = _ERRORS.get(parts[2], "应用图标读取失败")
+            if diagnostic:
+                error = ("应用图标渲染失败 "
+                         f"[{diagnostic[1]}/{diagnostic[2]}]")
+            results[package] = (b"", error)
         else:
             if expected_fingerprints:
                 if kind != "ICON_META" or len(parts) != 4:

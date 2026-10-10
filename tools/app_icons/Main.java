@@ -1,8 +1,10 @@
 package com.adblab.icons;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
@@ -37,6 +39,39 @@ public final class Main {
 
     private Main() {}
 
+    /** 绘制与编码共用资源清理边界，但必须保留原始失败阶段。 */
+    private static final class RenderFailure extends Exception {
+        final String stage;
+
+        RenderFailure(String stage, Throwable cause) {
+            super(null, cause, false, false);
+            this.stage = stage;
+        }
+    }
+
+    /** 只传固定诊断枚举，不把异常正文、类名或堆栈写入设备响应。 */
+    private static String renderFailureCode(String stage, Throwable failure) {
+        if (failure instanceof RenderFailure) {
+            stage = ((RenderFailure) failure).stage;
+            failure = failure.getCause();
+        }
+        String kind;
+        if (failure instanceof SecurityException) {
+            kind = "SECURITY";
+        } else if (failure instanceof IllegalArgumentException) {
+            kind = "ARGUMENT";
+        } else if (failure instanceof IllegalStateException) {
+            kind = "STATE";
+        } else if (failure instanceof Resources.NotFoundException) {
+            kind = "RESOURCE";
+        } else if (failure instanceof OutOfMemoryError) {
+            kind = "MEMORY";
+        } else {
+            kind = "OTHER";
+        }
+        return "RENDER_FAILED:" + stage + ":" + kind;
+    }
+
     private static int currentUser() throws Exception {
         Class<?> activityManager = Class.forName("android.app.ActivityManager");
         return (Integer) activityManager.getMethod("getCurrentUser").invoke(null);
@@ -60,17 +95,35 @@ public final class Main {
         return userContext.getPackageManager();
     }
 
+    /** 部分 ROM 的系统图标入口访问受限接口时，改读应用声明的资源；仍经过包管理权限边界。 */
+    private static Drawable loadIcon(PackageManager manager, String pkg) throws Exception {
+        try {
+            return manager.getApplicationIcon(pkg);
+        } catch (SecurityException denied) {
+            ApplicationInfo info = manager.getApplicationInfo(pkg, 0);
+            // 未声明图标的应用沿用 PackageManager 语义，读取设备提供的默认 Drawable。
+            if (info.icon == 0) {
+                return manager.getDefaultActivityIcon();
+            }
+            return manager.getResourcesForApplication(info).getDrawable(info.icon, null);
+        }
+    }
+
     private static byte[] render(Drawable drawable) throws Exception {
         Bitmap bitmap = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888);
+        String stage = "DRAW";
         try {
             Canvas canvas = new Canvas(bitmap);
             drawable.setBounds(0, 0, SIZE, SIZE);
             drawable.draw(canvas);
+            stage = "ENCODE";
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes)) {
                 throw new IllegalStateException("RENDER_FAILED");
             }
             return bytes.toByteArray();
+        } catch (Throwable failure) {
+            throw new RenderFailure(stage, failure);
         } finally {
             bitmap.recycle();
         }
@@ -171,6 +224,7 @@ public final class Main {
         }
         for (int index = first; index < args.length; index++) {
             String pkg = args[index];
+            String stage = "METADATA";
             try {
                 if (currentUser() != user) {
                     protocol.println(errorKind + "\t" + pkg + "\tUSER_CHANGED");
@@ -178,8 +232,15 @@ public final class Main {
                 }
                 JSONObject before = metadata || iconMetadata ? metadata(manager, pkg, user) : null;
                 byte[] record = before == null ? new byte[0] : before.toString().getBytes("UTF-8");
-                byte[] png = metadata ? new byte[0] : render(manager.getApplicationIcon(pkg));
+                byte[] png = new byte[0];
+                if (!metadata) {
+                    stage = "LOAD";
+                    Drawable drawable = loadIcon(manager, pkg);
+                    stage = "DRAW";
+                    png = render(drawable);
+                }
                 // 将身份与本次像素绑定；两次独立 helper 调用之间可能发生用户切换或应用更新。
+                stage = "METADATA";
                 JSONObject after = iconMetadata ? metadata(manager, pkg, user) : null;
                 if (currentUser() != user) {
                     protocol.println(errorKind + "\t" + pkg + "\tUSER_CHANGED");
@@ -202,7 +263,7 @@ public final class Main {
                 protocol.println(errorKind + "\t" + pkg + "\tNOT_FOUND");
             } catch (Throwable failure) {
                 protocol.println(errorKind + "\t" + pkg + "\t"
-                        + (metadata ? "READ_FAILED" : "RENDER_FAILED"));
+                        + (metadata ? "READ_FAILED" : renderFailureCode(stage, failure)));
             }
         }
     }

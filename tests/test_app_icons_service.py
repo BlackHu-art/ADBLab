@@ -264,6 +264,25 @@ def test_valid_icon_and_package_error_are_reported_independently(transport):
     ]
 
 
+@pytest.mark.parametrize("code,expected", [
+    ("RENDER_FAILED:LOAD:SECURITY", "应用图标渲染失败 [LOAD/SECURITY]"),
+    ("RENDER_FAILED:DRAW:ARGUMENT", "应用图标渲染失败 [DRAW/ARGUMENT]"),
+    ("RENDER_FAILED:ENCODE:STATE", "应用图标渲染失败 [ENCODE/STATE]"),
+    ("RENDER_FAILED:LOAD:RESOURCE", "应用图标渲染失败 [LOAD/RESOURCE]"),
+    ("RENDER_FAILED:DRAW:MEMORY", "应用图标渲染失败 [DRAW/MEMORY]"),
+    ("RENDER_FAILED:METADATA:OTHER", "应用图标渲染失败 [METADATA/OTHER]"),
+    ("RENDER_FAILED", "应用图标渲染失败"),
+    ("RENDER_FAILED:LOAD:private-device", "应用图标读取失败"),
+    ("RENDER_FAILED:/private/path:SECURITY", "应用图标读取失败"),
+    ("RENDER_FAILED:LOAD:SECURITY:private-device", "应用图标读取失败"),
+])
+def test_render_diagnostics_keep_only_fixed_stage_and_category(transport, code, expected):
+    _calls, outputs = transport
+    outputs[1] = CommandResult(True, f"ERROR\tcom.example.app\t{code}")
+
+    assert collect() == [("com.example.app", b"", expected)]
+
+
 def test_total_response_bound_rejects_before_parsing(transport):
     _calls, outputs = transport
     outputs[1] = CommandResult(True, "x" * (app_icons._MAX_OUTPUT_BYTES + 1))
