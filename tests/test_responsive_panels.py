@@ -9,6 +9,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QFont, QIntValidator, QRegularExpressionValidator
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -753,11 +754,19 @@ def test_responsive_spacing_tracks_viewport_without_replacing_widgets(
         state = _binding_widget_state(feature_panel)
         narrow = tuple(binding.applied_plan.spacing for binding in feature_panel._responsive_rows)
         assert 2 in narrow
+        if panel_name == "remote":
+            assert feature_panel._remote_workspace_binding.applied_plan.mode.columns == 1
 
-        _resize_feature_viewport(qt_application, panel, feature_panel, scroll, 900)
+        _resize_feature_viewport(
+            qt_application, panel, feature_panel, scroll, 1280 if panel_name == "remote" else 900,
+        )
         wide = tuple(binding.applied_plan.spacing for binding in feature_panel._responsive_rows)
         assert 6 in wide
-        assert wide != narrow
+        if panel_name == "remote":
+            # Remote 各组保持固定间距，以独立栏的回流验证宽度响应。
+            assert feature_panel._remote_workspace_binding.applied_plan.mode.columns == 2
+        else:
+            assert wide != narrow
 
         _resize_feature_viewport(qt_application, panel, feature_panel, scroll, 292)
         restored = tuple(binding.applied_plan.spacing for binding in feature_panel._responsive_rows)
@@ -2056,7 +2065,18 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
             for binding in category_bindings:
                 for widget in binding.widgets():
                     if widget.isVisible():
-                        assert_scroll_target_reachable(scroll, widget)
+                        if (
+                            panel_name == "remote"
+                            and binding is feature_panel._remote_workspace_binding
+                        ):
+                            # 整栏可超过视口高度，验收其全部可见操作控件的滚动可达性。
+                            controls = [control for control in widget.findChildren(QAbstractButton)
+                                        if control.isVisibleTo(content)]
+                            assert controls
+                            for control in controls:
+                                assert_scroll_target_reachable(scroll, control)
+                        else:
+                            assert_scroll_target_reachable(scroll, widget)
 
         before_resize = panel._responsive_coordinator.diagnostics.generation
         current_width = scroll.viewport().contentsRect().width()
@@ -2620,7 +2640,7 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
     )
     observed_workspace_columns = set()
     expected_columns = {
-        remote._remote_navigation_binding: {1, 2, 3},
+        remote._remote_navigation_binding: {1, 2, 4},
         remote._remote_key_binding: {1, 2, 3},
         remote._remote_volume_binding: {3},
         remote._remote_media_binding: {3},

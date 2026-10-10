@@ -19,7 +19,6 @@ from qfluentwidgets import (
     SwitchButton,
     TransparentTogglePushButton,
     VerticalSeparator,
-    themeColor,
 )
 
 from gui.styles import BaseStyles, FontRole
@@ -186,7 +185,9 @@ class RemoteChoiceEditor(QWidget):
         self.pivot = _ParameterPivot(self)
         self.pivot.setAccessibleName(combo.accessibleName())
         self.pivot.hBoxLayout.setSpacing(6)
-        self.pivot.setIndicatorLength(0)
+        # 指示条是唯一选中标记，单独保留底部空间，避免被按钮背景覆盖。
+        self.pivot.hBoxLayout.setContentsMargins(0, 0, 0, 4)
+        self.pivot.setIndicatorLength(16)
         for index in range(combo.count()):
             value = str(combo.itemData(index))
             self.pivot.addItem(value, combo.itemText(index))
@@ -234,9 +235,9 @@ class RemoteChoiceEditor(QWidget):
                 f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
                 f"PivotItem:hover {{ background: {BaseStyles.color('BUTTON_HOVER')}; }}"
                 "PivotItem[isSelected=true] {"
-                f"background: {BaseStyles.color('SELECTION_BG')};"
-                f"color: {BaseStyles.color('SELECTION_TEXT')}; }}"
-                f"PivotItem:focus {{ border-color: {themeColor().name()}; }}"
+                f"background: {BaseStyles.color('BUTTON_BG')};"
+                f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
+                f"PivotItem:focus {{ border-color: {BaseStyles.color('BORDER_COLOR')}; }}"
                 f"PivotItem:disabled {{ color: {BaseStyles.color('TEXT_DISABLED')}; }}"
             ))
             # 隐藏的 Pivot 仍参与堆叠布局高度；FPS 保留原度量，不抬高相邻下拉字段。
@@ -285,20 +286,14 @@ class RemoteBitrateEditor(QWidget):
         self.slider.setRange(0, combo.count() - 1)
         self.slider.setAccessibleName(combo.accessibleName())
         self.slider.setMinimumWidth(80)
-        layout = QVBoxLayout(self) if title_label is not None else QHBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         if title_label is not None:
             title_label.setWordWrap(False)
-            header = QHBoxLayout()
-            header.setContentsMargins(0, 0, 0, 0)
-            header.addWidget(title_label, 1)
-            header.addWidget(value_label)
-            layout.addLayout(header)
-            layout.addWidget(self.slider)
-        else:
-            layout.addWidget(self.slider, 1)
-            layout.addWidget(value_label)
+            layout.addWidget(title_label)
+        layout.addWidget(self.slider, 1)
+        layout.addWidget(value_label)
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         combo.currentIndexChanged.connect(self.sync_selection)
@@ -317,7 +312,7 @@ class RemoteBitrateEditor(QWidget):
         if self.title_label is not None:
             title_width = self.title_label.fontMetrics().horizontalAdvance(self.title_label.text())
             self.title_label.setMinimumWidth(title_width)
-            self.setMinimumWidth(max(80, title_width + self.value_label.minimumWidth() + 4))
+            self.setMinimumWidth(title_width + 80 + self.value_label.minimumWidth() + 8)
             self.slider.setFixedHeight(max(36, self.value_label.fontMetrics().height() + 14))
 
     def sync_selection(self, _index: int = -1) -> None:

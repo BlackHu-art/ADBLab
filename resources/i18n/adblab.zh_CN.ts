@@ -7489,5 +7489,45 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>显示手指在设备屏幕上的触点，不显示电脑鼠标点击</source>
             <translation>显示手指在设备屏幕上的触点，不显示电脑鼠标点击</translation>
         </message>
+        <message>
+            <source>下次启动生效</source>
+            <translation>下次启动生效</translation>
+        </message>
+        <message>
+            <source>画面尺寸</source>
+            <translation>画面尺寸</translation>
+        </message>
+        <message>
+            <source>帧率</source>
+            <translation>帧率</translation>
+        </message>
+        <message>
+            <source>视频缓冲</source>
+            <translation>视频缓冲</translation>
+        </message>
+        <message>
+            <source>画面方向</source>
+            <translation>画面方向</translation>
+        </message>
+        <message>
+            <source>视频编码由设备能力自动选择</source>
+            <translation>视频编码由设备能力自动选择</translation>
+        </message>
+        <message>
+            <source>窗口</source>
+            <translation>窗口</translation>
+        </message>
+        <message>
+            <source>设备屏幕</source>
+            <translation>设备屏幕</translation>
+        </message>
+        <message>
+            <source>音频与录制</source>
+            <translation>音频与录制</translation>
+        </message>
+        <message>
+            <source>限制镜像画面的最长边，保持设备画面比例</source>
+            <translation>限制镜像画面的最长边，保持设备画面比例</translation>
+        </message>
     </context>
 </TS>

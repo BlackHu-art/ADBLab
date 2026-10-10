@@ -7489,5 +7489,45 @@ Android device management, apps and diagnostics</translation>
             <source>显示手指在设备屏幕上的触点，不显示电脑鼠标点击</source>
             <translation>Show finger touches on the device screen, not computer mouse clicks</translation>
         </message>
+        <message>
+            <source>下次启动生效</source>
+            <translation>Applies on next launch</translation>
+        </message>
+        <message>
+            <source>画面尺寸</source>
+            <translation>Image size</translation>
+        </message>
+        <message>
+            <source>帧率</source>
+            <translation>Frame rate</translation>
+        </message>
+        <message>
+            <source>视频缓冲</source>
+            <translation>Video buffer</translation>
+        </message>
+        <message>
+            <source>画面方向</source>
+            <translation>Image orientation</translation>
+        </message>
+        <message>
+            <source>视频编码由设备能力自动选择</source>
+            <translation>Video encoding is selected automatically for the device</translation>
+        </message>
+        <message>
+            <source>窗口</source>
+            <translation>Window</translation>
+        </message>
+        <message>
+            <source>设备屏幕</source>
+            <translation>Device screen</translation>
+        </message>
+        <message>
+            <source>音频与录制</source>
+            <translation>Audio and recording</translation>
+        </message>
+        <message>
+            <source>限制镜像画面的最长边，保持设备画面比例</source>
+            <translation>Limit the longest edge while preserving the device aspect ratio</translation>
+        </message>
     </context>
 </TS>

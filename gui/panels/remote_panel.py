@@ -34,6 +34,7 @@ from services.remote.types import ScrcpyToolError
 
 if TYPE_CHECKING:
     from gui.widgets.category_stack import AdaptiveCategoryStack
+    from gui.widgets.responsive_binding import ResponsiveGridBinding
 
 
 class _RemoteInputShutdown:
@@ -300,6 +301,7 @@ class RemotePanel(BasePanel):
     panel_header: QWidget
     category_stack: "AdaptiveCategoryStack"
     _remote_section_groups: list[QWidget]
+    _remote_action_binding: "ResponsiveGridBinding"
     _remote_control_buttons: list[QAbstractButton]
     _remote_action_buttons: list[QAbstractButton]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
@@ -524,13 +526,22 @@ class RemotePanel(BasePanel):
                 section.setMinimumWidth(max(
                     min(context.width, 320), required, section.headerView.minimumSizeHint().width(),
                 ))
+            workspace = getattr(self, "_remote_workspace_binding", None)
+            for column in workspace.widgets() if workspace is not None else ():
+                column.setMinimumWidth(max(
+                    section.minimumWidth() for section in sections
+                    if column.isAncestorOf(section)
+                ))
             return context
         for section in sections:
             if section.view.isAncestorOf(container):
                 workspace = getattr(self, "_remote_workspace_binding", None)
                 width = section.view.width()
                 if workspace is not None:
-                    workspace_context = self._responsive_context(section.parentWidget())
+                    # 分区现在归属独立栏；宽度仍从外层工作区计划传播，避免重复分栏。
+                    workspace_context = self._responsive_context(
+                        section.parentWidget().parentWidget(),
+                    )
                     plan = workspace.responsive_plan(workspace_context)
                     width = max(0, (
                         workspace_context.width - plan.spacing * (plan.mode.columns - 1)
@@ -566,7 +577,15 @@ class RemotePanel(BasePanel):
                     ) // columns)
                 width = min(context.width, region_width)
                 if container.objectName() == "remoteDirectionPadRow":
-                    width = min(width, self._remote_action_buttons[0].height() * 3 + 16)
+                    pad = self._remote_action_binding
+                    minimum = pad.conservative_responsive_plan(context).required_width
+                    width = min(width, max(
+                        minimum, self._remote_action_buttons[0].height() * 3 + 16,
+                    ))
+                    # 方向盘居中且按自然宽度收缩；内层计划须使用最终盘宽。
+                    plan = pad.responsive_plan(replace(context, width=width))
+                    if not plan.overflow_required:
+                        width = plan.required_width
                 return replace(context, width=width)
         return context
 

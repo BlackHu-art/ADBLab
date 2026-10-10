@@ -91,7 +91,7 @@ def remote_layout(qt_application, monkeypatch, isolated_app_settings):
         _close_feature_panel(panel)
 
 
-def test_wide_remote_page_aligns_equal_columns_and_lower_sections(
+def test_wide_remote_page_keeps_sections_contiguous_in_independent_columns(
     remote_layout, qt_application,
 ):
     _panel, remote, _scroll, content, _settings = remote_layout
@@ -104,8 +104,8 @@ def test_wide_remote_page_aligns_equal_columns_and_lower_sections(
     system, recording = (
         mapped_rect(section, content) for section in remote._remote_bottom_sections
     )
-    assert abs(system.top() - recording.top()) <= 2
-    assert system.top() > max(left.bottom(), right.bottom())
+    assert 0 < system.top() - left.bottom() <= 24
+    assert 0 < recording.top() - right.bottom() <= 24
     assert abs(system.left() - left.left()) <= 2
     assert abs(recording.left() - right.left()) <= 2
     assert abs(system.width() - recording.width()) <= 2
@@ -193,9 +193,10 @@ def test_group_heading_emphasis_survives_runtime_font_changes(remote_layout, qt_
     from PySide6.QtWidgets import QLabel
 
     panel, remote, scroll, content, _settings = remote_layout
+    heading_texts = ("滑动手势", "音量与媒体", "高级参数", "窗口", "设备屏幕", "音频与录制")
     headings = {label.text(): label for label in content.findChildren(QLabel)
-                if label.text() in ("滑动手势", "音量与媒体", "高级参数")}
-    assert set(headings) == {"滑动手势", "音量与媒体", "高级参数"}
+                if label.text() in heading_texts}
+    assert set(headings) == {"滑动手势", "音量与媒体"}
     current = BaseStyles.current_font_config()
     for size in (12, 22, 12):
         config = FontConfig(
@@ -250,17 +251,78 @@ def test_parameter_selectors_save_stable_values_and_custom_clears_preset(remote_
     assert remote.preset_selector.currentItem() is None
 
 
+def test_buffer_and_orientation_labels_preserve_command_and_saved_values(remote_layout):
+    _panel, remote, _scroll, _content, settings = remote_layout
+    remote.buffer.setCurrentIndex(remote.buffer.findData("100"))
+    remote.orientation.setCurrentIndex(remote.orientation.findData("90"))
+    assert remote.buffer.currentText() == "100"
+    assert remote.orientation.currentText() == "90"
+    assert settings.get("scrcpy_buffer") == "100"
+    assert settings.get("scrcpy_orientation") == "90"
+    remote.orientation.setCurrentIndex(remote.orientation.findData("0"))
+    assert remote.orientation.currentText() == "自动"
+    assert settings.get("scrcpy_orientation") == "0"
+    from PySide6.QtWidgets import QLabel
+
+    units = [label for label in remote.orientation.parentWidget().findChildren(QLabel)
+             if label.text() == "°"]
+    assert len(units) == 1 and units[0].isHidden()
+    remote.orientation.setCurrentIndex(remote.orientation.findData("90"))
+    assert not units[0].isHidden()
+    remote.maxsize.setCurrentIndex(remote.maxsize.findData("Default"))
+    pixel_unit = next(label for label in remote.maxsize.parentWidget().findChildren(QLabel)
+                      if label.text() == "px")
+    assert pixel_unit.isHidden()
+
+
+@pytest.mark.parametrize("preset,expected", [
+    ("Smooth", ("1024", "30", "4", "50")),
+    ("Balanced", ("1280", "30", "8", "20")),
+    ("Quality", ("1920", "60", "12", "50")),
+    ("Low Latency", ("720p", "24", "2", "0")),
+])
+def test_each_preset_updates_fields_saved_values_and_launch_arguments(
+    remote_layout, monkeypatch, preset, expected,
+):
+    from services.remote import ScrcpyService
+    from services.remote.scrcpy_args import build_scrcpy_args
+
+    _panel, remote, _scroll, _content, settings = remote_layout
+    monkeypatch.setattr(ScrcpyService, "require_client", lambda _path: "adb")
+    monkeypatch.setattr(remote._input_engine, "window_title", lambda _device: "")
+    remote.preset_selector.items["Quality" if preset != "Quality" else "Smooth"].click()
+    remote.preset_selector.items[preset].click()
+    keys = ("maxsize", "fps", "bitrate", "buffer")
+    assert tuple(getattr(remote, key).currentData() for key in keys) == expected
+    assert tuple(settings.get(f"scrcpy_{key}") for key in keys) == expected
+    assert settings.get("scrcpy_preset") == preset
+    config = remote._scrcpy_config("scrcpy", "synthetic-device")
+    assert tuple(getattr(config, key) for key in keys) == expected
+    args = build_scrcpy_args(config)
+    assert args[args.index("-m") + 1] == expected[0].replace("p", "")
+    assert args[args.index("--max-fps") + 1] == expected[1]
+    assert f"--video-bit-rate={expected[2]}M" in args
+    if expected[3] == "0":
+        assert not any(arg.startswith("--video-buffer=") for arg in args)
+    else:
+        assert f"--video-buffer={expected[3]}" in args
+
+
 def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_layout):
     _panel, remote, _scroll, content, _settings = remote_layout
     groups = (
-        (remote._remote_navigation_binding, ("BACK", "HOME", "RECENTS")),
+        (remote._remote_navigation_binding, ("BACK", "HOME", "RECENTS", "POWER")),
         (remote._remote_key_binding, ("MENU", "ENTER", "DEL", "SETTINGS", "CAMERA", "SEARCH")),
         (remote._remote_volume_binding, ("VOL_DOWN", "VOL_UP")),
         (remote._remote_media_binding, ("MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT")),
     )
     for binding, codes in groups:
-        assert tuple(button.property("remoteKey") for button in binding.widgets()
-                     if button.property("remoteKey")) == codes
+        from PySide6.QtWidgets import QAbstractButton
+
+        buttons = [button for widget in binding.widgets()
+                   for button in (widget, *widget.findChildren(QAbstractButton))
+                   if button.property("remoteKey")]
+        assert tuple(button.property("remoteKey") for button in buttons) == codes
     actions = remote._remote_action_buttons
     assert tuple(button.property("remoteAction") for button in actions) == (
         "swipe_up", "swipe_down", "swipe_left", "swipe_right",
@@ -271,11 +333,99 @@ def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_la
     assert by_code["ENTER"].text() == "回车"
     assert by_code["DEL"].text() == "退格"
     assert by_code["MEDIA_PLAY"].accessibleName() == "播放/暂停"
-    assert by_code["POWER"] not in remote._remote_navigation_binding.widgets()
+    assert by_code["POWER"] in remote._remote_navigation_binding.widgets()
     assert mapped_rect(by_code["POWER"], content).bottom() < min(
         mapped_rect(button, content).top() for button in actions
     )
     assert all(button.iconSize().width() >= 16 for button in remote._remote_control_buttons)
+
+
+def test_default_preset_is_selected_before_user_interaction(remote_layout):
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    assert remote.preset.currentData() == "Smooth"
+    assert remote.preset_selector.currentRouteKey() == "Smooth"
+    assert remote.preset_selector.items["Smooth"].isSelected
+    assert tuple(getattr(remote, key).currentData() for key in (
+        "maxsize", "fps", "bitrate", "buffer",
+    )) == ("1024", "30", "4", "50")
+
+
+@pytest.mark.parametrize("theme", ("Dark", "Light"))
+def test_preset_selection_uses_bottom_indicator_without_button_highlight(
+    remote_layout, qt_application, theme,
+):
+    from PySide6.QtCore import QAbstractAnimation
+
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    BaseStyles.switch_theme(theme)
+    pivot = remote.preset_selector
+    for preset in ("Balanced", "Quality", "Low Latency", "Smooth"):
+        pivot.items[preset].click()
+        wait_until(qt_application, lambda: pivot.slideAni.currentAni.state() == (
+            QAbstractAnimation.State.Stopped
+        ))
+        selected = pivot.items[preset]
+        selected.setFocus()
+        qt_application.processEvents()
+        unselected = next(item for item in pivot.items.values() if not item.isSelected)
+        selected_image, unselected_image = selected.grab().toImage(), unselected.grab().toImage()
+        scale = selected_image.devicePixelRatio()
+        assert selected_image.pixelColor(round(8 * scale), round(4 * scale)) == (
+            unselected_image.pixelColor(round(8 * scale), round(4 * scale))
+        )
+        assert selected_image.pixelColor(round(8 * scale), 0) == (
+            unselected_image.pixelColor(round(8 * scale), 0)
+        )
+        painted = pivot.grab().toImage()
+        center = selected.geometry().center().x()
+        indicator_color = painted.pixelColor(
+            round(center * scale), round((pivot.height() - 2) * scale),
+        )
+        assert indicator_color.name() == themeColor().name()
+        assert selected.isSelected
+        assert sum(item.isSelected for item in pivot.items.values()) == 1
+
+
+def test_parameter_labels_precede_controls_and_units_follow_them(remote_layout):
+    from PySide6.QtWidgets import QLabel
+
+    _panel, remote, _scroll, content, _settings = remote_layout
+    for control, caption, unit in (
+        (remote.maxsize, "画面尺寸", "px"), (remote.fps, "帧率", "FPS"),
+        (remote.buffer, "视频缓冲", "ms"), (remote.orientation, "画面方向", None),
+    ):
+        label = next(label for label in remote._parameter_labels if label.text() == caption)
+        assert mapped_rect(label, content).right() < mapped_rect(control, content).left()
+        assert abs(mapped_rect(label, content).center().y()
+                   - mapped_rect(control, content).center().y()) <= 2
+        if unit:
+            suffix = next(label for label in label.parentWidget().findChildren(QLabel)
+                          if label.text() == unit)
+            assert mapped_rect(control, content).right() < mapped_rect(suffix, content).left()
+
+
+def test_bitrate_gets_full_width_row_below_size_and_frame_rate(remote_layout):
+    _panel, remote, _scroll, content, _settings = remote_layout
+    editor = remote.bitrate_slider.parentWidget()
+    assert mapped_rect(editor, content).top() > mapped_rect(remote.fps, content).bottom()
+    assert abs(editor.width() - remote.mirror_settings.width()) <= 2
+
+
+def test_window_options_form_one_continuous_three_column_grid(remote_layout):
+    _panel, remote, _scroll, content, _settings = remote_layout
+    controls = (
+        remote.chk_aot, remote.chk_fullscreen, remote.chk_showtouches, remote.chk_stayawake,
+        remote.chk_turnscreenoff, remote.chk_noaudio, remote.chk_record, remote.chk_noplayback,
+    )
+    assert remote.window_options_binding.widgets() == controls
+    assert remote.window_options_binding.applied_plan.mode.columns == 3
+    rectangles = [mapped_rect(control, content) for control in controls]
+    for start in range(0, len(rectangles), 3):
+        row = rectangles[start:start + 3]
+        assert max(rect.top() for rect in row) - min(rect.top() for rect in row) <= 2
+    gaps = [after.top() - before.bottom() - 1
+            for before, after in zip(rectangles[::3], rectangles[3::3])]
+    assert max(gaps) - min(gaps) <= 2
 
 
 def test_bitrate_slider_and_legacy_combo_keep_each_others_value(remote_layout):
