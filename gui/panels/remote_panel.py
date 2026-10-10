@@ -782,8 +782,8 @@ class RemotePanel(BasePanel):
         self._status_label.setAccessibleDescription(description)
 
         devices = list(active) or selected
-        self._mirror_device_label.setVisible(bool(devices))
-        self._mirror_connection_label.setVisible(bool(devices))
+        self._mirror_device_label.hide()
+        self._mirror_connection_label.hide()
         self._mirror_device_label.setText(
             self._mirror_device_name(devices[0]) if len(devices) == 1 else
             tr("镜像设备 · {count} 台").format(count=len(devices)) if devices else ""
@@ -807,19 +807,14 @@ class RemotePanel(BasePanel):
                 tr("仅录制，不打开镜像窗口") if self.chk_noplayback.isChecked()
                 else tr("镜像将在独立窗口打开")
             )
-        self._mirror_hint.setText(hint)
+        self._mirror_hint.setText(tr("镜像将在独立窗口打开"))
+        self._mirror_hint.setToolTip(hint)
         retry = bool(failed or generic_error) and self._session_state == self._SESSION_IDLE
-        self.btn_start.setText(
-            tr("重新尝试") if retry else
-            tr("追加镜像") if active and self.btn_start.isEnabled() else tr("开始镜像")
-        )
-        self.btn_stop.setText(
-            tr("停止全部") if len(active) > 1 else
-            tr("停止镜像") if stop_failed else
-            tr("取消启动") if not ready and (preparing or connecting) else tr("停止镜像")
-        )
+        self.btn_start.setText(tr("开始镜像"))
+        self.btn_start.setToolTip(tr("重新尝试") if retry else tr("开始屏幕镜像（Ctrl+Enter）"))
+        self.btn_stop.setText(tr("停止镜像"))
         # 单台会话的同名状态与动作由顶部承接；多台保留原设备归属的行内操作。
-        self._session_list.setVisible(len(sessions) > 1)
+        self._session_list.hide()
 
         error = ""
         if stop_failed:
@@ -846,9 +841,12 @@ class RemotePanel(BasePanel):
             self.btn_mirror_diagnostics.setChecked(False)
             self.btn_mirror_diagnostics.setText(tr("查看诊断详情"))
         self._mirror_error_label.setText(error)
-        self._mirror_error_label.setVisible(bool(error))
-        self.btn_mirror_diagnostics.setVisible(bool(error))
+        # 错误详情保留在状态提示中，避免连接结果改变操作栏高度。
+        self._mirror_error_label.hide()
+        self.btn_mirror_diagnostics.hide()
         self._mirror_diagnostic_label.setText(diagnostic)
+        self._mirror_diagnostic_label.hide()
+        self._status_label.setToolTip("\n".join(filter(None, (description, error, diagnostic))))
         # 摘要内容变化时刷新 Qt 网格项，状态轮询不重复触发布局。
         layout_state = (
             self._status_label.text(), self._mirror_device_label.text(),

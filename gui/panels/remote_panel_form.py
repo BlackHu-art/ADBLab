@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import cast
 
 from PySide6.QtCore import QObject, QSize, Qt, Slot
-from PySide6.QtWidgets import QCheckBox, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     IconWidget,
@@ -16,7 +16,6 @@ from qfluentwidgets import (
     ToolButton,
     themeColor,
 )
-from shiboken6 import delete
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.feedback import report_feedback
@@ -291,6 +290,12 @@ class RemotePanelForm(QObject):
             switch.updateGeometry()
         # 录屏提示显隐预留同一行字体高度，避免大字号时挤缩已展开的参数与开关。
         self._frame.record_path.setFixedHeight(self._frame.record_path.fontMetrics().height())
+        # 状态文案长度变化不能挤动开始、停止按钮或触发操作栏回流。
+        self._frame._status_label.setFixedWidth(max(
+            self._frame._status_label.fontMetrics().horizontalAdvance(tr(text))
+            for text in ("未选设备", "正在停止…", "停止失败", "镜像中", "录制中",
+                         "连接中", "准备中", "连接失败", "空闲")
+        ))
         for editor in self._editors:
             editor.refresh_metrics()
         for container, label, control in self._fields:
@@ -320,7 +325,7 @@ class RemotePanelForm(QObject):
             *(button.fontMetrics().height() + 14 for button in buttons),
             *(control.minimumSizeHint().height() for control in (*buttons, *combos, *choices)),
         )
-        for control in (*buttons, *combos, *choices, *self._switches, frame.bitrate_slider):
+        for control in (*buttons, *combos, *choices, *self._switches):
             control.setFixedHeight(height)
             if isinstance(control, ToolButton):
                 control.setFixedWidth(height)
@@ -345,30 +350,8 @@ class RemotePanelForm(QObject):
         self._frame.apply_responsive_width(0)
 
     def refresh_session_summary(self) -> None:
-        """保留摘要控件，仅刷新 Qt 网格项缓存的换行高度。
-
-        子标签显隐或字号变化后，QWidgetItem 可能仍返回旧高度，普通 invalidate
-        不能清除该缓存；重新挂入同一位置不改变控件身份、焦点或业务信号。
-        """
-        summary = self._session_summary
-        parent = summary.parentWidget()
-        if parent is None:
-            return
-        layout = parent.layout()
-        if not isinstance(layout, QGridLayout):
-            return
-        index = layout.indexOf(summary)
-        if index < 0:
-            return
-        row, column, row_span, column_span = cast(
-            tuple[int, int, int, int], layout.getItemPosition(index),
-        )
-        item = layout.takeAt(index)
-        assert item is not None
-        alignment = item.alignment()
-        delete(item)
-        layout.addWidget(summary, row, column, row_span, column_span, alignment)
-        parent.updateGeometry()
+        """固定操作栏保留网格项，避免状态切换时短暂拆装布局。"""
+        self._session_summary.updateGeometry()
 
     def _style_transparent_button(self, button) -> None:
         """所有按键共享高度和边框，图标按钮仍由原生控件居中绘制。"""
@@ -457,7 +440,11 @@ class RemotePanelForm(QObject):
         device_row.setSpacing(8)
         device_row.addWidget(frame._mirror_device_label, 1)
         device_row.addWidget(frame._mirror_connection_label)
-        summary_layout.addLayout(device_row)
+        # 设备明细留给独立展示入口，顶部仅承载固定的镜像操作。
+        frame._mirror_device_label.hide()
+        frame._mirror_connection_label.hide()
+        frame._mirror_device_label.setParent(summary)
+        frame._mirror_connection_label.setParent(summary)
         frame.btn_start = frame._b(
             tr("开始镜像"), "monitor-play.svg", "accent", tooltip=tr("开始屏幕镜像（Ctrl+Enter）"),
         )
@@ -469,7 +456,7 @@ class RemotePanelForm(QObject):
         frame._mirror_hint = apply_label_role(
             BodyLabel(tr("镜像将在独立窗口打开")), FontRole.UI, color_key="TEXT_SECONDARY",
         )
-        frame._mirror_hint.setWordWrap(True)
+        frame._mirror_hint.setWordWrap(False)
         gl.addWidget(frame._mirror_hint)
         frame._add_responsive_row(
             gl, summary, frame.btn_start, frame.btn_stop, spacing=12, adaptive_spacing=False,
@@ -721,7 +708,7 @@ class RemotePanelForm(QObject):
             action.setAccessibleName(
                 tr("{device}：{action}").format(device=label, action=action.text())
             )
-        frame._session_list.setVisible(len(sessions) > 1)
+        frame._session_list.hide()
         frame._refresh_mirror_presentation()
 
     def _session_action(self, device: str) -> None:

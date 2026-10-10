@@ -876,8 +876,7 @@ class RemotePanelScrcpy:
             )
         self._frame._set_button_enabled(btn_start, can_start)
         if sessions is not None and btn_start is not None:
-            text = tr("追加镜像") if state != RemotePanel._SESSION_IDLE else tr("开始镜像")
-            btn_start.setText(text)
+            btn_start.setText(tr("开始镜像"))
         self._frame._set_button_enabled(
             btn_stop,
             state in {RemotePanel._SESSION_STARTING, RemotePanel._SESSION_RUNNING},

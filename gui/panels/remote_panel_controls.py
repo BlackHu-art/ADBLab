@@ -292,7 +292,7 @@ class RemoteBitrateEditor(QWidget):
         if title_label is not None:
             title_label.setWordWrap(False)
             layout.addWidget(title_label)
-        layout.addWidget(self.slider, 1)
+        layout.addWidget(self.slider, 1, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(value_label)
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -313,7 +313,9 @@ class RemoteBitrateEditor(QWidget):
             title_width = self.title_label.fontMetrics().horizontalAdvance(self.title_label.text())
             self.title_label.setMinimumWidth(title_width)
             self.setMinimumWidth(title_width + 80 + self.value_label.minimumWidth() + 8)
-            self.slider.setFixedHeight(max(36, self.value_label.fontMetrics().height() + 14))
+            self.setMinimumHeight(max(36, self.value_label.fontMetrics().height() + 14))
+        # Fluent 滑轨按圆点半径绘制，控件拉高不会让轨道随高度居中。
+        self.slider.setFixedHeight(self.slider.handle.height())
 
     def sync_selection(self, _index: int = -1) -> None:
         """同步码率及原生圆点；同索引回写不发出下拉变化，保持预设归属。"""

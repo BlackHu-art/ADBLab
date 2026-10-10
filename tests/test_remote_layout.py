@@ -350,6 +350,40 @@ def test_default_preset_is_selected_before_user_interaction(remote_layout):
     )) == ("1024", "30", "4", "50")
 
 
+def test_mirror_toolbar_keeps_height_across_selection_and_session_states(
+    remote_layout, qt_application,
+):
+    _panel, remote, _scroll, content, _settings = remote_layout
+    toolbar = content.findChild(type(remote._session_list.parentWidget()), "remoteMirrorSession")
+    assert toolbar is not None
+    wait_for_stable_geometry(qt_application, toolbar)
+    height = toolbar.height()
+    watched = (remote.btn_start, remote.btn_stop, remote.preset_selector, remote.fps,
+               remote.bitrate_slider, remote.more_options)
+    geometry = tuple(mapped_rect(widget, content).getRect() for widget in watched)
+    from tests.test_remote_first_frame import _VisiblePaintGeometry
+
+    probe = _VisiblePaintGeometry(content, watched)
+    for state in (remote._SESSION_IDLE, remote._SESSION_STARTING, remote._SESSION_RUNNING,
+                  remote._SESSION_STOPPING, remote._SESSION_IDLE):
+        remote._set_session_state(state)
+        wait_for_stable_geometry(qt_application, toolbar)
+        assert toolbar.height() == height
+        assert tuple(mapped_rect(widget, content).getRect() for widget in watched) == geometry
+        assert remote._session_list.isHidden()
+        assert remote._mirror_device_label.isHidden()
+        assert remote.btn_start.text() == "开始镜像"
+        assert remote.btn_stop.text() == "停止镜像"
+    assert probe.samples
+    assert all(sample == geometry for sample in probe.samples)
+    remote._session_state = remote._SESSION_IDLE
+    remote._last_mirror_status = "Error"
+    remote._refresh_mirror_presentation()
+    wait_for_stable_geometry(qt_application, toolbar)
+    assert toolbar.height() == height
+    assert "重试" in remote._status_label.toolTip()
+
+
 @pytest.mark.parametrize("theme", ("Dark", "Light"))
 def test_preset_selection_uses_bottom_indicator_without_button_highlight(
     remote_layout, qt_application, theme,
@@ -486,6 +520,10 @@ def test_bitrate_readout_keeps_one_line_for_every_value(
     _resize_feature_viewport(qt_application, panel, remote, scroll, 1280)
     editor = remote.bitrate_slider.parentWidget()
     label = editor.value_label
+    wait_for_stable_geometry(qt_application, (editor, slider := remote.bitrate_slider, label))
+    handle_center = slider.mapTo(editor, slider.handle.geometry().center()).y()
+    assert abs(handle_center - label.geometry().center().y()) <= 1
+    assert abs(handle_center - editor.title_label.geometry().center().y()) <= 1
     remote.bitrate.setCurrentIndex(0)
     wait_for_stable_geometry(qt_application, (editor, label, remote.btn_start))
     single_line_height = label.sizeHint().height()
