@@ -796,13 +796,6 @@ class HomePage(ScrollArea):
                 tr("在项目目录打开命令行"),
                 frame._open_cmd,
             ),
-            (
-                "save_path",
-                FluentIcon.SAVE,
-                tr("输出目录"),
-                tr("修改截图、录屏等默认保存位置"),
-                frame._on_save_path_clicked,
-            ),
         ):
             self.tool_cards[key] = tools.add_card(icon, title, content, callback)
         self.banner = HomeBanner(tools, view)
@@ -832,6 +825,12 @@ class HomePage(ScrollArea):
                 content,
                 lambda route=key: frame._on_nav_requested(route),
             )
+        self.tool_cards["save_path"] = workspace.add_card(
+            FluentIcon.SAVE,
+            tr("输出目录"),
+            tr("修改截图、录屏等默认保存位置"),
+            frame._on_save_path_clicked,
+        )
         layout.addWidget(workspace)
 
         self.setWidget(view)

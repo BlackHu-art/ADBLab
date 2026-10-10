@@ -154,7 +154,7 @@ def test_home_banner_spans_page_and_keeps_wrapped_cards_inside(
     page.resize(width, 650)
     page.show()
     banner = page.banner
-    cards = list(page.tool_cards.values())
+    cards = page.banner.findChildren(ActionCard)
     wait_for_stable_geometry(qt_application, (page, banner, *cards))
 
     assert mapped_rect(banner, page.viewport()).topLeft() == QPoint(0, 0)
@@ -178,6 +178,9 @@ def test_home_banner_spans_page_and_keeps_wrapped_cards_inside(
         if not banner.isAncestorOf(group)
     )
     workspace_cards = workspace.findChildren(ActionCard)
+    assert page.tool_cards["save_path"] in workspace_cards
+    assert workspace_cards[-1] is page.tool_cards["save_path"]
+    assert not banner.isAncestorOf(page.tool_cards["save_path"])
     assert min(mapped_rect(card, page.widget()).left() for card in workspace_cards) == 32
     assert_scroll_target_reachable(page, workspace_cards[-1])
 
@@ -342,7 +345,7 @@ def test_main_window_home_retains_all_shortcuts_after_hidden_resize_and_theme_ch
                     == QAbstractAnimation.State.Stopped,
                 )
                 page = frame._home_page
-                cards = list(page.tool_cards.values())
+                cards = page.banner.findChildren(ActionCard)
                 wait_for_stable_geometry(qt_application, (frame, page, page.banner, *cards))
                 for card in cards:
                     assert page.banner.rect().contains(mapped_rect(card, page.banner)), (

@@ -396,7 +396,7 @@ def test_supported_minimum_home_keeps_every_action_keyboard_reachable(
         wait_until(qt_application, lambda: frame._home_page.viewport().width() > 0)
 
         assert not hasattr(frame, "_toolbar")
-        assert len(cards) == 6
+        assert len(cards) == 7
         assert all(card.focusPolicy() & Qt.FocusPolicy.TabFocus for card in cards)
         assert frame._home_page.horizontalScrollBar().maximum() == 0
     finally:
@@ -2028,8 +2028,8 @@ def test_narrow_home_wraps_cards_without_horizontal_overflow(
         wait_until(qt_application, lambda: frame._home_page.viewport().width() > 0)
         cards = tuple(frame._home_page.tool_cards.values())
 
-        assert len(cards) == 6
-        assert len({id(card) for card in cards}) == 6
+        assert len(cards) == 7
+        assert len({id(card) for card in cards}) == 7
         assert frame._home_page.horizontalScrollBar().maximum() == 0
         assert all(card.focusPolicy() & Qt.FocusPolicy.TabFocus for card in cards)
     finally:
