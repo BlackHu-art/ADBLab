@@ -7529,5 +7529,21 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>限制镜像画面的最长边，保持设备画面比例</source>
             <translation>限制鏡像畫面的最長邊，保持裝置畫面比例</translation>
         </message>
+        <message>
+            <source>单选</source>
+            <translation>單選</translation>
+        </message>
+        <message>
+            <source>当前</source>
+            <translation>目前</translation>
+        </message>
+        <message>
+            <source>收起设备</source>
+            <translation>收起裝置</translation>
+        </message>
+        <message>
+            <source>Android 版本未知</source>
+            <translation>Android 版本未知</translation>
+        </message>
     </context>
 </TS>

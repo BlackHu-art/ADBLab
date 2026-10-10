@@ -35,7 +35,8 @@ def _settle_cards(qt_application, page):
     for card in page.device_cards:
         widgets.extend((
             card, card.action_container, card.files_button, card.remote_button, card.apps_button,
-            card.selection, card.icon, card.name_label,
+            card.selection, card.icon, card.name_label, card.brand_label,
+            card.status_label, card.battery_label,
         ))
         for field in (
             *card.summary_fields.values(), *card.detail_fields.values(), card.identifier_field,
@@ -96,22 +97,41 @@ def test_normalized_device_metrics_have_named_summary_fields_and_hidden_details(
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
-def test_device_identity_controls_share_a_vertical_center(qt_application, monkeypatch, font_size):
+def test_device_header_keeps_identity_and_status_on_one_line(
+    qt_application, monkeypatch, font_size,
+):
     monkeypatch.setattr(
         BaseStyles, "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
     )
     window, page = _show_page(qt_application, 790)
     page.set_device_metadata(_rich_metadata())
-    for width in (790, 380, 790):
+    for width in (790, 620, 380, 790):
         window.resize(width, 1100)
         _settle_cards(qt_application, page)
         for card in page.device_cards:
+            controls = (
+                card.selection, card.icon, card.brand_label, card.name_label,
+                card.status_label, card.battery_label,
+            )
             centers = [
                 widget.mapTo(card, widget.rect().center()).y()
-                for widget in (card.selection, card.icon, card.name_label)
+                for widget in controls
             ]
             assert max(centers) - min(centers) <= 2
+            bounds = [QRect(widget.mapTo(card, QPoint()), widget.size()) for widget in controls]
+            assert all(card.rect().contains(rectangle) for rectangle in bounds)
+            assert all(left.right() < right.left() for left, right in zip(bounds, bounds[1:]))
+            assert abs(bounds[-1].right() - (card.width() - 15)) <= 1
+            for label in controls[2:]:
+                assert not label.wordWrap()
+                assert label.height() <= label.fontMetrics().height() + 1
+                assert label.toolTip() == label.text()
+                assert label.accessibleDescription() == label.text()
+            if width >= 620:
+                assert "在线" in card.status_label.display_text()
+                record = next(row for row in _rich_metadata() if row["ip"] == card.device_id)
+                assert record["Battery Level"] in card.battery_label.display_text()
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
@@ -197,11 +217,14 @@ def test_missing_metrics_remove_fields_while_zero_battery_is_preserved(qt_applic
     ])
     _settle_cards(qt_application, page)
     assert card.battery_label.text() == "电量 0%" and card.battery_label.isVisible()
+    assert card.battery_separator.isVisible()
+    assert card.brand_separator.isHidden()
     assert card.summary_fields["screen"].isHidden()
     assert card.summary_fields["memory"].isHidden()
     assert all(field.isHidden() for field in card.detail_fields.values())
     assert card.details_container.isVisible() and card.identifier.isVisible()
     assert page.device_cards[1].battery_label.isHidden()
+    assert page.device_cards[1].battery_separator.isHidden()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
@@ -241,7 +264,9 @@ def test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts(
 def test_cached_metadata_enriches_only_discovered_devices(qt_application):
     _window, page = _show_page(qt_application)
     first = page.device_cards[0]
-    assert first.name_label.text() == "示例 测试手机 A"
+    assert first.name_label.text() == "测试手机 A"
+    assert first.brand_label.text() == "示例"
+    assert first.brand_label.isVisible()
     assert "Android 14" in first.details_label.text()
     assert "USB" in first.status_label.text()
     assert "无线" in page.device_cards[1].status_label.text()
@@ -250,6 +275,46 @@ def test_cached_metadata_enriches_only_discovered_devices(qt_application):
     page.set_device_metadata([{"ip": "not-connected", "Model": "历史设备"}])
     assert [card.device_id for card in page.device_cards] == ["demo-usb-a", "192.0.2.15:5555"]
     assert "历史设备" not in page.summary.text()
+
+
+@pytest.mark.parametrize("identity, title", [
+    ({}, "测试手机"),
+    ({"name": "实验室设备", "alias": "备用别名"}, "实验室设备"),
+    ({"alias": "备用别名"}, "备用别名"),
+    ({"name": "demo-usb-a"}, "测试手机"),
+    ({"name": "device_demo-usb-a"}, "测试手机"),
+])
+def test_overview_title_separates_brand_and_preserves_valid_names(
+    qt_application, identity, title,
+):
+    _window, page = _show_page(qt_application)
+    page.set_device_metadata([{
+        "ip": "demo-usb-a", "Brand": "示例", "Model": "测试手机", **identity,
+    }])
+    card = page.device_cards[0]
+    _settle_cards(qt_application, page)
+
+    assert card.name_label.text() == title
+    assert card.brand_label.text() == "示例"
+    assert card.brand_label.isVisible()
+    assert card.brand_label.accessibleName() == "品牌"
+    assert card.brand_label.textFormat() == Qt.TextFormat.PlainText
+    assert card.identifier.toolTip() == "demo-usb-a"
+    card.details_button.click()
+    assert card.detail_fields["Brand"].full_value() == "示例"
+    assert card.detail_fields["Model"].full_value() == "测试手机"
+
+
+@pytest.mark.parametrize("brand", ["Unknown", "N/A", "-", "detecting", "ADB", ""])
+def test_unavailable_brand_stays_hidden_with_safe_model_fallback(qt_application, brand):
+    _window, page = _show_page(qt_application)
+    page.set_device_metadata([{
+        "ip": "demo-usb-a", "Brand": brand, "Model": "Unknown",
+    }])
+    card = page.device_cards[0]
+    assert card.name_label.text() == "Android USB设备"
+    assert card.brand_label.isHidden()
+    assert card.brand_label.text() == ""
 
 
 @pytest.mark.parametrize("device_id, connection_kind", [
@@ -547,6 +612,47 @@ def test_empty_states_offer_connection_without_placeholder_devices(qt_applicatio
     assert request.count() == (state != "scanning")
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_connection_toggle_only_shows_focus_border_for_keyboard(qt_application, theme):
+    BaseStyles.switch_theme(theme)
+    window, page = _show_page(qt_application)
+    window.activateWindow()
+    button = page.connect_button
+    request = QSignalSpy(page.connect_requested)
+    page.connect_requested.connect(lambda: page.set_connection_expanded(button.isChecked()))
+    page.disconnect_button.setFocus()
+    qt_application.processEvents()
+    focus_color = QColor(BaseStyles.color_for(theme, "BORDER_FOCUS"))
+
+    def border_color():
+        image = button.grab().toImage()
+        return image.pixelColor(image.width() // 2, round(image.devicePixelRatio()))
+
+    for expanded in (True, False):
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert button.isChecked() is expanded
+        assert border_color() != focus_color
+    assert request.count() == 2
+
+    page.disconnect_button.setFocus()
+    QTest.keyClick(page.disconnect_button, Qt.Key.Key_Backtab)
+    qt_application.processEvents()
+    assert button.hasFocus()
+    assert border_color() == focus_color
+    QTest.keyClick(button, Qt.Key.Key_Space)
+    qt_application.processEvents()
+    assert button.isChecked()
+    assert request.count() == 3
+    assert border_color() == focus_color
+
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    qt_application.processEvents()
+    assert not button.isChecked()
+    assert request.count() == 4
+    assert border_color() != focus_color
+
+
 @pytest.mark.parametrize("state", ["ready", "scanning", "unavailable"])
 @pytest.mark.parametrize("selected", [[], ["demo-usb-a", "192.0.2.15:5555"]])
 def test_device_overview_toolbar_preserves_selected_device_disconnect(
@@ -599,7 +705,8 @@ def test_device_cards_fit_actual_fonts_and_preserve_keyboard_actions(
     BaseStyles.switch_theme(theme)
     window, page = _show_page(qt_application, width)
     page.set_device_metadata([
-        {"ip": "demo-usb-a", "Model": "用于演示的长名称 Android 测试设备", "Aversion": "14"},
+        {"ip": "demo-usb-a", "Brand": "用于演示较长品牌名称的设备制造商",
+         "Model": "用于演示的长名称 Android 测试设备", "Aversion": "14"},
     ])
     _settle_cards(qt_application, page)
     assert window.width() == width
@@ -609,6 +716,17 @@ def test_device_cards_fit_actual_fonts_and_preserve_keyboard_actions(
     for card in page.device_cards:
         assert card.geometry().right() < page.width()
         assert card.name_label.font().pointSize() == font_size
+        if card.brand_label.isVisible():
+            assert card.brand_label.font().pointSize() == font_size
+            assert card.brand_label.height() >= card.brand_label.heightForWidth(
+                card.brand_label.width()
+            )
+            assert card.brand_label.geometry().right() < card.name_label.geometry().left()
+            assert abs(card.name_label.geometry().center().y()
+                       - card.brand_label.geometry().center().y()) <= 1
+            assert card.rect().contains(QRect(
+                card.brand_label.mapTo(card, QPoint()), card.brand_label.size(),
+            ))
         assert card.identifier.font().pointSize() == font_size
         assert card.selection.focusPolicy() != Qt.FocusPolicy.NoFocus
         buttons = (card.files_button, card.remote_button, card.apps_button)
@@ -781,7 +899,7 @@ def test_copy_details_is_explicit_local_and_contains_the_current_complete_card(
     assert len(copied) == 1 and requests.count() == 0
     values = dict(line.split("：", 1) for line in copied[0].splitlines())
     assert values == {
-        "设备名称": "示例 测试平板 B", "设备标识": "192.0.2.15:5555",
+        "设备名称": "测试平板 B", "设备标识": "192.0.2.15:5555",
         "连接状态": "无线 · 扫描中", "电池": "电量 0% · 使用电池",
         "系统": "Android 13 · API 33", "屏幕": "1600 × 2560",
         "内存": "6.0 GiB", "存储": "64 GiB", "品牌": "示例", "型号": "测试平板 B",

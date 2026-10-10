@@ -1,4 +1,4 @@
-"""设备栏弹层的边界、定位和瞬态资源回归。"""
+"""页内设备选择与兼容连接弹层的边界、定位和资源回归。"""
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
@@ -86,14 +86,14 @@ def test_native_device_popup_keeps_owner_active(
     wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
     if kind == "picker":
         bar.open_picker()
-        popup = bar._picker_flyout
+        popup = bar._picker
     else:
         bar.open_connection([], connection_anchor)
         popup = bar._connection_flyout
     wait_until(qt_application, lambda: popup.isVisible())
     qt_application.processEvents()
 
-    assert QApplication.activePopupWidget() is popup
+    assert QApplication.activePopupWidget() is (None if kind == "picker" else popup)
     assert native_window_api.GetActiveWindow() == hwnd
     bar.dismiss_popups()
     qt_application.processEvents()
@@ -113,7 +113,7 @@ def test_native_device_popup_routes_keyboard_without_activating(
     wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
     if kind == "picker":
         bar.open_picker()
-        popup = bar._picker_flyout
+        popup = bar._picker
         field = bar._picker.device_list
         field.setCurrentRow(1)
         field.setFocus()
@@ -193,16 +193,24 @@ def test_native_outside_click_closes_device_popup_and_allows_reopen(
     def open_popup():
         if kind == "picker":
             bar.open_picker()
-            return bar._picker_flyout
+            return bar._picker
         bar.open_connection([], connection_anchor)
         return bar._connection_flyout
 
     popup = open_popup()
-    point = QPoint(window.width() - 20, window.height() - 20)
-    assert not popup.geometry().contains(window.mapToGlobal(point))
-    coordinates = point.x() | (point.y() << 16)
+    point = QPoint(10, 10)
+    assert not QRect(popup.mapToGlobal(QPoint()), popup.size()).contains(window.mapToGlobal(point))
+    # 原生消息使用客户区物理坐标；逻辑坐标会在高 DPI 下落到错误控件上。
+    scale = window.devicePixelRatioF()
+    coordinates = round(point.x() * scale) | (round(point.y() * scale) << 16)
     assert native_window_api.PostMessageW(hwnd, 0x0201, 1, coordinates)  # WM_LBUTTONDOWN
     assert native_window_api.PostMessageW(hwnd, 0x0202, 0, coordinates)  # WM_LBUTTONUP
+    if kind == "picker":
+        qt_application.processEvents()
+        assert popup.isVisible() and bar.is_selector_expanded
+        assert open_popup() is popup
+        assert native_window_api.GetActiveWindow() == hwnd
+        return
     wait_until(
         qt_application, lambda: bar._picker_flyout is None and bar._connection_flyout is None,
     )
@@ -229,7 +237,8 @@ def test_device_popup_aligns_to_action_and_stays_in_content(
     assert bounds.right() <= content.right()
     assert bounds.top() >= anchor.mapToGlobal(QPoint(0, anchor.height())).y()
     if kind == "picker":
-        assert abs(bounds.right() - anchor.mapToGlobal(QPoint(anchor.width() - 1, 0)).x()) <= 2
+        assert bounds.left() == bar._surface.mapToGlobal(QPoint()).x()
+        assert bounds.width() == bar._surface.width()
     else:
         anchor_right = anchor.mapToGlobal(QPoint(anchor.width() - 1, 0)).x()
         screen_right = window.screen().availableGeometry().right()
@@ -240,8 +249,8 @@ def test_device_popup_aligns_to_action_and_stays_in_content(
             assert popup_bounds.right() == screen_right
         else:
             assert abs(bounds.right() - anchor_right) <= 2
-    assert 350 <= view.width() <= 420
-    assert window.screen().availableGeometry().contains(bounds)
+        assert 350 <= view.width() <= 420
+        assert window.screen().availableGeometry().contains(bounds)
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])
@@ -262,12 +271,16 @@ def test_hiding_device_bar_releases_popup_and_allows_immediate_reopen(
     if kind == "picker":
         bar.open_picker()
         replacement = bar._picker
+        assert replacement is view and replacement.isVisible()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert destroyed.count() == 0 and isValid(view)
+        return
     else:
         bar.open_connection([], anchor=connection_anchor)
         replacement = bar._connection
     assert replacement is not view and replacement.isVisible()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert destroyed.count() == 1
+    assert destroyed.count() == (0 if kind == "picker" else 1)
     assert not isValid(view)
     assert replacement.isVisible()
 
@@ -299,7 +312,7 @@ def test_device_popup_escape_dismisses_and_releases_view(bar_window, connection_
     QTest.keyClick(view, Qt.Key.Key_Escape)
     assert not view.isVisible()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert destroyed.count() == 1
+    assert destroyed.count() == (0 if kind == "picker" else 1)
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
@@ -360,7 +373,7 @@ def test_popup_large_fonts_and_connection_error_fit_window(
     if kind == "picker":
         bar.open_picker()
         view = bar._picker
-        controls = (view.description, view.device_list, view.select_all_button, view.clear_button)
+        controls = (view.summary_label, view.select_all_button, view.clear_button)
     else:
         bar.open_connection([], anchor=connection_anchor)
         view = bar._connection
@@ -420,11 +433,11 @@ def test_global_labels_survive_discovery_reorder_offline_and_selection_changes(b
     assert bar.device_label("demo-c") == "设备 3 · Phone"
     bar.set_context(["demo-c"], ["demo-c", "demo-a"], "ready")
     bar.open_picker()
-    assert bar._picker.device_list.item(0).text() == "设备 3 · Phone"
+    assert bar._picker.device_list.item(0).text() == "Phone"
     bar.set_context([], [], "empty")
     assert bar.device_label("demo-c") == "设备 3 · Phone"
     bar.set_context(["demo-c"], ["demo-c"], "ready")
-    assert bar._picker.device_list.item(0).text() == "设备 3 · Phone"
+    assert bar._picker.device_list.item(0).text() == "Phone"
 
 
 @pytest.mark.parametrize("width,font_size", [(400, 12), (730, 12), (650, 22)])
@@ -446,10 +459,10 @@ def test_single_device_header_keeps_normal_name_fully_visible(
 
     button = bar.targets_button
     assert "Redmi 23113RKC6C" in button.text()
-    assert "设备 1" in button.text()
+    assert "设备 1" not in button.text()
     assert button.width() >= button.sizeHint().width()
-    assert "当前设备 · 设备 1 · Redmi 23113RKC6C" in button.toolTip()
-    assert "当前设备 · 设备 1 · Redmi 23113RKC6C" == button.accessibleName()
+    assert "当前设备 · Redmi 23113RKC6C" in button.toolTip()
+    assert "当前设备 · Redmi 23113RKC6C" == button.accessibleName()
     assert bar.rect().contains(QRect(button.mapTo(bar, QPoint()), button.size()))
     assert bar.session_combo.currentData() == "demo-a"
 
@@ -491,7 +504,7 @@ def test_single_page_header_and_picker_show_only_current_operation_target(bar_wi
     source.addItem("demo-b", userData="demo-b")
     bar.set_context(["demo-a", "demo-b"], ["demo-a", "demo-b"], "ready")
     bar.set_session_context(source, None)
-    assert bar.targets_button.accessibleName() == "当前设备 · 设备 2"
+    assert bar.targets_button.accessibleName() == "当前设备 · Android 设备"
     bar.open_picker()
     assert bar._picker.batch_heading.isHidden()
     assert "请选择一台操作设备" in bar._picker.description.text()
@@ -504,7 +517,7 @@ def test_single_page_header_and_picker_show_only_current_operation_target(bar_wi
     bar.set_context(["demo-a"], ["demo-a"], "ready")
     assert "离线" in bar.targets_button.accessibleName()
     bar.set_session_context(None, None)
-    assert bar.targets_button.accessibleName() == "操作设备 · 1 台"
+    assert bar.targets_button.accessibleName() == "操作设备 · 1 台 · 收起设备"
     assert not bar._picker.batch_heading.isVisible()
     source.deleteLater()
 
@@ -534,7 +547,7 @@ def test_single_device_popup_keeps_actions_inside_narrow_window(
     picker = bar._picker
     bounds = QRect(picker.mapToGlobal(QPoint()), picker.size())
     assert QRect(window.mapToGlobal(QPoint()), window.size()).contains(bounds)
-    controls = [picker.device_list, picker.clear_button]
+    controls = [picker.clear_button]
     assert picker.close_button.isVisible() is with_close
     assert picker.close_section.isVisible() is with_close
     if with_close:
@@ -543,10 +556,14 @@ def test_single_device_popup_keeps_actions_inside_narrow_window(
         assert control.isVisible()
         assert picker.rect().contains(QRect(control.mapTo(picker, QPoint()), control.size()))
         assert control.height() >= control.fontMetrics().height()
-    picker.device_list.scrollToBottom()
+    picker.device_list.setCurrentRow(picker.device_list.count() - 1)
     last = picker.device_list.item(picker.device_list.count() - 1)
-    assert picker.device_list.viewport().rect().contains(picker.device_list.visualItemRect(last))
+    center = picker.device_list.viewport().mapTo(
+        picker.scroll_area.viewport(), picker.device_list.visualItemRect(last).center(),
+    )
+    assert picker.scroll_area.viewport().rect().contains(center)
     if with_close:
+        picker.scroll_area.ensureWidgetVisible(picker.close_button)
         requested = QSignalSpy(bar.close_session_requested)
         QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
         assert requested.count() == 1
@@ -585,17 +602,16 @@ def test_picker_close_action_updates_and_hides_with_session_context(bar_window, 
     assert not picker.close_button.isVisible()
 
 
-def test_picker_close_action_supports_keyboard_and_releases_after_completion(
+def test_picker_close_action_supports_keyboard_and_collapses_after_completion(
     bar_window, qt_application,
 ):
     window, bar = bar_window
     source = ComboBox(window)
     source.addItem("demo-a", userData="demo-a")
     close = PushButton("清除截图结果", window)
-    bar.set_session_context(source, close)
+    bar.set_session_context(source, close, single=False, close_scope="page")
     bar.open_picker()
     picker = bar._picker
-    popup = bar._picker_flyout
     requested = QSignalSpy(bar.close_session_requested)
     destroyed = QSignalSpy(picker.destroyed)
     picker.clear_button.setFocus(Qt.FocusReason.TabFocusReason)
@@ -604,17 +620,17 @@ def test_picker_close_action_supports_keyboard_and_releases_after_completion(
     assert picker.close_button.hasFocus()
     QTest.keyClick(picker.close_button, Qt.Key.Key_Space)
     assert requested.count() == 1
-    assert popup.isVisible()
+    assert bar.is_selector_expanded
     assert picker.close_button.text() == "正在关闭"
     assert not picker.close_button.isEnabled()
     QTest.keyClick(picker.close_button, Qt.Key.Key_Space)
     assert requested.count() == 1
     bar.set_session_context(None, None)
-    assert not popup.isVisible()
-    assert bar._picker is None and bar._picker_flyout is None
+    assert not bar.is_selector_expanded
+    assert bar._picker is picker and bar._picker_flyout is None
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert destroyed.count() == 1
-    assert not isValid(picker)
+    assert destroyed.count() == 0
+    assert isValid(picker)
 
 
 def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_update(

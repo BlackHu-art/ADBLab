@@ -264,6 +264,15 @@ def test_picker_closes_only_current_session_and_preserves_device_context(
     selection = QSignalSpy(picker.selection_requested)
     assert picker.close_button.isVisible()
     assert picker.close_button.text() == host.close_session_button.text()
+    wait_for_stable_geometry(qt_application, (picker, picker.close_button))
+    current_item = next(
+        picker.device_list.item(index) for index in range(picker.device_list.count())
+        if picker.device_list.item(index).data(Qt.ItemDataRole.UserRole) == "demo-a"
+    )
+    current_row = picker.device_list.itemWidget(current_item)
+    assert current_row.isAncestorOf(picker.close_button)
+    assert abs(mapped_rect(current_row.name_label, picker).center().y()
+               - mapped_rect(picker.close_button, picker).center().y()) <= 1
 
     QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
 
@@ -274,7 +283,8 @@ def test_picker_closes_only_current_session_and_preserves_device_context(
     assert host.current_feature == "overview"
     assert frame.left_panel.device_context_snapshot() == context
     assert selection.count() == disconnected.count() == 0
-    assert not isValid(picker) or not picker.isVisible()
+    assert not bar.is_selector_expanded
+    assert bar._picker is picker and not picker.isVisible()
 
 
 def test_screenshot_picker_keeps_clear_results_label(frame, qt_application):
@@ -292,13 +302,127 @@ def test_screenshot_picker_keeps_clear_results_label(frame, qt_application):
     assert picker.close_button.isVisible()
     assert picker.close_button.text() == "清除截图结果"
     assert picker.close_button.accessibleName() == "清除截图结果"
+    wait_for_stable_geometry(qt_application, (picker, picker.close_button))
+    assert abs(mapped_rect(picker.clear_button, picker).center().y()
+               - mapped_rect(picker.close_button, picker).center().y()) <= 1
+    assert not picker.device_list.isAncestorOf(picker.close_button)
 
     QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
 
     assert page.dispose_reasons == ["user"]
     assert host.registry.get(key) is None
     assert host.current_feature == "overview"
-    assert not isValid(picker) or not picker.isVisible()
+    assert not bar.is_selector_expanded
+    assert bar._picker is picker and not picker.isVisible()
+
+
+@pytest.mark.parametrize("section,feature,scope", [
+    ("devices", "files", "session"),
+    ("apps", "manager", "session"),
+    ("system", "logcat", "session"),
+    ("apps", "media", "page"),
+])
+def test_selector_close_scope_matches_feature_ownership(
+    frame, qt_application, monkeypatch, section, feature, scope,
+):
+    """关闭动作范围由功能定义投影，不通过翻译文案或遗留当前设备推断。"""
+    host = frame._workspace_feature_hosts[section]
+    host._definitions[feature] = replace(
+        host._definitions[feature], factory=_ClosableSessionPage,
+    )
+    frame.show()
+    frame._on_devices_updated(["demo-a"])
+    frame.left_panel.set_selected_devices(["demo-a"])
+    frame._open_workspace_feature(section, feature)
+    projected = Mock()
+    monkeypatch.setattr(frame._global_device_bar, "set_session_context", projected)
+
+    frame._sync_global_session_controls()
+
+    assert projected.call_args.kwargs.get("close_scope") == scope
+
+
+def test_selector_visibility_matches_existing_pages(frame, qt_application):
+    """共用展开区只替换既有入口，独立页面和设备概览不新增设备栏。"""
+    frame.show()
+    bar = frame._global_device_bar
+    for section, feature in (
+        ("devices", "files"), ("devices", "remote"), ("apps", "manager"),
+        ("apps", "overview"), ("apps", "media"), ("system", "overview"),
+        ("system", "logcat"), ("system", "performance"),
+    ):
+        host = frame._workspace_feature_hosts[section]
+        if feature in host._definitions:
+            host._definitions[feature] = replace(
+                host._definitions[feature], factory=_ClosableSessionPage,
+            )
+        frame._open_workspace_feature(section, feature)
+        assert bar.isVisibleTo(frame)
+        assert not bar.is_selector_expanded
+        bar.open_picker()
+        assert bar.is_selector_expanded
+    for route in ("home", "devices", "tasks", "settings"):
+        frame._on_nav_requested(route)
+        assert bar.isHidden()
+        assert not bar.is_selector_expanded
+
+
+def test_offline_current_session_keeps_original_close_action(frame, qt_application):
+    """离线当前会话保留一行关闭入口，不能重新勾选或改写在线目标。"""
+    host = frame._workspace_feature_hosts["devices"]
+    host._definitions["files"] = replace(
+        host._definitions["files"], factory=_ClosableSessionPage,
+    )
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame.left_panel.set_selected_devices(["demo-a"])
+    frame._open_workspace_feature("devices", "files", device_id="demo-a")
+    page = host.stack.currentWidget()
+    frame._on_devices_updated(["demo-b"])
+    context = frame.left_panel.device_context_snapshot()
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker.device_list.count() == 2
+    offline_item = next(
+        picker.device_list.item(index) for index in range(picker.device_list.count())
+        if not picker.device_list.item(index).data(Qt.ItemDataRole.UserRole)
+    )
+    offline_row = picker.device_list.itemWidget(offline_item)
+    assert not offline_row.check_box.isEnabled()
+    assert offline_row.status_label.text() == "离线"
+    assert offline_row.isAncestorOf(picker.close_button)
+    selected = QSignalSpy(picker.selection_requested)
+
+    QTest.mouseClick(picker.close_button, Qt.MouseButton.LeftButton)
+
+    assert page.dispose_reasons == ["user"]
+    assert selected.count() == 0
+    assert frame.left_panel.device_context_snapshot() == context
+
+
+def test_collapsed_selector_callback_cannot_close_new_page_session(frame, qt_application):
+    """复用选择组件时，切页前的晚到关闭信号不能作用于新页面。"""
+    host = frame._workspace_feature_hosts["apps"]
+    for feature in ("manager", "media"):
+        host._definitions[feature] = replace(
+            host._definitions[feature], factory=_ClosableSessionPage,
+        )
+    frame.show()
+    frame._on_devices_updated(["demo-a"])
+    frame.left_panel.set_selected_devices(["demo-a"])
+    frame._open_workspace_feature("apps", "manager", device_id="demo-a")
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    frame._open_workspace_feature("apps", "media")
+    page = host.stack.currentWidget()
+    assert not bar.is_selector_expanded
+
+    picker.close_session_requested.emit()
+
+    assert page.dispose_reasons == []
+    assert host.stack.currentWidget() is page
 
 
 @pytest.mark.parametrize("section,feature", [
@@ -356,7 +480,8 @@ def test_picker_disables_close_until_async_session_disposal_finishes(frame, qt_a
     page.dispose_ready.emit(page)
     assert host.registry.get(key) is None
     assert host.current_feature == "overview"
-    assert not isValid(picker) or not picker.isVisible()
+    assert not bar.is_selector_expanded
+    assert bar._picker is picker and not picker.isVisible()
 
 
 @pytest.mark.parametrize("state", ["ready", "empty", "unavailable"])
@@ -441,10 +566,149 @@ def test_device_metadata_updates_visible_hub_without_persistence(frame, qt_appli
     assert frame._device_metadata["demo-a"]["SDK Version"] == "35"
     assert "Serial Number" not in frame._device_metadata["demo-a"]
     card = frame._device_hub.device_cards[0]
-    assert "Phone" in card.name_label.text()
+    assert card.name_label.text() == "Phone"
+    assert card.brand_label.text() == "Example"
+    assert card.identifier.toolTip() == "demo-a"
     frame._on_devices_updated([])
     frame._on_device_info_updated("demo-a", {"Model": "Late"})
     assert "demo-a" not in frame._device_metadata
+
+
+@pytest.mark.parametrize("field, value, expected_brand, expected_model", [
+    ("Brand", " Updated Brand ", "Updated Brand", "Phone"),
+    ("Model", " Updated Model ", "Example", "Updated Model"),
+])
+def test_brand_or_model_refresh_updates_only_its_device_without_selecting(
+    frame, qt_application, field, value, expected_brand, expected_model,
+):
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
+    for device in ("demo-a", "demo-b"):
+        frame._on_device_info_updated(device, {
+            "Brand": "Example", "Model": "Phone", "Aversion": "14",
+        })
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker is not None
+    first, second = frame._device_hub.device_cards
+    first_item, second_item = picker.device_list.item(0), picker.device_list.item(1)
+    first_row = picker.device_list.itemWidget(first_item)
+    second_row = picker.device_list.itemWidget(second_item)
+    target_events = QSignalSpy(bar.selection_requested)
+    picker_events = QSignalSpy(picker.selection_requested)
+    assert first.name_label.text() == second.name_label.text() == "Phone"
+    assert bar.device_label("demo-a") == "设备 1 · Example Phone"
+    assert bar.device_label("demo-b") == "设备 2 · Example Phone"
+
+    frame._on_device_info_updated("demo-a", {field: value})
+    qt_application.processEvents()
+
+    assert bar._device_details["demo-a"] == {
+        "brand": expected_brand, "model": expected_model,
+        "android_version": "14", "connection": "USB",
+    }
+    assert bar._device_details["demo-b"] == {
+        "brand": "Example", "model": "Phone", "android_version": "14", "connection": "USB",
+    }
+    assert first.name_label.text() == expected_model
+    assert first.brand_label.text() == expected_brand
+    assert second.name_label.text() == "Phone" and second.brand_label.text() == "Example"
+    assert first.identifier.toolTip() == "demo-a"
+    assert second.identifier.toolTip() == "demo-b"
+    assert picker.device_list.itemWidget(first_item) is first_row
+    assert picker.device_list.itemWidget(second_item) is second_row
+    assert first_item.data(Qt.ItemDataRole.UserRole) == "demo-a"
+    assert second_item.data(Qt.ItemDataRole.UserRole) == "demo-b"
+    assert first_item.checkState() == Qt.CheckState.Checked
+    assert second_item.checkState() == Qt.CheckState.Unchecked
+    assert frame.left_panel.selected_devices == ["demo-a"]
+    assert target_events.count() == picker_events.count() == 0
+
+
+def test_android_version_refresh_updates_open_picker_without_changing_targets(
+    frame, qt_application,
+):
+    """仅系统版本变化也应刷新已展开行，不改变任务归属或触发选择回传。"""
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
+    for device in ("demo-a", "demo-b"):
+        frame._on_device_info_updated(device, {
+            "Brand": "Example", "Model": "Phone", "Aversion": "14",
+        })
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker is not None
+    qt_application.processEvents()
+    item = picker.device_list.item(0)
+    row = picker.device_list.itemWidget(item)
+    other_item = picker.device_list.item(1)
+    other_row = picker.device_list.itemWidget(other_item)
+    target_events = QSignalSpy(bar.selection_requested)
+    picker_events = QSignalSpy(picker.selection_requested)
+    assert row.version_label.text() == "Android 14"
+    assert row.name_label.toolTip() == other_row.name_label.toolTip() == "Phone"
+    assert bar.device_label("demo-a") == "设备 1 · Example Phone"
+
+    frame._on_device_info_updated("demo-a", {"Aversion": "15"})
+    qt_application.processEvents()
+
+    assert row.version_label.text() == "Android 15"
+    assert other_row.version_label.text() == "Android 14"
+    assert row.connection_label.text() == "USB"
+    assert bar.is_selector_expanded
+    assert picker.device_list.item(0) is item
+    assert picker.device_list.itemWidget(item) is row
+    assert picker.device_list.item(1) is other_item
+    assert picker.device_list.itemWidget(other_item) is other_row
+    assert frame.left_panel.selected_devices == ["demo-a"]
+    assert item.checkState() == Qt.CheckState.Checked
+    assert other_item.checkState() == Qt.CheckState.Unchecked
+    assert target_events.count() == picker_events.count() == 0
+    assert bar.device_label("demo-a") == "设备 1 · Example Phone"
+
+
+@pytest.mark.parametrize("device,version,connection", [
+    ("demo-usb-a", "14", "USB"),
+    ("192.0.2.15:5555", "Unknown", "无线"),
+    ("adb-demo._adb-tls-connect._tcp.local.", "15", "无线"),
+    ("emulator-5554", "13", "模拟器"),
+])
+def test_picker_projects_cached_version_and_connection_without_identity_text(
+    frame, qt_application, monkeypatch, device, version, connection,
+):
+    """设备行只使用已有缓存和连接类别，不把设备身份作为展示名称。"""
+    monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda devices: [
+        {"ip": device, "Brand": "Example", "Model": "Phone", "Aversion": version},
+    ] if device in devices else [])
+    frame.show()
+    frame._on_devices_updated([device])
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert picker is not None
+    qt_application.processEvents()
+    item = picker.device_list.item(0)
+    row = picker.device_list.itemWidget(item)
+
+    assert row.name_label.toolTip() == "Phone"
+    assert row.connection_label.text() == connection
+    if version != "Unknown":
+        assert row.version_label.text() == f"Android {version}"
+    else:
+        assert "Unknown" not in row.version_label.text()
+    displayed = "\n".join((
+        item.text(), item.toolTip(), row.name_label.toolTip(),
+        row.version_label.text(), row.connection_label.text(),
+        row.check_box.accessibleName(),
+    ))
+    assert device not in displayed
+    assert "设备 1" not in displayed
+    assert item.data(Qt.ItemDataRole.UserRole) == device
+    assert bar.device_label(device) == "设备 1 · Example Phone"
 
 
 def test_system_shared_host_ports_and_device_private_pid_require_one_target(frame):
@@ -585,7 +849,7 @@ def test_device_bar_returns_for_feature_in_same_host_and_hides_on_back(frame, qt
     assert frame.stackedWidget.geometry().top() == overview_top
 
 
-def test_popup_multiselect_round_trip_keeps_clicked_items_alive(frame, qt_application):
+def test_inline_multiselect_round_trip_keeps_clicked_items_alive(frame, qt_application):
     frame.show()
     frame._on_devices_updated(["demo-a", "demo-b"])
     bar = frame._global_device_bar
@@ -701,7 +965,7 @@ def test_connection_panel_synchronous_failure_result_is_delivered(
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])
-def test_top_device_popups_open_below_their_anchor(frame, qt_application, kind):
+def test_device_selector_and_legacy_connection_open_below_header(frame, qt_application, kind):
     frame.move(100, 0)
     frame.show()
     frame.move(100, 0)
@@ -728,7 +992,7 @@ def test_top_device_popups_open_below_their_anchor(frame, qt_application, kind):
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
-def test_device_popups_follow_fonts_and_compact_row_count(
+def test_device_selector_and_legacy_connection_follow_fonts(
     qt_application, monkeypatch, font_size
 ):
     monkeypatch.setattr(
@@ -750,7 +1014,8 @@ def test_device_popups_follow_fonts_and_compact_row_count(
     for listing in (picker.device_list,):
         row_height = listing.item(0).sizeHint().height()
         assert row_height >= listing.fontMetrics().height() + 18
-        assert listing.height() == row_height * 2 + 8
+        assert listing.height() >= row_height * 2
+        assert listing.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
@@ -1067,15 +1332,21 @@ def test_large_font_session_close_remains_readable_in_picker(qt_application, mon
         "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or 22)),
     )
-    bar = DeviceContextBar()
+    window = QWidget()
+    window.resize(452, 360)
+    layout = QVBoxLayout(window)
+    layout.setContentsMargins(0, 0, 0, 0)
+    bar = DeviceContextBar(window)
+    layout.addWidget(bar)
+    layout.addStretch(1)
     source = ComboBox()
     source.addItem("demo-a", userData="demo-a")
     close = PushButton("关闭应用管理")
-    bar.resize(452, 200)
     bar.set_context(["demo-a", "demo-b"], ["demo-a", "demo-b"], "ready")
     bar.set_session_context(source, close)
-    bar.show()
+    window.show()
     qt_application.processEvents()
+    assert window.width() == 452
     assert bar.targets_button.isVisible()
     assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
     bar.open_picker()
@@ -1083,15 +1354,15 @@ def test_large_font_session_close_remains_readable_in_picker(qt_application, mon
     qt_application.processEvents()
     assert picker.session_combo.currentData() == "demo-a"
     assert picker.close_button.isVisible()
-    assert picker.close_button.width() >= picker.close_button.sizeHint().width()
+    assert picker.close_button.width() >= picker.close_button.iconSize().width() + 16
     assert picker.close_button.height() >= picker.close_button.fontMetrics().height() + 16
     assert picker.close_button.font().pointSize() == 22
     assert picker.close_button.accessibleName() == "关闭应用管理"
-    assert picker.close_button.text() == "关闭应用管理"
-    assert picker.rect().contains(mapped_rect(picker.close_button, picker))
-    assert mapped_rect(picker.close_button, picker).top() > mapped_rect(
-        picker.clear_button, picker,
-    ).bottom()
+    assert picker.close_button.text() == ""
+    assert "关闭应用管理" in picker.close_button.toolTip()
+    assert_scroll_target_reachable(picker.scroll_area, picker.close_button)
+    current_row = picker.device_list.itemWidget(picker.device_list.item(0))
+    assert current_row.isAncestorOf(picker.close_button)
 
 
 def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_application):
@@ -1116,7 +1387,15 @@ def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_app
     assert frame.left_panel.selected_devices == ["demo-a", "demo-b"]
     host.set_device_selection_locked("probe", True, "运行中")
     assert not bar.session_combo.isEnabled()
-    assert not bar._picker.device_list.isEnabled()
+    picker = bar._picker
+    for index in range(picker.device_list.count()):
+        row = picker.device_list.itemWidget(picker.device_list.item(index))
+        assert not row.check_box.isEnabled()
+    assert picker.close_button.isEnabled()
+    selection = QSignalSpy(picker.selection_requested)
+    picker.device_list.setCurrentRow(0)
+    QTest.keyClick(picker.device_list, Qt.Key.Key_Space)
+    assert selection.count() == 0
     frame._choose_global_session("demo-a")
     assert host.current_device_id == "demo-b"
     host.set_device_selection_locked("probe", False)
@@ -1151,8 +1430,11 @@ def test_single_list_changes_target_without_losing_cached_page(frame, qt_applica
     assert bar.session_combo.currentData() == "demo-a"
     assert tuple(frame._navigation_history) == history
     frame._on_devices_updated(["demo-b"])
-    assert picker.device_list.count() == 1
-    assert picker.device_list.item(0).data(Qt.ItemDataRole.UserRole) == "demo-b"
+    assert picker.device_list.count() == 2
+    assert [picker.device_list.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(picker.device_list.count()) if
+            picker.device_list.item(index).data(Qt.ItemDataRole.UserRole)] == ["demo-b"]
+    assert picker.close_button.isVisible()
     assert host.stack.currentWidget() is page
 
 
@@ -1172,7 +1454,7 @@ def test_no_device_primary_action_opens_device_management(frame, qt_application,
     assert frame.stackedWidget.currentWidget() is frame._devices_page
     assert frame._devices_page.current_route.feature == "overview"
     assert frame._device_hub.connect_button.isVisibleTo(frame)
-    assert frame._global_device_bar._picker is None
+    assert not frame._global_device_bar.is_selector_expanded
 
 
 @pytest.mark.parametrize("section,feature", [
@@ -1417,25 +1699,25 @@ def test_device_picker_respects_short_window_height(
     window.resize(720, 360)
     window.show()
     bar.set_context([], [f"device-{index}" for index in range(count)], "ready")
-    close = PushButton(tr("关闭应用管理"))
-    bar.set_session_context(None, close)
+    close = PushButton(tr("清除截图结果"))
+    bar.set_session_context(None, close, close_scope="page")
     qt_application.processEvents()
     try:
         bar.open_picker()
         qt_application.processEvents()
-        picker, popup = bar._picker, bar._picker_flyout
-        assert picker is not None and popup is not None
-        bounds = bar._popup_bounds(bar.targets_button)
-        assert bounds.contains(QRect(popup.pos(), popup.size()))
-        assert picker.rect().contains(mapped_rect(picker.clear_button, picker))
+        picker = bar._picker
+        assert picker is not None and bar.is_selector_expanded
+        assert not picker.isWindow()
+        assert window.rect().contains(mapped_rect(picker, window))
+        assert_scroll_target_reachable(picker.scroll_area, picker.clear_button)
         assert picker.close_button.isVisible()
-        assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+        assert_scroll_target_reachable(picker.scroll_area, picker.close_button)
         last = picker.device_list.item(count - 1)
-        picker.device_list.scrollToItem(last)
+        picker.device_list.setCurrentItem(last)
         qt_application.processEvents()
-        assert picker.device_list.viewport().rect().intersects(
-            picker.device_list.visualItemRect(last)
-        )
+        last_row = picker.device_list.itemWidget(last)
+        assert picker.scroll_area.viewport().rect().contains(
+            mapped_rect(last_row, picker.scroll_area.viewport()))
         spy = QSignalSpy(picker.selection_requested)
         picker.select_all_button.click()
         assert spy.count() == 1 and len(spy.at(0)[0]) == count
@@ -1444,9 +1726,9 @@ def test_device_picker_respects_short_window_height(
         picker.device_list.setCurrentItem(last)
         QTest.keyClick(picker.device_list, Qt.Key.Key_Space)
         assert spy.count() == 3 and list(spy.at(2)[0]) == [f"device-{count - 1}"]
-        QTest.keyClick(popup, Qt.Key.Key_Escape)
+        QTest.keyClick(picker.device_list, Qt.Key.Key_Escape)
         qt_application.processEvents()
-        assert not isValid(popup) or not popup.isVisible()
+        assert not bar.is_selector_expanded and not picker.isVisible()
     finally:
         bar.dismiss_popups()
         window.close()

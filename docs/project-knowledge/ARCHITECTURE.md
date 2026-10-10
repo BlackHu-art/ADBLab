@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-10
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -83,10 +83,12 @@ flowchart LR
   `take_overview_content()` 明确组合与视觉归属，不再由主窗口穿透内部设备控件和缓存。
   协调器和 Remote 控制器按 QObject 父子关系随窗口/视图释放，不能仅靠 Python 引用管理寿命。
 - `DeviceContextBar` 在页面堆叠外提供页面标题及当前任务所需的设备入口，不拥有会话或运行锁。
-  批量页显示选择数量，固定设备页显示当前设备；各页面共用一个设备勾选下拉列表，单选页选择目标时
-  同时切换对应会话，多选页保留全部目标，均提交到同一 DeviceManager。具体页面规则见
-  [设备入口](../guides/OPERATION_RESULTS.md)。会话设备编号在当前运行内固定，组合根向结果和采集区域投影显示名称。
-  会话状态投影到可见控件的悬停提示与可访问说明，内部状态徽标不占布局空间。
+  批量页显示选择数量，固定设备页显示当前设备；已有入口共用普通 QWidget 承载的页内
+  `DevicePicker`，与正文共用材质面，展开时由布局分配高度，不创建设备选择浮窗。
+  单选页选择目标时同时切换对应会话，多选页保留全部目标，均提交到同一 DeviceManager。
+  具体页面范围、单行布局和关闭动作归属见[设备入口](../guides/OPERATION_RESULTS.md#统一操作设备入口)。
+  会话设备编号在当前运行内固定，组合根向结果和采集区域投影显示名称；必要状态和原关闭动作
+  只从当前宿主投影，选择器不建立新的任务状态源。
   `DeviceHubPage` 消费主窗口缓存快照并经信号请求操作，入口与详情呈现见
   [设备概览流程](BUSINESS_FLOW.md#workspace-路由目录)。
   概览的连接入口由 `MainFrame` 按需创建 `DeviceConnectionPanel`，挂在设备摘要与列表之间，

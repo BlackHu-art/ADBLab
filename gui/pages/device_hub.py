@@ -3,8 +3,8 @@
 from collections.abc import Iterable, Mapping
 from math import ceil
 
-from PySide6.QtCore import QEvent, QRect, QSignalBlocker, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFontMetricsF, QMouseEvent, QPainter
+from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QFocusEvent, QFontMetricsF, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -70,6 +70,11 @@ def _device_name(device_id: str, metadata: Mapping[str, object]) -> str:
     )
 
 
+def _overview_device_name(device_id: str, metadata: Mapping[str, object]) -> str:
+    """概览独立展示品牌，标题仍沿用有效别名和安全回退，不改任务归属名称。"""
+    return _device_name(device_id, {**metadata, "Brand": ""})
+
+
 class _DeviceIdentifier(CaptionLabel):
     """只省略标识的展示文本，提示和无障碍描述始终保留完整值。"""
 
@@ -97,6 +102,42 @@ class _DeviceIdentifier(CaptionLabel):
         super().changeEvent(event)
         if event.type() == QEvent.Type.FontChange:
             self._refresh_text()
+
+
+class _DeviceHeaderLabel(BodyLabel):
+    """头部始终单行绘制，省略不改原文，保证详情复制和辅助读取完整。"""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.compact_text = ""
+        self.setWordWrap(False)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+
+    def display_text(self) -> str:
+        """空间不足时优先显示状态或数值，原文继续用于提示和复制。"""
+        text = self.text()
+        if self.compact_text and self.fontMetrics().horizontalAdvance(text) > self.width():
+            text = self.compact_text
+        return self.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, self.contentsRect().width(),
+        )
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        painter.drawText(
+            self.contentsRect(),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+            self.display_text(),
+        )
 
 
 class _DeviceField(QWidget):
@@ -193,27 +234,34 @@ class _DeviceCard(QWidget):
         )
         self.icon = IconWidget(get_themed_icon("device-mobile.svg"), self)
         self.icon.setFixedSize(28, 28)
-        self.name_label = BodyLabel(self)
-        self.status_label = CaptionLabel(self)
-        self.battery_label = CaptionLabel(self)
-        for label in (self.name_label, self.status_label, self.battery_label):
-            label.setWordWrap(True)
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setMinimumWidth(0)
+        self.name_label = _DeviceHeaderLabel(self)
+        self.brand_label = _DeviceHeaderLabel(self)
+        self.brand_label.setAccessibleName(tr("品牌"))
+        self.brand_label.setTextColor(
+            QColor(BaseStyles.color_for("Light", "TEXT_SECONDARY")),
+            QColor(BaseStyles.color_for("Dark", "TEXT_SECONDARY")),
+        )
+        self.status_label = _DeviceHeaderLabel(self)
+        self.battery_label = _DeviceHeaderLabel(self)
+        self.brand_separator = CaptionLabel("·", self)
+        self.battery_separator = CaptionLabel("·", self)
         self.identity = QWidget(self)
+        self.identity.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         identity_layout = QHBoxLayout(self.identity)
         identity_layout.setContentsMargins(0, 0, 0, 0)
-        identity_layout.setSpacing(12)
-        identity_layout.addWidget(self.selection, 0, Qt.AlignmentFlag.AlignVCenter)
-        identity_layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        identity_layout.addWidget(self.name_label, 1, Qt.AlignmentFlag.AlignVCenter)
+        identity_layout.setSpacing(8)
+        for widget in (
+            self.selection, self.icon, self.brand_label, self.brand_separator, self.name_label,
+        ):
+            identity_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+        identity_layout.addStretch(1)
         self.status_container = QWidget(self)
-        status_layout = QVBoxLayout(self.status_container)
+        status_layout = QHBoxLayout(self.status_container)
         status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(3)
-        status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.battery_label)
-        self._header_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        status_layout.setSpacing(8)
+        for widget in (self.status_label, self.battery_separator, self.battery_label):
+            status_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._header_layout = QHBoxLayout()
         self._header_layout.setSpacing(16)
         self._header_layout.addWidget(self.identity, 1)
         self._header_layout.addWidget(self.status_container)
@@ -318,9 +366,16 @@ class _DeviceCard(QWidget):
         """接收状态源回传的快照，不在卡片内持久化第二份选中集合。"""
         available = state == "ready"
         self._selected = selected
-        name = _device_name(self.device_id, metadata)
+        name = _overview_device_name(self.device_id, metadata)
         self.name_label.setText(name)
         self.name_label.setToolTip(name)
+        brand = _metadata_text(metadata.get("Brand"))
+        if brand == "ADB":
+            brand = ""
+        self.brand_label.setText(brand)
+        self.brand_label.setToolTip(brand)
+        self.brand_label.setVisible(bool(brand))
+        self.brand_separator.setVisible(bool(brand))
         version = (
             _metadata_text(metadata.get("Aversion"))
             or _metadata_text(metadata.get("Android Version"))
@@ -342,12 +397,15 @@ class _DeviceCard(QWidget):
             tr("电量 {battery}").format(battery=battery) if battery else "", charging,
         ))))
         self.battery_label.setVisible(bool(battery or charging))
+        self.battery_separator.setVisible(bool(battery or charging))
+        self.battery_label.compact_text = battery or charging
         connection_state = {
             "ready": tr("在线"), "scanning": tr("扫描中"), "unavailable": tr("连接待确认"),
         }.get(state, tr("已离线"))
         self.status_label.setText(" · ".join(filter(None, (
             _connection_kind(self.device_id), connection_state, tr("已选") if selected else "",
         ))))
+        self.status_label.compact_text = connection_state
         status_color = {
             "ready": "LOG_SUCCESS", "scanning": "LOG_INFO", "unavailable": "LOG_WARNING",
         }.get(state, "TEXT_SECONDARY")
@@ -413,22 +471,7 @@ class _DeviceCard(QWidget):
         if event.type() == QEvent.Type.MouseButtonDblClick and isinstance(event, QMouseEvent):
             self._toggle_from_double_click(event)
             return True
-        if (
-            event.type() == QEvent.Type.Resize
-            and isinstance(watched, (BodyLabel, CaptionLabel))
-            and watched in (
-                self.name_label, self.status_label, self.battery_label,
-            )
-        ):
-            self._sync_label_height(watched)
         return super().eventFilter(watched, event)
-
-    def _sync_label_height(self, label: BodyLabel | CaptionLabel) -> None:
-        # 横纵重排后嵌套布局可能沿用单行高度，实际换行文本必须先参与最小高度约束。
-        height = label.fontMetrics().boundingRect(
-            QRect(0, 0, max(1, label.width()), 0), Qt.TextFlag.TextWordWrap, label.text()
-        ).height()
-        label.setMinimumHeight(max(label.fontMetrics().height(), height))
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self._toggle_from_double_click(event)
@@ -447,10 +490,17 @@ class _DeviceCard(QWidget):
         title_font = BaseStyles.font_for_role(FontRole.UI)
         title_font.setBold(True)
         self.name_label.setFont(title_font)
+        self.brand_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         self.status_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         self.battery_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
-        for label in (self.name_label, self.status_label, self.battery_label):
-            label.setMinimumHeight(label.fontMetrics().height())
+        for label in (self.name_label, self.brand_label, self.status_label, self.battery_label):
+            label.setFixedHeight(ceil(QFontMetricsF(label.font()).height()))
+        for separator in (self.brand_separator, self.battery_separator):
+            separator.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+            separator.setFixedSize(
+                ceil(QFontMetricsF(separator.font()).horizontalAdvance(separator.text())),
+                ceil(QFontMetricsF(separator.font()).height()),
+            )
         self.selection.setFont(font)
         self.selection.setFixedWidth(self.selection.sizeHint().height())
         for field in (
@@ -475,21 +525,7 @@ class _DeviceCard(QWidget):
         self.action_container.setMaximumWidth(16777215 if compact else action_width)
         width = available if compact else action_width
         self.action_container.setMinimumHeight(self._action_layout.heightForWidth(width))
-        status_width = max(
-            self.status_label.fontMetrics().horizontalAdvance(self.status_label.text()),
-            self.battery_label.fontMetrics().horizontalAdvance(self.battery_label.text()),
-        )
-        title_required = (
-            status_width
-            + self.name_label.fontMetrics().horizontalAdvance(self.name_label.text())
-            + self.selection.sizeHint().width() + self.icon.width() + 32
-        )
-        stacked_header = available < title_required
-        self._header_layout.setDirection(
-            QBoxLayout.Direction.TopToBottom if stacked_header
-            else QBoxLayout.Direction.LeftToRight
-        )
-        self.status_container.setMinimumWidth(0 if stacked_header else status_width)
+        self._fit_header(available)
         summary_fields = tuple(self.summary_fields.values())
         detail_fields = (*self.detail_fields.values(), self.identifier_field)
         # 摘要图标也占据标签区；两组字段共享数值起点和列宽，避免展开后列线错开。
@@ -519,11 +555,47 @@ class _DeviceCard(QWidget):
             not field.isHidden() for field in self.summary_fields.values()
         ))
         self._place_fields(self._details_layout, detail_fields, columns, value_offset)
-        for label in (self.name_label, self.status_label, self.battery_label):
-            if not label.isHidden():
-                self._sync_label_height(label)
         self._body_layout.invalidate()
         self.updateGeometry()
+
+    def _fit_header(self, available: int) -> None:
+        """宽度足够时两端按自然宽度展示，不足时各组共享省略预算，不挤成第二行。"""
+        labels = (self.brand_label, self.name_label, self.status_label, self.battery_label)
+        natural = [
+            0 if label.isHidden() else ceil(
+                QFontMetricsF(label.font()).horizontalAdvance(label.text()),
+            )
+            for label in labels
+        ]
+        identity_fixed = self.selection.width() + self.icon.width() + 16
+        if not self.brand_separator.isHidden():
+            identity_fixed += self.brand_separator.width() + 16
+        status_fixed = (
+            0 if self.battery_separator.isHidden() else self.battery_separator.width() + 16
+        )
+        text_budget = max(
+            0, available - identity_fixed - status_fixed - self._header_layout.spacing(),
+        )
+        status_budget = min(sum(natural[2:]), max(text_budget // 2, text_budget - sum(natural[:2])))
+        status_widths = natural[2:]
+        if sum(status_widths) > status_budget:
+            # 前缀不能挤掉关键状态和百分比；简写节省的空间交回品牌、型号。
+            status_widths = [
+                0 if label.isHidden() else ceil(
+                    QFontMetricsF(label.font()).horizontalAdvance(label.compact_text),
+                )
+                for label in labels[2:]
+            ]
+            status_budget = min(text_budget, sum(status_widths))
+        widths = []
+        for (first, second), budget in (
+            (natural[:2], text_budget - status_budget), (status_widths, status_budget),
+        ):
+            second_width = min(second, max(budget // 2, budget - first))
+            widths.extend((min(first, max(0, budget - second_width)), second_width))
+        for label, width in zip(labels, widths):
+            label.setFixedWidth(width)
+        self.status_container.setFixedWidth(sum(widths[2:]) + status_fixed)
 
     @staticmethod
     def _place_fields(
@@ -596,6 +668,8 @@ class DeviceHubPage(QWidget):
             FluentIcon.CONNECT, tr("连接设备"), self._toolbar_actions,
         )
         self.connect_button.setCheckable(True)
+        self.connect_button.setProperty("keyboardFocus", False)
+        self.connect_button.installEventFilter(self)
         self.connect_button.setAccessibleName(tr("连接设备"))
         self.connect_button.setToolTip(tr("展开或收起设备连接区"))
         self.connect_button.clicked.connect(self.connect_requested)
@@ -667,6 +741,27 @@ class DeviceHubPage(QWidget):
             self.connect_button.setIcon(FluentIcon.UP.colored(color, color))
         else:
             self.connect_button.setIcon(FluentIcon.CONNECT)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.connect_button:
+            keyboard_focus = None
+            if event.type() == QEvent.Type.FocusIn and isinstance(event, QFocusEvent):
+                keyboard_focus = event.reason() in (
+                    Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                    Qt.FocusReason.ShortcutFocusReason,
+                )
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                keyboard_focus = False
+            elif event.type() == QEvent.Type.KeyPress:
+                keyboard_focus = True
+            if keyboard_focus is not None and watched.property("keyboardFocus") != keyboard_focus:
+                # 鼠标点击仅切换展开状态；键盘导航仍需要明确的焦点提示。
+                button = self.connect_button
+                button.setProperty("keyboardFocus", keyboard_focus)
+                button.style().unpolish(button)
+                button.style().polish(button)
+                button.update()
+        return super().eventFilter(watched, event)
 
     def set_device_metadata(self, records: Iterable[Mapping[str, object]]) -> None:
         """只接收主窗口提供的内存元数据副本，不加载存储或执行设备查询。"""
@@ -768,7 +863,10 @@ class DeviceHubPage(QWidget):
     def _apply_theme(self) -> None:
         # 仅连接入口的选中态强调文字，保留 Fluent 透明底色和悬停、按下反馈。
         selected = "TransparentPushButton:checked:enabled { color: --ThemeColorPrimary; }"
-        focus = "TransparentPushButton:focus { border: 2px solid %s; border-radius: 6px; }"
+        focus = (
+            'TransparentPushButton[keyboardFocus="true"]:focus '
+            "{ border: 2px solid %s; border-radius: 6px; }"
+        )
         setCustomStyleSheet(
             self.connect_button,
             selected + focus % BaseStyles.color_for("Light", "BORDER_FOCUS"),

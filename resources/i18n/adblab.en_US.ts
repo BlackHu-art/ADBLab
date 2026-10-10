@@ -7529,5 +7529,21 @@ Android device management, apps and diagnostics</translation>
             <source>限制镜像画面的最长边，保持设备画面比例</source>
             <translation>Limit the longest edge while preserving the device aspect ratio</translation>
         </message>
+        <message>
+            <source>单选</source>
+            <translation>Single selection</translation>
+        </message>
+        <message>
+            <source>当前</source>
+            <translation>Current</translation>
+        </message>
+        <message>
+            <source>收起设备</source>
+            <translation>Collapse devices</translation>
+        </message>
+        <message>
+            <source>Android 版本未知</source>
+            <translation>Android version unknown</translation>
+        </message>
     </context>
 </TS>

@@ -10,7 +10,21 @@ from gui.pages.workspace_features import WorkspaceFeatureHost
 from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceContextBar
 from tests.test_workspace_feature_host import _LifecyclePage
-from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry
+from tests.ui_geometry_helpers import (
+    assert_scroll_target_reachable,
+    mapped_rect,
+    wait_for_stable_geometry,
+)
+
+
+def _assert_close_action_fits(picker):
+    """文字按钮或窄窗图标均保持完整操作名称与可点击区域。"""
+    button = picker.close_button
+    text_width = button.fontMetrics().horizontalAdvance(button.text())
+    assert button.width() >= text_width + button.iconSize().width() + 16
+    assert button.accessibleName()
+    assert button.accessibleName() in button.toolTip()
+    assert_scroll_target_reachable(picker.scroll_area, button)
 
 
 @pytest.fixture
@@ -100,8 +114,10 @@ def test_session_status_visibility_and_route_clear_do_not_leave_stale_text(sessi
     bar.set_session_context(combo, close, badge)
     assert bar.session_hint.isHidden()
     assert bar._picker.close_button.isVisible()
+    picker = bar._picker
     bar.set_session_context(None, None)
-    assert bar._picker is None
+    assert not bar.is_selector_expanded
+    assert bar._picker is picker
     assert bar.session_hint.text() == ""
     assert bar.session_hint.toolTip() == ""
     assert bar.session_hint.accessibleDescription() == ""
@@ -154,9 +170,8 @@ def test_device_selection_preserves_bar_rows(
         wait_for_stable_geometry(qt_application, (picker, picker.close_button))
         if close_text is not None:
             assert picker.close_button.isVisible()
-            assert picker.close_button.width() >= picker.close_button.sizeHint().width()
+            _assert_close_action_fits(picker)
             assert status in picker.close_button.accessibleDescription()
-            assert picker.rect().contains(mapped_rect(picker.close_button, picker))
             assert (mapped_rect(picker.close_button, picker).top()
                     > mapped_rect(picker.clear_button, picker).bottom())
         else:
@@ -198,7 +213,7 @@ def test_long_session_name_does_not_force_a_second_row(session_bar, qt_applicati
         picker = bar._picker
         wait_for_stable_geometry(qt_application, (picker, picker.close_button))
         assert picker.close_button.isVisible()
-        assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+        _assert_close_action_fits(picker)
         bar.dismiss_popups()
 
 
@@ -230,9 +245,8 @@ def test_session_status_and_actions_fit_after_width_and_font_changes(
     picker = bar._picker
     wait_for_stable_geometry(qt_application, (picker, picker.close_button))
     assert picker.close_button.isVisible()
-    assert picker.rect().contains(mapped_rect(picker.close_button, picker))
+    _assert_close_action_fits(picker)
     assert picker.close_button.height() >= picker.close_button.fontMetrics().height()
-    assert picker.close_button.width() >= picker.close_button.sizeHint().width()
     assert status in bar.session_combo.accessibleDescription()
     assert status in bar.accessibleDescription()
     assert status in picker.close_button.accessibleDescription()
@@ -295,7 +309,7 @@ def test_closing_session_projects_resource_wait_instead_of_operation_permission(
             host.open_feature("probe", preferred_device="demo-a")
         assert host.stack.currentWidget() is host.closing_page
         bar.set_session_context(host.device_combo, host.close_session_button, host.session_badge)
-        if bar._picker is None:
+        if not bar.is_selector_expanded:
             bar.open_picker()
         assert not bar._picker.close_button.isEnabled()
         assert bar._picker.close_button.accessibleName() == "正在关闭"
@@ -339,7 +353,7 @@ def test_closing_projection_survives_target_and_connection_changes(qt_applicatio
         assert host.stack.currentWidget() is host.closing_page
         assert host.registry.is_disposing(key)
         assert not host.close_session_button.isEnabled()
-        if bar._picker is None:
+        if not bar.is_selector_expanded:
             bar.open_picker()
         assert not bar._picker.close_button.isEnabled()
         assert bar._picker.close_button.accessibleName() == "正在关闭"

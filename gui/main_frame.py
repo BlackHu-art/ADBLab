@@ -61,7 +61,7 @@ from gui.close_controller import CloseController
 from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
 from gui.notifications import show_toast
-from gui.pages.device_hub import DeviceHubPage, _device_name
+from gui.pages.device_hub import DeviceHubPage, _connection_kind, _device_name, _metadata_text
 from gui.pages.fluent_pages import (
     GalleryPage,
     HomePage,
@@ -2002,8 +2002,19 @@ class MainFrame(FluentWindow):
                         apps.set_device_labels(labels)
                     for host in self._workspace_feature_hosts.values():
                         host.performance_sessions.set_device_labels(labels)
-                records = {device: {**info, "name": bar.device_label(device)}
-                           for device, info in records.items()}
+                # 展示属性独立投影；仅品牌或版本变化也须更新已展开行，不改任务归属名称。
+                bar.set_device_details({
+                    device: {
+                        "brand": _metadata_text(info.get("Brand")),
+                        "model": _metadata_text(info.get("Model")),
+                        "android_version": (
+                            _metadata_text(info.get("Aversion"))
+                            or _metadata_text(info.get("Android Version"))
+                        ),
+                        "connection": _connection_kind(device),
+                    }
+                    for device, info in records.items()
+                })
             if incremental:
                 for record in records.values():
                     hub.update_device_metadata(record)
@@ -2082,6 +2093,7 @@ class MainFrame(FluentWindow):
             host.session_badge if not host.session_badge.isHidden() else None,
             single=requires and host.current_feature != "performance",
             selection_locked=host.is_device_selection_locked(),
+            close_scope="session" if requires else "page",
         )
 
     def _select_operation_devices(self, devices: list[str]) -> None:

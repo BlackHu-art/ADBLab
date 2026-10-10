@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-10
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -79,11 +79,14 @@ sequenceDiagram
 无法获得合法连接端点时只刷新设备列表；历史保存失败记录固定诊断，不撤销已确认的连接。
 DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
 兼容状态源，全局栏和 DeviceHubPage 都将选择交回同一 DeviceManager，再接收更新后的快照。
-会话身份与操作目标分别保存；单选弹层通过 `MainFrame._select_operation_devices()` 一次同步二者，
+会话身份与操作目标分别保存；页内列表单选通过 `MainFrame._select_operation_devices()` 一次同步二者，
 清空目标保留原会话缓存和停止入口，不能改变在途任务的设备归属。交互规则见
 [统一操作设备入口](../guides/OPERATION_RESULTS.md#统一操作设备入口)。
-DeviceContextBar 在进程内分配固定显示编号，组合根向概览、Monkey、性能列表及 ActionResults
-投影设备名称。操作提交将名称冻结进结果快照；编号映射不持久化，也不参与准入或命令选路。
+展开状态只属于当前设备栏的界面状态，不持久化，也不增加设备选择或任务状态的可写副本。
+DeviceContextBar 在进程内分配固定显示编号，组合根向 Monkey、性能列表及 ActionResults
+投影设备名称。概览直接消费缓存元数据，显示规则见
+[统一操作设备入口](../guides/OPERATION_RESULTS.md#统一操作设备入口)。操作提交将名称冻结进
+结果快照；编号映射不持久化，也不参与准入或命令选路。
 
 ## 路由与命令状态
 

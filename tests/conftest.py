@@ -200,6 +200,7 @@ _UI_TEST_FILES = frozenset(
         "test_device_hub_page.py",
         "test_global_device_context.py",
         "test_device_context_bar_presentation.py",
+        "test_inline_device_selector.py",
         "test_session_status_bar.py",
         "test_navigation_theme.py",
         "test_content_section.py",

@@ -973,8 +973,8 @@ def test_navigation_history_tracks_workspace_leaves_on_same_physical_page(
         frame.close()
 
 
-def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application):
-    """全局设备弹层不改变历史，多选和隐藏宿主信号不能夺走待打开意图。"""
+def test_inline_device_selector_preserves_history_and_ignores_ambiguous_resume(qt_application):
+    """页内设备选择不改变历史，多选和隐藏宿主信号不能夺走待打开意图。"""
 
     frame = build_main_frame()
     try:
@@ -986,11 +986,13 @@ def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application)
         history = tuple(frame._navigation_history)
         frame._global_device_bar.open_picker()
         assert frame._global_device_bar._picker is not None
+        assert frame._global_device_bar.is_selector_expanded
+        assert not frame._global_device_bar._picker.isWindow()
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert tuple(frame._navigation_history) == history
 
         frame._on_devices_updated(["device-1", "device-2"])
-        # 多选快照从设备列表广播；当前 manager 的弹层本身只允许单选。
+        # 多选快照从设备列表广播；当前 manager 的展开列表本身只允许单选。
         frame.left_panel._devices_tab.set_selected_devices(["device-1", "device-2"])
         frame._on_workspace_route_changed(WorkspaceRoute("system", "overview"))
         assert host.pending_route == pending
@@ -999,6 +1001,7 @@ def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application)
         assert tuple(frame._navigation_history) == history
 
         frame._on_nav_requested("tasks")
+        assert not frame._global_device_bar.is_selector_expanded
         assert host.pending_route == pending
         frame.navigationInterface.panel.returnButton.click()
         assert frame.stackedWidget.currentWidget() is frame._apps_page
@@ -3115,6 +3118,46 @@ def test_settings_page_applies_typography_in_one_batch(qt_application):
         ]
         reload_styles.assert_called_once_with()
     finally:
+        frame._close_ready = True
+        frame.close()
+
+
+def test_inline_selector_reallocates_workspace_height_and_restores_after_collapse(qt_application):
+    """展开占用内容面受限高度，收起完整归还正文空间，不改变主窗口大小。"""
+    frame = build_main_frame()
+    try:
+        frame.show()
+        frame._on_devices_updated([f"demo-{index}" for index in range(20)])
+        frame._open_workspace_feature("devices", "remote")
+        bar = frame._global_device_bar
+        surface = frame._content_surface
+        stack = frame.stackedWidget
+        for height in (540, 800, 540):
+            frame.resize(1017, height)
+            wait_for_stable_geometry(qt_application, (frame, bar, stack, surface))
+            collapsed_height = bar.height()
+            collapsed_body = stack.geometry()
+            window_size = frame.size()
+            surface_height = surface.height()
+
+            bar.open_picker()
+            wait_for_stable_geometry(qt_application, (frame, bar, stack, bar._picker))
+
+            assert bar.is_selector_expanded
+            assert frame.size() == window_size
+            assert surface.height() == surface_height
+            assert stack.y() > collapsed_body.y()
+            assert stack.height() < collapsed_body.height()
+            assert bar._picker.height() <= int((surface_height - collapsed_height) * 0.45)
+            assert surface.rect().contains(mapped_rect(bar._picker, surface))
+
+            bar.collapse_selector()
+            wait_until(qt_application, lambda: bar.height() == collapsed_height)
+
+            assert bar.height() == collapsed_height
+            assert stack.geometry() == collapsed_body
+    finally:
+        frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 

@@ -101,6 +101,22 @@ def test_about_support_toggle_translates_both_states(
         panel.close()
 
 
+@pytest.mark.parametrize("language,single,current,collapse,unknown", [
+    ("zh_CN", "单选", "当前", "收起设备", "Android 版本未知"),
+    ("zh_HK", "單選", "目前", "收起裝置", "Android 版本未知"),
+    ("en_US", "Single selection", "Current", "Collapse devices", "Android version unknown"),
+])
+def test_inline_device_selector_labels_have_bundled_translations(
+    installed_translators, language, single, current, collapse, unknown,
+):
+    """紧凑选择列表的新短文案在三种界面语言中均可显示。"""
+    installed_translators(language)
+    assert i18n.tr("单选") == single
+    assert i18n.tr("当前") == current
+    assert i18n.tr("收起设备") == collapse
+    assert i18n.tr("Android 版本未知") == unknown
+
+
 def test_translation_installation_does_not_change_locale_or_environment(
     qt_application, installed_translators,
 ):
