@@ -36,7 +36,7 @@ from gui.feedback import report_feedback
 from gui.i18n import tr
 from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_label_role, apply_reading_surface
+from gui.styles.fluent import apply_label_role, apply_reading_surface, use_smooth_scroll
 from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
@@ -204,7 +204,7 @@ class AppDetailsPage(QWidget):
             sb.setProperty("adaptiveBaseHeight", 28)
             hl.addWidget(sb)
         parent.addLayout(hl)
-        lw = ListWidget()
+        lw = use_smooth_scroll(ListWidget())
         lw.setItemDelegate(_PermissionItemDelegate(lw))
         lw.setMinimumHeight(100)
         lw.setSelectionMode(

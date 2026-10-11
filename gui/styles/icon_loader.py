@@ -10,8 +10,10 @@ from pathlib import Path
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QIcon
 from qfluentwidgets import FluentIcon, FluentIconBase, Theme
-from qfluentwidgets.common.icon import SvgIconEngine, getIconColor
+from qfluentwidgets.common.icon import getIconColor
 
+from gui.styles.cached_icon import CachedSvgIconEngine
+from gui.styles.cached_icon import cached_fluent_icon as cached_fluent_icon
 from utils.resource_path import resource_path
 
 
@@ -24,7 +26,7 @@ def _resource_svg(path: str) -> str:
 @lru_cache(maxsize=32)
 def _tinted_resource_icon(path: str, tint: str) -> QIcon:
     """按已解析的主题色缓存矢量引擎，保持不同 DPI 的绘制精度。"""
-    return QIcon(SvgIconEngine(_resource_svg(path).replace("currentColor", tint)))
+    return QIcon(CachedSvgIconEngine(_resource_svg(path).replace("currentColor", tint).encode()))
 
 
 class ResourceIcon(FluentIconBase):

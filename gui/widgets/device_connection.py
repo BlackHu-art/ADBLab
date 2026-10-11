@@ -16,7 +16,6 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QTimer,
-    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
@@ -65,9 +64,10 @@ from gui.styles.fluent import (
     apply_focus_indicator,
     apply_font_role,
     apply_label_role,
-    use_instant_scroll,
+    use_smooth_scroll,
 )
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
+from gui.widgets.frame_animation import FrameAnimation
 from utils.adb_targets import normalize_adb_connect_target
 
 
@@ -191,7 +191,7 @@ class _AddressForm(QWidget):
         history_layout.setContentsMargins(0, 0, 0, 0)
         history_layout.setSpacing(8)
         history_layout.addWidget(StrongBodyLabel(tr("设备连接历史"), self.history_box))
-        self.history_scroll = use_instant_scroll(SmoothScrollArea(self.history_box))
+        self.history_scroll = use_smooth_scroll(SmoothScrollArea(self.history_box))
         self.history_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.history_scroll.setWidgetResizable(True)
         self.history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -341,7 +341,7 @@ class DeviceConnectionPanel(QWidget):
         self._reveal_start = 0
         self._reveal_end = 0
         self._focus_policies: dict[QWidget, Qt.FocusPolicy] = {}
-        self._reveal_animation = QVariantAnimation(self)
+        self._reveal_animation = FrameAnimation(self)
         self._reveal_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
         self._reveal_animation.valueChanged.connect(self._apply_reveal_frame)
         self._reveal_animation.finished.connect(self._finish_reveal)
@@ -1547,6 +1547,8 @@ class DeviceConnectionPanel(QWidget):
         self.navigation.refresh_mode()
         for layout in reversed(list(self.stack.findChildren(QLayout))):
             layout.invalidate()
+            # 状态区在扫码和配对码页之间复用；先同步子布局约束，再测量各页自然高度。
+            layout.activate()
         stack_layout = self.stack.layout()
         assert stack_layout is not None
         stack_layout.invalidate()

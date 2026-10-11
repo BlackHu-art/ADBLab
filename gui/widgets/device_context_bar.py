@@ -17,7 +17,6 @@ from PySide6.QtCore import (
     QSignalBlocker,
     QSize,
     Qt,
-    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
@@ -66,8 +65,9 @@ from qfluentwidgets import (
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_focus_indicator
+from gui.styles.fluent import apply_focus_indicator, use_smooth_scroll
 from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.frame_animation import FrameAnimation
 from utils.adb_targets import normalize_adb_connect_target
 
 
@@ -358,7 +358,7 @@ class DevicePicker(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.scroll_area = ScrollArea(self)
+        self.scroll_area = use_smooth_scroll(ScrollArea(self))
         self.scroll_area.setObjectName("inlineDeviceScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1114,7 +1114,7 @@ class DeviceContextBar(QWidget):
         self._selector_end_height = 0
         self._selector_start_angle = 0.0
         self._selector_end_angle = 0.0
-        self._selector_animation = QVariantAnimation(self)
+        self._selector_animation = FrameAnimation(self)
         self._selector_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
         self._selector_animation.valueChanged.connect(self._apply_selector_frame)
         self._selector_animation.finished.connect(self._finish_selector_animation)

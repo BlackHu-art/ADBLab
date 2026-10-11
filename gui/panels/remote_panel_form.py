@@ -326,6 +326,11 @@ class RemotePanelForm(QObject):
             control.setFixedHeight(height)
             if isinstance(control, ToolButton):
                 control.setFixedWidth(height)
+        for editor in self._editors:
+            if isinstance(editor, RemoteChoiceEditor) and editor._prefer_combo:
+                # 隐藏 Pivot 的指示条仍抬高堆叠布局；纯下拉字段须随当前统一高度
+                # 同步外壳，避免相邻控件居中后错位，字号恢复时也不能保留旧高度。
+                editor.setFixedHeight(height)
         frame._mirror_hint.setMinimumHeight(height)
         for section in (*frame._remote_section_groups, *frame._remote_bottom_sections):
             section.headerView.setMinimumHeight(height)

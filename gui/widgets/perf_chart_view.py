@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import use_smooth_scroll
 from gui.styles.material import ensure_material_observer
 from gui.styles.tokens import RAW_PALETTE
 from services.perf_chart_data import METRIC_UNITS, reduce_extrema
@@ -37,7 +38,7 @@ class PerfChartView(QWidget):
         self._chart.legend().setVisible(True)
         self._chart_view = QChartView(self._chart, self)
         self._chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._chart_scroll = QScrollArea(self)
+        self._chart_scroll = use_smooth_scroll(QScrollArea(self))
         self._chart_scroll.setWidgetResizable(True)
         self._chart_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._chart_scroll.setWidget(self._chart_view)

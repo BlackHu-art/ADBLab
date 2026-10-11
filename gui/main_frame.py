@@ -77,6 +77,7 @@ from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.startup_stages import WindowStartupStage
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.device_context_bar import DeviceContextBar
+from gui.widgets.frame_animation import FrameAnimation
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.layout_settle import settle_responsive_layout
 from gui.widgets.navigation_theme import NavigationThemeToggle
@@ -93,7 +94,7 @@ from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole
-from .styles.fluent import refresh_fluent_widget_style, use_instant_scroll
+from .styles.fluent import refresh_fluent_widget_style, use_smooth_scroll
 from .styles.theme import apply_dark_title_bar
 
 
@@ -408,6 +409,8 @@ class MainFrame(FluentWindow):
         self._adb_pairing = None
         self._connection_panel = None
         self._connection_transition_active = False
+        self._device_details_transition_active = False
+        self._selector_transition_active = False
         self._actions = MainFrameActions(self)
         self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
@@ -560,6 +563,8 @@ class MainFrame(FluentWindow):
         for timer in self.findChildren(QTimer):
             timer.stop()
         for animation in self.findChildren(QAbstractAnimation):
+            animation.stop()
+        for animation in self.findChildren(FrameAnimation):
             animation.stop()
         self.deleteLater()
         self.startup_aborted.emit()
@@ -1062,18 +1067,33 @@ class MainFrame(FluentWindow):
         previous = self._device_scroll_vertical_maximum
         followed_previous_bottom = previous > 0 and bar.value() >= previous - 2
         self._device_scroll_vertical_maximum = maximum
-        if self._connection_transition_active:
-            # 展开只让设备卡片下移，不逐帧跟底拖动表单；二维码在完整展开后自行定位。
+        if self._connection_transition_active or self._device_details_transition_active:
+            # 连接区和详情展开只推移后续内容，不逐帧跟底拖动阅读位置。
             return
         if maximum > previous and followed_previous_bottom:
             bar.setValue(maximum)
 
     def _on_connection_transition_changed(self, active: bool) -> None:
-        """概览连接区与设备选择区互斥显示，共用工作区几何过渡的合并边界。"""
+        """连接区与同页详情可同时展开，结束一处不能提前恢复整个工作区布局。"""
         self._connection_transition_active = active
-        self.left_panel.set_viewport_transition_active(active)
+        self._sync_viewport_transition_gate()
 
-    def _sync_connection_reveal_geometry(self) -> None:
+    def _on_device_details_transition_changed(self, active: bool) -> None:
+        self._device_details_transition_active = active
+        self._sync_viewport_transition_gate()
+
+    def _on_selector_transition_changed(self, active: bool) -> None:
+        self._selector_transition_active = active
+        self._sync_viewport_transition_gate()
+
+    def _sync_viewport_transition_gate(self) -> None:
+        """等最后一个活动过渡结束，涵盖跨页时仍在收尾的旧页面。"""
+        self.left_panel.set_viewport_transition_active(
+            self._connection_transition_active or self._device_details_transition_active
+            or self._selector_transition_active
+        )
+
+    def _sync_device_reveal_geometry(self) -> None:
         """逐帧只同步概览的滚动高度，响应式网格仍在过渡结束后统一收敛。"""
         self._sync_device_scroll_content_minimum()
         layout = self._device_hub.layout()
@@ -1113,7 +1133,7 @@ class MainFrame(FluentWindow):
 
         self._global_device_bar = DeviceContextBar(self)
         self._global_device_bar.selector_transition_changed.connect(
-            self.left_panel.set_viewport_transition_active,
+            self._on_selector_transition_changed,
         )
         self.widgetLayout.removeWidget(self.stackedWidget)
         # 设备栏与页面共用一个材质面，避免两次半透明合成或接缝处出现色带。
@@ -1132,11 +1152,15 @@ class MainFrame(FluentWindow):
         self.widgetLayout.addWidget(self._content_surface, 1)
         self._sync_material_surface_styles()
         self._device_hub = DeviceHubPage(self)
+        self._device_hub.details_transition_changed.connect(
+            self._on_device_details_transition_changed,
+        )
+        self._device_hub.details_geometry_changed.connect(self._sync_device_reveal_geometry)
         # 旧设备视图作为兼容状态源保留在协调器下；不拆走仍被响应式绑定引用的控件。
         self.left_panel.device_widget.setParent(self.left_panel)
         self.left_panel.device_widget.hide()
 
-        device_scroll = use_instant_scroll(SmoothScrollArea(self))
+        device_scroll = use_smooth_scroll(SmoothScrollArea(self))
         device_scroll.setObjectName("deviceScrollArea")
         device_scroll.setWidgetResizable(True)
         device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2199,7 +2223,7 @@ class MainFrame(FluentWindow):
             self._connection_panel = panel
             self._device_hub.set_connection_panel(panel)
             panel.transition_changed.connect(self._on_connection_transition_changed)
-            panel.reveal_geometry_changed.connect(self._sync_connection_reveal_geometry)
+            panel.reveal_geometry_changed.connect(self._sync_device_reveal_geometry)
             panel.address_connect_requested.connect(self._connect_address)
             self.adb_controller.signals.connection_completed.connect(
                 panel.complete_address_connection

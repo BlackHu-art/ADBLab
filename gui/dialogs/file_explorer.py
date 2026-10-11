@@ -55,6 +55,7 @@ from gui.styles.fluent import (
     apply_label_role,
     apply_reading_surface,
     create_transient_menu,
+    use_smooth_scroll,
 )
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
@@ -340,7 +341,7 @@ class FileExplorerPage(QWidget):
         browser_layout.setContentsMargins(0, 0, 0, 0)
         browser_layout.setSpacing(4)
 
-        self.table = TableWidget(self.browser_panel)
+        self.table = use_smooth_scroll(TableWidget(self.browser_panel))
         self.table.setItemDelegate(FileExplorerItemDelegate(self.table))
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setIconSize(QSize(16, 16))

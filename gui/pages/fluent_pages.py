@@ -59,15 +59,20 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import (
-    apply_font_role, apply_label_role, set_fluent_font_rule, use_instant_scroll,
+    apply_font_role,
+    apply_label_role,
+    set_fluent_font_rule,
+    use_instant_scroll,
+    use_smooth_scroll,
 )
-from gui.styles.icon_loader import DEVICE_ICON
+from gui.styles.icon_loader import DEVICE_ICON, cached_fluent_icon
 from gui.widgets.adb_client_card import AdbClientSettingCard, AdbEnvironmentSettingCard
 from gui.widgets.home_banner import HomeBanner
 from gui.widgets.setting_card_layout import (
     SettingsCardPresentation as _SettingsCardPresentation,
 )
 from gui.widgets.setting_card_layout import apply_setting_text_style
+from gui.widgets.settings_scroll import SettingsWheelScroll
 from gui.window_effects import is_mica_supported
 from services.adb_clients import clear_client_probe_cache
 from utils.adb_resolver import (
@@ -102,7 +107,7 @@ class GalleryPage(QWidget):
         layout.setSpacing(0)
 
         if scroll:
-            body = use_instant_scroll(scroll_area or SmoothScrollArea(self))
+            body = use_smooth_scroll(scroll_area or SmoothScrollArea(self))
             body.setObjectName(f"{route_key}ScrollArea")
             body.setWidgetResizable(True)
             body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -158,7 +163,7 @@ class ActionCard(CardWidget):
         self.setAccessibleName(title)
         self.setAccessibleDescription(content)
 
-        icon_widget = IconWidget(icon, self)
+        icon_widget = IconWidget(cached_fluent_icon(icon), self)
         icon_widget.setFixedSize(36, 36)
         title_label = StrongBodyLabel(title, self)
         content_label = CaptionLabel(content, self)
@@ -500,7 +505,7 @@ class WorkspaceSectionPage(QWidget):
             content.show()
             self.body = content
             return
-        body = use_instant_scroll(scroll_area or SmoothScrollArea(self))
+        body = use_smooth_scroll(scroll_area or SmoothScrollArea(self))
         body.setWidgetResizable(True)
         body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -721,7 +726,7 @@ class HomePage(ScrollArea):
 
     def __init__(self, frame, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        use_instant_scroll(self)
+        use_smooth_scroll(self)
         self._top_left_radius = 0
         self.setObjectName("homePage")
         self.setAccessibleName(tr("首页"))
@@ -928,6 +933,7 @@ class SettingsPage(ScrollArea):
     ) -> None:
         super().__init__(parent)
         use_instant_scroll(self)
+        self._wheel_scroll = SettingsWheelScroll(self, self.scrollDelagate.vScrollBar)
         self._frame = frame
         self._settings = AppSettings.instance()
         self._startup_detection_scheduled = False
@@ -1182,11 +1188,26 @@ class SettingsPage(ScrollArea):
                 (self.restart_adb_card, self.restart_adb_card.button),
             )
         ]
+        # 只在构造时准备静态图标；包装器在绘制时仍按当前主题选色。
+        icon_labels = [item.card.iconLabel for item in self._card_presentations]
+        icon_labels.extend((
+            self.adb_client_card.card.iconLabel, self.adb_check_card.card.iconLabel,
+        ))
+        for label in icon_labels:
+            label.setIcon(cached_fluent_icon(label._icon))
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)
         self._refresh_typography()
 
     # ── ADB 页签与客户端选择 ─────────────────────────────────────────────
+
+    def prepare_shutdown(self) -> None:
+        """异步关闭前停止设置页动画及客户端探测，不等待窗口最终隐藏。"""
+        self._wheel_scroll.prepare_shutdown()
+        for card in (self.adb_client_card, self.adb_check_card):
+            card.expandAni.stop()
+            card.card.expandButton.rotateAni.stop()
+        self.adb_client_card.prepare_shutdown()
 
     def start_startup_detection(self) -> None:
         """主窗就绪后预热一次客户端识别；卡片销毁会撤销尚未投递的回调。"""

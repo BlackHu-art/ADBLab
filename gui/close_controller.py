@@ -12,6 +12,7 @@ from adblab.application.supervision import (
 )
 from core.exec import CommandRunner, ProcessRunner
 from gui.i18n import tr
+from gui.widgets.settings_scroll import SettingsWheelScroll
 
 
 class CloseController:
@@ -164,14 +165,23 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        for scroll in self._frame.findChildren(SettingsWheelScroll):
+            scroll.prepare_shutdown()
         device_bar = getattr(self._frame, "_global_device_bar", None)
         if device_bar is not None:
             # 先结束几何过渡，避免动画完成回调在 SidePanel 清理后恢复布局计时器。
             device_bar.dismiss_popups()
+        device_hub = getattr(self._frame, "_device_hub", None)
+        if device_hub is not None:
+            device_hub.prepare_shutdown()
         settings = getattr(self._frame, "_settings_page", None)
-        client_card = getattr(settings, "adb_client_card", None)
-        if client_card is not None:
-            client_card.prepare_shutdown()
+        prepare_settings = getattr(settings, "prepare_shutdown", None)
+        if callable(prepare_settings):
+            prepare_settings()
+        else:
+            client_card = getattr(settings, "adb_client_card", None)
+            if client_card is not None:
+                client_card.prepare_shutdown()
         connection = getattr(self._frame, "_connection_panel", None)
         if connection is not None:
             connection.prepare_shutdown()

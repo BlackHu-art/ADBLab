@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QSize, Qt, Signal
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, FluentIcon
 from shiboken6 import isValid
@@ -13,8 +13,185 @@ from shiboken6 import isValid
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.pages.fluent_pages import WorkspaceAreaPage, WorkspaceSectionPage
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
+from gui.styles import BaseStyles
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
 from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
+
+
+class _TopLevelShowWatcher(QObject):
+    """记录瞬时顶层显示；只检查最终父子关系会漏掉构造期闪窗。"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.allowed_window = None
+        self.phase = "构造"
+        self.events = []
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.Show and isinstance(obj, QWidget)
+                and obj.isWindow() and obj is not self.allowed_window):
+            text = getattr(obj, "text", None)
+            self.events.append((
+                self.phase, type(obj).__name__, text() if callable(text) else obj.objectName(),
+            ))
+        return False
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_logcat_construction_never_shows_detached_controls(qt_application, theme):
+    from gui.dialogs.live_logcat import LiveLogcatPage
+
+    BaseStyles.switch_theme(theme)
+    watcher = _TopLevelShowWatcher(qt_application)
+    qt_application.installEventFilter(watcher)
+    page = None
+    try:
+        page = LiveLogcatPage(device_ip="demo-a")
+        page.prepare_for_workspace()
+        qt_application.processEvents()
+        assert not watcher.events, watcher.events
+    finally:
+        if page is not None:
+            page.request_dispose("test")
+            page.deleteLater()
+        qt_application.removeEventFilter(watcher)
+        watcher.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_all_pages_device_selection_and_reopen_without_transient_windows(
+    qt_application, monkeypatch, theme,
+):
+    # 保留真实页面、选择信号与释放流程，只隔离设备 I/O 和后台发现。
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr("models.device_store.DeviceStore.get_full_devices_info", lambda _: [])
+    monkeypatch.setattr("gui.dialogs.app_manager.AppManagerPage._load_apps", Mock())
+    monkeypatch.setattr("gui.dialogs.file_explorer.FileExplorerPage._refresh", Mock())
+    monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
+    BaseStyles.switch_theme(theme)
+    watcher = _TopLevelShowWatcher(qt_application)
+    qt_application.installEventFilter(watcher)
+    frame = None
+    try:
+        frame = build_main_frame(
+            screen_adapter=_FakeScreenAdapter(_FakeScreen("probe", QSize(1600, 1100))),
+        )
+        watcher.allowed_window = frame
+        frame.show()
+        qt_application.processEvents()
+        assert BaseStyles.current_theme() == theme
+        frame._on_devices_updated(["demo-a", "demo-b"])
+        routes = list(frame._workspace_navigation_keys)
+        assert len(routes) == 9
+
+        def select_device(device):
+            bar = frame._global_device_bar
+            if bar.isVisible():
+                bar.open_picker()
+                wait_until(qt_application, lambda: not bar._selector_transition_active)
+                picker = bar._picker
+                # 多选页面也明确切换到唯一目标，避免只增加勾选而未切换设备。
+                for other, row in tuple(picker._rows.items()):
+                    if other != device and row.check_box.isChecked():
+                        row.check_box.click()
+                if not picker._rows[device].check_box.isChecked():
+                    picker._rows[device].check_box.click()
+                bar.collapse_selector()
+                wait_until(qt_application, lambda: not bar._selector_transition_active)
+            else:
+                # 设备概览沿用其卡片选择源，不为无选择器页面新增选择入口。
+                frame.left_panel.set_selected_devices([device])
+            qt_application.processEvents()
+            assert frame.left_panel.selected_devices == [device]
+
+        for section, feature in routes:
+            watcher.phase = f"{section}/{feature}:首次进入"
+            frame.left_panel.set_selected_devices([])
+            assert frame._open_workspace_feature(section, feature)
+            qt_application.processEvents()
+            host = frame._workspace_feature_hosts[section]
+            watcher.phase = f"{section}/{feature}:首次选择 A"
+            select_device("demo-a")
+            first_key = host.registry.current_key
+            first = host.stack.currentWidget()
+            assert not first.isWindow()
+            assert frame.isAncestorOf(first)
+            watcher.phase = f"{section}/{feature}:切换 B"
+            select_device("demo-b")
+            second_key = host.registry.current_key
+            second = host.stack.currentWidget()
+            per_device_session = feature in {"files", "manager", "logcat", "performance"}
+            if per_device_session:
+                assert first_key.device_id == "demo-a"
+                assert second_key.device_id == "demo-b"
+                assert second is not first
+                assert second.parentWidget() is host.stack
+            else:
+                assert second is first
+            watcher.phase = f"{section}/{feature}:切回 A"
+            select_device("demo-a")
+            assert host.stack.currentWidget() is first
+            assert host.registry.current_key == first_key
+
+            watcher.phase = f"{section}/{feature}:关闭后重开"
+            if first_key is not None:
+                tools = first._device_tools if feature == "media" else None
+                if feature == "media":
+                    assert tools is not None
+                parking = first._device_tools_parking if tools is not None else None
+                if feature == "performance":
+                    # 性能页没有用户关闭按钮，单独验证真实资源释放后的重建。
+                    assert not host.close_session_button.isEnabled()
+                    host.registry.request_dispose(first_key, "test")
+                else:
+                    assert host.close_session_button.isEnabled()
+                    frame._close_global_session()
+                wait_until(qt_application, lambda: host.registry.get(first_key) is None)
+                if tools is not None:
+                    assert tools.parentWidget() is parking
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                assert not isValid(first)
+                assert frame._open_workspace_feature(section, feature)
+                qt_application.processEvents()
+                reopened = host.stack.currentWidget()
+                reopened_key = host.registry.current_key
+                assert reopened is not first
+                assert reopened_key == FeatureSessionKey(
+                    first_key.feature, first_key.device_id, first_key.generation + 1,
+                )
+                assert reopened.parentWidget() is host.stack
+                assert not reopened.isWindow()
+                if per_device_session:
+                    assert host.registry.get(second_key) is second
+                if tools is not None:
+                    assert reopened._device_tools is tools
+                    assert reopened.isAncestorOf(tools)
+            else:
+                frame._on_nav_requested("home")
+                assert frame._open_workspace_feature(section, feature)
+                qt_application.processEvents()
+                assert host.stack.currentWidget() is first
+
+        for name in ("home", "tasks", "settings"):
+            for repeat in range(2):
+                watcher.phase = f"{name}:进入 {repeat + 1}"
+                frame._on_nav_requested(name)
+                qt_application.processEvents()
+                assert frame.stackedWidget.currentWidget() is getattr(frame, f"_{name}_page")
+                assert not frame._global_device_bar.isVisible()
+                frame._open_workspace_feature("devices", "overview")
+                qt_application.processEvents()
+        assert not watcher.events, watcher.events
+    finally:
+        if frame is not None:
+            for host in frame._workspace_feature_hosts.values():
+                host.shutdown()
+                wait_until(qt_application, lambda: not host.registry.keys())
+            frame._unbind_window_screen()
+            frame._close_ready = True
+            frame.close()
+        qt_application.removeEventFilter(watcher)
+        watcher.deleteLater()
 
 
 class _LifecyclePage(QWidget):

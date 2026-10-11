@@ -5,9 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from PySide6.QtCore import QRegularExpression
+from PySide6.QtCore import QCoreApplication, QEvent, QRegularExpression
 from PySide6.QtGui import QRegularExpressionValidator
-from PySide6.QtWidgets import QBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QBoxLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import ComboBox
 
 from gui.i18n import tr
@@ -107,6 +115,20 @@ class SystemIntentControls:
         icon = "arrow-up.svg" if expanded else "arrow-down.svg"
         self.advanced_toggle.setIcon(get_fluent_icon(icon))
         self.panel.apply_responsive_width(0)
+        # 显隐先改变局部最小高度；在首帧前把祖先几何一起落实，避免旧父高度
+        # 暂时压缩新增字段或把收起后的余高分配给上方已有控件。
+        ancestor = self.advanced
+        while ancestor is not None:
+            ancestor.updateGeometry()
+            ancestor_layout = ancestor.layout()
+            if ancestor_layout is not None:
+                ancestor_layout.activate()
+            if isinstance(ancestor, QScrollArea):
+                # widgetResizable 的内容尺寸由滚动区事件处理，单独 activate
+                # QWidget 布局不会刷新它；只同步实际宿主，不派发其他排队事件。
+                QCoreApplication.sendEvent(ancestor, QEvent(QEvent.Type.LayoutRequest))
+                break
+            ancestor = ancestor.parentWidget()
 
     def _mode_changed(self, index: int) -> None:
         placeholders = ("包名/.Activity", "android.intent.action.VIEW", "https://… 或 app://…")

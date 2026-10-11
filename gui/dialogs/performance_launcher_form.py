@@ -37,7 +37,7 @@ from qfluentwidgets import (
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.i18n import tr
-from gui.styles.fluent import apply_label_role, configure_button, use_instant_scroll
+from gui.styles.fluent import apply_label_role, configure_button, use_smooth_scroll
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
 from gui.widgets.content_section import ContentSection
@@ -110,7 +110,9 @@ class _PerformanceGrid(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reflow()
+        # 父滚动区或内容展开只改高度时保留横向计划；内容及字体仍由各自事件刷新。
+        if event.size().width() != event.oldSize().width():
+            self._reflow()
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -149,7 +151,8 @@ class _PerformanceRow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reflow()
+        if event.size().width() != event.oldSize().width():
+            self._reflow()
 
     def _reflow(self) -> None:
         if not hasattr(self, "_box") or self._keep_inline:
@@ -207,7 +210,8 @@ class _PerformanceField(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reflow()
+        if event.size().width() != event.oldSize().width():
+            self._reflow()
 
     def event(self, event):
         result = super().event(event)
@@ -353,7 +357,8 @@ class _PerformanceActionCard(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._reflow()
+        if event.size().width() != event.oldSize().width():
+            self._reflow()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -505,7 +510,7 @@ class PerformanceLauncherForm:
         content_layout.addWidget(self._frame.header_card)
         content_layout.addWidget(self._frame._configuration_group)
         content_layout.addWidget(self._frame._results_group, 1)
-        self._frame._config_scroll = use_instant_scroll(SmoothScrollArea())
+        self._frame._config_scroll = use_smooth_scroll(SmoothScrollArea())
         # 独立页面为悬浮滚动条保留通道，移交工作区后由嵌入边距替代。
         content_layout.setContentsMargins(
             0, 0, self._frame._config_scroll.delegate.vScrollBar.width() + 4, 0

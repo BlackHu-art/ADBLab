@@ -33,6 +33,10 @@ class LiveLogcatStream:
     def __init__(self, frame):
         # 控制器由页面持有，反向使用弱引用，避免 Qt 包装对象进入 Python 引用环。
         self._frame_ref = weakref.ref(frame)
+        # 空态独立于会被清空、换行及应用查询覆盖的状态栏，仅消费本会话的采集事件。
+        self._empty_capture_state = "idle"
+        self._empty_filter_wait = ""
+        self._empty_cleared = False
 
     @property
     def _frame(self):
@@ -82,12 +86,81 @@ class LiveLogcatStream:
             has_visible_content = not self._frame.output.document().isEmpty()
         self._frame.clear_action.setEnabled(bool(self._frame.entries) or has_visible_content)
         self._frame.export_action.setEnabled(has_visible_content)
-        self._frame.output.setPlaceholderText(
-            tr("当前等级下没有匹配的日志，可调整等级或等待新日志。")
-            if self._frame.entries
-            else tr("日志会显示在这里。可选择应用或日志等级后开始采集。")
-        )
+        self._refresh_empty_hint()
         self._refresh_reading_status()
+
+    def _set_empty_capture_state(self, state: str) -> None:
+        """只更新正文空态，不改变按钮准入、后台采集或停止屏障。"""
+        self._empty_capture_state = state
+        self._refresh_empty_hint()
+
+    def _capture_released(self) -> None:
+        """资源释放后收口等待提示，失败原因保留到下一次启动。"""
+        if self._empty_capture_state not in ("idle", "start_failed", "failed"):
+            self._empty_capture_state = "stopped"
+        self._refresh_empty_hint()
+
+    def _empty_hint(self) -> tuple[str, str]:
+        state = self._empty_capture_state
+        if state == "cleanup_pending":
+            return tr("仍在等待采集结束"), tr("后台任务尚未完成清理，请稍候。")
+        if state == "stopping":
+            return tr("正在停止采集"), tr("完成后可以重新开始采集。")
+        if state in ("start_failed", "failed"):
+            title = tr("日志采集启动失败") if state == "start_failed" else tr("日志采集意外结束")
+            detail = (
+                tr("正在清理本次采集，请稍候。") if self._frame.worker is not None
+                else tr("请检查设备连接，再点击上方「开始」重试。")
+            )
+            return title, detail
+        if not self._frame._device_connected:
+            detail = (
+                tr("请检查设备连接，可点击上方「停止」结束本次采集。")
+                if state in ("starting", "running") else tr("请连接当前设备后再开始采集。")
+            )
+            return tr("设备未连接"), detail
+        if state == "starting":
+            return tr("正在启动日志采集"), tr("正在准备日志流，请稍候。")
+        if state == "running":
+            if self._empty_filter_wait == "waiting":
+                return (
+                    tr("正在等待目标应用启动"),
+                    tr("请在设备上打开目标应用，随后会自动显示日志。"),
+                )
+            if self._empty_filter_wait == "retrying":
+                return (
+                    tr("正在重试应用查询"),
+                    tr("暂时无法获取应用进程，重试期间仅等待该应用的日志。"),
+                )
+            if self._empty_filter_wait == "switching":
+                return tr("正在切换应用过滤"), tr("正在等待当前过滤条件下的新日志。")
+        if self._frame.entries:
+            detail = (
+                tr("可调整日志等级，或等待符合条件的新日志。") if state == "running"
+                else tr("可调整日志等级查看已有记录。")
+            )
+            return tr("当前条件下暂无日志"), detail
+        if state == "running":
+            detail = (
+                tr("已清空显示，采集仍在继续。") if self._empty_cleared
+                else tr("采集正在运行，新日志到达后会显示在这里。")
+            )
+            return tr("正在等待新日志"), detail
+        if not self._frame._device_selected:
+            return tr("尚未选择操作设备"), tr("请在顶部设备列表中勾选当前设备。")
+        if state == "stopped":
+            return tr("采集已停止"), tr("点击上方「开始」启动新的采集。")
+        return tr("准备采集设备日志"), tr("点击上方「开始」，应用可留空以查看全部日志。")
+
+    def _refresh_empty_hint(self) -> None:
+        """提示不写入日志文档；有正文时隐藏，不影响导出、选区和阅读位置。"""
+        if self._frame._closing:
+            return
+        output = self._frame.output
+        text = "\n".join(self._empty_hint()) if output.document().isEmpty() else ""
+        if output.placeholderText() != text:
+            output.setPlaceholderText(text)
+            output.setAccessibleDescription(text)
 
     def _refresh_reading_status(self):
         """阅读状态与采集状态分开，计数按批次更新而不复制日志正文。"""
@@ -103,7 +176,11 @@ class LiveLogcatStream:
         )
         ring = self._frame.cache_ring
         ring.setRange(0, self._frame.MAX_BUFFER)
-        ring.setValue(len(self._frame.entries))
+        count = len(self._frame.entries)
+        if ring.value() != count:
+            ring.setValue(count)
+            # 无动画 Fluent 圆环只写入数值；显式排队重绘避免原生进度阈值漏掉小批更新。
+            ring.update()
         ring.setToolTip(f"{message}\n{hint}")
         ring.setAccessibleDescription(ring.toolTip())
 
@@ -168,6 +245,8 @@ class LiveLogcatStream:
                 )
                 return
             if worker.update_package(requested):
+                self._empty_filter_wait = "switching"
+                self._refresh_empty_hint()
                 # 旧代次尚未落屏的内容不能越过 Enter 提交形成的过滤边界。
                 self._frame._line_flush_timer.stop()
                 self._frame._pending_visible_lines.clear()
@@ -242,6 +321,7 @@ class LiveLogcatStream:
                 tr("请先勾选并连接当前设备，再开始采集"), tr("请连接设备"),
             )
             self._frame._set_running_actions(False)
+            self._refresh_empty_hint()
             return
         self._frame._worker_release_timer.stop()
         self._frame.entries.clear()
@@ -253,6 +333,9 @@ class LiveLogcatStream:
         self._frame.output.clear()
         self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
+        self._empty_capture_state = "starting"
+        self._empty_filter_wait = ""
+        self._empty_cleared = False
         self._update_content_actions(False)
         pkg = self._frame.pkg_input.text().strip()
         worker = _live_logcat.LogcatWorker(self._frame.device_ip, package=pkg)
@@ -286,17 +369,21 @@ class LiveLogcatStream:
             )
         except Exception:
             self._frame.status_bar.setText(tr("无法启动日志任务，请稍后重试"), tr("启动失败"))
+            self._set_empty_capture_state("start_failed")
             worker.deleteLater()
             return
         self._frame.worker = worker
         self._frame._supervisor_task_id = task_id
+        self._frame._logcat_stop_result_received = False
         self._frame._set_running_actions(True)
+        self._frame.status_bar.setText(tr("正在启动日志采集…"), tr("启动中"))
         worker.start()
 
     def _stop(self):
         if self._frame.worker and self._frame._supervisor_task_id:
             self._frame.status_bar.setText(tr("正在停止采集…"), tr("停止中"))
             self._frame._set_running_actions(True, stopping=True)
+            self._set_empty_capture_state("stopping")
             self._frame._task_supervisor.stop_async(self._frame._supervisor_task_id)
 
     def _clear(self):
@@ -309,23 +396,32 @@ class LiveLogcatStream:
         self._frame.output.clear()
         self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
+        self._empty_cleared = True
         self._frame.status_bar.setText(tr("已清空日志；运行中的采集会继续"), tr("已清空"))
         self._update_content_actions(False)
 
     def _toggle_wrap(self):
+        output = self._frame.output
+        reading_block = output.firstVisibleBlock()
+        follow_tail = self._frame.follow_btn.isChecked()
         self._frame._updating_output = True
         try:
             self._apply_wrap()
-            if self._frame.follow_btn.isChecked():
-                bar = self._frame.output.verticalScrollBar()
+            bar = output.verticalScrollBar()
+            if follow_tail:
                 bar.setValue(bar.maximum())
+            elif reading_block.isValid():
+                bar.setValue(reading_block.firstLineNumber())
+            # Qt 重排会自动显露追加日志留下的尾部光标；完成重排后恢复阅读位置，保留选区。
+            output.horizontalScrollBar().setValue(0)
         finally:
             self._frame._updating_output = False
 
     def _apply_wrap(self):
         if self._frame.wrap_btn.isChecked():
+            # 无文档边距时长串排版可能残留数像素范围；换行模式不显示横向滚动条。
+            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._frame.status_bar.setText(tr("已开启自动换行"), tr("换行已开"))
         else:
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -425,6 +521,7 @@ class LiveLogcatStream:
                 pending.popleft()
                 self._frame._pending_visible_lines.popleft()
         entry = (text, level, pid)
+        self._empty_cleared = False
         self._frame.entries.append(entry)
         if self._passes(level):
             self._frame._pending_visible_entries.append(entry)
@@ -439,7 +536,7 @@ class LiveLogcatStream:
                 return
             if batch.generation != worker.filter_generation:
                 return
-            if batch.dropped_before:
+            if batch.dropped_before and not self._frame._logcat_stopping:
                 self._frame.status_bar.setText(
                     tr("正在采集；高负载下已丢弃 {value0} 行日志").format(
                         value0=batch.dropped_before
@@ -452,7 +549,8 @@ class LiveLogcatStream:
             worker.acknowledge_batch()
 
     def _on_dropped(self, worker: LogcatWorker, count: int):
-        if not self._frame._closing and self._frame.worker is worker:
+        if (not self._frame._closing and self._frame.worker is worker
+                and not self._frame._logcat_stopping):
             self._frame.status_bar.setText(
                 tr("正在采集；高负载下已丢弃 {value0} 行日志").format(value0=count),
                 tr("已丢弃 {value0} 行").format(value0=count),
@@ -536,19 +634,40 @@ class LiveLogcatStream:
         self._frame.status_bar.setText(msg, compact)
 
     def _on_worker_status(self, worker: LogcatWorker, msg: str):
-        if self._frame.worker is worker:
+        if (not self._frame._closing and self._frame.worker is worker
+                and not self._frame._logcat_stopping):
+            if msg == "正在启动日志采集…":
+                self._empty_capture_state = "starting"
+            elif msg == "日志采集无法继续，请检查设备连接后重试":
+                self._empty_capture_state = "failed"
+            elif msg == "正在等待目标应用启动；过滤期间不会显示其他应用日志":
+                self._empty_capture_state = "running"
+                self._empty_filter_wait = "waiting"
+            elif msg == "应用进程查询失败，正在重试；过滤期间不会显示其他应用日志":
+                self._empty_capture_state = "running"
+                self._empty_filter_wait = "retrying"
+            elif msg.startswith("正在采集"):
+                self._empty_capture_state = "running"
+                self._empty_filter_wait = ""
+            self._refresh_empty_hint()
             self._on_status(msg)
 
     def _on_worker_terminated(self, worker: LogcatWorker, result: LogcatTermination):
         if self._frame._closing or self._frame.worker is not worker:
             return
+        # 监督器已报告停止结果后，晚到的线程终止信号不能倒退为“停止中”。
+        if self._frame._logcat_stop_result_received:
+            return
         if result.kind is LogcatTerminationKind.CANCELLED:
+            self._set_empty_capture_state("stopping")
             self._frame.status_bar.setText(tr("已请求停止采集"), tr("停止中"))
         elif result.kind is LogcatTerminationKind.START_FAILED:
+            self._set_empty_capture_state("start_failed")
             self._frame.status_bar.setText(
                 tr("日志采集启动失败，请检查设备连接后重试"), tr("启动失败"),
             )
         else:
+            self._set_empty_capture_state("failed")
             self._frame.status_bar.setText(
                 tr("日志采集意外结束，请检查设备连接后重新开始"), tr("采集异常"),
             )

@@ -11,7 +11,7 @@ from qfluentwidgets import FluentIcon, TableWidget
 from gui.features.base import FeatureSessionKey, FeatureSessionRegistry
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import configure_fluent_control, font_qss
+from gui.styles.fluent import configure_fluent_control, font_qss, use_smooth_scroll
 from gui.widgets.collapsible_tools import CollapsibleTools
 
 
@@ -45,7 +45,7 @@ class PerformanceSessions(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        self.table = TableWidget(self)
+        self.table = use_smooth_scroll(TableWidget(self))
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels([tr("设备"), tr("状态"), tr("采集进度")])
         self.table.setAccessibleName(tr("各设备采集状态"))

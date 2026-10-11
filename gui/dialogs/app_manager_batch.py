@@ -20,7 +20,7 @@ from gui.dialogs.lifecycle import (
 )
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import add_menu_action, apply_label_role, configure_button
+from gui.styles.fluent import add_menu_action, apply_label_role, configure_button, use_smooth_scroll
 from gui.styles.typography import FontRole
 
 
@@ -329,7 +329,7 @@ class AppManagerBatch:
         ai = LineEdit()
         lo.addWidget(ai)
         lo.addWidget(apply_label_role(BodyLabel(tr("说明（可选）")), FontRole.UI))
-        di = TextEdit()
+        di = use_smooth_scroll(TextEdit())
         di.setMaximumHeight(60)
         lo.addWidget(di)
         button_row = QHBoxLayout()

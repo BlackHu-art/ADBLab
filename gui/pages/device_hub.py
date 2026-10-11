@@ -3,7 +3,15 @@
 from collections.abc import Iterable, Mapping
 from math import ceil
 
-from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QColor, QFocusEvent, QFontMetricsF, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -33,6 +41,7 @@ from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_focus_indicator
 from gui.styles.icon_loader import get_themed_icon
+from gui.widgets.frame_animation import FrameAnimation
 
 
 def _metadata_text(value: object) -> str:
@@ -220,6 +229,8 @@ class _DeviceCard(QWidget):
 
     selection_toggled = Signal(str, bool)
     action_requested = Signal(str, str, str)
+    details_transition_changed = Signal(bool)
+    details_geometry_changed = Signal()
 
     def __init__(self, device_id: str, parent: QWidget) -> None:
         super().__init__(parent)
@@ -282,7 +293,16 @@ class _DeviceCard(QWidget):
         self.details_label = self.summary_fields["system"].value
         self.screen_label = self.summary_fields["screen"].value
         self.memory_label = self.summary_fields["memory"].value
-        self.details_container = QWidget(self)
+        self._details_expanded = False
+        self._details_transition_active = False
+        self._details_release_pending = False
+        self._details_preparing = False
+        self._details_shutdown = False
+        self._details_content_height = 0
+        self._main_height = 0
+        self._details_clip = QWidget(self)
+        self._details_clip.setFixedHeight(0)
+        self.details_container = QWidget(self._details_clip)
         self.detail_parameters = QWidget(self.details_container)
         self._details_layout = QGridLayout(self.detail_parameters)
         self._details_layout.setContentsMargins(0, 0, 0, 0)
@@ -307,12 +327,14 @@ class _DeviceCard(QWidget):
         self.copy_details_button.setToolTip(tr("复制此设备当前已获取的全部详情"))
         self.copy_details_button.setAccessibleName(tr("复制此设备当前已获取的全部详情"))
         self.copy_details_button.clicked.connect(self._copy_details)
+        self._copy_focus_policy = self.copy_details_button.focusPolicy()
+        self.copy_details_button.installEventFilter(self)
         self._copy_feedback_timer = QTimer(self)
         self._copy_feedback_timer.setSingleShot(True)
         self._copy_feedback_timer.timeout.connect(
             lambda: self.copy_details_button.setText(tr("复制详情"))
         )
-        details_layout = QVBoxLayout(self.details_container)
+        details_layout = self._details_content_layout = QVBoxLayout(self.details_container)
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(8)
         details_layout.addWidget(self.detail_parameters)
@@ -341,13 +363,23 @@ class _DeviceCard(QWidget):
         self._footer_layout.addWidget(self.details_button, 0, Qt.AlignmentFlag.AlignLeft)
         self._footer_layout.addStretch(1)
         self._footer_layout.addWidget(self.action_container, 0)
+        # 上半部保持自然高度；详情和顶部间距只由透明外壳裁切，不参与剩余高度分配。
+        self._main_content = QWidget(self)
+        self._main_layout = QVBoxLayout(self._main_content)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(12)
+        self._main_layout.addLayout(self._header_layout)
+        self._main_layout.addWidget(self.summary_container)
+        self._main_layout.addLayout(self._footer_layout)
         self._body_layout = QVBoxLayout(self)
         self._body_layout.setContentsMargins(14, 12, 14, 12)
-        self._body_layout.setSpacing(12)
-        self._body_layout.addLayout(self._header_layout)
-        self._body_layout.addWidget(self.summary_container)
-        self._body_layout.addLayout(self._footer_layout)
-        self._body_layout.addWidget(self.details_container)
+        self._body_layout.setSpacing(0)
+        self._body_layout.addWidget(self._main_content)
+        self._body_layout.addWidget(self._details_clip)
+        self._details_animation = FrameAnimation(self)
+        self._details_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._details_animation.valueChanged.connect(self._apply_details_frame)
+        self._details_animation.finished.connect(self._finish_details_reveal)
         for widget in self.findChildren(QWidget):
             if not isinstance(widget, QAbstractButton):
                 widget.installEventFilter(self)
@@ -433,12 +465,106 @@ class _DeviceCard(QWidget):
         self.update()
 
     def _set_details_expanded(self, expanded: bool) -> None:
+        """先同步交互意图，再从当前可见高度续接；复制焦点不能留在裁掉的区域。"""
+        if self._details_shutdown:
+            with QSignalBlocker(self.details_button):
+                self.details_button.setChecked(self._details_expanded)
+            return
+        self._details_expanded = expanded
         self.details_button.setText(tr("收起详情") if expanded else tr("详细信息"))
-        self.details_container.setVisible(expanded)
-        self._reflow()
+        self.details_container.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, not expanded,
+        )
+        self.copy_details_button.setFocusPolicy(
+            self._copy_focus_policy if expanded else Qt.FocusPolicy.NoFocus,
+        )
+        focus = QApplication.focusWidget()
+        if not expanded and focus is not None and self.details_container.isAncestorOf(focus):
+            self.details_button.setFocus(Qt.FocusReason.OtherFocusReason)
+        if expanded:
+            self.details_container.show()
+        self._details_preparing = True
+        try:
+            self._reflow()
+        finally:
+            self._details_preparing = False
+        self._animate_details()
+
+    def _details_target_height(self) -> int:
+        return self._details_content_height + 12 if self._details_expanded else 0
+
+    def _animate_details(self) -> None:
+        """只保留一条时钟；反向和内容重测均从现有裁切位置出发。"""
+        self._details_release_pending = False
+        self._details_animation.stop()
+        self._details_start = self._details_clip.height()
+        self._details_end = self._details_target_height()
+        distance = abs(self._details_end - self._details_start)
+        if self._details_shutdown or not self.isVisible() or not distance:
+            self._finish_details_reveal(wait_for_paint=False)
+            return
+        if not self._details_transition_active:
+            self._details_transition_active = True
+            self.details_transition_changed.emit(True)
+        with QSignalBlocker(self._details_animation):
+            self._details_animation.setDuration(max(
+                1, round(200 * min(1.0, distance / max(1, self._details_content_height + 12))),
+            ))
+            self._details_animation.setStartValue(0.0)
+            self._details_animation.setEndValue(1.0)
+        self._details_animation.start()
+
+    def _apply_details_frame(self, progress: float) -> None:
+        height = self._details_start + (self._details_end - self._details_start) * progress
+        self._commit_details_height(round(height))
+
+    def _commit_details_height(self, height: int) -> None:
+        """逐帧同步卡片和下一张设备卡，真实详情始终位于固定顶部且保持自然尺寸。"""
+        self._details_clip.setFixedHeight(height)
+        self.details_container.setGeometry(
+            0, 12, max(1, self.width() - 28), self._details_content_height,
+        )
+        self.setFixedHeight(self._main_height + height + 24)
+        self._body_layout.activate()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        if layout is not None:
+            layout.activate()
+        self.details_geometry_changed.emit()
+
+    def _finish_details_reveal(self, *, wait_for_paint: bool = True) -> None:
+        """先提交终点，再释放页面门禁；不可见卡片不等待永远不会到来的 Paint。"""
+        self._details_animation.stop()
+        self._commit_details_height(self._details_target_height())
+        self.details_container.setVisible(self._details_expanded)
+        window = self.window()
+        if (wait_for_paint and self._details_transition_active and self.isVisible()
+                and self.updatesEnabled() and not self.visibleRegion().isEmpty()
+                and window is not None and not window.isMinimized()):
+            self._details_release_pending = True
+            self.update()
+        else:
+            self._release_details_transition()
+
+    def _release_details_transition(self) -> None:
+        self._details_release_pending = False
+        if self._details_transition_active:
+            self._details_transition_active = False
+            self.details_transition_changed.emit(False)
+
+    def prepare_shutdown(self) -> None:
+        """异步关闭可能保留可见窗口；提前封闭动画准入并在停布局协调器前收口。"""
+        if self._details_shutdown:
+            return
+        self._details_shutdown = True
+        self._finish_details_reveal(wait_for_paint=False)
+        self._copy_feedback_timer.stop()
 
     def _copy_details(self) -> None:
         """只在用户点击时复制当前卡片快照，不查询设备或导出未经筛选的原始属性。"""
+        if self._details_shutdown:
+            return
         entries = [
             (tr("设备名称"), self.name_label.text()),
             (tr("设备标识"), self.device_id),
@@ -468,6 +594,9 @@ class _DeviceCard(QWidget):
         event.accept()
 
     def eventFilter(self, watched, event) -> bool:
+        if (watched is self.copy_details_button and event.type() == QEvent.Type.FocusIn
+                and self._details_expanded and self._details_transition_active):
+            self._finish_details_reveal()
         if event.type() == QEvent.Type.MouseButtonDblClick and isinstance(event, QMouseEvent):
             self._toggle_from_double_click(event)
             return True
@@ -484,6 +613,8 @@ class _DeviceCard(QWidget):
                              QColor(BaseStyles.color("BORDER_FOCUS")))
         painter.setPen(QColor(BaseStyles.color("BORDER_COLOR")))
         painter.drawLine(14, self.height() - 1, self.width() - 14, self.height() - 1)
+        if self._details_release_pending:
+            self._release_details_transition()
 
     def apply_fonts(self) -> None:
         font = BaseStyles.font_for_role(FontRole.UI)
@@ -512,6 +643,13 @@ class _DeviceCard(QWidget):
             button.setMinimumHeight(
                 max(32, button.sizeHint().height(), button.fontMetrics().height() + 16)
             )
+        metrics = self.details_button.fontMetrics()
+        chrome = self.details_button.sizeHint().width() - metrics.horizontalAdvance(
+            self.details_button.text(),
+        )
+        self.details_button.setFixedWidth(chrome + max(
+            metrics.horizontalAdvance(tr("详细信息")), metrics.horizontalAdvance(tr("收起详情")),
+        ))
         self._reflow()
 
     def _reflow(self) -> None:
@@ -555,8 +693,35 @@ class _DeviceCard(QWidget):
             not field.isHidden() for field in self.summary_fields.values()
         ))
         self._place_fields(self._details_layout, detail_fields, columns, value_offset)
-        self._body_layout.invalidate()
-        self.updateGeometry()
+        # 显隐与字号变化先落实子布局约束，不能用上一帧的 QWidgetItem 尺寸测量。
+        for layout in (
+            self.identity.layout(), self.status_container.layout(),
+            self._summary_layout, self._details_layout, self._details_content_layout,
+            self._main_layout,
+        ):
+            assert layout is not None
+            layout.invalidate()
+            layout.activate()
+        content_height = max(
+            self._details_content_layout.minimumSize().height(),
+            self._details_content_layout.totalHeightForWidth(available),
+            self._details_content_layout.sizeHint().height(),
+        )
+        changed = content_height != self._details_content_height
+        self._details_content_height = content_height
+        self._main_height = max(
+            self._main_layout.minimumSize().height(),
+            self._main_layout.totalHeightForWidth(available),
+        )
+        self._main_content.setFixedHeight(self._main_height)
+        if self._details_preparing:
+            self._commit_details_height(self._details_clip.height())
+        elif self._details_transition_active:
+            self._commit_details_height(self._details_clip.height())
+            if changed:
+                self._animate_details()
+        else:
+            self._commit_details_height(self._details_target_height())
 
     def _fit_header(self, available: int) -> None:
         """宽度足够时两端按自然宽度展示，不足时各组共享省略预算，不挤成第二行。"""
@@ -619,7 +784,20 @@ class _DeviceCard(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._reflow()
+        if event.size().width() != event.oldSize().width():
+            self._reflow()
+
+    def hideEvent(self, event) -> None:
+        """离页、删除及关闭保持展开意图但立即收敛几何，不遗留动画或复制反馈计时。"""
+        self._finish_details_reveal(wait_for_paint=False)
+        self._copy_feedback_timer.stop()
+        self.copy_details_button.setText(tr("复制详情"))
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._finish_details_reveal(wait_for_paint=False)
+        self._copy_feedback_timer.stop()
+        super().closeEvent(event)
 
 
 class DeviceHubPage(QWidget):
@@ -631,6 +809,8 @@ class DeviceHubPage(QWidget):
     disconnect_requested = Signal()
     selection_requested = Signal(list)
     device_action_requested = Signal(str, str, str)
+    details_transition_changed = Signal(bool)
+    details_geometry_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -641,6 +821,8 @@ class DeviceHubPage(QWidget):
         self._state = "empty"
         self._metadata: dict[str, dict[str, object]] = {}
         self._cards: dict[str, _DeviceCard] = {}
+        self._active_detail_cards: set[_DeviceCard] = set()
+        self._shutdown_prepared = False
         self._connection_panel: QWidget | None = None
         layout = QVBoxLayout(self)
         self._page_layout = layout
@@ -717,6 +899,17 @@ class DeviceHubPage(QWidget):
     def device_cards(self) -> tuple[_DeviceCard, ...]:
         """按当前发现顺序返回可见设备卡，不包含仅存在于历史缓存的设备。"""
         return tuple(self._cards[device_id] for device_id in self._connected)
+
+    def prepare_shutdown(self) -> None:
+        """保持详情展开意图，先同步结束所有卡片，再允许宿主停止布局与后台协调器。"""
+        if self._shutdown_prepared:
+            return
+        self._shutdown_prepared = True
+        for card in tuple(self._cards.values()):
+            card.prepare_shutdown()
+        if self._active_detail_cards:
+            self._active_detail_cards.clear()
+            self.details_transition_changed.emit(False)
 
     def set_connection_panel(self, panel: QWidget) -> None:
         """挂载唯一连接区，尾部间距由面板一并裁剪，隐藏时不留下占位。"""
@@ -800,12 +993,29 @@ class DeviceHubPage(QWidget):
         for index, device_id in enumerate(self._connected):
             if device_id not in self._cards:
                 card = _DeviceCard(device_id, self.cards_container)
+                if self._shutdown_prepared:
+                    card.prepare_shutdown()
                 card.selection_toggled.connect(self._request_selection)
                 card.action_requested.connect(self._request_device_action)
+                card.details_transition_changed.connect(
+                    lambda active, target=card: self._on_details_transition_changed(target, active)
+                )
+                card.details_geometry_changed.connect(self.details_geometry_changed)
                 self._cards[device_id] = card
             self._cards_layout.insertWidget(index, self._cards[device_id])
         self._refresh_cards()
         self._refresh_summary()
+
+    def _on_details_transition_changed(self, card: _DeviceCard, active: bool) -> None:
+        """多张设备卡可以同时开合；最后一张完成或隐藏后才释放概览布局门禁。"""
+        was_active = bool(self._active_detail_cards)
+        if active:
+            self._active_detail_cards.add(card)
+        else:
+            self._active_detail_cards.discard(card)
+        is_active = bool(self._active_detail_cards)
+        if was_active != is_active:
+            self.details_transition_changed.emit(is_active)
 
     def _refresh_cards(self) -> None:
         for device_id, card in self._cards.items():

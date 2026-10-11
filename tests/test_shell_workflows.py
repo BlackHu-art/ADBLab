@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter
 from PySide6.QtTest import QSignalSpy, QTest
-from qfluentwidgets import FluentIcon, PrimaryPushButton
+from qfluentwidgets import FluentIcon, FluentIconBase, PrimaryPushButton
 
 from controllers.signals import ADBControllerSignals
 from gui.pages.workspace_features import WorkspaceRoute
@@ -196,7 +196,9 @@ def test_reference_icons_render_in_both_themes_and_primary_buttons_keep_native_i
     owner = BasePanel.__new__(BasePanel)
     button = owner._b("开始", "play.svg", variant="accent", tooltip="开始测试")
     assert type(button) is PrimaryPushButton
-    assert button._icon is get_fluent_icon("play.svg") is FluentIcon.PLAY
+    assert get_fluent_icon("play.svg") is FluentIcon.PLAY
+    assert isinstance(button._icon, FluentIconBase)
+    assert button._icon.path() == FluentIcon.PLAY.path()
     clicks = QSignalSpy(button.clicked)
     button.setEnabled(False)
     button.click()
@@ -218,8 +220,10 @@ def test_existing_icons_and_performance_primary_buttons_follow_theme_changes(qt_
         for theme in ("Dark", "Light"):
             BaseStyles.switch_theme(theme)
             qt_application.processEvents()
-            assert page.start_btn._icon is FluentIcon.PLAY
-            assert page.stop_btn._icon is FluentIcon.CANCEL
+            assert isinstance(page.start_btn._icon, FluentIconBase)
+            assert isinstance(page.stop_btn._icon, FluentIconBase)
+            assert page.start_btn._icon.path() == FluentIcon.PLAY.path()
+            assert page.stop_btn._icon.path() == FluentIcon.CANCEL.path()
             assert isinstance(page.start_btn, PrimaryPushButton)
             if theme == "Dark":
                 dark = icon.pixmap(24, 24).toImage()

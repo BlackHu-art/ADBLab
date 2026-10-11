@@ -31,6 +31,12 @@ class LiveLogcatLifecycle:
             or result.task_id != self._frame._supervisor_task_id
         ):
             return
+        self._frame._logcat_stop_result_received = True
+        self._frame._stream_controller._set_empty_capture_state(
+            "cleanup_pending"
+            if result.disposition in (StopDisposition.TIMED_OUT, StopDisposition.FAILED)
+            else "stopping"
+        )
         if result.disposition is StopDisposition.GRACEFUL:
             self._frame.status_bar.setText(tr("采集已停止"), tr("已停止"))
         elif result.disposition is StopDisposition.FORCED:
@@ -46,6 +52,7 @@ class LiveLogcatLifecycle:
         worker = self._frame.worker
         if worker is None:
             self._frame._set_running_actions(False)
+            self._frame._stream_controller._capture_released()
         elif self._release_logcat_worker(worker):
             self._frame._set_running_actions(False)
         elif not self._frame._worker_release_timer.isActive():
@@ -132,6 +139,7 @@ class LiveLogcatLifecycle:
         if was_current:
             self._frame.worker = None
             self._frame._supervisor_task_id = None
+            self._frame._stream_controller._capture_released()
             release_timer = getattr(self._frame, "_worker_release_timer", None)
             if release_timer is not None:
                 release_timer.stop()

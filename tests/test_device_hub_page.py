@@ -10,7 +10,7 @@ from shiboken6 import isValid
 
 from gui.pages.device_hub import DeviceHubPage
 from gui.styles import BaseStyles
-from tests.ui_geometry_helpers import wait_for_stable_geometry
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 def _show_page(qt_application, width=960):
@@ -30,6 +30,9 @@ def _show_page(qt_application, width=960):
 
 
 def _settle_cards(qt_application, page):
+    wait_until(qt_application, lambda: all(
+        not card._details_transition_active for card in page.device_cards
+    ))
     widgets = [page, page.toolbar, page.summary, page.connect_button,
                page.disconnect_button, page.refresh_button]
     for card in page.device_cards:
@@ -202,6 +205,7 @@ def test_details_expand_without_selection_and_survive_metadata_and_state_updates
     assert card.details_button.isChecked() and card.details_container.isVisible()
     assert card.detail_fields["Storage Available"].value.text() == "20 GiB"
     QTest.mouseClick(card.details_button, Qt.MouseButton.LeftButton)
+    wait_until(qt_application, lambda: not card._details_transition_active)
     assert not card.details_container.isVisible()
     assert requests.count() == 0
 

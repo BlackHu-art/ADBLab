@@ -57,13 +57,16 @@ def test_remote_parameter_dropdowns_keep_labels_and_control_heights_aligned(
         ).top()
     else:
         assert mapped_rect(fields[0], content).bottom() < mapped_rect(fields[1], content).top()
-    if columns == 3:
-        assert len({mapped_rect(field, content).top() for field in fields}) == 1
-        assert mapped_rect(fields[1], content).right() < mapped_rect(fields[2], content).left()
-        assert fields[2].isAncestorOf(remote.bitrate_slider)
-        assert_contained(remote.bitrate_slider, fields[2])
+    # 当前布局是尺寸/FPS 两字段，码率独占下方整行，不能沿用旧三列参数行预期。
+    assert len(fields) == 2
+    bitrate_editor = remote.bitrate_slider.parentWidget()
+    bitrate_rect = mapped_rect(bitrate_editor, content)
+    assert bitrate_rect.top() > max(mapped_rect(field, content).bottom() for field in fields)
+    assert abs(bitrate_editor.width() - remote.mirror_settings.width()) <= 2
+    assert_contained(remote.bitrate_slider, bitrate_editor)
+    assert_non_overlapping((*fields, bitrate_editor), content)
     if (font_size, view_width) == (12, 1600):
-        assert columns == 3, "普通字号宽窗应在一行展示尺寸、FPS 和码率"
+        assert columns == 2, "普通字号宽窗应并排显示尺寸和 FPS，码率在下方独占一行"
     assert scroll.horizontalScrollBar().maximum() == 0
 
 

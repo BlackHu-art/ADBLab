@@ -91,7 +91,8 @@ def _assert_single_line_status(page):
     assert status_rect.right() < ring_rect.left()
     assert not status_rect.intersects(ring_rect)
     group_rect = QRect(page._status_group.mapTo(page, QPoint()), page._status_group.size())
-    assert page.actions.geometry().contains(group_rect)
+    actions_rect = QRect(page.actions.mapTo(page, QPoint()), page.actions.size())
+    assert actions_rect.contains(group_rect)
     assert group_rect.bottom() < page.output.geometry().top()
 
 
@@ -174,8 +175,10 @@ def test_logcat_controls_follow_font_and_fit_narrow_content(
         assert max(rect.top() for rect in rects) < min(rect.bottom() for rect in rects)
         assert all(not left.intersects(right) for index, left in enumerate(rects)
                    for right in rects[index + 1:])
-    assert page.level_combo.geometry().bottom() < page.actions.geometry().top()
-    assert page.actions.geometry().bottom() < page.output.geometry().top()
+    level_rect = QRect(page.level_combo.mapTo(page, QPoint()), page.level_combo.size())
+    actions_rect = QRect(page.actions.mapTo(page, QPoint()), page.actions.size())
+    assert level_rect.bottom() < actions_rect.top()
+    assert actions_rect.bottom() < page.output.geometry().top()
     assert page.actions.rect().contains(QRect(
         page._status_group.mapTo(page.actions, QPoint()), page._status_group.size(),
     ))
@@ -207,7 +210,10 @@ def test_logcat_output_background_and_all_levels_keep_readable_contrast(
 
     def surface_color(editor):
         image = page.grab().toImage()
-        point = editor.viewport().mapTo(page, editor.viewport().rect().center())
+        # 空态提示已居中，背景取样避开文字、边框和滚动条。
+        point = editor.viewport().mapTo(page, QPoint(
+            editor.viewport().width() - 24, editor.viewport().height() - 24,
+        ))
         scale = image.devicePixelRatio()
         return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 

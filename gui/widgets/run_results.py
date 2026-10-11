@@ -35,6 +35,7 @@ from gui.styles.fluent import (
     apply_reading_surface,
     configure_button,
     configure_fluent_control,
+    use_smooth_scroll,
 )
 from gui.widgets.collapsible_tools import CollapsibleTools
 from services.run_library import RunRecord
@@ -113,7 +114,7 @@ class RunResultsWidget(QWidget):
         self.empty_label.setWordWrap(True)
         self.empty_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.empty_label)
-        self.table = TableWidget(self)
+        self.table = use_smooth_scroll(TableWidget(self))
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels([tr("完成时间"), tr("类型"), tr("应用"), tr("状态")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

@@ -320,6 +320,7 @@ def test_main_frame_shutdown_disconnects_scan_callbacks_without_warning(qt_appli
     """真实扫描信号经启动入口连接后，关闭必须解除回调而非仅靠关闭标记忽略结果。"""
     visible_states = []
     frame = SimpleNamespace(
+        findChildren=lambda _kind: [],
         _scan_thread=None,
         _closing=False,
         _initial_refresh_timer=QTimer(),

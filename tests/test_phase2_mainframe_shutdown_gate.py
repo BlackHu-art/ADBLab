@@ -75,6 +75,7 @@ class FakeLeftPanel:
 
 def _frame(controller_shutdown, *, scan_thread=None, deadline=0.5, left_panel=None):
     frame = MainFrame.__new__(MainFrame)
+    frame.findChildren = Mock(return_value=[])
     frame.task_supervisor = QtTaskSupervisor()
     frame._test_signal_queue = SimpleQueue()
     frame.task_supervisor.application_stopped.connect(

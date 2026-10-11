@@ -12,6 +12,7 @@ from qfluentwidgets import (
     InfoBadge,
     InfoLevel,
     LineEdit,
+    PlainTextEdit,
     TransparentPushButton,
 )
 
@@ -46,6 +47,8 @@ class LiveLogcatPage(QWidget):
     pkg_input: LineEdit
     btn_get_pkg: TransparentPushButton
     _filters_layout: QGridLayout
+    _controls: QWidget
+    output: PlainTextEdit
 
     def __init__(
         self,
@@ -82,6 +85,7 @@ class LiveLogcatPage(QWidget):
         self._owner_cleanup_completed = False
         self._application_cleanup_fallback = False
         self._logcat_stopping = False
+        self._logcat_stop_result_received = False
         self._view_active = False
         self._dispose_emitted = False
         self._package_filter_revision = 0
@@ -106,6 +110,7 @@ class LiveLogcatPage(QWidget):
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
+        BaseStyles.accent_color_changed.connect(self._refresh_reading_icons)
         self._task_supervisor.task_stopped.connect(self._on_task_stopped)
         self._task_supervisor.owner_stopped.connect(self._on_owner_stopped)
         self._task_supervisor.application_stopped.connect(
@@ -123,8 +128,14 @@ class LiveLogcatPage(QWidget):
         self.header_card.setVisible(not embedded)
         layout = self.layout()
         assert layout is not None
-        margins = (32, 8, 32, 32) if embedded else (8, 8, 8, 8)
+        # 工具栏独立保留宿主留白；正文两侧对称，仅预留边缘滚动条所需空间。
+        margins = (0, 8, 0, 0) if embedded else (8, 8, 8, 8)
         layout.setContentsMargins(*margins)
+        inset = 32 if embedded else 0
+        controls_layout = self._controls.layout()
+        assert controls_layout is not None
+        controls_layout.setContentsMargins(inset, 0, inset, 0)
+        self.output.setViewportMargins(14, 0, 14, 14)
         self._reflow_filters()
 
     def minimumSizeHint(self):
@@ -138,7 +149,11 @@ class LiveLogcatPage(QWidget):
         if not self.header_card.isHidden():
             width = max(width, self.header_card.minimumSizeHint().width())
         margins = layout.contentsMargins()
-        size.setWidth(width + margins.left() + margins.right())
+        controls_layout = self._controls.layout()
+        assert controls_layout is not None
+        controls_margins = controls_layout.contentsMargins()
+        size.setWidth(width + margins.left() + margins.right()
+                      + controls_margins.left() + controls_margins.right())
         return size
 
     def activate(self, payload=None) -> None:
@@ -200,6 +215,7 @@ class LiveLogcatPage(QWidget):
     def _sync_device_actions(self) -> None:
         active = bool(self.worker is not None and self.worker.is_active())
         self._set_running_actions(active, stopping=self._logcat_stopping)
+        self._stream_controller._refresh_empty_hint()
         self.status_badge.setText(tr("设备已连接") if self._device_connected else tr("设备离线"))
         self.status_badge.setLevel(
             InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
@@ -245,6 +261,11 @@ class LiveLogcatPage(QWidget):
         return (
             getattr(self, "_form_controller", None) or LiveLogcatForm(self)
         )._apply_theme(_value)
+
+    def _refresh_reading_icons(self, _value=None) -> None:
+        """合并动作与强调色通知；关闭后不再刷新已退出的页面。"""
+        if not self._closing:
+            self._form_controller._refresh_reading_icons()
 
     @staticmethod
     def _filter_minimum_width(widget) -> int:
@@ -511,6 +532,7 @@ class LiveLogcatPage(QWidget):
         self._pending_visible_lines.clear()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.accent_color_changed, self._refresh_reading_icons)
         self._form_controller._material.stop()
         safe_disconnect(self._task_supervisor.task_stopped, self._on_task_stopped)
         if self.worker:

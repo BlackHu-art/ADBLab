@@ -25,7 +25,7 @@ class LogcatMaterial(ReadingSurfaceMaterial):
             return
         borderless = (
             " PlainTextEdit, PlainTextEdit:hover, PlainTextEdit:focus, PlainTextEdit:disabled "
-            "{ border: none; border-radius: 0px; }"
+            "{ border: none; border-radius: 0px; padding: 0px; }"
         )
         setCustomStyleSheet(
             output,

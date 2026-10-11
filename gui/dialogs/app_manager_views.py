@@ -1,11 +1,12 @@
 """应用管理器视图控制器 — 加载/填充应用列表、筛选与选择同步、详情懒加载。"""
 
 import weakref
+from collections.abc import Iterator
 from functools import lru_cache
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QModelIndex, QPoint, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem
-from PySide6.QtWidgets import QTreeWidgetItem
+from PySide6.QtWidgets import QTreeView, QTreeWidgetItem
 
 from gui.dialogs.app_manager_rows import STATUS_ROLE, VERSION_ROLE, refresh_row_description
 from gui.dialogs.lifecycle import (
@@ -18,6 +19,32 @@ from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action
 from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.typography import FontRole
+
+
+def _visible_row_indexes(view: QTreeView) -> Iterator[QModelIndex]:
+    """仅遍历当前视口的行，排序、隐藏和横向滚动的映射交给 Qt。
+
+    可见区补全会在连续滚动期间反复触发，不能逐个检查整份应用列表。
+    保持命中列不变，避免横滚后的第零列已离开视口而漏掉后续行。
+    """
+    viewport = view.viewport().rect()
+    if viewport.isEmpty():
+        return
+    index = QModelIndex()
+    for x in (viewport.left(), viewport.center().x(), viewport.right()):
+        index = view.indexAt(QPoint(x, viewport.top()))
+        if index.isValid():
+            break
+    if not index.isValid():
+        return
+    column = index.column()
+    while index.isValid():
+        rect = view.visualRect(index)
+        if rect.top() > viewport.bottom():
+            break
+        if rect.isValid() and viewport.intersects(rect):
+            yield index
+        index = view.indexBelow(index).siblingAtColumn(column)
 
 
 @lru_cache(maxsize=16)
@@ -326,13 +353,10 @@ class AppManagerViews:
     def _visible_detail_packages(self, limit: int = 30) -> list[str]:
         packages: list[str] = []
         if self._frame._view_mode:
-            viewport = self._frame.icon_list.viewport().rect()
-            for i in range(self._frame.icon_list.topLevelItemCount()):
-                item = self._frame.icon_list.topLevelItem(i)
-                pkg = item.data(0, Qt.ItemDataRole.UserRole) if item else ""
+            for index in _visible_row_indexes(self._frame.icon_list):
+                pkg = index.siblingAtColumn(0).data(Qt.ItemDataRole.UserRole)
                 if (
-                    item and not item.isHidden() and pkg
-                    and viewport.intersects(self._frame.icon_list.visualItemRect(item))
+                    pkg
                     and pkg not in self._frame._loaded_detail_packages
                     and pkg not in self._frame._failed_detail_packages
                 ):
@@ -341,16 +365,9 @@ class AppManagerViews:
                         break
             return packages
 
-        root = self._frame.tree.rootIndex()
-        viewport = self._frame.tree.viewport().rect()
         seen = set()
-        for row in range(self._frame.proxy.rowCount(root)):
-            proxy_index = self._frame.proxy.index(row, 2, root)
-            if not proxy_index.isValid():
-                continue
-            rect = self._frame.tree.visualRect(proxy_index)
-            if rect.isValid() and not viewport.intersects(rect):
-                continue
+        for index in _visible_row_indexes(self._frame.tree):
+            proxy_index = index.siblingAtColumn(2)
             source_index = self._frame.proxy.mapToSource(proxy_index)
             source_row = source_index.row()
             item = self._frame.model.item(source_row, 2)

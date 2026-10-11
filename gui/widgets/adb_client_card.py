@@ -12,12 +12,22 @@ import os
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, QTimer, Signal
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QObject,
+    QRunnable,
+    QSignalBlocker,
+    QSize,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
     QButtonGroup,
     QHBoxLayout,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -35,6 +45,7 @@ from qfluentwidgets import (
 from core.exec import resolve_adb_program
 from gui.i18n import tr
 from gui.styles.fluent import configure_button
+from gui.widgets.frame_animation import FrameAnimation
 from services.adb_clients import (
     ERROR_CANCELLED,
     ERROR_MISSING,
@@ -160,7 +171,113 @@ class _ProbeTask(QRunnable):
             self.signals.finished.emit(self._generation, candidates, probes)
 
 
-class AdbClientSettingCard(SimpleExpandGroupSettingCard):
+class _SettingPropertyAnimation(FrameAnimation):
+    """本地设置卡属性桥；先写属性再通知布局，箭头每次从当前角度续接。"""
+
+    def __init__(
+        self, target: QObject, name: str, owner: QWidget, *, implicit_start: bool = False,
+    ) -> None:
+        super().__init__(owner, owner=owner)
+        self._target_object = target
+        self._property_name = name
+        self._implicit_start = implicit_start
+        self.valueChanged.connect(self._write_property)
+        target.destroyed.connect(self.stop)
+
+    def _write_property(self, value: object) -> None:
+        # 与 QPropertyAnimation 保持一致：停止态配置端点只计算插值，不改真实几何。
+        if self.state() != QAbstractAnimation.State.Stopped:
+            self._target_object.setProperty(self._property_name, value)
+
+    def setEndValue(self, value: object) -> None:  # noqa: N802 - 沿用动画调用接口
+        # 原生属性动画会把整数角度转为 float；裸 QVariantAnimation 不做属性类型转换。
+        current = self._target_object.property(self._property_name)
+        if isinstance(current, float) and isinstance(value, (int, float)):
+            value = float(value)
+        super().setEndValue(value)
+
+    def start(self) -> None:
+        """原生箭头未设置起点，保持它从现值启动的约定，不回跳到上次起点。"""
+        if self.state() == QAbstractAnimation.State.Running:
+            return
+        if self._implicit_start:
+            with QSignalBlocker(self):
+                self.setStartValue(self._target_object.property(self._property_name))
+        super().start()
+        if (self.state() == QAbstractAnimation.State.Running
+                and self._target_object.property(self._property_name) != self.currentValue()):
+            # 静态插值器的起点未变化时不会再次发值，仍须落实真实属性及其依赖布局。
+            self.valueChanged.emit(self.currentValue())
+
+
+class _ContinuousExpandGroupSettingCard(SimpleExpandGroupSettingCard):
+    """中途反向沿当前裁切位置续接，完整开合仍使用原生设置卡的布局与主题。"""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        previous = self.expandAni
+        previous.stop()
+        previous.valueChanged.disconnect(self._onExpandValueChanged)
+        self.expandAni = _SettingPropertyAnimation(self.verticalScrollBar(), "value", self)
+        self.expandAni.setDuration(previous.duration())
+        self.expandAni.setEasingCurve(previous.easingCurve())
+        self.expandAni.valueChanged.connect(self._onExpandValueChanged)
+        previous.deleteLater()
+
+        button = self.card.expandButton
+        previous = button.rotateAni
+        previous.stop()
+        rotation = _SettingPropertyAnimation(button, "angle", button, implicit_start=True)
+        rotation.setDuration(previous.duration())
+        rotation.setEasingCurve(previous.easingCurve())
+        # Fluent 在此字段上只调用有限动画方法，本地桥保留该协议并接管属性写入。
+        setattr(button, "rotateAni", rotation)
+        previous.deleteLater()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - 沿用 Qt 接口
+        # 离页时停止采样并落实已选终态，回来后不能留下半截卡片或中途箭头。
+        self.expandAni.stop()
+        self.card.expandButton.rotateAni.stop()
+        self.verticalScrollBar().setValue(
+            0 if self.isExpand else self.viewLayout.sizeHint().height(),
+        )
+        self._onExpandValueChanged()
+        self.card.expandButton.setAngle(180 if self.isExpand else 0)
+        super().hideEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - 沿用 Qt 接口
+        # 正文由 widgetResizable 按视口宽度布局。原生实现又将正文设为带边框的卡片
+        # 宽度，导致高度动画每帧都先扩宽再缩回，反复测量换行；这里只同步固定表头。
+        QScrollArea.resizeEvent(self, event)
+        self.card.resize(self.width(), self.card.height())
+
+    def setExpand(self, isExpand: bool) -> None:  # noqa: N802 - 沿用 Fluent 接口
+        if self.isExpand == isExpand:
+            return
+        if self.expandAni.state() == QAbstractAnimation.State.Stopped:
+            super().setExpand(isExpand)
+            return
+
+        # 原生反向入口先把卡片调至完整高度，再从固定端点开始；动画中只能沿当前
+        # 可见高度重启，避免当场推移后续设置项和改变滚动范围。
+        current_height = self.height()
+        self.expandAni.stop()
+        self.isExpand = isExpand
+        self.setProperty("isExpand", isExpand)
+        self.setStyle(QApplication.style())
+        # 换行度量可能在上一帧后更新，旧滚动值不一定还对应当前可见高度；部分展开时
+        # maximum 又含尚未露出的空白区，起终点均应从当前内容自然高换算。
+        content_height = self.viewLayout.sizeHint().height()
+        start = max(0, self.viewportMargins().top() + content_height - current_height)
+        end = 0 if isExpand else content_height
+        with QSignalBlocker(self.expandAni):
+            self.expandAni.setStartValue(start)
+            self.expandAni.setEndValue(end)
+        self.expandAni.start()
+        self.card.expandButton.setExpand(isExpand)
+
+
+class AdbClientSettingCard(_ContinuousExpandGroupSettingCard):
     """ADB 客户端选择卡：自动、命名来源候选与自定义路径。"""
 
     client_selected = Signal(str)
@@ -707,7 +824,7 @@ def _settings_row(
     return row
 
 
-class AdbEnvironmentSettingCard(SimpleExpandGroupSettingCard):
+class AdbEnvironmentSettingCard(_ContinuousExpandGroupSettingCard):
     """执行环境卡：折叠态显示检测结果并可重新检测，展开态选择执行模式。"""
 
     mode_requested = Signal(str)

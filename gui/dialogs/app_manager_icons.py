@@ -8,6 +8,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Slot
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
 from gui.dialogs.app_manager_rows import refresh_row_description
+from gui.dialogs.app_manager_views import _visible_row_indexes
 from gui.i18n import tr
 
 if TYPE_CHECKING:
@@ -185,14 +186,9 @@ class AppManagerIcons(QObject):
             ))
 
     def _viewport_packages(self) -> list[str]:
-        view = self.page.icon_list
-        viewport = view.viewport().rect()
         packages = []
-        for index in range(view.topLevelItemCount()):
-            item = view.topLevelItem(index)
-            if item.isHidden() or not viewport.intersects(view.visualItemRect(item)):
-                continue
-            package = item.data(0, Qt.ItemDataRole.UserRole)
+        for index in _visible_row_indexes(self.page.icon_list):
+            package = index.siblingAtColumn(0).data(Qt.ItemDataRole.UserRole)
             if package:
                 packages.append(package)
         return packages

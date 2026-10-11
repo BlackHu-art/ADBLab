@@ -12,25 +12,48 @@ from typing import TypeVar
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QAction, QColor, QFocusEvent, QFont, QIcon
-from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
-from qfluentwidgets import PrimaryPushButton, PushButton, RoundMenu, SmoothMode, setCustomStyleSheet
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
+    QAbstractScrollArea,
+    QPlainTextEdit,
+    QTextEdit,
+    QWidget,
+)
+from qfluentwidgets import (
+    PrimaryPushButton,
+    PushButton,
+    RoundMenu,
+    SmoothMode,
+    ToolButton,
+    setCustomStyleSheet,
+)
 
 from gui.i18n import tr
 from gui.styles.fonts import FontMixin
+from gui.styles.icon_loader import cached_fluent_icon
 from gui.styles.material import ensure_material_observer, is_mica_active
 from gui.styles.theme import ThemeMixin
 from gui.styles.typography import FontRole
+from gui.widgets.settings_scroll import SettingsWheelScroll
 from gui.widgets.transient_menu import TransientMenuFocusGuard
 
 _WidgetT = TypeVar("_WidgetT", bound=QWidget)
 _ButtonT = TypeVar("_ButtonT", bound=QAbstractButton)
+_ScrollT = TypeVar("_ScrollT", bound=QAbstractScrollArea)
+
+
+def _fluent_scroll_delegate(area: QWidget):
+    """兼容 Fluent 的三种滚动代理字段，避免误认 ListWidget 的绘制 delegate。"""
+    return next((
+        candidate for name in ("scrollDelagate", "scrollDelegate", "delegate")
+        if (candidate := getattr(area, name, None)) is not None
+        and hasattr(candidate, "verticalSmoothScroll")
+    ), None)
 
 
 def use_instant_scroll(area: _WidgetT) -> _WidgetT:
-    """滚轮直接到位，不走默认的最长 500 毫秒缓动。
-
-    页面铺在半透明云母上，缓动的每一帧都会重绘整页，看起来像掉帧。
-    """
+    """关闭 Fluent 的默认缓动，供专用视图或局部滚轮控制器接管输入。"""
 
     setter = getattr(area, "setScrollAnimation", None)
     if callable(setter):
@@ -41,10 +64,39 @@ def use_instant_scroll(area: _WidgetT) -> _WidgetT:
     if callable(smooth_setter):
         smooth_setter(SmoothMode.NO_SMOOTH, Qt.Orientation.Vertical)
         smooth_setter(SmoothMode.NO_SMOOTH, Qt.Orientation.Horizontal)
-    delegate = getattr(area, "scrollDelagate", None) or getattr(area, "delegate", None)
+    delegate = _fluent_scroll_delegate(area)
     if delegate is not None:
         delegate.vScrollBar.setScrollAnimation(0)
         delegate.hScrollBar.setScrollAnimation(0)
+    return area
+
+
+def use_smooth_scroll(area: _ScrollT) -> _ScrollT:
+    """像素视图复用局部高刷滚轮；按行文本保留原生步长，重复安装不叠加时钟。
+
+    只替换普通垂直鼠标刻度。触控板、水平滚动、修饰键、选区和外部定位仍交给
+    原控件；图片查看器的缩放/翻页不从此入口接入。
+    """
+    use_instant_scroll(area)
+    delegate = _fluent_scroll_delegate(area)
+    if delegate is not None:
+        # useAni=False 的表格和文本使用另一套引擎，仅将覆盖滚条时长设为零并不能停掉它。
+        for engine in (delegate.verticalSmoothScroll, delegate.horizonSmoothScroll):
+            engine.setSmoothMode(SmoothMode.NO_SMOOTH)
+        delegate.vScrollBar.setScrollAnimation(0)
+        delegate.hScrollBar.setScrollAnimation(0)
+    if isinstance(area, QPlainTextEdit) or (
+        isinstance(area, QAbstractItemView)
+        and area.verticalScrollMode() != QAbstractItemView.ScrollMode.ScrollPerPixel
+    ):
+        return area
+    controller = area.findChild(
+        SettingsWheelScroll, "adblabWheelScroll", Qt.FindChildOption.FindDirectChildrenOnly,
+    )
+    if controller is None:
+        controller = SettingsWheelScroll(area, delegate.vScrollBar if delegate else None)
+    # SettingsPage 的关闭边界及历史调用仍可通过原字段访问同一控制器。
+    setattr(area, "_wheel_scroll", controller)
     return area
 
 
@@ -216,6 +268,7 @@ def apply_reading_surface(widget: _WidgetT) -> _WidgetT:
     selector = widget.property("adblabFocusSelector")
     widget.setProperty("adblabFocusSelector", str(selector) if selector else type(widget).__name__)
     ensure_reading_surface(widget)
+    use_smooth_scroll(widget)
     return widget
 
 
@@ -338,6 +391,10 @@ def configure_button(
     """配置直接使用的 qfluentwidgets 按钮；危险色使用 light/dark 自定义 QSS。"""
 
     button.setText(tr(text))
+    if isinstance(button, (PushButton, ToolButton)):
+        icon = cached_fluent_icon(button._icon)
+        if icon is not button._icon:
+            button.setIcon(icon)
     button.setAccessibleName(tr(text or str(tooltip or "")))
     set_function_tooltip(button, tooltip)
     apply_font_role(button, role, ensure_height=True)

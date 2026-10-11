@@ -39,7 +39,12 @@ from gui.dialogs.app_manager_rows import STATUS_ROLE, AppManagerIconView, AppMan
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.combo_menu import configure_combo_menu
-from gui.styles.fluent import apply_focus_indicator, apply_label_role, create_transient_menu
+from gui.styles.fluent import (
+    apply_focus_indicator,
+    apply_label_role,
+    create_transient_menu,
+    use_smooth_scroll,
+)
 from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.typography import FontRole
 
@@ -286,7 +291,7 @@ class AppManagerForm:
         self._frame.proxy.setSourceModel(self._frame.model)
         self._frame.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._frame.proxy.setFilterKeyColumn(-1)
-        self._frame.tree = TreeView()
+        self._frame.tree = use_smooth_scroll(TreeView())
         self._frame.tree.setHeader(
             AppManagerTableHeader(Qt.Orientation.Horizontal, self._frame.tree)
         )
@@ -325,7 +330,7 @@ class AppManagerForm:
         )
         self._frame.stack.addWidget(self._frame.tree)
 
-        self._frame.icon_list = AppManagerIconView()
+        self._frame.icon_list = use_smooth_scroll(AppManagerIconView())
         icons = self._frame.icon_list
         icons.setObjectName("appManagerIconList")
         icons.setBorderVisible(False)
