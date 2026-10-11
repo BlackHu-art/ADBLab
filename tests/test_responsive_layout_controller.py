@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import gc
 import weakref
+from dataclasses import dataclass
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QMargins, QSize, QTimer
-from PySide6.QtGui import QFont, QWindow
+from PySide6.QtGui import QFont, QResizeEvent, QWindow
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGridLayout, QWidget
 from shiboken6 import isValid
@@ -74,6 +75,43 @@ class ResizeEchoTarget:
 
     def apply_responsive_plan(self, plan):
         self.applied.append(plan)
+
+
+@dataclass(frozen=True)
+class HeightFeedbackPlan:
+    width: int
+    height: int
+
+    @property
+    def fingerprint(self):
+        return self.width, self.height
+
+    @property
+    def settling_fingerprint(self):
+        return (self.width,)
+
+
+class HeightFeedbackTarget(FakeTarget):
+    requires_settling_barrier = True
+
+    def __init__(self):
+        super().__init__([], None)
+        self.width = 320
+        self.height = 200
+        self.synchronized = []
+
+    def responsive_context(self):
+        return LayoutContext(self.width, self.height, False, ("Sans", 12.0), 1)
+
+    def responsive_plan(self, context):
+        self.plan_calls += 1
+        return HeightFeedbackPlan(context.width, context.height)
+
+    def conservative_responsive_plan(self, context):
+        return HeightFeedbackPlan(context.width, context.height)
+
+    def synchronize_responsive_plan(self, plan):
+        self.synchronized.append(plan)
 
 
 class MetricWidget(QWidget):
@@ -605,6 +643,307 @@ def test_settle_now_defers_when_called_during_apply(qt_application):
 
     assert results == [False]
     assert target.applied == ["A", "A"]
+
+
+@pytest.mark.parametrize("queued_reason", [None, ReflowReason.EXPLICIT, ReflowReason.RESIZE])
+def test_geometry_transition_defers_existing_and_new_work_until_resume(
+    qt_application, queued_reason,
+):
+    """高度过渡必须暂停已排队及防抖中的规划，结束后一次处理全部真实变更。"""
+    target = FakeTarget(candidates=["A"], conservative="D")
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    if queued_reason is not None:
+        coordinator.request_reflow(queued_reason)
+
+    coordinator.set_geometry_transition_active(True)
+    coordinator.set_geometry_transition_active(True)
+    for reason in (ReflowReason.FONT, ReflowReason.THEME, ReflowReason.RESIZE):
+        coordinator.request_reflow(reason)
+    assert coordinator.settle_now(ReflowReason.SCREEN) is False
+    # 等待超过防抖窗口，验证原先排定的回调和同步 settle 都不能绕过暂停。
+    QTest.qWait(coordinator.RESIZE_DEBOUNCE_MS + 20)
+    assert target.plan_calls == 0
+    assert target.applied == []
+
+    coordinator.set_geometry_transition_active(False)
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable and bool(target.applied))
+
+    assert target.applied == ["A"]
+    assert coordinator.diagnostics.fallback_reason is None
+    expected_reasons = {ReflowReason.FONT, ReflowReason.THEME, ReflowReason.RESIZE,
+                        ReflowReason.SCREEN}
+    if queued_reason is not None:
+        expected_reasons.add(queued_reason)
+    assert expected_reasons <= set(coordinator.diagnostics.reasons)
+    generation = coordinator.diagnostics.generation
+    coordinator.set_geometry_transition_active(False)
+    QTest.qWait(coordinator.RESIZE_DEBOUNCE_MS + 20)
+    assert coordinator.diagnostics.generation == generation
+    assert target.applied == ["A"]
+
+
+def test_geometry_transition_preserves_finishing_and_pending_reasons(qt_application):
+    """上一代的收尾定时器不能穿透暂停，已排入下一代的原因也不能丢失。"""
+    target = FakeTarget(candidates=["A"], conservative="D")
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    assert coordinator.settle_now(ReflowReason.EXPLICIT) is True
+    coordinator._finish_generation(coordinator.diagnostics.generation)
+    coordinator.request_reflow(ReflowReason.FONT)
+    planned = target.plan_calls
+    applied = tuple(target.applied)
+
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.RESIZE)
+    coordinator.request_reflow(ReflowReason.THEME)
+    QTest.qWait(coordinator.RESIZE_DEBOUNCE_MS + 20)
+    assert target.plan_calls == planned
+    assert tuple(target.applied) == applied
+
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+    assert target.applied == [*applied, "A"]
+    assert {ReflowReason.FONT, ReflowReason.RESIZE, ReflowReason.THEME} <= set(
+        coordinator.diagnostics.reasons,
+    )
+    assert coordinator.diagnostics.fallback_reason is None
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    assert target.applied == [*applied, "A", "A"]
+
+
+def test_geometry_transition_buffers_top_level_font_theme_and_resize_events(qt_application):
+    """真实顶层事件经过统一暂停入口，恢复后仍重新计算变化后的布局。"""
+    window = QWidget()
+    target = FakeTarget(candidates=["A"], conservative="D")
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.attach_top_level(window)
+    coordinator.set_geometry_transition_active(True)
+    for event_type in (QEvent.Type.FontChange, QEvent.Type.ThemeChange, QEvent.Type.LayoutRequest):
+        QCoreApplication.sendEvent(window, QEvent(event_type))
+    QCoreApplication.sendEvent(window, QResizeEvent(QSize(500, 300), QSize(400, 300)))
+    QTest.qWait(coordinator.RESIZE_DEBOUNCE_MS + 20)
+    assert target.plan_calls == 0
+    assert target.applied == []
+
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable and bool(target.applied))
+
+    assert target.applied == ["A"]
+    assert {ReflowReason.FONT, ReflowReason.THEME, ReflowReason.LAYOUT_REQUEST,
+            ReflowReason.RESIZE} <= set(coordinator.diagnostics.reasons)
+    coordinator.detach_top_level(window)
+    window.close()
+
+
+@pytest.mark.parametrize("height_changed", [False, True])
+def test_geometry_transition_unchanged_layout_resumes_with_one_probe_no_apply(
+    qt_application, height_changed,
+):
+    """只有高度反馈时终点只复核一次，不能再落实网格或等待滚动条屏障。"""
+    target = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    initial_calls = target.plan_calls
+
+    for cycle in range(2):
+        coordinator.set_geometry_transition_active(True)
+        coordinator.set_geometry_transition_active(True)
+        coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+        if height_changed:
+            target.height += 20
+        coordinator.set_geometry_transition_active(False)
+        wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+        assert len(target.applied) == 1
+        assert target.plan_calls == initial_calls + cycle + 1
+        assert len(target.synchronized) == (cycle + 1 if height_changed else 0)
+        assert coordinator.diagnostics.rounds == 0
+        assert coordinator.diagnostics.fallback_reason is None
+    if height_changed:
+        assert target.synchronized[-1].height == target.height
+
+
+@pytest.mark.parametrize("reason", [
+    ReflowReason.RESIZE, ReflowReason.FONT, ReflowReason.EXPLICIT,
+])
+def test_geometry_transition_late_layout_feedback_does_not_restart_generation(
+    qt_application, monkeypatch, reason,
+):
+    """终点的迟到布局反馈不应重启整代规划，但真实变更不能被反馈标记过滤。"""
+    window = QWidget()
+    target = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.attach_top_level(window)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    initial_calls = target.plan_calls
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    target.height += 20
+    # 精确推进一次恢复轮次，避免人工提前执行后残留另一份 0ms 回调。
+    with monkeypatch.context() as scheduling:
+        scheduling.setattr(coordinator, "_schedule_round", lambda _generation: None)
+        coordinator.set_geometry_transition_active(False)
+        generation = coordinator.diagnostics.generation
+        coordinator._run_round(generation)
+    coordinator._finalize_generation(generation)
+    assert coordinator.diagnostics.stable
+
+    # 终点几何可在 1ms 收尾后、低优先级反馈清理前才传播到顶层。
+    QCoreApplication.sendEvent(window, QEvent(QEvent.Type.LayoutRequest))
+    assert coordinator.diagnostics.generation == generation
+    assert coordinator.diagnostics.stable
+    assert target.plan_calls == initial_calls + 1
+    assert len(target.applied) == 1
+
+    target.width = 280
+    if reason is ReflowReason.RESIZE:
+        QCoreApplication.sendEvent(window, QResizeEvent(QSize(280, 200), QSize(320, 200)))
+    elif reason is ReflowReason.FONT:
+        QCoreApplication.sendEvent(window, QEvent(QEvent.Type.FontChange))
+    else:
+        coordinator.request_reflow(reason)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    assert coordinator.diagnostics.generation == generation + 1
+    assert reason in coordinator.diagnostics.reasons
+    assert len(target.applied) == 2
+    assert target.applied[-1].width == 280
+
+    # 清理后新的布局请求仍是合法外部输入，不能永久被抑制。
+    qt_application.processEvents()
+    QCoreApplication.sendEvent(window, QEvent(QEvent.Type.LayoutRequest))
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    assert coordinator.diagnostics.generation == generation + 2
+    coordinator.detach_top_level(window)
+    window.close()
+
+
+@pytest.mark.parametrize("reason", [
+    ReflowReason.EXPLICIT, ReflowReason.FONT, ReflowReason.THEME, ReflowReason.RESIZE,
+])
+@pytest.mark.parametrize("late", [False, True])
+def test_geometry_transition_real_reflow_reason_keeps_normal_convergence(
+    qt_application, reason, late,
+):
+    """真实变更在恢复前或首轮前到达，都不得被高度优化吞掉。"""
+    target = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    if not late:
+        coordinator.request_reflow(reason)
+    coordinator.set_geometry_transition_active(False)
+    if late:
+        coordinator.request_reflow(reason)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+    assert len(target.applied) == 2
+    assert reason in coordinator.diagnostics.reasons
+    assert coordinator.diagnostics.rounds == 1
+
+
+@pytest.mark.parametrize("change", ["width", "added", "removed", "reregistered", "cannot_sync"])
+def test_geometry_transition_changed_target_or_plan_keeps_normal_convergence(
+    qt_application, monkeypatch, change,
+):
+    """目标集合、水平输入变化或无法同步高度时，必须回到正常布局流程。"""
+    target = HeightFeedbackTarget()
+    companion = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    if change == "removed":
+        coordinator.register(companion)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    if change == "width":
+        target.width = 280
+    elif change == "added":
+        coordinator.register(companion)
+    elif change == "removed":
+        coordinator.unregister(companion)
+    elif change == "reregistered":
+        coordinator.unregister(target)
+        coordinator.register(target)
+    else:
+        target.height += 20
+        monkeypatch.setattr(target, "synchronize_responsive_plan", None)
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+    assert len(target.applied) == 2
+    assert target.applied[-1].width == target.width
+    assert target.applied[-1].height == target.height
+    if change == "added":
+        assert len(companion.applied) == 1
+    assert coordinator.diagnostics.rounds == 1
+
+
+def test_geometry_transition_sync_settle_invalidates_height_only_resume(qt_application):
+    """恢复后首轮之前的同步布局入口仍须落实计划，不继承高度专用快捷路径。"""
+    target = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    coordinator.set_geometry_transition_active(False)
+
+    assert coordinator.settle_now(ReflowReason.EXPLICIT) is True
+    assert len(target.applied) == 2
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+
+def test_geometry_transition_fallback_baseline_is_not_reused(qt_application):
+    target = FakeTarget(["A", "B", "A"], "D")
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    assert coordinator.diagnostics.fallback_reason is not None
+    applied = list(target.applied)
+    target.candidates = ["D"]
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+    assert target.applied == [*applied, "D"]
+    assert coordinator.diagnostics.fallback_reason is None
+
+
+def test_geometry_transition_restarted_before_resume_probe_discards_stale_baseline(
+    qt_application,
+):
+    target = HeightFeedbackTarget()
+    coordinator = ResponsiveCoordinator()
+    coordinator.register(target)
+    coordinator.request_reflow(ReflowReason.EXPLICIT)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+    coordinator.set_geometry_transition_active(True)
+    coordinator.request_reflow(ReflowReason.LAYOUT_REQUEST)
+    coordinator.set_geometry_transition_active(False)
+    coordinator.set_geometry_transition_active(True)
+    QTest.qWait(20)
+    assert len(target.applied) == 1
+    coordinator.set_geometry_transition_active(False)
+    wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+    assert len(target.applied) == 2
+    assert coordinator.diagnostics.rounds == 1
 
 
 

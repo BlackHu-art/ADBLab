@@ -3141,6 +3141,9 @@ def test_inline_selector_reallocates_workspace_height_and_restores_after_collaps
             surface_height = surface.height()
 
             bar.open_picker()
+            wait_until(qt_application, lambda: (
+                bar._selector_animation.state() == QAbstractAnimation.State.Stopped
+            ))
             wait_for_stable_geometry(qt_application, (frame, bar, stack, bar._picker))
 
             assert bar.is_selector_expanded

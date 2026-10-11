@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ceil
 from typing import Literal
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QRect,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QFocusEvent,
     QFontMetricsF,
     QKeyEvent,
     QMouseEvent,
@@ -108,12 +121,18 @@ class _SessionComboBox(ComboBox):
 class _SelectorButton(TransparentDropDownPushButton):
     """沿用无底色按钮，展开时以反向强调箭头和文案表达区域的实际状态。"""
 
+    _arrow_angle = 0.0
+
+    def set_arrow_angle(self, angle: float) -> None:
+        self._arrow_angle = angle
+        self.update()
+
     def _drawDropDownIcon(self, painter, rect) -> None:
         painter.save()
+        painter.translate(rect.center())
+        painter.rotate(self._arrow_angle)
+        painter.translate(-rect.center())
         if self.property("selectorExpanded"):
-            painter.translate(rect.center())
-            painter.rotate(180)
-            painter.translate(-rect.center())
             FluentIcon.ARROW_DOWN.render(
                 painter, rect, fill=BaseStyles.color("BUTTON_ACCENT"),
             )
@@ -309,6 +328,7 @@ class DevicePicker(QWidget):
     close_session_requested = Signal()
     collapse_requested = Signal()
     device_operation_requested = Signal(str, str)
+    focus_entered = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -329,6 +349,10 @@ class DevicePicker(QWidget):
         self._close_text = ""
         self._scan_state = ""
         self._sizing = False
+        self._update_depth = 0
+        self._rows_pending = False
+        self._interaction_active = True
+        self._focus_policies: dict[QWidget, Qt.FocusPolicy] = {}
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout(self)
@@ -411,7 +435,30 @@ class DevicePicker(QWidget):
             child.installEventFilter(self)
         self.installEventFilter(self)
 
+    def set_interaction_active(self, active: bool) -> None:
+        """收起时退出鼠标和键盘导航，但保留各行原有启用外观与业务忙碌状态。"""
+        self._interaction_active = active
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not active)
+        widgets = (self, *self.findChildren(QWidget))
+        if active:
+            for widget in widgets:
+                policy = self._focus_policies.get(widget)
+                if policy is not None:
+                    widget.setFocusPolicy(policy)
+            self._focus_policies.clear()
+        else:
+            # 快照刷新可能替换设备行，只保存现存控件，原策略不能被 NoFocus 覆盖。
+            self._focus_policies = {
+                widget: self._focus_policies.get(widget, widget.focusPolicy())
+                for widget in widgets
+            }
+            for widget in widgets:
+                widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
     def eventFilter(self, watched, event) -> bool:
+        if (not self._interaction_active
+                and isinstance(event, (QMouseEvent, QWheelEvent, QKeyEvent))):
+            return True
         if watched is self.device_list.viewport() and event.type() == QEvent.Type.Resize:
             # 页头先于内部视口收到 resize；按最终宽度更新列和行，避免旧行宽裁掉右侧动作。
             self._sync_compact_actions()
@@ -432,6 +479,12 @@ class DevicePicker(QWidget):
             self.collapse_requested.emit()
             return True
         if event.type() == QEvent.Type.FocusIn and isinstance(watched, QWidget):
+            # 键盘进入时先完整露出区域，避免焦点停在动画裁剪范围之外。
+            if isinstance(event, QFocusEvent) and event.reason() in (
+                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                Qt.FocusReason.ShortcutFocusReason,
+            ):
+                self.focus_entered.emit()
             if watched is self.device_list:
                 self._ensure_current_visible()
             elif self.content.isAncestorOf(watched):
@@ -515,8 +568,22 @@ class DevicePicker(QWidget):
 
     def set_height_budget(self, height: int) -> None:
         """外层统一承担滚动，短窗的可见高度不会改变内部设备行自然高度。"""
+        if self._height_budget == max(8, height):
+            return
         self._height_budget = max(8, height)
         self._sync_list_height()
+
+    @contextmanager
+    def batch_update(self) -> Iterator[None]:
+        """同一宿主快照的字段统一落地后重排行；嵌套更新仅由最外层刷新。"""
+        self._update_depth += 1
+        try:
+            yield
+        finally:
+            self._update_depth -= 1
+            if not self._update_depth and self._rows_pending:
+                self._rows_pending = False
+                self._sync_rows()
 
     def set_context(
         self, selected: Iterable[str], connected: Iterable[str],
@@ -538,6 +605,9 @@ class DevicePicker(QWidget):
         self._sync_rows()
 
     def _sync_rows(self) -> None:
+        if self._update_depth:
+            self._rows_pending = True
+            return
         current = str(self.session_combo.currentData() or "")
         offline = bool(self._close_visible and self._close_scope == "session"
                        and current and current not in self._connected)
@@ -646,6 +716,8 @@ class DevicePicker(QWidget):
         self._place_close_action()
         self._sync_summary()
         self._sync_list_height()
+        if not self._interaction_active:
+            self.set_interaction_active(False)
 
     def set_session_context(self, source: ComboBox | None, target: CheckBox) -> None:
         """保留会话查看投影，不让行内关闭动作依赖最近一次点击的设备。"""
@@ -869,12 +941,13 @@ class DevicePicker(QWidget):
 
     def _choose_session(self, _index: int) -> None:
         target = str(self.session_combo.currentData() or "")
-        if target and self.session_combo.isEnabled() and not self._operation_selection_locked:
+        if (self._interaction_active and target and self.session_combo.isEnabled()
+                and not self._operation_selection_locked):
             self.session_requested.emit(target)
 
     def _toggle_current_target(self, checked: bool) -> None:
         target = str(self.session_combo.currentData() or "")
-        if (not target or not self.session_target.isEnabled()
+        if (not self._interaction_active or not target or not self.session_target.isEnabled()
                 or self._operation_selection_locked):
             return
         selected = [device for device in self._selected if device != target]
@@ -883,7 +956,7 @@ class DevicePicker(QWidget):
         self.selection_requested.emit(selected)
 
     def _set_all(self, checked: bool) -> None:
-        if self._operation_selection_locked:
+        if not self._interaction_active or self._operation_selection_locked:
             return
         if checked and (self._single_selection or self._selection_locked):
             return
@@ -896,7 +969,7 @@ class DevicePicker(QWidget):
         self._submit()
 
     def _submit(self, changed: QListWidgetItem | None = None) -> None:
-        if self._operation_selection_locked:
+        if not self._interaction_active or self._operation_selection_locked:
             self._sync_rows()
             return
         if (self._single_selection and changed is not None
@@ -923,7 +996,8 @@ class DevicePicker(QWidget):
         """每次宿主快照最多提交一次行操作，点击不隐式勾选或切换会话。"""
         device = next((key for key, candidate in self._rows.items() if candidate is row), "")
         operation = (self._operations or {}).get(device)
-        if (not self.isVisible() or operation is None or not operation.action
+        if (not self._interaction_active or not self.isVisible()
+                or operation is None or not operation.action
                 or not operation.enabled or device in self._pending_operations):
             return
         self._pending_operations.add(device)
@@ -985,6 +1059,27 @@ class DeviceConnectionForm(FlyoutViewBase):
         self.connect_requested.emit(target)
 
 
+class _DevicePickerReveal(QWidget):
+    """只改变裁剪范围；内容高度固定，动画不会逐帧触发列表重排。"""
+
+    GAP = 6
+
+    def __init__(self, picker: DevicePicker, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.picker = picker
+        picker.setParent(self)
+        picker.move(0, self.GAP)
+        self.setAutoFillBackground(False)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(0)
+        self.hide()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.picker.width() != self.width():
+            self.picker.resize(self.width(), self.picker.height())
+
+
 class DeviceContextBar(QWidget):
     """固定在应用内容区上方，不随页面滚动；视图切换不修改批量复选集。"""
 
@@ -993,6 +1088,7 @@ class DeviceContextBar(QWidget):
     session_requested = Signal(str)
     close_session_requested = Signal()
     device_operation_requested = Signal(str, str)
+    selector_transition_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1009,6 +1105,19 @@ class DeviceContextBar(QWidget):
         self._selected: tuple[str, ...] = ()
         self._connected: tuple[str, ...] = ()
         self._picker: DevicePicker | None = None
+        self._selector_reveal: _DevicePickerReveal | None = None
+        self._selector_open = False
+        self._selector_transition_active = False
+        self._selector_release_pending = False
+        self._selector_target_height = 0
+        self._selector_start_height = 0
+        self._selector_end_height = 0
+        self._selector_start_angle = 0.0
+        self._selector_end_angle = 0.0
+        self._selector_animation = QVariantAnimation(self)
+        self._selector_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._selector_animation.valueChanged.connect(self._apply_selector_frame)
+        self._selector_animation.finished.connect(self._finish_selector_animation)
         self._connection: DeviceConnectionForm | None = None
         self._picker_flyout: Flyout | None = None
         self._connection_flyout: Flyout | None = None
@@ -1023,7 +1132,8 @@ class DeviceContextBar(QWidget):
         outer = QVBoxLayout(self)
         self._outer_layout = outer
         outer.setContentsMargins(32, 12, 32, 6)
-        outer.setSpacing(6)
+        # 页头与列表的间距由裁剪层承担，避免展开第一帧凭空增加固定间隙。
+        outer.setSpacing(0)
         self._surface = QWidget(self)
         outer.addWidget(self._surface)
         self._layout = QHBoxLayout(self._surface)
@@ -1073,6 +1183,7 @@ class DeviceContextBar(QWidget):
         self._apply_theme()
         self._apply_fonts()
         self.set_context((), (), "empty")
+        self.targets_button.installEventFilter(self)
         if parent is not None:
             parent.installEventFilter(self)
 
@@ -1143,12 +1254,6 @@ class DeviceContextBar(QWidget):
         self.targets_button.setAccessibleDescription(
             tr("{text}，已选 {count} 台").format(text=text, count=len(self._selected))
         )
-        if self._picker is not None:
-            self._picker.set_context(
-                self._picker_selection(), self._connected,
-                names={device: self.device_display_name(device) for device in self._device_numbers},
-                details=self._device_details,
-            )
         self._sync_session_target()
         self._sync_picker_session()
         self._sync_target_presentation()
@@ -1262,19 +1367,21 @@ class DeviceContextBar(QWidget):
 
     def _sync_picker_session(self) -> None:
         if self._picker is not None:
-            self._picker.set_selection_mode(
-                single=self._single_selection, locked=self._selection_locked,
-            )
-            self._picker.set_session_context(
-                self.session_combo if self._has_session else None, self.session_target,
-            )
-            self._picker.set_context(
-                self._picker_selection(), self._connected,
-                names={device: self.device_display_name(device) for device in self._device_numbers},
-                details=self._device_details,
-            )
-            self._picker.set_close_context(self._close_action, scope=self._close_scope)
-            self._picker.set_discovery_state(self._discovery_state)
+            with self._picker.batch_update():
+                self._picker.set_selection_mode(
+                    single=self._single_selection, locked=self._selection_locked,
+                )
+                self._picker.set_session_context(
+                    self.session_combo if self._has_session else None, self.session_target,
+                )
+                self._picker.set_context(
+                    self._picker_selection(), self._connected,
+                    names={device: self.device_display_name(device)
+                           for device in self._device_numbers},
+                    details=self._device_details,
+                )
+                self._picker.set_close_context(self._close_action, scope=self._close_scope)
+                self._picker.set_discovery_state(self._discovery_state)
             self._sync_selector_height()
 
     def _picker_selection(self) -> tuple[str, ...]:
@@ -1415,23 +1522,33 @@ class DeviceContextBar(QWidget):
             picker.device_operation_requested.connect(self._request_device_operation)
             picker.close_session_requested.connect(self._request_close_session)
             picker.collapse_requested.connect(lambda: self.collapse_selector(keyboard=True))
+            picker.focus_entered.connect(self._reveal_focused_picker)
             self._picker = picker
-            self._outer_layout.addWidget(picker)
-            picker.set_device_operations(
-                self._device_operations, selection_locked=self._operation_selection_locked,
-            )
-        self._sync_picker_session()
+            self._selector_reveal = _DevicePickerReveal(picker, self)
+            self._outer_layout.addWidget(self._selector_reveal)
+            with picker.batch_update():
+                picker.set_device_operations(
+                    self._device_operations, selection_locked=self._operation_selection_locked,
+                )
+                self._sync_picker_session()
+        else:
+            self._sync_picker_session()
+        assert self._selector_reveal is not None
+        self._picker.set_interaction_active(True)
         self._picker.show()
+        self._selector_reveal.show()
+        self._outer_layout.activate()
+        self._selector_open = True
         self.targets_button.setProperty("selectorExpanded", True)
         self.targets_button.setChecked(True)
         self._sync_target_presentation()
         self.targets_button.update()
-        self._sync_selector_height()
+        self._animate_selector()
 
     @property
     def is_selector_expanded(self) -> bool:
-        """展开状态仅由当前控件可见性决定，不写入设备或持久化状态。"""
-        return self._picker is not None and not self._picker.isHidden()
+        """立即反映用户展开意图，收起过渡中的残留画面不接受设备操作。"""
+        return self._selector_open
 
     def toggle_selector(self) -> None:
         """用户点击页头切换列表，保留程序调用 open_picker 的幂等契约。"""
@@ -1440,7 +1557,7 @@ class DeviceContextBar(QWidget):
         else:
             self.open_picker()
 
-    def collapse_selector(self, *, keyboard: bool = False) -> None:
+    def collapse_selector(self, *, keyboard: bool = False, animated: bool = True) -> None:
         """隐藏列表并移出焦点链；原行对象保留，避免点击回调期间销毁发送方。"""
         if self._picker is None:
             return
@@ -1453,11 +1570,103 @@ class DeviceContextBar(QWidget):
             self.targets_button.setFocus(
                 Qt.FocusReason.TabFocusReason if keyboard else Qt.FocusReason.OtherFocusReason,
             )
-        self._picker.hide()
+        self._selector_open = False
+        assert self._selector_reveal is not None
+        # 收起期间退出焦点链并拒绝点击，避免仍在消失的设备行提交操作。
+        self._picker.set_interaction_active(False)
         self.targets_button.setProperty("selectorExpanded", False)
         self.targets_button.setChecked(False)
         self._sync_target_presentation()
         self.targets_button.update()
+        self._animate_selector(animated=animated)
+
+    def _animate_selector(self, *, animated: bool = True) -> None:
+        """单一时钟从当前几何反向；重启前停止旧动画，不排队旧完成回调。"""
+        reveal = self._selector_reveal
+        if reveal is None:
+            return
+        self._selector_release_pending = False
+        self._selector_animation.stop()
+        self._selector_start_height = reveal.height()
+        self._selector_end_height = self._selector_target_height if self._selector_open else 0
+        self._selector_start_angle = self.targets_button._arrow_angle
+        self._selector_end_angle = 180.0 if self._selector_open else 0.0
+        distance = abs(self._selector_end_height - self._selector_start_height)
+        if not animated or not self.isVisible() or not distance:
+            self._finish_selector_animation(wait_for_paint=False)
+            return
+        if not self._selector_transition_active:
+            self._selector_transition_active = True
+            self.selector_transition_changed.emit(True)
+        # 重配 duration 会按旧 currentTime 同步发出 valueChanged；此时新的高度端点
+        # 已生效，必须阻断旧进度，避免反向点击先跳到终点再退回当前高度。
+        with QSignalBlocker(self._selector_animation):
+            self._selector_animation.setDuration(max(
+                1, round(200 * min(1.0, distance / max(1, self._selector_target_height))),
+            ))
+            self._selector_animation.setStartValue(0.0)
+            self._selector_animation.setEndValue(1.0)
+        self._selector_animation.start()
+
+    def _apply_selector_frame(self, progress: float) -> None:
+        if self._selector_reveal is None:
+            return
+        height = self._selector_start_height + (
+            self._selector_end_height - self._selector_start_height
+        ) * progress
+        self._selector_reveal.setFixedHeight(round(height))
+        self.targets_button.set_arrow_angle(self._selector_start_angle + (
+            self._selector_end_angle - self._selector_start_angle
+        ) * progress)
+        self._commit_selector_geometry()
+
+    def _commit_selector_geometry(self) -> None:
+        """在绘制前一起落实裁切区和页头几何，避免旧总高度挤压或拉伸列表上方。"""
+        self._outer_layout.activate()
+        self.updateGeometry()
+        parent = self.parentWidget()
+        parent_layout = parent.layout() if parent is not None else None
+        if parent_layout is not None:
+            parent_layout.activate()
+
+    def _finish_selector_animation(self, *, wait_for_paint: bool = True) -> None:
+        """先提交终点画面再恢复布局；隐藏、关闭和键盘提前完成不等待绘制。"""
+        if self._selector_reveal is None or self._picker is None:
+            return
+        self._selector_animation.stop()
+        self._selector_reveal.setFixedHeight(
+            self._selector_target_height if self._selector_open else 0,
+        )
+        self.targets_button.set_arrow_angle(180.0 if self._selector_open else 0.0)
+        if not self._selector_open:
+            self._picker.hide()
+            self._selector_reveal.hide()
+        self._commit_selector_geometry()
+        window = self.window()
+        if (wait_for_paint and self.isVisible() and self.updatesEnabled()
+                and window is not None and not window.isMinimized()):
+            self._selector_release_pending = self._selector_transition_active
+            self.update()
+        else:
+            self._release_selector_transition()
+
+    def _release_selector_transition(self) -> None:
+        self._selector_release_pending = False
+        if self._selector_transition_active:
+            self._selector_transition_active = False
+            self.selector_transition_changed.emit(False)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._selector_release_pending:
+            # 此时终点几何已进入本次绘制；宿主排定的规划会在整轮绘制返回后运行，
+            # 避免最后几像素被昂贵布局计算挡在屏幕之外。
+            self._release_selector_transition()
+
+    def _reveal_focused_picker(self) -> None:
+        """键盘提前进入列表时直接完成展开，确保焦点可见且不改变导航来源。"""
+        if self._selector_open:
+            self._finish_selector_animation(wait_for_paint=False)
 
     def _sync_selector_height(self) -> None:
         if self._picker is None:
@@ -1468,6 +1677,15 @@ class DeviceContextBar(QWidget):
         margins = self._outer_layout.contentsMargins()
         header = self._surface.sizeHint().height() + margins.top() + margins.bottom()
         self._picker.set_height_budget(max(8, int((height - header) * .45)))
+        target = self._picker.height() + _DevicePickerReveal.GAP
+        if target == self._selector_target_height:
+            return
+        self._selector_target_height = target
+        if self._selector_open:
+            if self._selector_animation.state() != QAbstractAnimation.State.Stopped:
+                self._animate_selector()
+            else:
+                self._finish_selector_animation(wait_for_paint=False)
 
     def minimumSizeHint(self) -> QSize:
         # 展开高度按宿主实时收缩，不能用上一次固定高度反过来锁住主窗口最小高度。
@@ -1475,6 +1693,11 @@ class DeviceContextBar(QWidget):
         return QSize(0, self._surface.sizeHint().height() + margins.top() + margins.bottom())
 
     def eventFilter(self, watched, event) -> bool:
+        if (watched is self.targets_button and isinstance(event, QKeyEvent)
+                and event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape
+                and self.is_selector_expanded):
+            self.collapse_selector(keyboard=True)
+            return True
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:
             self._sync_selector_height()
         return super().eventFilter(watched, event)
@@ -1555,7 +1778,7 @@ class DeviceContextBar(QWidget):
     def dismiss_popups(self) -> None:
         """兼容旧入口：收起页内选择区，并关闭仍使用浮层的旧连接表单。"""
 
-        self.collapse_selector()
+        self.collapse_selector(animated=False)
         if self._connection_flyout is not None:
             self._connection_flyout.close()
 
@@ -1581,7 +1804,10 @@ class DeviceContextBar(QWidget):
         # 原生字体含小数宽度；取整舍入后再传给 elidedText 会误删仍放得下的末字。
         metrics = QFontMetricsF(self.targets_button.font(), self.targets_button)
         text = tr("收起设备") if self.is_selector_expanded else self._target_text
-        natural = ceil(metrics.horizontalAdvance(text)) + text_padding
+        natural = ceil(max(
+            metrics.horizontalAdvance(self._target_text),
+            metrics.horizontalAdvance(tr("收起设备")),
+        )) + text_padding
         height = max(32, self.session_combo.fontMetrics().height() + 14)
         title_width = self.page_title.sizeHint().width() + 24
         self.page_title.setVisible(width >= natural + title_width)

@@ -645,7 +645,7 @@ class DeviceHubPage(QWidget):
         layout = QVBoxLayout(self)
         self._page_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.summary = BodyLabel(self)
         self.summary.setWordWrap(True)
@@ -688,6 +688,8 @@ class DeviceHubPage(QWidget):
         action_layout.addWidget(self.refresh_button)
         self._toolbar_layout.addWidget(self._toolbar_actions, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.toolbar)
+        # 工具栏后的基础间距常驻；连接区的额外间距随裁剪高度展开，避免显隐瞬跳。
+        layout.addSpacing(14)
         self.cards_container = QWidget(self)
         self._cards_layout = QVBoxLayout(self.cards_container)
         self._cards_layout.setContentsMargins(0, 0, 0, 0)
@@ -717,16 +719,17 @@ class DeviceHubPage(QWidget):
         return tuple(self._cards[device_id] for device_id in self._connected)
 
     def set_connection_panel(self, panel: QWidget) -> None:
-        """把唯一连接区放在工具栏与设备内容之间，隐藏时由布局移除其占位。"""
+        """挂载唯一连接区，尾部间距由面板一并裁剪，隐藏时不留下占位。"""
         if self._connection_panel is panel:
             return
         if self._connection_panel is not None:
             raise ValueError("device connection panel is already attached")
         self._connection_panel = panel
-        self._page_layout.insertWidget(1, panel)
+        panel.setContentsMargins(0, 0, 0, 14)
+        self._page_layout.insertWidget(2, panel)
 
     def set_connection_expanded(self, expanded: bool) -> None:
-        """以连接区的实际显隐同步入口语义，离页和主动收起使用同一状态。"""
+        """以连接区的展开意图同步入口，动画中的残留画面不延迟按钮反馈。"""
         self.connect_button.setChecked(expanded)
         text = tr("收起连接") if expanded else tr("连接设备")
         self.connect_button.setText(text)
@@ -925,10 +928,12 @@ class DeviceHubPage(QWidget):
             self.summary.fontMetrics().horizontalAdvance(self.summary.text())
             + action_width + 12
         )
+        vertical = self.width() < required
         self._toolbar_layout.setDirection(
-            QBoxLayout.Direction.TopToBottom if self.width() < required
-            else QBoxLayout.Direction.LeftToRight
+            QBoxLayout.Direction.TopToBottom if vertical else QBoxLayout.Direction.LeftToRight
         )
+        # 纵排摘要按换行自然高度显示，不能吸收剩余高度后随连接区动画被逐帧挤压。
+        self._toolbar_layout.setStretch(0, 0 if vertical else 1)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

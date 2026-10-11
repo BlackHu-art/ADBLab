@@ -164,6 +164,10 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        device_bar = getattr(self._frame, "_global_device_bar", None)
+        if device_bar is not None:
+            # 先结束几何过渡，避免动画完成回调在 SidePanel 清理后恢复布局计时器。
+            device_bar.dismiss_popups()
         settings = getattr(self._frame, "_settings_page", None)
         client_card = getattr(settings, "adb_client_card", None)
         if client_card is not None:

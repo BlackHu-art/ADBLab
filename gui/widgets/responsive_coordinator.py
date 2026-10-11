@@ -21,6 +21,8 @@ from gui.widgets.responsive_primitives import (
     _TopLevelAttachment,
 )
 
+_FingerprintBatch = tuple[tuple[int, object], ...]
+
 
 class ResponsiveCoordinator:
     """合并外部布局事件，并在最多三次应用后锁定保守方案。"""
@@ -47,6 +49,10 @@ class ResponsiveCoordinator:
         self._fallback_locked = False
         self._reasons: list[ReflowReason] = []
         self._pending_reasons: list[ReflowReason] = []
+        self._geometry_transition_active = False
+        self._transition_reasons: list[ReflowReason] = []
+        self._transition_baseline: tuple[_FingerprintBatch, _FingerprintBatch] | None = None
+        self._resume_baseline: tuple[_FingerprintBatch, _FingerprintBatch] | None = None
         self._plan_history: list[tuple[tuple[int, object], ...]] = []
         self._settling_history: list[tuple[tuple[int, object], ...]] = []
         self._context_sync_rounds = 0
@@ -86,11 +92,15 @@ class ResponsiveCoordinator:
         self._purge_targets()
         if any(target_ref() is target for target_ref in self._target_refs):
             return
+        self._transition_baseline = None
+        self._resume_baseline = None
         coordinator_ref = weakref.ref(self)
 
         def forget_target(dead_ref: weakref.ReferenceType[ReflowTarget]) -> None:
             coordinator = coordinator_ref()
             if coordinator is not None:
+                coordinator._transition_baseline = None
+                coordinator._resume_baseline = None
                 coordinator._target_refs = [
                     target_ref
                     for target_ref in coordinator._target_refs
@@ -100,6 +110,8 @@ class ResponsiveCoordinator:
         self._target_refs.append(weakref.ref(target, forget_target))
 
     def unregister(self, target: ReflowTarget) -> None:
+        self._transition_baseline = None
+        self._resume_baseline = None
         self._target_refs = [
             target_ref
             for target_ref in self._target_refs
@@ -108,6 +120,9 @@ class ResponsiveCoordinator:
 
     def request_reflow(self, reason: ReflowReason) -> None:
         reason = reason if isinstance(reason, ReflowReason) else ReflowReason(reason)
+        if self._geometry_transition_active:
+            self._append_reason(self._transition_reasons, reason)
+            return
         if reason is ReflowReason.LAYOUT_REQUEST and (self._state == "settling" or self._in_apply):
             return
         if self._state == "idle":
@@ -132,6 +147,42 @@ class ResponsiveCoordinator:
             return
         self._append_reason(self._pending_reasons, reason)
 
+    def set_geometry_transition_active(self, active: bool) -> None:
+        """由唯一宿主在 GUI 线程成对通知几何过渡，合并中间帧的布局请求。
+
+        开始时接管已排定、防抖及收尾中的工作；结束时用最终几何重新收敛，字体、
+        主题和真实尺寸变更均保留。反向过渡可重复激活，立即收起或隐藏也必须解除。
+        """
+        if self._geometry_transition_active == active:
+            return
+        self._geometry_transition_active = active
+        if active:
+            self._transition_baseline = None
+            self._resume_baseline = None
+            if (self._state == "idle" and not self._fallback_locked
+                    and self._plan_history and self._settling_history):
+                self._transition_baseline = self._plan_history[-1], self._settling_history[-1]
+            if self._state != "idle":
+                for reason in self._reasons:
+                    self._append_reason(self._transition_reasons, reason)
+            for reason in self._pending_reasons:
+                self._append_reason(self._transition_reasons, reason)
+            self._pending_reasons.clear()
+            self._debounce_timer.stop()
+            self._finishing = False
+            # 上一代的反馈标记不能跨过暂停，否则会吞掉过渡产生的新布局请求。
+            self._internal_layout_feedback.clear()
+            self._state = "suspended"
+            return
+        self._state = "idle"
+        reasons = tuple(self._transition_reasons)
+        self._transition_reasons.clear()
+        baseline, self._transition_baseline = self._transition_baseline, None
+        if reasons:
+            self._start_generation(reasons)
+            if reasons == (ReflowReason.LAYOUT_REQUEST,):
+                self._resume_baseline = baseline
+
     def _flush_debounced_generation(self) -> None:
         """在连续 resize/splitter/screen 通知的尾沿提交一次最终几何。"""
 
@@ -152,6 +203,11 @@ class ResponsiveCoordinator:
         本方法可能让代次加一；继续收敛仍由既有的有界轮次负责。返回是否已同步执行。
         """
 
+        if self._geometry_transition_active:
+            self.request_reflow(reason)
+            return False
+        # 同步入口表达新的布局要求，不能继承尚未执行的纯高度恢复优化。
+        self._resume_baseline = None
         if self._in_apply:
             # 正在落实计划时再次进入属于该次 apply 的内部反馈，交给正常排代次路径，
             # 避免 _apply_candidates 与 _plan_history 重入。
@@ -212,6 +268,7 @@ class ResponsiveCoordinator:
 
     def _start_generation(self, reasons: Iterable[ReflowReason]) -> None:
         self._debounce_timer.stop()
+        self._resume_baseline = None
         self._generation += 1
         self._rounds = 0
         self._state = "scheduled"
@@ -267,10 +324,11 @@ class ResponsiveCoordinator:
             for target, _context, plan in candidates
         )
 
-    def _can_synchronize_candidates(self, candidates, fingerprint) -> bool:
-        if not self._plan_history:
-            return False
-        previous = self._plan_history[-1]
+    def _can_synchronize_candidates(self, candidates, fingerprint, previous=None) -> bool:
+        if previous is None:
+            if not self._plan_history:
+                return False
+            previous = self._plan_history[-1]
         if len(previous) != len(fingerprint):
             return False
         for (target, _context, _plan), previous_item, current_item in zip(
@@ -284,8 +342,9 @@ class ResponsiveCoordinator:
                 return False
         return True
 
-    def _synchronize_candidates(self, candidates, fingerprint) -> None:
-        previous = self._plan_history[-1]
+    def _synchronize_candidates(self, candidates, fingerprint, previous=None) -> None:
+        if previous is None:
+            previous = self._plan_history[-1]
         for (target, _context, plan), previous_item, current_item in zip(
             candidates,
             previous,
@@ -301,7 +360,32 @@ class ResponsiveCoordinator:
             except RuntimeError:
                 self.unregister(target)
 
+    def _resume_unchanged_geometry(self, candidates, fingerprint, settling_fingerprint) -> bool:
+        """只复用过渡前已稳定的水平计划，避免纯高度终点再经历完整布局屏障。
+
+        基线仅供恢复后的首轮使用。新增目标、实际水平输入变化或显式重排均走原流程；
+        高度快照变化的目标必须支持无布局副作用的同步，否则仍重新应用计划。
+        """
+        baseline, self._resume_baseline = self._resume_baseline, None
+        if baseline is None or self._reasons != [ReflowReason.LAYOUT_REQUEST]:
+            return False
+        previous, previous_settling = baseline
+        if (settling_fingerprint != previous_settling
+                or not self._can_synchronize_candidates(candidates, fingerprint, previous)):
+            return False
+        self._synchronize_candidates(candidates, fingerprint, previous)
+        self._plan_history.append(fingerprint)
+        self._settling_history.append(settling_fingerprint)
+        # 快路径未执行 apply，但终点高度仍会产生迟到的顶层布局反馈。
+        # 沿用本代低优先级清理窗口，避免反馈在收尾之后误开新一代规划。
+        self._internal_layout_feedback.update(
+            (key, self._generation) for key in self._attachments
+        )
+        return True
+
     def _run_round(self, generation: int) -> None:
+        if self._geometry_transition_active:
+            return
         if generation != self._generation or self._state == "idle" or self._finishing:
             return
         self._state = "settling"
@@ -316,6 +400,9 @@ class ResponsiveCoordinator:
             return
         fingerprint = self._batch_fingerprint(candidates)
         settling_fingerprint = self._batch_settling_fingerprint(candidates)
+        if self._resume_unchanged_geometry(candidates, fingerprint, settling_fingerprint):
+            self._finish_generation(generation)
+            return
         if self._plan_history and fingerprint == self._plan_history[-1]:
             requires_barrier = any(
                 bool(getattr(target, "requires_settling_barrier", False))

@@ -150,6 +150,11 @@ class SidePanel(QWidget):
                 self._responsive_settle_timer.start()
         index = self._responsive_viewports.get(watched)
         if index is not None and event.type() == QEvent.Type.Resize:
+            resize = cast(QResizeEvent, event)
+            # 这些 viewport 已预留纵向滚动条，纯高度变化不影响横向断点。
+            # 在查询已应用几何之前跳过，避免该查询递归规划 Remote 内层网格。
+            if resize.oldSize().isValid() and resize.oldSize().width() == resize.size().width():
+                return super().eventFilter(watched, event)
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)
             # 当前代会在每轮重新读取真实 viewport；此时产生的 Resize 属于布局反馈，
@@ -161,7 +166,7 @@ class SidePanel(QWidget):
                 return super().eventFilter(watched, event)
             apply_responsive_width = getattr(tab, "apply_responsive_width", None)
             if callable(apply_responsive_width):
-                apply_responsive_width(cast(QResizeEvent, event).size().width())
+                apply_responsive_width(resize.size().width())
         return super().eventFilter(watched, event)
 
     def _connect_lazy_tab_signals(self, index: int, tab=None):
@@ -310,6 +315,12 @@ class SidePanel(QWidget):
 
         self._responsive_coordinator.request_reflow(reason)
         if not self._responsive_settle_timer.isActive():
+            self._responsive_settle_timer.start()
+
+    def set_viewport_transition_active(self, active: bool) -> None:
+        """设备栏改变正文高度时暂缓规划，结束后恢复收敛与稳定通知。"""
+        self._responsive_coordinator.set_geometry_transition_active(active)
+        if not active and not self._responsive_settle_timer.isActive():
             self._responsive_settle_timer.start()
 
     def attach_responsive_top_level(self, widget: QWidget) -> None:

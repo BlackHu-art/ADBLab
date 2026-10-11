@@ -76,6 +76,8 @@ class ResponsiveGridBinding:
         self._initial_minimum_width = container.minimumWidth()
         self._initial_maximum_width = container.maximumWidth()
         self._applied_plan: GridPlan | None = None
+        # 正常与保守规划各保留最近一次输入，窗口拖动不会积累历史宽度缓存。
+        self._plan_cache: dict[bool, tuple[tuple[object, ...], GridPlan]] = {}
         self._destroyed = False
         container.destroyed.connect(self._on_container_destroyed)
         coordinator.register(self)
@@ -303,39 +305,63 @@ class ResponsiveGridBinding:
             spacing = layout.spacing()
         if spacing < 0:
             spacing = 0
+        margins = layout.contentsMargins()
+        font_height = None
+        if self._adaptive_spacing:
+            font_height = max(
+                (widget.fontMetrics().height() for widget in self._live_widgets_exact()),
+                default=self._live_container().fontMetrics().height(),
+            )
+        # 控件度量每次重读；只缓存纯规划结果。高度不参与列布局，但返回的上下文
+        # 必须仍是当前高度，供协调器收敛；其余输入均参与匹配，避免字体或样式过期。
+        cache_key = (
+            modes, context.width, context.restricted_workspace, context.font_fingerprint,
+            context.style_generation,
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            ("adaptive", font_height) if self._adaptive_spacing else ("fixed", spacing),
+            metrics,
+        )
+        normal_plan = modes is self._modes
+        cached = self._plan_cache.get(normal_plan)
+        if cached is not None and cached[0] == cache_key:
+            plan = cached[1]
+            if plan.context_fingerprint != context.fingerprint:
+                plan = replace(plan, context_fingerprint=context.fingerprint)
+                self._plan_cache[normal_plan] = (cache_key, plan)
+            return plan
         if self._adaptive_spacing:
             spacing = 2
             provisional = choose_grid_plan(
                 metrics,
                 modes,
                 context.width,
-                layout.contentsMargins(),
+                margins,
                 spacing,
                 context.fingerprint,
             )
             gap_count = max(0, provisional.mode.columns - 1)
             minimum_width = max(0, provisional.required_width - spacing * gap_count)
-            font_height = max(
-                (widget.fontMetrics().height() for widget in self._live_widgets_exact()),
-                default=self._live_container().fontMetrics().height(),
-            )
+            assert font_height is not None
             spacing = adaptive_layout_spacing(
                 context.width,
                 minimum_width,
                 font_height,
                 gap_count,
             )
-        return choose_grid_plan(
+        plan = choose_grid_plan(
             metrics,
             modes,
             context.width,
-            layout.contentsMargins(),
+            margins,
             spacing,
             context.fingerprint,
         )
+        self._plan_cache[normal_plan] = (cache_key, plan)
+        return plan
 
     def _on_container_destroyed(self, *_args) -> None:
         self._destroyed = True
+        self._plan_cache.clear()
         coordinator = self._coordinator_ref()
         if coordinator is not None:
             coordinator.unregister(self)

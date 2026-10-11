@@ -7,9 +7,30 @@ import re
 import time
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetricsF, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QRect,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+    Signal,
+)
+from PySide6.QtGui import (
+    QColor,
+    QFocusEvent,
+    QFontMetricsF,
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
+    QApplication,
     QBoxLayout,
     QGridLayout,
     QHBoxLayout,
@@ -36,6 +57,7 @@ from qfluentwidgets import (
     TransparentPushButton,
     VerticalSeparator,
 )
+from shiboken6 import isValid
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
@@ -282,14 +304,16 @@ class _AddressForm(QWidget):
 
 
 class DeviceConnectionPanel(QWidget):
-    """常驻页内单会话视图；收起立即隐藏，资源空闲前拒绝新一轮配对。"""
+    """常驻页内单会话视图；收起立即撤销准入，资源空闲前拒绝新一轮配对。"""
 
     connect_requested = Signal(str)
     address_connect_requested = Signal(str, str)
     expanded_changed = Signal(bool)
+    transition_changed = Signal(bool)
+    reveal_geometry_changed = Signal()
     PAGES = ("qr", "manual", "address")
 
-    def __init__(self, coordinator, history=(), parent=None):
+    def __init__(self, coordinator, history=(), parent=None, *, animated=False):
         super().__init__(parent)
         self.coordinator = coordinator
         self.current_page = "qr"
@@ -308,12 +332,30 @@ class DeviceConnectionPanel(QWidget):
         self._qr_expired = False
         self._scan_deadline = 0.0
         self._reflow_pending = False
+        self._animated = animated
+        self._natural_height = 0
+        self._transition_active = False
+        self._release_pending = False
+        self._preparing_reveal = False
+        self._finishing_reveal = False
+        self._reveal_start = 0
+        self._reveal_end = 0
+        self._focus_policies: dict[QWidget, Qt.FocusPolicy] = {}
+        self._reveal_animation = QVariantAnimation(self)
+        self._reveal_animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._reveal_animation.valueChanged.connect(self._apply_reveal_frame)
+        self._reveal_animation.finished.connect(self._finish_reveal)
+        self._paint_release_timer = QTimer(self)
+        self._paint_release_timer.setSingleShot(True)
+        self._paint_release_timer.timeout.connect(self._release_reveal)
         self._countdown = QTimer(self)
         self._countdown.setInterval(1000)
         self._countdown.timeout.connect(self._tick)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self._layout = QVBoxLayout(self)
+        # 内容保留完整自然高度，外壳只裁剪显示范围，避免每一帧挤压文字和表单。
+        self._content = QWidget(self)
+        self._layout = QVBoxLayout(self._content)
         self._layout.setContentsMargins(0, 0, 0, 12)
         self._layout.setSpacing(10)
         self.navigation = AdaptiveNavigation("connection", accessible_name="连接方式", parent=self)
@@ -408,6 +450,10 @@ class DeviceConnectionPanel(QWidget):
             shortcut.activated.connect(lambda step=step: self._cycle_page(step))
         self._apply_fonts()
         self._update_controls()
+        for widget in self._content.findChildren(QWidget):
+            widget.installEventFilter(self)
+        if parent is not None:
+            parent.installEventFilter(self)
         self.setFixedHeight(0)
         self.hide()
 
@@ -439,24 +485,30 @@ class DeviceConnectionPanel(QWidget):
         self.address_form.show_feedback("")
         self._pending_page = None
         self._pending_refresh = False
-        self.setMinimumHeight(0)
-        self.setMaximumHeight(16777215)
-        self._show_page("qr", start=False)
-        self.show()
-        self._reflow()
+        self._preparing_reveal = True
+        try:
+            self._set_interaction_active(True)
+            self._show_page("qr", start=False)
+            self.show()
+            self._reflow()
+        finally:
+            self._preparing_reveal = False
         area = self.scroll_area
         if area is not None:
             area.viewport().installEventFilter(self)
         self.expanded_changed.emit(True)
+        self._animate_reveal()
         if self.coordinator.busy:
             self._project_state(self.coordinator.state, self.coordinator.reason)
         else:
             self.coordinator.start_qr()
             self._update_controls()
 
-    def collapse(self):
-        """隐藏和清空秘密立即发生；取消资源由协调器异步完成，视图保持存活。"""
+    def collapse(self, *, animated=None):
+        """先撤销准入和秘密再收起；取消由协调器异步完成，不等待视觉动画。"""
         if not self._expanded:
+            if animated is False:
+                self._finish_reveal(wait_for_paint=False)
             return
         self._expanded = False
         self._closed = True
@@ -466,11 +518,104 @@ class DeviceConnectionPanel(QWidget):
         self._pending_refresh = False
         self._clear_secrets()
         self.progress_ring.stop()
-        self.setFixedHeight(0)
-        self.hide()
+        self._set_interaction_active(False)
         if not self._shutting_down:
             self.coordinator.cancel()
         self.expanded_changed.emit(False)
+        self._animate_reveal(animated=animated)
+
+    def _set_interaction_active(self, active):
+        """收起中的控件不接收点击和 Tab；保留原外观及下次展开的焦点策略。"""
+        self._content.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not active)
+        if active:
+            for widget, policy in self._focus_policies.items():
+                if isValid(widget) and self._content.isAncestorOf(widget):
+                    widget.setFocusPolicy(policy)
+            self._focus_policies.clear()
+            return
+        focus = QApplication.focusWidget()
+        if focus is not None and self.isAncestorOf(focus):
+            focus.clearFocus()
+            parent = self.parentWidget()
+            if parent is not None:
+                parent.setFocus(Qt.FocusReason.OtherFocusReason)
+        for widget in self._content.findChildren(QWidget):
+            if widget not in self._focus_policies:
+                self._focus_policies[widget] = widget.focusPolicy()
+            widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def _target_reveal_height(self):
+        return self._natural_height + self.contentsMargins().bottom() if self._expanded else 0
+
+    def _animate_reveal(self, *, animated=None):
+        """单一时钟从当前高度反向，旧完成回调不能结束新的展开意图。"""
+        self._release_pending = False
+        self._paint_release_timer.stop()
+        self._reveal_animation.stop()
+        self._reveal_start = self.height()
+        self._reveal_end = self._target_reveal_height()
+        distance = abs(self._reveal_end - self._reveal_start)
+        enabled = self._animated if animated is None else animated
+        if not enabled or not self.isVisible() or not distance:
+            self._finish_reveal(wait_for_paint=False)
+            return
+        if not self._transition_active:
+            self._transition_active = True
+            self.transition_changed.emit(True)
+        with QSignalBlocker(self._reveal_animation):
+            self._reveal_animation.setDuration(max(
+                1, round(200 * min(1.0, distance / max(1, self._natural_height))),
+            ))
+            self._reveal_animation.setStartValue(0.0)
+            self._reveal_animation.setEndValue(1.0)
+        self._reveal_animation.start()
+
+    def _apply_reveal_frame(self, progress):
+        height = self._reveal_start + (self._reveal_end - self._reveal_start) * progress
+        self.setFixedHeight(round(height))
+        self._commit_reveal_geometry()
+
+    def _commit_reveal_geometry(self):
+        """一帧内落实直接父布局，绘制时文字顶点和设备卡位置使用同一份几何。"""
+        self._content.setGeometry(0, 0, self.width(), self._natural_height)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        if layout is not None:
+            layout.activate()
+        self.reveal_geometry_changed.emit()
+
+    def _finish_reveal(self, *, wait_for_paint=True):
+        """提交终态画面后释放布局边界；离页及关闭不等待不可见窗口绘制。"""
+        self._reveal_animation.stop()
+        self.setFixedHeight(self._target_reveal_height())
+        if not self._expanded:
+            self._finishing_reveal = True
+            try:
+                self.hide()
+            finally:
+                self._finishing_reveal = False
+        self._commit_reveal_geometry()
+        window = self.window()
+        paint_host = self if self._expanded else self.parentWidget()
+        if (wait_for_paint and self._transition_active and paint_host is not None
+                and paint_host.isVisible() and paint_host.updatesEnabled()
+                and not paint_host.visibleRegion().isEmpty()
+                and window is not None and not window.isMinimized()):
+            self._release_pending = True
+            paint_host.update()
+        else:
+            self._release_reveal()
+
+    def _release_reveal(self):
+        self._release_pending = False
+        self._paint_release_timer.stop()
+        if self._transition_active:
+            self._transition_active = False
+            self.transition_changed.emit(False)
+        if self._expanded and not self._shutting_down and self._qr_request is not None:
+            request_id = self._qr_request
+            QTimer.singleShot(0, lambda: self._ack_qr(request_id))
 
     def _label(self, text, parent, layout, *, strong=False):
         label = (StrongBodyLabel if strong else BodyLabel)(tr(text), parent)
@@ -989,6 +1134,7 @@ class DeviceConnectionPanel(QWidget):
         self.action_row.setVisible(qr or busy or state == "CleanupFailed")
         show_progress = (
             qr
+            and self._expanded and not self._closed and not self._shutting_down
             and self.isVisible()
             and state in ("Checking", "Pairing", "WaitingForConnection", "Stopping")
         )
@@ -1026,6 +1172,7 @@ class DeviceConnectionPanel(QWidget):
         window = self.window()
         return (
             self._expanded
+            and not self._transition_active
             and not self._shutting_down
             and not self._has_pending()
             and not self._qr_acknowledged
@@ -1326,7 +1473,7 @@ class DeviceConnectionPanel(QWidget):
     def _reflow(self):
         """断点使用实际可用宽度；字号增大时提前换行，三页按自然高度共用空间。"""
         self._reflow_pending = False
-        if not hasattr(self, "address_form"):
+        if not hasattr(self, "address_form") or not self._expanded or self._shutting_down:
             return
         margins = self.stack.contentsMargins()
         width = max(1, self.width() - margins.left() - margins.right())
@@ -1407,13 +1554,21 @@ class DeviceConnectionPanel(QWidget):
         if self._expanded:
             height = self.stack.heightForWidth(self.width())
             self.stack.setFixedHeight(height)
-            self.setFixedHeight(
+            natural_height = (
                 height
                 + self.navigation.sizeHint().height()
                 + self._layout.spacing()
                 + self._layout.contentsMargins().bottom()
             )
+            changed = natural_height != self._natural_height
+            self._natural_height = natural_height
+            self._content.setGeometry(0, 0, self.width(), natural_height)
             self._layout.activate()
+            if not self._preparing_reveal:
+                if self._transition_active and changed:
+                    self._animate_reveal()
+                elif not self._transition_active:
+                    self._finish_reveal(wait_for_paint=False)
         self._render_qr()
         self.updateGeometry()
 
@@ -1421,15 +1576,32 @@ class DeviceConnectionPanel(QWidget):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setPen(QColor(BaseStyles.color("BORDER_COLOR")))
-        painter.drawLine(14, self.height() - 1, self.width() - 14, self.height() - 1)
+        painter.drawLine(14, self._natural_height - 1, self.width() - 14, self._natural_height - 1)
+        if self._release_pending:
+            self._release_reveal()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._schedule_reflow()
+        if event.size().width() != event.oldSize().width():
+            self._schedule_reflow()
 
     def eventFilter(self, watched, event):
+        if watched is self.parentWidget():
+            if event.type() == QEvent.Type.Hide and self._transition_active:
+                self.collapse(animated=False)
+            elif event.type() == QEvent.Type.Paint and self._release_pending and not self._expanded:
+                # 外壳已隐藏，父级完成终点绘制后才能恢复昂贵布局；新过渡会停止此计时器。
+                self._paint_release_timer.start(0)
+        if (event.type() == QEvent.Type.FocusIn and isinstance(event, QFocusEvent)
+                and event.reason() in (
+                    Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                )
+                and self._expanded and self._transition_active and not self._preparing_reveal):
+            self._finish_reveal(wait_for_paint=False)
         if event.type() == QEvent.Type.Resize:
-            self._render_qr()
+            area = self.scroll_area
+            if area is not None and watched is area.viewport():
+                self._render_qr()
         return super().eventFilter(watched, event)
 
     def event(self, event):
@@ -1441,7 +1613,9 @@ class DeviceConnectionPanel(QWidget):
     def hideEvent(self, event):
         super().hideEvent(event)
         if self._expanded:
-            self.collapse()
+            self.collapse(animated=False)
+        elif self._transition_active and not self._finishing_reveal:
+            self._finish_reveal(wait_for_paint=False)
 
     def prepare_shutdown(self):
         """应用监督器接管取消和等待；视图只清空秘密、停止视觉更新并关闭准入。"""
@@ -1450,10 +1624,11 @@ class DeviceConnectionPanel(QWidget):
         self._pending_refresh = False
         self._clear_secrets()
         self.progress_ring.stop()
+        self.collapse(animated=False)
         self.setEnabled(False)
 
     def closeEvent(self, event):
-        self.collapse()
+        self.collapse(animated=False)
         super().closeEvent(event)
 
     def keyPressEvent(self, event):

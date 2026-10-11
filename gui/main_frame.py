@@ -407,6 +407,7 @@ class MainFrame(FluentWindow):
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
         self._adb_pairing = None
         self._connection_panel = None
+        self._connection_transition_active = False
         self._actions = MainFrameActions(self)
         self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
@@ -1061,8 +1062,23 @@ class MainFrame(FluentWindow):
         previous = self._device_scroll_vertical_maximum
         followed_previous_bottom = previous > 0 and bar.value() >= previous - 2
         self._device_scroll_vertical_maximum = maximum
+        if self._connection_transition_active:
+            # 展开只让设备卡片下移，不逐帧跟底拖动表单；二维码在完整展开后自行定位。
+            return
         if maximum > previous and followed_previous_bottom:
             bar.setValue(maximum)
+
+    def _on_connection_transition_changed(self, active: bool) -> None:
+        """概览连接区与设备选择区互斥显示，共用工作区几何过渡的合并边界。"""
+        self._connection_transition_active = active
+        self.left_panel.set_viewport_transition_active(active)
+
+    def _sync_connection_reveal_geometry(self) -> None:
+        """逐帧只同步概览的滚动高度，响应式网格仍在过渡结束后统一收敛。"""
+        self._sync_device_scroll_content_minimum()
+        layout = self._device_hub.layout()
+        if layout is not None:
+            layout.activate()
 
     def _sync_workspace_restriction(self, *, force: bool = False) -> None:
         del force
@@ -1096,6 +1112,9 @@ class MainFrame(FluentWindow):
         self.run_library.error.connect(self._on_run_library_error)
 
         self._global_device_bar = DeviceContextBar(self)
+        self._global_device_bar.selector_transition_changed.connect(
+            self.left_panel.set_viewport_transition_active,
+        )
         self.widgetLayout.removeWidget(self.stackedWidget)
         # 设备栏与页面共用一个材质面，避免两次半透明合成或接缝处出现色带。
         self._content_surface = QWidget(self)
@@ -2174,9 +2193,13 @@ class MainFrame(FluentWindow):
             self._adb_pairing = QtAdbPairing(self.task_supervisor, self)
             self._adb_pairing.connected.connect(self._on_wireless_connected)
         if panel is None:
-            panel = DeviceConnectionPanel(self._adb_pairing, parent=self._device_hub)
+            panel = DeviceConnectionPanel(
+                self._adb_pairing, parent=self._device_hub, animated=True,
+            )
             self._connection_panel = panel
             self._device_hub.set_connection_panel(panel)
+            panel.transition_changed.connect(self._on_connection_transition_changed)
+            panel.reveal_geometry_changed.connect(self._sync_connection_reveal_geometry)
             panel.address_connect_requested.connect(self._connect_address)
             self.adb_controller.signals.connection_completed.connect(
                 panel.complete_address_connection

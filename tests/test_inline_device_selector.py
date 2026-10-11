@@ -1,7 +1,7 @@
 """页内设备选择的布局、焦点与原操作归属回归。"""
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QWheelEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
@@ -39,6 +39,8 @@ def test_inline_selector_pushes_body_and_reuses_one_embedded_widget(selector, qt
     initial_y = body.y()
     top_levels = set(QApplication.topLevelWidgets())
     bar.open_picker()
+    wait_until(qt_application, lambda: bar._selector_animation.state()
+               == QAbstractAnimation.State.Stopped)
     wait_for_stable_geometry(qt_application, (bar, body))
     picker = bar._picker
     assert not picker.isWindow()
@@ -48,6 +50,8 @@ def test_inline_selector_pushes_body_and_reuses_one_embedded_widget(selector, qt
     bar.open_picker()
     assert bar._picker is picker
     bar.collapse_selector()
+    wait_until(qt_application, lambda: bar._selector_animation.state()
+               == QAbstractAnimation.State.Stopped)
     wait_for_stable_geometry(qt_application, (bar, body))
     assert not bar.is_selector_expanded and body.y() == initial_y
     bar.open_picker()

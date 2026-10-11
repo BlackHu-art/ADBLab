@@ -1236,6 +1236,10 @@ def test_connection_panel_collapsed_restores_cards_and_creates_no_window(frame, 
     assert frame._adb_pairing is None
     hub.connect_button.click()
     panel = frame._connection_panel
+    wait_until(qt_application, lambda: (
+        panel._reveal_animation.state() == QAbstractAnimation.State.Stopped
+        and not panel._transition_active
+    ))
     wait_for_stable_geometry(qt_application, (hub, panel, hub.cards_container))
     assert hub.cards_container.y() > collapsed_top
     assert hub.toolbar.geometry().bottom() < panel.y()
@@ -1244,6 +1248,10 @@ def test_connection_panel_collapsed_restores_cards_and_creates_no_window(frame, 
         visible_windows
     )
     hub.connect_button.click()
+    wait_until(qt_application, lambda: (
+        panel._reveal_animation.state() == QAbstractAnimation.State.Stopped
+        and not panel._transition_active
+    ))
     wait_for_stable_geometry(qt_application, (hub, hub.toolbar, hub.cards_container))
     assert hub.cards_container.y() == collapsed_top
     assert panel.isHidden()
