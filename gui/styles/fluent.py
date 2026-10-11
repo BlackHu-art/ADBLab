@@ -10,8 +10,8 @@ from collections.abc import Callable
 from types import MethodType
 from typing import TypeVar
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QFont, QIcon
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QAction, QColor, QFocusEvent, QFont, QIcon
 from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
 from qfluentwidgets import PrimaryPushButton, PushButton, RoundMenu, SmoothMode, setCustomStyleSheet
 
@@ -125,11 +125,48 @@ def set_function_tooltip(widget: QWidget, tooltip: str | None) -> None:
     widget.setProperty("functionalToolTip", description)
 
 
-def apply_focus_indicator(widget: QWidget, *, selector: str | None = None) -> None:
-    """为 qfluentwidgets 默认移除 outline 的控件补充可见键盘焦点。"""
+class _KeyboardFocusObserver(QObject):
+    """随控件销毁的焦点来源观察器，不改变键盘导航或鼠标事件的业务路由。"""
+
+    def __init__(self, widget: QWidget) -> None:
+        super().__init__(widget)
+        self.setObjectName("adblabKeyboardFocusObserver")
+        widget.setProperty("adblabKeyboardFocus", False)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if not isinstance(watched, QWidget) or not watched.property("adblabKeyboardFocusOnly"):
+            return super().eventFilter(watched, event)
+        keyboard = None
+        if event.type() == QEvent.Type.FocusIn and isinstance(event, QFocusEvent):
+            keyboard = event.reason() in (
+                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                Qt.FocusReason.ShortcutFocusReason,
+            )
+        elif event.type() == QEvent.Type.MouseButtonPress:
+            keyboard = False
+        elif event.type() == QEvent.Type.KeyPress:
+            keyboard = True
+        if keyboard is not None and watched.property("adblabKeyboardFocus") != keyboard:
+            minimum, maximum = watched.minimumSize(), watched.maximumSize()
+            watched.setProperty("adblabKeyboardFocus", keyboard)
+            watched.style().unpolish(watched)
+            watched.style().polish(watched)
+            # Fluent 复选框 QSS 自带最小尺寸；刷新焦点不能覆盖字号和行布局的约束。
+            watched.setMinimumSize(minimum)
+            watched.setMaximumSize(maximum)
+            watched.update()
+        return super().eventFilter(watched, event)
+
+
+def apply_focus_indicator(
+    widget: QWidget, *, selector: str | None = None, keyboard_only: bool = False,
+) -> None:
+    """补充焦点提示；显式选择 keyboard_only 时鼠标不绘制外框，其他调用保持原行为。"""
 
     name = selector or type(widget).__name__
     widget.setProperty("adblabFocusSelector", name)
+    widget.setProperty("adblabKeyboardFocusOnly", keyboard_only)
     if widget.property("adblabReadingSurface") and isinstance(widget, (QPlainTextEdit, QTextEdit)):
         from gui.styles.reading_surface import ensure_reading_surface
 
@@ -138,11 +175,23 @@ def apply_focus_indicator(widget: QWidget, *, selector: str | None = None) -> No
     light = ThemeMixin.color_for("Light", "BORDER_FOCUS")
     dark = ThemeMixin.color_for("Dark", "BORDER_FOCUS")
     radius = ThemeMixin.RADIUS_MD
+    base = ""
+    focus_selector = name
+    if keyboard_only:
+        observer = widget.findChild(
+            _KeyboardFocusObserver, "adblabKeyboardFocusObserver",
+            Qt.FindChildOption.FindDirectChildrenOnly,
+        )
+        if observer is None:
+            _KeyboardFocusObserver(widget)
+        focus_selector += '[adblabKeyboardFocus="true"]'
+        # 预留相同边宽，鼠标与键盘切换不能改变文字位置或挤动相邻按钮。
+        base = f"{name} {{ border: 2px solid transparent; border-radius: {radius}px; }}"
     setCustomStyleSheet(
         widget,
-        f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}"
+        base + f"{focus_selector}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}"
         + str(widget.property("adblabFontQss") or ""),
-        f"{name}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}"
+        base + f"{focus_selector}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}"
         + str(widget.property("adblabFontQss") or ""),
     )
 
@@ -240,7 +289,10 @@ def refresh_fluent_widget_style(widget: QWidget) -> None:
         return
     selector = widget.property("adblabFocusSelector")
     if selector:
-        apply_focus_indicator(widget, selector=str(selector))
+        apply_focus_indicator(
+            widget, selector=str(selector),
+            keyboard_only=bool(widget.property("adblabKeyboardFocusOnly")),
+        )
 
 
 def configure_fluent_control(

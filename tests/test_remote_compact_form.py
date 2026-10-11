@@ -2,10 +2,12 @@
 
 import pytest
 from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
-from qfluentwidgets import SwitchButton
+from qfluentwidgets import SwitchButton, TransparentPushButton
 
+from gui.styles import BaseStyles
 from tests.test_responsive_panels import (
     _close_feature_panel,
     _resize_feature_viewport,
@@ -37,7 +39,8 @@ def test_compact_form_keeps_primary_action_above_configuration(compact_remote):
     assert remote.fps.isVisibleTo(content)
     for name in ("chk_aot", "chk_fullscreen", "chk_showtouches"):
         assert isinstance(getattr(remote, name), SwitchButton)
-    assert remote._mirror_device_label.isVisibleTo(content)
+    assert remote._status_label.isVisibleTo(content)
+    assert "待启动 1 台" == remote._status_label.text()
 
 
 def test_session_actions_span_both_settings_and_remote_controls(compact_remote):
@@ -60,6 +63,38 @@ def test_session_actions_span_both_settings_and_remote_controls(compact_remote):
     assert scroll.horizontalScrollBar().maximum() == 0
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_launch_bar_transparent_buttons_only_outline_for_keyboard(
+    compact_remote, qt_application, theme,
+):
+    remote, _scroll, content = compact_remote
+    BaseStyles.switch_theme(theme)
+    remote.set_target_devices([])
+    session = content.findChild(QWidget, "remoteMirrorSession")
+    assert not session.property("remoteSectionSurface")
+    for button in (remote.btn_start, remote.btn_stop, remote.btn_mirror_diagnostics):
+        assert isinstance(button, TransparentPushButton)
+        assert button.property("adblabKeyboardFocusOnly")
+    button = remote.btn_start
+    button.window().activateWindow()
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    qt_application.processEvents()
+    size = button.size()
+
+    def border_color():
+        image = button.grab().toImage()
+        return image.pixelColor(image.width() // 2, round(image.devicePixelRatio()))
+
+    accent = QColor(BaseStyles.color("BORDER_FOCUS"))
+    assert border_color() != accent
+    button.clearFocus()
+    button.setFocus(Qt.FocusReason.TabFocusReason)
+    qt_application.processEvents()
+    assert button.hasFocus()
+    assert border_color() == accent
+    assert button.size() == size
+
+
 def test_session_and_workspace_share_outer_edges(compact_remote):
     remote, _scroll, content = compact_remote
     session = content.findChild(QWidget, "remoteMirrorSession")
@@ -75,7 +110,7 @@ def test_session_copy_is_not_compressed_below_text_height(
     remote, scroll, content = compact_remote
     remote.set_target_devices(["synthetic-device"])
     _resize_feature_viewport(qt_application, remote.panel, remote, scroll, width)
-    for label in (remote._mirror_hint, remote._mirror_device_label, remote._status_label):
+    for label in (remote._mirror_hint, remote._status_label):
         wait_for_stable_geometry(qt_application, label)
         assert label.height() >= max(
             label.fontMetrics().height(), label.heightForWidth(label.width()),
@@ -270,7 +305,7 @@ def test_record_only_and_save_recording_stay_consistent(compact_remote):
     assert remote._mirror_hint.text() == "仅录制，不打开镜像窗口"
     remote.chk_record.setChecked(False)
     assert not remote.chk_noplayback.isChecked()
-    assert remote._mirror_hint.text() == "镜像将在独立窗口打开"
+    assert remote._mirror_hint.text() == "每台设备将在独立窗口打开镜像"
 
 
 def test_record_only_without_target_preserves_device_selection_hint(compact_remote):
@@ -278,7 +313,7 @@ def test_record_only_without_target_preserves_device_selection_hint(compact_remo
     remote.set_target_devices([])
     remote.chk_noplayback.setChecked(True)
     assert remote.chk_record.isChecked()
-    assert remote._mirror_hint.text() == "请从右上角选择操作设备"
+    assert remote._mirror_hint.text() == "请选择操作设备，可同时启动多台"
     remote.set_target_devices(["synthetic-device"])
     assert remote._mirror_hint.text() == "仅录制，不打开镜像窗口"
 

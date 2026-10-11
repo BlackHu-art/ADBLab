@@ -1314,6 +1314,9 @@ class MainFrame(FluentWindow):
         )
         bar.session_requested.connect(self._choose_global_session)
         bar.close_session_requested.connect(self._close_global_session)
+        bar.device_operation_requested.connect(self._request_remote_device_operation)
+        remote_panel.device_selection_requested.connect(self._show_remote_device_selector)
+        remote_panel.device_operations_changed.connect(self._sync_global_session_controls)
         self._device_hub.choose_requested.connect(bar.open_picker)
         self._device_hub.connect_requested.connect(self._show_global_connection)
         self._device_hub.refresh_requested.connect(self._request_device_refresh)
@@ -2075,6 +2078,11 @@ class MainFrame(FluentWindow):
         if bar is None:
             return
         host = self._current_feature_host()
+        remote = self._current_remote_panel()
+        bar.set_device_operations(
+            remote.device_operations() if remote is not None else None,
+            selection_locked=remote.is_mirror_selection_locked() if remote is not None else False,
+        )
         current = self.stackedWidget.currentWidget()
         device_overview = (
             host is not None and host.section_key == "devices"
@@ -2098,6 +2106,9 @@ class MainFrame(FluentWindow):
 
     def _select_operation_devices(self, devices: list[str]) -> None:
         """一次选择同时提交操作目标并切换单设备会话，避免查看与准入互相脱节。"""
+        remote = self._current_remote_panel()
+        if remote is not None and remote.is_mirror_selection_locked():
+            return
         host = self._current_feature_host()
         single = bool(host is not None and host.feature_requires_device(host.current_feature)
                       and host.current_feature != "performance")
@@ -2111,6 +2122,24 @@ class MainFrame(FluentWindow):
             if single or (host.current_feature == "performance"
                           and host.current_device_id not in devices):
                 self._choose_global_session(devices[0])
+
+    def _current_remote_panel(self):
+        """只为当前远程页面投影镜像状态，后台通知不污染其他页面的操作入口。"""
+        host = self._current_feature_host()
+        if host is None or host.section_key != "devices" or host.current_feature != "remote":
+            return None
+        return self.left_panel.remote_panel
+
+    def _show_remote_device_selector(self) -> None:
+        """空目标镜像动作复用当前页选择区，不创建另一份设备列表。"""
+        if self._current_remote_panel() is not None and not self._closing:
+            self._global_device_bar.open_picker()
+
+    def _request_remote_device_operation(self, device: str, action: str) -> None:
+        """行内动作交回原镜像控制器重新准入，既不改勾选也不切换设备会话。"""
+        remote = self._current_remote_panel()
+        if remote is not None and not self._closing:
+            remote.request_device_operation(device, action)
 
     def _choose_global_session(self, device_id: str) -> None:
         """会话切换走原宿主入口，运行锁生效且不改写批量目标。"""

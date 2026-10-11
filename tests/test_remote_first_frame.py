@@ -110,7 +110,7 @@ def test_remote_entry_keeps_parameter_geometry_from_first_visible_paint(
                 ), f"选择设备后，会话文字应保留足够高度：{label.text()}"
                 assert session.rect().contains(mapped_rect(label, session))
         assert heights[0] == heights[2]
-        assert heights[1] < heights[0], "清空设备后摘要高度应恢复"
+        assert heights[1] == heights[0], "设备选择切换保留紧凑操作条高度，不挤动下方参数"
     finally:
         frame.left_panel.shutdown()
         frame._unbind_window_screen()

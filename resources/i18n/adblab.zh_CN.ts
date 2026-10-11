@@ -7545,5 +7545,89 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>Android 版本未知</source>
             <translation>Android 版本未知</translation>
         </message>
+        <message>
+            <source>Android 设备</source>
+            <translation>Android 设备</translation>
+        </message>
+        <message>
+            <source>{state} {count} 台</source>
+            <translation>{state} {count} 台</translation>
+        </message>
+        <message>
+            <source>停止全部已启动或准备中的镜像，不受当前勾选影响</source>
+            <translation>停止全部已启动或准备中的镜像，不受当前勾选影响</translation>
+        </message>
+        <message>
+            <source>启动 {count} 台</source>
+            <translation>启动 {count} 台</translation>
+        </message>
+        <message>
+            <source>启动当前勾选中尚未运行的设备（Ctrl+Enter）</source>
+            <translation>启动当前勾选中尚未运行的设备（Ctrl+Enter）</translation>
+        </message>
+        <message>
+            <source>展开操作设备列表</source>
+            <translation>展开操作设备列表</translation>
+        </message>
+        <message>
+            <source>已全部启动</source>
+            <translation>已全部启动</translation>
+        </message>
+        <message>
+            <source>已运行的镜像继续保留；停止全部不受勾选影响</source>
+            <translation>已运行的镜像继续保留；停止全部不受勾选影响</translation>
+        </message>
+        <message>
+            <source>待启动</source>
+            <translation>待启动</translation>
+        </message>
+        <message>
+            <source>待启动 {count} 台</source>
+            <translation>待启动 {count} 台</translation>
+        </message>
+        <message>
+            <source>收起原因</source>
+            <translation>收起原因</translation>
+        </message>
+        <message>
+            <source>查看原因</source>
+            <translation>查看原因</translation>
+        </message>
+        <message>
+            <source>正在准备服务；可取消启动，已打开的镜像也将停止</source>
+            <translation>正在准备服务；可取消启动，已打开的镜像也将停止</translation>
+        </message>
+        <message>
+            <source>正在启动…</source>
+            <translation>正在启动…</translation>
+        </message>
+        <message>
+            <source>正在建立连接，画面就绪后显示镜像中</source>
+            <translation>正在建立连接，画面就绪后显示镜像中</translation>
+        </message>
+        <message>
+            <source>每台设备将在独立窗口打开镜像</source>
+            <translation>每台设备将在独立窗口打开镜像</translation>
+        </message>
+        <message>
+            <source>请先勾选在线设备，再重试</source>
+            <translation>请先勾选在线设备，再重试</translation>
+        </message>
+        <message>
+            <source>请选择操作设备，可同时启动多台</source>
+            <translation>请选择操作设备，可同时启动多台</translation>
+        </message>
+        <message>
+            <source>追加启动 {count} 台</source>
+            <translation>追加启动 {count} 台</translation>
+        </message>
+        <message>
+            <source>追加设备沿用当前参数；停止全部后可调整设置</source>
+            <translation>追加设备沿用当前参数；停止全部后可调整设置</translation>
+        </message>
+        <message>
+            <source>重试 {count} 台</source>
+            <translation>重试 {count} 台</translation>
+        </message>
     </context>
 </TS>

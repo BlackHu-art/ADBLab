@@ -7545,5 +7545,89 @@ Android device management, apps and diagnostics</translation>
             <source>Android 版本未知</source>
             <translation>Android version unknown</translation>
         </message>
+        <message>
+            <source>Android 设备</source>
+            <translation>Android device</translation>
+        </message>
+        <message>
+            <source>{state} {count} 台</source>
+            <translation>{state}: {count}</translation>
+        </message>
+        <message>
+            <source>停止全部已启动或准备中的镜像，不受当前勾选影响</source>
+            <translation>Stop every active or preparing mirror, regardless of the current selection</translation>
+        </message>
+        <message>
+            <source>启动 {count} 台</source>
+            <translation>Start {count}</translation>
+        </message>
+        <message>
+            <source>启动当前勾选中尚未运行的设备（Ctrl+Enter）</source>
+            <translation>Start selected devices that are not running (Ctrl+Enter)</translation>
+        </message>
+        <message>
+            <source>展开操作设备列表</source>
+            <translation>Expand the device list</translation>
+        </message>
+        <message>
+            <source>已全部启动</source>
+            <translation>All started</translation>
+        </message>
+        <message>
+            <source>已运行的镜像继续保留；停止全部不受勾选影响</source>
+            <translation>Active mirrors keep running; Stop all applies regardless of selection</translation>
+        </message>
+        <message>
+            <source>待启动</source>
+            <translation>Ready to start</translation>
+        </message>
+        <message>
+            <source>待启动 {count} 台</source>
+            <translation>Ready to start: {count}</translation>
+        </message>
+        <message>
+            <source>收起原因</source>
+            <translation>Hide details</translation>
+        </message>
+        <message>
+            <source>查看原因</source>
+            <translation>View details</translation>
+        </message>
+        <message>
+            <source>正在准备服务；可取消启动，已打开的镜像也将停止</source>
+            <translation>Preparing services; canceling startup also stops open mirrors</translation>
+        </message>
+        <message>
+            <source>正在启动…</source>
+            <translation>Starting…</translation>
+        </message>
+        <message>
+            <source>正在建立连接，画面就绪后显示镜像中</source>
+            <translation>Connecting; the status changes to Mirroring when the video is ready</translation>
+        </message>
+        <message>
+            <source>每台设备将在独立窗口打开镜像</source>
+            <translation>Each device opens in a separate mirror window</translation>
+        </message>
+        <message>
+            <source>请先勾选在线设备，再重试</source>
+            <translation>Select an online device before retrying</translation>
+        </message>
+        <message>
+            <source>请选择操作设备，可同时启动多台</source>
+            <translation>Select devices; you can start several at once</translation>
+        </message>
+        <message>
+            <source>追加启动 {count} 台</source>
+            <translation>Start {count} more</translation>
+        </message>
+        <message>
+            <source>追加设备沿用当前参数；停止全部后可调整设置</source>
+            <translation>Additional devices use the current settings; stop all mirrors to change them</translation>
+        </message>
+        <message>
+            <source>重试 {count} 台</source>
+            <translation>Retry {count}</translation>
+        </message>
     </context>
 </TS>

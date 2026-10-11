@@ -11,16 +11,116 @@ from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QFontMetricsF
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
-from qfluentwidgets import SmoothScrollArea
+from qfluentwidgets import FluentIcon, SmoothScrollArea
 
 from gui.i18n import install_translators, tr
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager
-from gui.widgets.device_connection import DeviceConnectionPanel
+from gui.widgets.device_connection import DeviceConnectionPanel, _connection_button
 from tests.test_device_connection import PairingDouble, qr_png
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 pytestmark = pytest.mark.ui
+
+
+def _accent_outline_is_visible(button):
+    """仅测按钮四边中点，避免把强调色文字和图标误判为焦点外框。"""
+    image = button.grab().toImage()
+    accent = BaseStyles.color("BORDER_FOCUS").lower()
+    inset = max(1, round(image.devicePixelRatio()))
+    points = (
+        (image.width() // 2, inset),
+        (image.width() // 2, image.height() - inset - 1),
+        (inset, image.height() // 2),
+        (image.width() - inset - 1, image.height() // 2),
+    )
+    return any(image.pixelColor(x, y).name().lower() == accent for x, y in points)
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_connection_action_only_shows_focus_outline_for_keyboard(qt_application, primary):
+    """透明与强调动作保留键盘提示，点击、换主题及重复聚焦不增加业务提交。"""
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    previous = QWidget(window)
+    previous.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    button = _connection_button(FluentIcon.CONNECT, "连接设备", window, primary=primary)
+    spacer = QWidget(window)
+    spacer.setMinimumHeight(80)
+    for widget in (previous, button, spacer):
+        layout.addWidget(widget)
+    QWidget.setTabOrder(previous, button)
+    clicked = QSignalSpy(button.clicked)
+    window.resize(320, 180)
+    window.show()
+
+    def settle_without_hover():
+        QTest.mouseMove(spacer, spacer.rect().center())
+        qt_application.processEvents()
+
+    try:
+        for index, theme in enumerate(("Light", "Dark", "Light")):
+            BaseStyles.switch_theme(theme)
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            settle_without_hover()
+            assert button.hasFocus()
+            assert clicked.count() == index * 2 + 1
+            assert not _accent_outline_is_visible(button)
+
+            previous.setFocus(Qt.FocusReason.OtherFocusReason)
+            QTest.keyClick(previous, Qt.Key.Key_Tab)
+            settle_without_hover()
+            assert button.hasFocus()
+            assert _accent_outline_is_visible(button)
+            QTest.keyClick(button, Qt.Key.Key_Space)
+            assert clicked.count() == index * 2 + 2
+            assert _accent_outline_is_visible(button)
+
+            BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+            settle_without_hover()
+            assert _accent_outline_is_visible(button)
+            assert clicked.count() == index * 2 + 2
+    finally:
+        window.close()
+        window.deleteLater()
+
+
+def test_pairing_code_action_has_no_mouse_outline_and_switches_once(qt_application):
+    pairing = PairingDouble()
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    panel = DeviceConnectionPanel(pairing, parent=host)
+    layout.addWidget(panel)
+    host.resize(900, 500)
+    host.show()
+    panel.expand()
+    pairing.finish("Idle", "")
+    button = panel.code_button
+    clicks = QSignalSpy(button.clicked)
+    wait_for_stable_geometry(qt_application, (host, panel, button))
+    try:
+        for theme in ("Dark", "Light"):
+            BaseStyles.switch_theme(theme)
+            button.clearFocus()
+            button.setFocus(Qt.FocusReason.TabFocusReason)
+            qt_application.processEvents()
+            assert button.isVisible() and button.isEnabled() and button.hasFocus()
+            assert _accent_outline_is_visible(button)
+            button.clearFocus()
+            button.setFocus(Qt.FocusReason.MouseFocusReason)
+            qt_application.processEvents()
+            assert not _accent_outline_is_visible(button)
+        calls_before = list(pairing.calls)
+        QTest.mousePress(button, Qt.MouseButton.LeftButton)
+        assert not _accent_outline_is_visible(button)
+        QTest.mouseRelease(button, Qt.MouseButton.LeftButton)
+        wait_until(qt_application, lambda: panel.current_page == "manual")
+        assert clicks.count() == 1
+        assert pairing.calls == [*calls_before, ("cancel",)]
+    finally:
+        panel.prepare_shutdown()
+        host.close()
+        host.deleteLater()
 
 
 @pytest.mark.parametrize("language", ["zh_CN", "en_US"])
@@ -138,7 +238,12 @@ def test_connection_history_starts_at_top_and_last_row_can_be_filled(
     assert viewport.rect().contains(QRect(last_row.mapTo(viewport, QPoint()), last_row.size()))
     submitted = QSignalSpy(panel.connect_requested)
     calls_before = list(pairing.calls)
-    QTest.mouseClick(last_row, Qt.MouseButton.LeftButton, pos=last_row.rect().center())
+    last_row.setFocus(Qt.FocusReason.TabFocusReason)
+    qt_application.processEvents()
+    assert _accent_outline_is_visible(last_row)
+    QTest.mousePress(last_row, Qt.MouseButton.LeftButton, pos=last_row.rect().center())
+    assert not _accent_outline_is_visible(last_row)
+    QTest.mouseRelease(last_row, Qt.MouseButton.LeftButton, pos=last_row.rect().center())
     assert form.address.text() == history[-1][1]
     assert form.address.hasFocus()
     assert submitted.count() == 0

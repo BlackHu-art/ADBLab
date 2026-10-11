@@ -2564,11 +2564,14 @@ def test_remote_panel_ignores_repeated_stop_while_stopping():
 
 
 def test_remote_panel_controls_follow_full_session_state(qt_application):
+    from gui.panels.remote_panel_scrcpy import RemoteDeviceSession
+
     side_panel = SidePanel()
     try:
         remote = side_panel._ensure_tab_loaded(2)
 
-        assert remote.btn_start.isEnabled() is False
+        assert remote.btn_start.isEnabled() is True
+        assert remote.btn_start.text() == "选择设备"
         assert remote.btn_stop.isEnabled() is False
         assert all(not button.isEnabled() for button in remote._remote_control_buttons)
 
@@ -2583,11 +2586,18 @@ def test_remote_panel_controls_follow_full_session_state(qt_application):
         assert remote.btn_start.isEnabled() is True
         assert all(button.isEnabled() for button in remote._remote_control_buttons)
 
+        session = RemoteDeviceSession(ScrcpyConfig(
+            exe="scrcpy", adb="adb", device="device-1", maxsize="1024", fps="30",
+            bitrate="4", codec="auto", buffer="50", orientation="0",
+        ))
+        remote._device_sessions = {"device-1": session}
         remote._set_session_state(RemotePanel._SESSION_STARTING)
         assert remote.btn_start.isEnabled() is False
         assert remote.btn_stop.isEnabled() is True
         assert all(button.isEnabled() for button in remote._remote_control_buttons)
 
+        session.state = "ready"
+        session.resource_owned = True
         remote._set_session_state(RemotePanel._SESSION_RUNNING)
         assert remote.btn_start.isEnabled() is False
         assert remote.btn_stop.isEnabled() is True
@@ -2598,6 +2608,8 @@ def test_remote_panel_controls_follow_full_session_state(qt_application):
         assert remote.btn_stop.isEnabled() is False
         assert all(button.isEnabled() for button in remote._remote_control_buttons)
 
+        session.state = "stopped"
+        session.resource_owned = False
         remote._set_session_state(RemotePanel._SESSION_IDLE)
         assert remote.btn_start.isEnabled() is True
         assert remote.btn_stop.isEnabled() is False

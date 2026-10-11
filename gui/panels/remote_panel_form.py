@@ -14,6 +14,7 @@ from qfluentwidgets import (
     InfoBadge,
     SwitchButton,
     ToolButton,
+    TransparentPushButton,
     themeColor,
 )
 
@@ -30,6 +31,7 @@ from gui.panels.remote_panel_controls import (
 )
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
+    apply_focus_indicator,
     apply_font_role,
     apply_label_role,
     configure_button,
@@ -290,12 +292,7 @@ class RemotePanelForm(QObject):
             switch.updateGeometry()
         # 录屏提示显隐预留同一行字体高度，避免大字号时挤缩已展开的参数与开关。
         self._frame.record_path.setFixedHeight(self._frame.record_path.fontMetrics().height())
-        # 状态文案长度变化不能挤动开始、停止按钮或触发操作栏回流。
-        self._frame._status_label.setFixedWidth(max(
-            self._frame._status_label.fontMetrics().horizontalAdvance(tr(text))
-            for text in ("未选设备", "正在停止…", "停止失败", "镜像中", "录制中",
-                         "连接中", "准备中", "连接失败", "空闲")
-        ))
+        self._frame._status_label.setMinimumWidth(0)
         for editor in self._editors:
             editor.refresh_metrics()
         for container, label, control in self._fields:
@@ -329,6 +326,7 @@ class RemotePanelForm(QObject):
             control.setFixedHeight(height)
             if isinstance(control, ToolButton):
                 control.setFixedWidth(height)
+        frame._mirror_hint.setMinimumHeight(height)
         for section in (*frame._remote_section_groups, *frame._remote_bottom_sections):
             section.headerView.setMinimumHeight(height)
         frame.codec.setMinimumHeight(height)
@@ -351,11 +349,38 @@ class RemotePanelForm(QObject):
 
     def refresh_session_summary(self) -> None:
         """固定操作栏保留网格项，避免状态切换时短暂拆装布局。"""
+        frame = self._frame
+        count = max(99, len(frame.selected_devices), len(getattr(frame, "_device_sessions", {})))
+        labels = (
+            (frame.btn_start, (
+                tr("选择设备"), tr("正在启动…"), tr("已全部启动"), tr("正在停止…"),
+                tr("启动 {count} 台").format(count=count),
+                tr("追加启动 {count} 台").format(count=count),
+                tr("重试 {count} 台").format(count=count),
+            )),
+            (frame.btn_stop, (tr("停止全部"), tr("取消启动"), tr("正在停止…"))),
+        )
+        # 为同一按钮的状态文案预留自然宽度，状态切换不挤动相邻操作和参数。
+        for button, texts in labels:
+            metrics = button.fontMetrics()
+            chrome = button.sizeHint().width() - metrics.horizontalAdvance(button.text())
+            button.setMinimumWidth(max(metrics.horizontalAdvance(text) for text in texts) + chrome)
         self._session_summary.updateGeometry()
 
     def _style_transparent_button(self, button) -> None:
         """所有按键共享高度和边框，图标按钮仍由原生控件居中绘制。"""
         selector = type(button).__name__
+        if button in (self._frame.btn_start, self._frame.btn_stop,
+                      self._frame.btn_mirror_diagnostics):
+            rule = f"{selector} {{ padding: 3px 10px 4px; border-radius: 6px; }}"
+            if button is self._frame.btn_start:
+                rule += f"{selector}:enabled {{ color: {BaseStyles.color('BORDER_FOCUS')}; }}"
+            set_fluent_font_rule(button, rule)
+            apply_focus_indicator(button, keyboard_only=True)
+            apply_font_role(button)
+            button.setFixedHeight(max(36, button.fontMetrics().height() + 14,
+                                      button.minimumSizeHint().height()))
+            return
         # 常态沿用普通按钮的细边框，焦点仅改变颜色，避免转移焦点时改变尺寸。
         rule = (
             f"{selector}:!focus {{ border: 1px solid transparent; }}"
@@ -382,7 +407,7 @@ class RemotePanelForm(QObject):
         frame = self._frame
         expanded = frame._mirror_diagnostic_label.isHidden()
         frame._mirror_diagnostic_label.setVisible(expanded)
-        frame.btn_mirror_diagnostics.setText(tr("收起诊断详情") if expanded else tr("查看诊断详情"))
+        frame.btn_mirror_diagnostics.setText(tr("收起原因") if expanded else tr("查看原因"))
         frame.apply_responsive_width(0)
 
     @Slot()
@@ -399,7 +424,7 @@ class RemotePanelForm(QObject):
     def _build_session(self) -> QWidget:
         """会话状态与停止入口独立于设置区，参数锁定不会遮挡原会话资源。"""
         frame = self._frame
-        g = RemoteSection(tr("屏幕镜像"), surface=True)
+        g = RemoteSection(tr("屏幕镜像"))
         g.setObjectName("remoteMirrorSession")
         gl = g.viewLayout
         frame._status_label = frame._status_text(tr("状态：空闲"))
@@ -407,7 +432,8 @@ class RemotePanelForm(QObject):
         frame._status_label.setToolTip(tr("状态：空闲"))
         frame._status_label.setAccessibleDescription(tr("状态：空闲"))
         frame._status_label.setMinimumWidth(0)
-        frame._status_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+        frame._status_label.setWordWrap(True)
+        frame._status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         g.headerView.hide()
         summary = QWidget(g)
         self._session_summary = summary
@@ -421,8 +447,7 @@ class RemotePanelForm(QObject):
         mirror_icon.setFixedSize(20, 20)
         title_row.addWidget(mirror_icon)
         title_row.addWidget(g.headerLabel)
-        title_row.addWidget(frame._status_label)
-        title_row.addStretch(1)
+        title_row.addWidget(frame._status_label, 1)
         summary_layout.addLayout(title_row)
         frame._mirror_device_label = apply_label_role(
             BodyLabel(tr("未选择设备")), FontRole.UI, color_key="TEXT_SECONDARY",
@@ -445,19 +470,13 @@ class RemotePanelForm(QObject):
         frame._mirror_connection_label.hide()
         frame._mirror_device_label.setParent(summary)
         frame._mirror_connection_label.setParent(summary)
-        frame.btn_start = frame._b(
-            tr("开始镜像"), "monitor-play.svg", "accent", tooltip=tr("开始屏幕镜像（Ctrl+Enter）"),
-        )
-        frame.btn_stop = frame._b(
-            tr("停止镜像"), "stop-circle.svg",
-            tooltip=tr("停止屏幕镜像（Ctrl+Shift+Return）"),
-        )
+        frame.btn_start = TransparentPushButton(get_fluent_icon("monitor-play.svg"), tr("选择设备"))
+        frame.btn_stop = TransparentPushButton(get_fluent_icon("stop-circle.svg"), tr("停止全部"))
         frame.btn_stop.setEnabled(False)
         frame._mirror_hint = apply_label_role(
             BodyLabel(tr("镜像将在独立窗口打开")), FontRole.UI, color_key="TEXT_SECONDARY",
         )
-        frame._mirror_hint.setWordWrap(False)
-        gl.addWidget(frame._mirror_hint)
+        frame._mirror_hint.setWordWrap(True)
         frame._add_responsive_row(
             gl, summary, frame.btn_start, frame.btn_stop, spacing=12, adaptive_spacing=False,
             policies=(WidthPolicy.WRAPPING, WidthPolicy.NATURAL, WidthPolicy.NATURAL),
@@ -470,7 +489,6 @@ class RemotePanelForm(QObject):
                 GridMode("one", 1, 2, column_stretches=(1,)),
             ),
         )
-        gl.insertWidget(0, frame._responsive_row_owners[-1][0])
         gl.setSpacing(4)
         frame._mirror_error_label = apply_label_role(
             BodyLabel(""), FontRole.UI, color_key="TEXT_PRIMARY",
@@ -478,15 +496,20 @@ class RemotePanelForm(QObject):
         frame._mirror_error_label.setWordWrap(True)
         gl.addWidget(frame._mirror_error_label)
         frame._mirror_error_label.hide()
-        frame.btn_mirror_diagnostics = frame._b(
-            tr("查看诊断详情"), "info.svg", "ghost", tooltip=tr("展开或收起镜像诊断详情"),
+        frame.btn_mirror_diagnostics = TransparentPushButton(
+            get_fluent_icon("info.svg"), tr("查看原因"),
         )
         frame.btn_mirror_diagnostics.clicked.connect(self._toggle_mirror_diagnostics)
         frame.btn_mirror_diagnostics.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed,
         )
         self._toggle_buttons.append(frame.btn_mirror_diagnostics)
-        gl.addWidget(frame.btn_mirror_diagnostics, 0, Qt.AlignmentFlag.AlignLeft)
+        hint_row = QHBoxLayout()
+        hint_row.setContentsMargins(0, 0, 0, 0)
+        hint_row.setSpacing(8)
+        hint_row.addWidget(frame._mirror_hint, 1)
+        hint_row.addWidget(frame.btn_mirror_diagnostics)
+        gl.addLayout(hint_row)
         frame.btn_mirror_diagnostics.hide()
         frame._mirror_diagnostic_label = apply_label_role(
             BodyLabel(""), FontRole.UI, color_key="TEXT_SECONDARY",
@@ -686,12 +709,7 @@ class RemotePanelForm(QObject):
                 frame._session_list_layout.addWidget(container)
                 row = frame._session_rows[device] = (name, status, action)
             name, status, action = row
-            window = frame.panel.window()
-            bar = getattr(window, "_global_device_bar", None)
-            label = (
-                bar.device_label(device) if bar is not None
-                else tr("设备 {number}").format(number=list(sessions).index(device) + 1)
-            )
+            label = frame._mirror_device_name(device)
             name.setText(label)
             name.setToolTip(label)
             stop_failed = session.resource_owned and session.error_type == "StopFailed"

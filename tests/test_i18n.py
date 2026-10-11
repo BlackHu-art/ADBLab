@@ -117,6 +117,23 @@ def test_inline_device_selector_labels_have_bundled_translations(
     assert i18n.tr("Android 版本未知") == unknown
 
 
+@pytest.mark.parametrize("language,start,append,retry,summary,details", [
+    ("zh_CN", "启动 2 台", "追加启动 2 台", "重试 2 台", "镜像中 2 台", "查看原因"),
+    ("zh_HK", "啟動 2 台", "追加啟動 2 台", "重試 2 台", "鏡像中 2 台", "查看原因"),
+    ("en_US", "Start 2", "Start 2 more", "Retry 2", "Mirroring: 2", "View details"),
+])
+def test_mirror_launch_counts_and_failure_details_have_bundled_translations(
+    installed_translators, language, start, append, retry, summary, details,
+):
+    """镜像操作条的数量占位符与失败入口沿用实际打包词库。"""
+    installed_translators(language)
+    assert i18n.tr("启动 {count} 台").format(count=2) == start
+    assert i18n.tr("追加启动 {count} 台").format(count=2) == append
+    assert i18n.tr("重试 {count} 台").format(count=2) == retry
+    assert i18n.tr("{state} {count} 台").format(state=i18n.tr("镜像中"), count=2) == summary
+    assert i18n.tr("查看原因") == details
+
+
 def test_translation_installation_does_not_change_locale_or_environment(
     qt_application, installed_translators,
 ):

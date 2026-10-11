@@ -2,7 +2,7 @@
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, Qt
-from PySide6.QtGui import QFont, QWheelEvent
+from PySide6.QtGui import QColor, QFont, QWheelEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, PushButton
@@ -252,6 +252,95 @@ def test_unknown_brand_does_not_leave_an_empty_information_column(selector, qt_a
     row = picker._rows["demo-a"]
     assert row.brand_label.isHidden() and row.brand_separator.isHidden()
     assert row.name_label.x() - row.check_box.geometry().right() <= 12
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("mode", ["multi", "single", "page"])
+def test_selector_controls_only_show_focus_frame_for_keyboard(
+    selector, qt_application, theme, mode,
+):
+    window, bar, body = selector
+    BaseStyles.switch_theme(theme)
+    source = ComboBox(window)
+    source.addItem("demo-a", userData="demo-a")
+    source.hide()
+    close = PushButton("清除截图结果" if mode == "page" else "关闭文件管理", window)
+    close.hide()
+    if mode != "multi":
+        bar.set_session_context(
+            source if mode == "single" else None, close,
+            single=mode == "single", close_scope="page" if mode == "page" else "session",
+        )
+    bar.open_picker()
+    window.activateWindow()
+    picker = bar._picker
+    controls = [bar.targets_button, picker.clear_button, picker._rows["demo-a"].check_box]
+    if mode != "single":
+        controls.append(picker.select_all_button)
+    if mode != "multi":
+        controls.append(picker.close_button)
+    accent = QColor(BaseStyles.color("BORDER_FOCUS"))
+
+    def border_color(control):
+        image = control.grab().toImage()
+        return image.pixelColor(image.width() // 2, round(image.devicePixelRatio()))
+
+    def restore_host_context(control):
+        if control is picker.close_button:
+            assert not control.isEnabled()
+            # 模拟宿主结束关闭、重新打开会话后的状态投影。
+            for enabled in (False, True):
+                close.setEnabled(enabled)
+                bar.set_session_context(
+                    source if mode == "single" else None, close,
+                    single=mode == "single",
+                    close_scope="page" if mode == "page" else "session",
+                )
+        bar.set_context(["demo-a"], ["demo-a", "demo-b"], "ready")
+        bar.open_picker()
+
+    for control in controls:
+        activated = QSignalSpy(control.clicked)
+        QTest.mouseClick(control, Qt.MouseButton.LeftButton)
+        restore_host_context(control)
+        QTest.mouseMove(body, QPoint(5, 5))
+        wait_for_stable_geometry(qt_application, (bar, picker, control))
+        assert activated.count() == 1
+        assert border_color(control) != accent
+        natural = control.size()
+        control.clearFocus()
+        control.setFocus(Qt.FocusReason.TabFocusReason)
+        qt_application.processEvents()
+        assert control.hasFocus()
+        assert border_color(control) == accent
+        assert control.size() == natural
+        QTest.mouseClick(control, Qt.MouseButton.LeftButton)
+        restore_host_context(control)
+        QTest.mouseMove(body, QPoint(5, 5))
+        qt_application.processEvents()
+        assert activated.count() == 2
+        assert border_color(control) != accent
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_collapse_only_shows_returned_focus_frame_for_escape(selector, qt_application, escape):
+    window, bar, body = selector
+    bar.open_picker()
+    window.activateWindow()
+    checkbox = bar._picker._rows["demo-a"].check_box
+    QTest.mouseClick(checkbox, Qt.MouseButton.LeftButton)
+    assert checkbox.hasFocus()
+    if escape:
+        QTest.keyClick(checkbox, Qt.Key.Key_Escape)
+    else:
+        bar.dismiss_popups()
+    QTest.mouseMove(body, QPoint(5, 5))
+    qt_application.processEvents()
+    assert not bar.is_selector_expanded
+    assert bar.targets_button.hasFocus()
+    image = bar.targets_button.grab().toImage()
+    color = image.pixelColor(image.width() // 2, round(image.devicePixelRatio()))
+    assert (color == QColor(BaseStyles.color("BORDER_FOCUS"))) is escape
 
 
 def test_mouse_selection_does_not_paint_accent_frame(selector, qt_application):

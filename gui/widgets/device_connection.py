@@ -40,7 +40,10 @@ from qfluentwidgets import (
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
-    apply_focus_indicator, apply_font_role, apply_label_role, use_instant_scroll,
+    apply_focus_indicator,
+    apply_font_role,
+    apply_label_role,
+    use_instant_scroll,
 )
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from utils.adb_targets import normalize_adb_connect_target
@@ -52,7 +55,7 @@ def _connection_button(icon, text, parent, *, primary=False):
     button.setText(tr(text))
     button.setIcon(icon)
     button.setToolTip(tr(text))
-    apply_focus_indicator(button)
+    apply_focus_indicator(button, keyboard_only=True)
     return button
 
 
@@ -207,7 +210,7 @@ class _AddressForm(QWidget):
             )
             row.setToolTip(tr("点击填入地址：{address}").format(address=endpoint))
             row.setAccessibleDescription(description)
-            apply_focus_indicator(row)
+            apply_focus_indicator(row, keyboard_only=True)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(8, 5, 8, 5)
             row_layout.addWidget(_HistoryText(name, endpoint, row), 1)
@@ -504,7 +507,7 @@ class DeviceConnectionPanel(QWidget):
         )
         self.code_button.setToolTip(tr("使用配对码连接"))
         self.code_button.setAccessibleDescription(tr("使用配对码连接"))
-        apply_focus_indicator(self.code_button)
+        apply_focus_indicator(self.code_button, keyboard_only=True)
         self.code_button.clicked.connect(lambda: self.request_page("manual"))
         code_option_layout.addWidget(self.code_button)
         self.qr_text_layout.addStretch()
@@ -1263,7 +1266,7 @@ class DeviceConnectionPanel(QWidget):
         """常规扫码使用三栏；窄窗口、错误及续连表单改用通栏操作区。"""
         # 状态指示与操作区分别预留宽度，状态内容变化不改变三栏断点。
         side_width = 1 + max(
-            self._qr_refresh_width() + 10 + self.cancel_button.sizeHint().width(),
+            self._qr_refresh_width() + 10 + self.cancel_button.width(),
             self._status_text_size(tr("等待手机扫码"), width, 1).width()
             + 10 + self._countdown_width(),
         )

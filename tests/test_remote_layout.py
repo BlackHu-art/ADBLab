@@ -6,9 +6,9 @@ from concurrent.futures import Future
 import pytest
 from qfluentwidgets import (
     Pivot,
-    PrimaryPushButton,
     Slider,
     SwitchButton,
+    TransparentPushButton,
     themeColor,
 )
 
@@ -372,8 +372,10 @@ def test_mirror_toolbar_keeps_height_across_selection_and_session_states(
         assert tuple(mapped_rect(widget, content).getRect() for widget in watched) == geometry
         assert remote._session_list.isHidden()
         assert remote._mirror_device_label.isHidden()
-        assert remote.btn_start.text() == "开始镜像"
-        assert remote.btn_stop.text() == "停止镜像"
+        assert remote.btn_start.text() == "选择设备"
+        assert remote.btn_stop.text() == (
+            "正在停止…" if state == remote._SESSION_STOPPING else "停止全部"
+        )
     assert probe.samples
     assert all(sample == geometry for sample in probe.samples)
     remote._session_state = remote._SESSION_IDLE
@@ -607,7 +609,7 @@ def test_remote_controls_keep_existing_toggle_meanings_and_session_locks(
     for name in _OPTION_NAMES:
         assert isinstance(getattr(remote, name), SwitchButton)
     assert remote.chk_noaudio.isChecked()
-    assert isinstance(remote.btn_start, PrimaryPushButton)
+    assert isinstance(remote.btn_start, TransparentPushButton)
     remote.set_target_devices(["synthetic-device"])
     controls = (
         remote.preset_selector, remote.fps, remote.bitrate_slider,

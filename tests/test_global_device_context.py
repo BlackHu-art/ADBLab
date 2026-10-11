@@ -19,7 +19,14 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractButton, QScrollArea, QVBoxLayout, QWidget
-from qfluentwidgets import CardWidget, ComboBox, PushButton, SettingCard
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    PushButton,
+    SettingCard,
+    TransparentDropDownPushButton,
+    TransparentPushButton,
+)
 from shiboken6 import isValid
 
 from gui.pages.device_hub import DeviceHubPage
@@ -365,6 +372,100 @@ def test_selector_visibility_matches_existing_pages(frame, qt_application):
         frame._on_nav_requested(route)
         assert bar.isHidden()
         assert not bar.is_selector_expanded
+
+
+@pytest.mark.parametrize("theme,font_size", [("Light", 12), ("Dark", 22)])
+def test_all_page_selectors_keep_columns_actions_and_fonts_consistent(
+    frame, qt_application, isolated_app_settings, theme, font_size,
+):
+    """已有八个入口复用同一布局，真实字体通知和换页不能留下旧列宽或按钮样式。"""
+    routes = (
+        ("devices", "files"), ("devices", "remote"), ("apps", "manager"),
+        ("apps", "overview"), ("apps", "media"), ("system", "overview"),
+        ("system", "logcat"), ("system", "performance"),
+    )
+    for section, feature in routes:
+        host = frame._workspace_feature_hosts[section]
+        if feature in host._definitions:
+            host._definitions[feature] = replace(
+                host._definitions[feature], factory=_ClosableSessionPage,
+            )
+    devices = ("demo-usb", "emulator-5554", "192.0.2.15:5555")
+    metadata = (
+        {"Brand": "vivo", "Model": "V2458A", "Aversion": "16"},
+        {"Brand": "Redmi", "Model": "23113RKC6C", "Aversion": "15"},
+        {"Model": "Pixel 8", "Aversion": "14"},
+    )
+    frame._on_devices_updated(list(devices))
+    for device, info in zip(devices, metadata):
+        frame._on_device_info_updated(device, info)
+    frame.left_panel.set_selected_devices(list(devices))
+    isolated_app_settings.set("ui_font_size", 14)
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+    frame.show()
+    qt_application.processEvents()
+    frame.resize(1120, 1000)
+    bar = frame._global_device_bar
+    fields = ("brand_label", "name_label", "version_label", "connection_label")
+    initial_picker = None
+    heights = []
+    for section, feature in routes:
+        assert frame._open_workspace_feature(section, feature, device_id=devices[0])
+        host = frame._workspace_feature_hosts[section]
+        assert host.session_toolbar.isHidden()
+        assert bar.isVisibleTo(frame)
+        assert not bar.is_selector_expanded
+        bar.open_picker()
+        picker = bar._picker
+        if initial_picker is None:
+            initial_picker = picker
+            font_changes = QSignalSpy(BaseStyles.ui_font_changed)
+            isolated_app_settings.set("ui_font_size", font_size)
+            BaseStyles.reload_from_settings()
+            BaseStyles.switch_theme(theme)
+            assert font_changes.count() == 1
+        assert picker is initial_picker
+        rows = list(picker._rows.values())
+        wait_for_stable_geometry(qt_application, (frame, bar, picker, *rows))
+        assert len(rows) == len(devices)
+        assert bar.palette().color(QPalette.ColorRole.Window) == QColor(
+            BaseStyles.color("WINDOW_BG")
+        )
+        assert not picker.content.autoFillBackground()
+        assert not picker.scroll_area.viewport().autoFillBackground()
+        for field in fields:
+            cells = [getattr(row, field) for row in rows]
+            assert len({(cell.x(), cell.width()) for cell in cells}) == 1
+            assert all(cell.font().pointSize() == font_size for cell in cells)
+        for row in rows:
+            cells = [row.check_box, *(getattr(row, field) for field in fields)]
+            if row.status_label.isVisibleTo(frame):
+                cells.append(row.status_label)
+            if (picker.close_section.parentWidget() is row
+                    and picker.close_button.isVisibleTo(frame)):
+                cells.append(picker.close_button)
+            bounds = [mapped_rect(cell, row) for cell in cells]
+            assert all(row.rect().contains(rect) for rect in bounds), (section, feature)
+            assert all(left.right() < right.left()
+                       for left, right in zip(bounds, bounds[1:])), (section, feature)
+            assert max(rect.center().y() for rect in bounds) - min(
+                rect.center().y() for rect in bounds
+            ) <= 1, (section, feature)
+            if len(cells) > 5:
+                assert 0 <= row.width() - 1 - bounds[-1].right() <= 5
+        buttons = [bar.targets_button, picker.clear_button]
+        buttons.extend(button for button in (picker.select_all_button, picker.close_button)
+                       if button.isVisibleTo(frame))
+        for button in buttons:
+            assert isinstance(button, (TransparentPushButton, TransparentDropDownPushButton))
+            assert button.font().pointSize() == font_size
+            assert button.height() >= button.fontMetrics().height()
+        row_height = picker.device_list.sizeHintForRow(0)
+        assert picker.scroll_area.height() >= row_height * 5 + picker.toolbar.height()
+        assert picker.scroll_area.verticalScrollBar().maximum() == 0
+        heights.append(picker.height())
+    assert len(set(heights)) == 1
 
 
 def test_offline_current_session_keeps_original_close_action(frame, qt_application):
