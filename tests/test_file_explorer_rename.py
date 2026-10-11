@@ -21,8 +21,14 @@ def local_shell(tmp_path):
     environment = dict(os.environ)
     if os.name == "nt":
         git = shutil.which("git")
-        directory = Path(git).parent.parent / "usr/bin" if git else None
-        if directory is not None and (directory / "bash.exe").is_file():
+        directory = None
+        # Git 可从 cmd、bin 或 mingw64/bin 解析，不能用固定父级推断安装根。
+        for parent in Path(git).parents if git else ():
+            candidate = parent / "usr/bin"
+            if all((candidate / tool).is_file() for tool in ("bash.exe", "ln.exe")):
+                directory = candidate
+                break
+        if directory is not None:
             shell = str(directory / "bash.exe")
             environment["PATH"] = str(directory) + os.pathsep + environment.get("PATH", "")
             # Git 的链接仿真可验证 -L，无需 Windows 原生链接创建权限。

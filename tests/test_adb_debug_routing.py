@@ -3,7 +3,6 @@
 import json
 import subprocess
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -78,10 +77,11 @@ def test_frozen_resolver_logs_internal_candidate_and_actual_source(
 def test_native_entries_log_resolved_client_without_command_values(
     debug_log, monkeypatch, tmp_path, entry,
 ):
-    executable = str(tmp_path / "_internal" / "runtime-tools" / "windows-x86_64" / "adb.exe")
-    Path(executable).parent.mkdir(parents=True)
-    Path(executable).touch()
-    monkeypatch.setattr(execution, "_adb_path", executable)
+    source = tmp_path / "_internal" / "runtime-tools" / "windows-x86_64" / "adb.exe"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic-adb")
+    executable = str(source.with_name("adblab-adb.exe") if sys.platform == "win32" else source)
+    monkeypatch.setattr(execution, "_adb_path", str(source))
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)
     calls = []
@@ -120,13 +120,30 @@ def test_native_entries_log_resolved_client_without_command_values(
     else:
         execution.ProcessRunner().spawn(cmd)
 
+    # 来源选择保留原文件；执行及日志必须指向真正启动的客户端副本。
+    assert execution.resolve_adb_program() == str(source)
+    assert source.read_bytes() == b"synthetic-adb"
     assert calls[0][0] == executable
     rows = [row for row in debug_log() if row["event"] == "execute"]
-    assert rows and rows[0]["backend"] == "native_client"
-    assert rows[0]["executable"] == executable
-    assert rows[0]["command"] == "shell"
+    assert rows and all(row["backend"] == "native_client" for row in rows)
+    assert all(row["executable"] == executable for row in rows)
+    assert all(row["command"] == "shell" for row in rows)
     assert "synthetic-private-device" not in str(rows)
     assert "hidden-value" not in str(rows)
+
+
+@pytest.mark.parametrize("filename", ["adb.exe", "adblab-adb.exe"])
+def test_command_recognizes_client_name_without_logging_arguments(debug_log, filename):
+    executable = "C:/synthetic-bundle/" + filename
+    adb_debug.command(
+        [executable, "-s", "synthetic-private-device", "shell", "echo secret=hidden-value"],
+        backend="native_client",
+    )
+
+    assert debug_log() == [{
+        "event": "execute", "backend": "native_client", "phase": "start",
+        "executable": executable, "command": "shell",
+    }]
 
 
 def test_fast_entry_logs_direct_backend_and_does_not_launch_client(debug_log, monkeypatch):

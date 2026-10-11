@@ -212,7 +212,9 @@ def test_child_pss_files_keep_full_identity_and_all_reach_report(monkeypatch, tm
     from mobileperf.android import meminfos
 
     packages = ["com.example.app", "com.example.app:one.worker", "com.example.app:two.worker"]
-    clock = [0.0]
+    # 开始时间与采样时钟使用同一本地时间，避开 Windows 不支持的负 Unix 时间戳。
+    start_time = "2026_09_29_10_00_00"
+    clock = [meminfos.TimeUtils.getTimeStamp(start_time, meminfos.TimeUtils.UnderLineFormatter)]
     monkeypatch.setattr(meminfos, "time", SimpleNamespace(time=lambda: clock[0]))
     adb = SimpleNamespace(run_shell_cmd=lambda command: "",
                           cleanup_owned_heapdumps=lambda *args: None,
@@ -233,7 +235,7 @@ def test_child_pss_files_keep_full_identity_and_all_reach_report(monkeypatch, tm
     RuntimeData.package_save_path = str(tmp_path)
     RuntimeData.config_dic = {"dumpheap_freq": 3600, "pid_change_focus_package": []}
 
-    collector._collect_memory_thread("1970_01_01_07_30_00")
+    collector._collect_memory_thread(start_time)
 
     files = sorted(tmp_path.glob("pss_*.csv"))
     assert len(files) == 3

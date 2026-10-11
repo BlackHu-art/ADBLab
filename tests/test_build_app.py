@@ -82,11 +82,24 @@ def test_manifest_change_reaches_both_real_consumers(monkeypatch):
 
 def test_spec_finds_manifest_outside_repository_working_directory(tmp_path):
     code = r'''
-import json, runpy, sys, types, subprocess
+import json, platform, runpy, sys, types, subprocess
+from pathlib import Path
+# 隔离解释器不继承 x64_host fixture，宿主探测也不属于构建行为。
+platform.machine = lambda: "x86_64"
 hooks = types.ModuleType("PyInstaller.utils.hooks")
 hooks.collect_submodules = lambda package: [package + ".included"]
 sys.modules["PyInstaller.utils.hooks"] = hooks
-subprocess.run = lambda *args, **kwargs: None
+expected_preparations = [
+    [sys.executable, str(Path(sys.argv[2]) / "scripts" / script)]
+    for script in ("prepare_runtime_tools.py", "build_scrcpy_adb_bridge.py")
+]
+preparation_calls = []
+def prepare(command, **kwargs):
+    assert command in expected_preparations, command
+    assert kwargs == {"check": True}, kwargs
+    preparation_calls.append(command)
+    return subprocess.CompletedProcess(command, 0)
+subprocess.run = prepare
 captured = {}
 def analysis(*args, **kwargs):
     captured.update(kwargs)
@@ -97,6 +110,7 @@ runpy.run_path(sys.argv[1], init_globals={
     "SPECPATH": sys.argv[2], "Analysis": analysis,
     "PYZ": lambda *a, **k: None, "EXE": lambda *a, **k: None, "COLLECT": lambda *a, **k: None,
 })
+assert preparation_calls == expected_preparations, preparation_calls
 print(json.dumps(captured["hiddenimports"]))
 '''
     result = subprocess.run(
@@ -137,7 +151,9 @@ def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
 
 def test_build_dry_run_does_not_import_qt_or_invoke_packager(tmp_path):
     code = r'''
-import importlib.abc, runpy, subprocess, sys
+import importlib.abc, platform, runpy, subprocess, sys
+# 固定与父进程 fixture 相同的宿主，避免 Windows 版本查询误入构建禁区。
+platform.machine = lambda: "x86_64"
 class BlockBuildImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split(".")[0] in {"PySide6", "PyInstaller"}:
@@ -146,6 +162,7 @@ sys.meta_path.insert(0, BlockBuildImports())
 def no_subprocess(*args, **kwargs):
     raise AssertionError("dry-run attempted to build")
 subprocess.run = no_subprocess
+subprocess.Popen = no_subprocess
 sys.argv = [sys.argv[1], "--dry-run", "--name", "dry run"]
 runpy.run_path(sys.argv[0], run_name="__main__")
 '''

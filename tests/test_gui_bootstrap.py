@@ -32,9 +32,18 @@ def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plug
         "main.user_data_root=lambda: (_ for _ in ()).throw(AssertionError('user data accessed'));"
         "sys.exit(main._dispatch_cli(['--self-check','gui']))"
     )
+    startupinfo = None
+    creationflags = 0
+    if sys.platform == "win32":
+        # 无控制台时 Qt 会为插件加载失败弹出阻塞对话框；隐藏控制台保留真实失败路径。
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NEW_CONSOLE
     result = subprocess.run(
         [sys.executable, "-c", code], cwd=os.path.dirname(main.__file__),
         env=environment, capture_output=True, timeout=15,
+        startupinfo=startupinfo, creationflags=creationflags,
     )
     if platform_plugin == "offscreen":
         assert result.returncode == 0, result.stderr.decode(errors="replace")

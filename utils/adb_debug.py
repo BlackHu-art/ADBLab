@@ -137,7 +137,7 @@ def command(
     cmd: list[str], *, backend: str, phase: str = "start", **fields: object,
 ) -> None:
     """记录 ADB 执行路径与命令类别，忽略其他程序及所有原始命令参数。"""
-    if not cmd or ntpath.basename(cmd[0]).lower() not in {"adb", "adb.exe"}:
+    if not cmd or ntpath.basename(cmd[0]).lower() not in {"adb", "adb.exe", "adblab-adb.exe"}:
         return
     event(
         "execute", **fields, backend=backend, phase=phase,

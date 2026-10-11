@@ -348,7 +348,6 @@ class CommandRunner:
             if raw is not None:
                 result = _normalise_result(raw, timeout)
             else:
-                adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
                 deadline = time.monotonic() + remaining
                 hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
                     "adb", "adb.exe", "adblab-adb.exe",
@@ -360,6 +359,7 @@ class CommandRunner:
                     run_timeout = deadline - time.monotonic()
                     if run_timeout <= 0:
                         raise AdbClientTimeout
+                    adb_debug.command(launched, backend="native_client", timeout=run_timeout)
                     proc = run_native(
                         launched,
                         isolate=native_tool or _is_native_tool(resolved_cmd),
@@ -373,7 +373,7 @@ class CommandRunner:
                     )
                     if adb_debug.enabled():
                         adb_debug.command(
-                            resolved_cmd, backend="native_client", phase="finish",
+                            launched, backend="native_client", phase="finish",
                             status="completed",
                             returncode=proc.returncode,
                         )
@@ -438,9 +438,6 @@ class CommandRunner:
                                 resolved_cmd, remaining, cancelled, stdout_sink=output_file,
                             )
                         else:
-                            adb_debug.command(
-                                resolved_cmd, backend="native_client", timeout=remaining,
-                            )
                             hold_adb_lock = os.path.basename(resolved_cmd[0]).lower() in {
                                 "adb", "adb.exe", "adblab-adb.exe",
                             }
@@ -451,6 +448,9 @@ class CommandRunner:
                                 remaining = deadline - time.monotonic()
                                 if remaining <= 0:
                                     raise AdbClientTimeout
+                                adb_debug.command(
+                                    launched, backend="native_client", timeout=remaining,
+                                )
                                 proc = run_native(
                                     launched,
                                     isolate=_is_native_tool(resolved_cmd),
@@ -680,8 +680,8 @@ class ProcessRunner:
         if env is not None:
             popen_kwargs["env"] = env
         resolved_cmd = resolve_command(cmd)
-        adb_debug.command(resolved_cmd, backend="native_client")
         launched = _launch_command(resolved_cmd)
+        adb_debug.command(launched, backend="native_client")
         return popen_native(
             launched, isolate=native_tool or _is_native_tool(resolved_cmd), **popen_kwargs,
         )

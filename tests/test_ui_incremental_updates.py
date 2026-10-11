@@ -111,7 +111,7 @@ def test_context_menus_release_after_close_and_keep_shared_actions(qt_applicatio
         parent.deleteLater()
 
 
-def test_device_icon_reuses_source_and_tinted_engine(qt_application, monkeypatch, tmp_path):
+def test_device_icon_reuses_source_and_tinted_icon(qt_application, monkeypatch, tmp_path):
     from gui.styles import icon_loader
 
     path = tmp_path / "device.svg"
@@ -121,15 +121,20 @@ def test_device_icon_reuses_source_and_tinted_engine(qt_application, monkeypatch
     monkeypatch.setattr(icon, "path", lambda _theme: str(path))
     reads = Mock(wraps=Path.read_text)
     monkeypatch.setattr(Path, "read_text", lambda self, **kw: reads(self, **kw))
-    engines = Mock(wraps=icon_loader.SvgIconEngine)
-    monkeypatch.setattr(icon_loader, "SvgIconEngine", engines)
+    first = icon.icon(color="#123456")
     for _ in range(30):
-        assert not icon.icon(color="#123456").pixmap(32, 32).isNull()
+        repeated = icon.icon(color="#123456")
+        assert repeated.cacheKey() == first.cacheKey()
+        rendered = repeated.pixmap(32, 32).toImage()
+        assert rendered.pixelColor(16, 16).name() == "#123456"
     assert reads.call_count == 1
-    assert engines.call_count == 1
-    assert not icon.icon(color="#654321").pixmap(64, 64).isNull()
+    other = icon.icon(color="#654321")
+    assert other.cacheKey() != first.cacheKey()
+    rendered = other.pixmap(64, 64).toImage()
+    assert rendered.width() == rendered.height() == 64
+    assert rendered.pixelColor(32, 32).name() == "#654321"
     assert reads.call_count == 1
-    assert engines.call_count == 2
+    assert icon.icon(color="#123456").cacheKey() == first.cacheKey()
 
 
 def test_hidden_performance_logs_buffer_until_activate(qt_application):

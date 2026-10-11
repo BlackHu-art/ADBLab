@@ -252,7 +252,7 @@ def test_macos_restricted_path_uses_default_sdk_before_homebrew(monkeypatch, tmp
     sdk = _prepare_macos(monkeypatch, tmp_path)
     _existing_paths(monkeypatch, [sdk, "/opt/homebrew/bin/adb", "/usr/local/bin/adb"])
 
-    assert adb_resolver.resolve_adb_path() == sdk
+    assert _same_path(adb_resolver.resolve_adb_path(), sdk)
     candidates = adb_resolver.list_adb_candidates()
     assert [(item.source, item.path) for item in candidates] == [
         ("homebrew_arm64", "/opt/homebrew/bin/adb"),

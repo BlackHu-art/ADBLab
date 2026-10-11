@@ -240,7 +240,8 @@ platform-tools 后无需重启应用。正常 Windows onedir 的资源根是
 
 `probe_start` / `probe_result` / `probe_complete` 显示检测所用客户端路径、本机服务端点、
 状态与耗时，并在探测结束时汇总当前策略；
-`mode` 记录用户选择；`execute` 区分 `native_client` 和 `server_direct`。直连事件中的
+`mode` 记录用户选择；`execute` 区分 `native_client` 和 `server_direct`。原生事件中的
+`executable` 记录实际启动的客户端，Windows 换名复用时为 `adblab-adb.exe`。直连事件中的
 客户端路径只是所适配的解析路径，`client_spawned=false` 表示该请求没有启动 adb.exe。
 这里记录的是实际选路，不推断现存 ADB Server 是由哪份 adb.exe 启动。
 
