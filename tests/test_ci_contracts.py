@@ -686,7 +686,6 @@ def _run_tag_retention(tmp_path, refs, *, releases=(), failure=""):
     step = next(step for step in workflow["jobs"]["release"]["steps"]
                 if step.get("name") == "Retain latest 5 version tags")
     script = tmp_path / "retention.sh"
-    script.write_text(step["run"], encoding="utf-8")
     scenario = tmp_path / "scenario.json"
     scenario.write_text(json.dumps({
         "refs": refs, "releases": releases, "failure": failure,
@@ -724,25 +723,21 @@ def _run_tag_retention(tmp_path, refs, *, releases=(), failure=""):
         else:
             raise AssertionError("Unexpected offline CLI call: " + repr([tool, *args]))
     """), encoding="utf-8")
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    for tool in ("git", "gh"):
-        launcher = fake_bin / tool
-        launcher.write_text(
-            "#!/usr/bin/env bash\nexec " + shlex.quote(sys.executable)
-            + " -B " + shlex.quote(str(fake)) + " " + tool + ' "$@"\n',
-            encoding="utf-8",
-        )
-        launcher.chmod(0o755)
+    # Git Bash 启动时会重排 PATH；函数替身确保工作流无法误用真实 git/gh。
+    command = shlex.quote(sys.executable) + " -B " + shlex.quote(str(fake))
+    offline_commands = "\n".join(
+        f'{tool}() {{ {command} {tool} "$@"; }}' for tool in ("git", "gh")
+    )
+    script.write_text(offline_commands + "\n" + step["run"], encoding="utf-8", newline="\n")
     bash = shutil.which("bash")
     assert bash, "The workflow contract requires a bash interpreter"
     result = subprocess.run(
-        [bash, str(script)], cwd=tmp_path,
-        env={**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
-             "FAKE_SCENARIO": str(scenario), "FAKE_CALLS": str(calls),
+        [bash, "--noprofile", "--norc", str(script)], cwd=tmp_path,
+        env={**os.environ, "FAKE_SCENARIO": str(scenario), "FAKE_CALLS": str(calls),
              "GITHUB_REPOSITORY": "example/offline", "GH_TOKEN": "offline-test-only"},
         capture_output=True, text=True, timeout=10,
     )
+    assert calls.is_file(), result.stderr
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
     deleted_releases = [args[3] for args in commands if args[:3] == ["gh", "release", "delete"]]
     deleted_tags = [

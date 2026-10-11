@@ -672,7 +672,7 @@ def test_live_logcat_reactivation_applies_eviction_without_matching_new_lines(
         assert page.output.toPlainText() == ""
         assert page.cache_ring.value() == page.cache_ring.maximum() == 100
         assert "100 / 100" in page.cache_ring.toolTip()
-        assert page.output.placeholderText() == "当前等级下没有匹配的日志，可调整等级或等待新日志。"
+        assert page.output.placeholderText() == "当前条件下暂无日志\n可调整日志等级查看已有记录。"
         assert not page.export_btn.isEnabled()
     finally:
         page.close()
