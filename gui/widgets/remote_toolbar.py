@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
+    QColor,
     QFocusEvent,
     QHideEvent,
     QKeyEvent,
@@ -442,9 +443,18 @@ class RemoteToolbar(QWidget):
         background = BaseStyles.color("TOOLBAR_BG")
         border = BaseStyles.color("BORDER_COLOR")
         hover = BaseStyles.color("BUTTON_HOVER")
-        selected = BaseStyles.color("SELECTION_BG")
+        pressed = BaseStyles.color("BUTTON_PRESSED")
         accent = BaseStyles.color("BORDER_FOCUS")
+        # 展开态轻染当前强调色；不借用固定蓝色的全局文本选区颜色。
+        selection = QColor(accent)
+        selection.setAlphaF(0.24 if BaseStyles.resolved_theme() == "Dark" else 0.18)
+        selected = (
+            f"rgba({selection.red()}, {selection.green()}, {selection.blue()}, {selection.alpha()})"
+        )
         disabled = BaseStyles.color("TEXT_DISABLED")
+        scroll_background = BaseStyles.color("SCROLLBAR_BG")
+        scroll_handle = BaseStyles.color("SCROLLBAR_HANDLE")
+        scroll_hover = BaseStyles.color("SCROLLBAR_HANDLE_HOVER")
         style = f"""
         QWidget#remoteToolbar, QFrame#remoteToolbarPopup {{
             background: {background}; border: 1px solid {border}; border-radius: 10px;
@@ -457,12 +467,21 @@ class RemoteToolbar(QWidget):
         QToolButton#remoteToolbarCollapse {{ padding: 0; }}
         QPushButton {{ text-align: left; padding: 7px 9px; border-color: {border}; }}
         QToolButton:hover, QPushButton:hover {{ background: {hover}; border-color: {border}; }}
-        QToolButton:pressed, QToolButton:checked, QPushButton:pressed {{
-            background: {selected}; }}
+        QToolButton:pressed, QPushButton:pressed {{ background: {pressed}; }}
+        QToolButton#remoteToolbarMore:checked {{ background: {selected}; }}
         QToolButton[remoteKeyboardFocus="true"]:focus,
         QPushButton[remoteKeyboardFocus="true"]:focus {{ border-color: {accent}; }}
         QToolButton:disabled, QPushButton:disabled {{ color: {disabled}; }}
         QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; border: none; }}
+        QScrollBar:vertical {{ background: {scroll_background}; width: 8px;
+            margin: 0; border: none; border-radius: 4px; }}
+        QScrollBar::handle:vertical {{ background: {scroll_handle};
+            min-height: 24px; border-radius: 4px; }}
+        QScrollBar::handle:vertical:hover {{ background: {scroll_hover}; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0; border: none; background: transparent; }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: transparent; }}
         """
         self.setStyleSheet(style)
         self._popup.setStyleSheet(style)

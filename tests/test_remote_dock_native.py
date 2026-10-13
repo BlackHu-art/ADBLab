@@ -257,6 +257,147 @@ def test_native_dark_more_icons_and_mouse_feedback_stay_legible(
         parent.close()
 
 
+def test_native_theme_and_accent_changes_update_open_and_collapsed_surfaces(
+    qt_application, external_window,
+):
+    from gui.panels.remote_panel_dock import RemotePanelDock
+    from gui.styles import BaseStyles
+
+    original_accent = BaseStyles.accent_color()
+    BaseStyles.switch_theme("Dark")
+    process, info, title = external_window
+    session = SimpleNamespace(
+        config=SimpleNamespace(device="synthetic", no_window=False, window_title=title),
+        process=process, state="ready", resource_owned=True, cancel_event=threading.Event(),
+    )
+    frame = _Frame(session)
+    parent = QWidget()
+    dock = RemotePanelDock(frame, parent)
+    api = _Win32WindowApi()
+    measurements = []
+    selected_colors = {"Light": {}, "Dark": {}}
+    artifacts = os.environ.get("ADBLAB_NATIVE_DOCK_ARTIFACT_DIR")
+    directory = Path(artifacts) if artifacts else None
+    scale = os.environ.get("QT_SCALE_FACTOR", "default")
+    if directory:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def widget_image(surface, widget):
+        ratio = surface.devicePixelRatio()
+        return surface.copy(
+            round(widget.x() * ratio), round(widget.y() * ratio),
+            round(widget.width() * ratio), round(widget.height() * ratio),
+        )
+
+    try:
+        dock.sync()
+        toolbar = dock.entries["synthetic"].toolbar
+        _wait(qt_application, toolbar.isVisible, "侧栏未显示")
+        toolbar_hwnd = int(toolbar.winId())
+        popup_hwnd = int(toolbar.popup_window.winId())
+        foreground = int(api._user32.GetForegroundWindow() or 0)
+        for presentation in ("open", "collapsed"):
+            if presentation == "open":
+                QTest.mouseClick(toolbar._more_button, Qt.MouseButton.LeftButton)
+            else:
+                QTest.mouseClick(toolbar._collapse_button, Qt.MouseButton.LeftButton)
+            for accent in ("#D04080", "#159B85"):
+                for index, theme in enumerate(("Dark", "Light", "Dark")):
+                    BaseStyles.switch_theme(theme)
+                    BaseStyles.set_accent_color(accent)
+                    qt_application.processEvents()
+                    dock.tick()
+                    assert toolbar.collapsed is (presentation == "collapsed")
+                    assert toolbar.popup_window.isVisible() is (presentation == "open")
+                    assert int(toolbar.winId()) == toolbar_hwnd
+                    assert int(toolbar.popup_window.winId()) == popup_hwnd
+                    assert api._get_window_long(toolbar_hwnd, -8) == info["hwnd"]
+                    assert api._get_window_long(popup_hwnd, -8) == toolbar_hwnd
+                    assert int(api._user32.GetForegroundWindow() or 0) == foreground
+                    stage = f"{presentation}-{accent[1:]}-{index}-{theme.lower()}"
+                    background = QColor(BaseStyles.color("TOOLBAR_BG"))
+                    surfaces = [("toolbar", toolbar)]
+                    if presentation == "open":
+                        surfaces.append(("popup", toolbar.popup_window))
+                    for name, widget in surfaces:
+                        image = widget.grab().toImage()
+                        ratio = image.devicePixelRatio()
+                        sampled = image.pixelColor(image.width() // 2, round(4 * ratio))
+                        assert sampled == background, (stage, name, sampled, background)
+                        corners = ((0, 0), (image.width() - 1, 0),
+                                   (0, image.height() - 1),
+                                   (image.width() - 1, image.height() - 1))
+                        assert all(image.pixelColor(x, y).alpha() == 0 for x, y in corners)
+                        if directory:
+                            assert image.save(str(
+                                directory / f"native-theme-{scale}-{stage}-{name}.png",
+                            ))
+                    toolbar_image = toolbar.grab().toImage()
+                    button = (toolbar._more_button if presentation == "open"
+                              else toolbar._collapse_button)
+                    button_image = widget_image(toolbar_image, button)
+                    ratio = button_image.devicePixelRatio()
+                    width = round(button.iconSize().width() * ratio)
+                    height = round(button.iconSize().height() * ratio)
+                    left = (button_image.width() - width) // 2
+                    top = (button_image.height() - height) // 2
+                    lightness = [button_image.pixelColor(x, y).lightness()
+                                 for x in range(left, left + width)
+                                 for y in range(top, top + height)]
+                    if theme == "Dark":
+                        assert max(lightness) > background.lightness() + 80, stage
+                    else:
+                        assert min(lightness) < background.lightness() - 80, stage
+                    if presentation == "open":
+                        selected = button_image.pixelColor(
+                            button_image.width() // 2, round(3 * ratio),
+                        )
+                        selected_colors[theme][accent] = selected.name()
+                        if accent == "#D04080":
+                            assert selected.red() > selected.green(), (stage, selected)
+                        else:
+                            assert selected.green() > selected.red(), (stage, selected)
+                        indicator = widget_image(toolbar_image, toolbar._indicator)
+                        expected_accent = QColor(accent)
+                        edges = [
+                            button_image.pixelColor(x, y)
+                            for offset in range(int(ratio) + 1)
+                            for x, y in (
+                                (button_image.width() // 2, offset),
+                                (button_image.width() // 2, button_image.height() - 1 - offset),
+                                (offset, button_image.height() // 2),
+                                (button_image.width() - 1 - offset, button_image.height() // 2),
+                            )
+                        ]
+                        assert expected_accent not in edges, (stage, "鼠标展开出现强调色边框")
+                        assert any(
+                            indicator.pixelColor(x, y) == expected_accent
+                            for x in range(indicator.width()) for y in range(indicator.height())
+                        ), (stage, "指示点未更新强调色")
+                    measurements.append({
+                        "stage": stage,
+                        "qt_dpr": ratio,
+                        "background": background.name(),
+                        "accent": accent,
+                        "icon_min_lightness": min(lightness),
+                        "icon_max_lightness": max(lightness),
+                        "more_selected_fill": selected.name() if presentation == "open" else None,
+                        "toolbar_hwnd": toolbar_hwnd,
+                        "popup_hwnd": popup_hwnd,
+                        "foreground_hwnd": foreground,
+                    })
+        assert all(len(set(colors.values())) == 2 for colors in selected_colors.values())
+        assert not frame.calls
+    finally:
+        if directory:
+            (directory / f"native-theme-changes-scale-{scale}.json").write_text(
+                json.dumps(measurements, indent=2), encoding="utf-8",
+            )
+        dock.close()
+        parent.close()
+        BaseStyles.set_accent_color(original_accent)
+
+
 def test_native_more_mouse_press_survives_dock_poll_and_dispatches_on_release(
     qt_application, external_window,
 ):

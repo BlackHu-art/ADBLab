@@ -535,3 +535,124 @@ def test_open_popup_updates_theme_accent_and_button_icons(qt_application):
     finally:
         toolbar.dispose()
         BaseStyles.set_accent_color(original_accent)
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_more_selection_tracks_accent_while_command_press_uses_theme_feedback(
+    qt_application, theme,
+):
+    from gui.styles import BaseStyles
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    original_accent = BaseStyles.accent_color()
+    BaseStyles.switch_theme(theme)
+    toolbar = RemoteToolbar()
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        _show_more(toolbar, qt_application)
+        more = _more_button(toolbar)
+        back = next(button for button in _buttons(toolbar)
+                    if button.property("remoteKey") == "BACK")
+
+        def background(button):
+            position = button.mapTo(toolbar, QPoint(5, button.height() // 2))
+            return _render_widget(toolbar).pixelColor(position)
+
+        samples = []
+        for accent in ("#D04080", "#087F5B"):
+            BaseStyles.set_accent_color(accent)
+            qt_application.processEvents()
+            selected = background(more)
+            samples.append(selected)
+            assert toolbar.popup_window.isVisible() and more.isChecked()
+            assert selected != QColor(BaseStyles.color("TOOLBAR_BG"))
+            assert selected != QColor(BaseStyles.color("SELECTION_BG")), (
+                "自定义强调色不能继续显示固定蓝色选中背景", theme, accent, selected.name(),
+            )
+            if accent == "#D04080":
+                assert selected.red() > selected.green()
+            else:
+                assert selected.green() > selected.red()
+
+            QTest.mousePress(back, Qt.MouseButton.LeftButton)
+            assert background(back) == QColor(
+                BaseStyles.color("BUTTON_PRESSED"),
+            )
+            QTest.mouseRelease(back, Qt.MouseButton.LeftButton)
+            assert toolbar.popup_window.isVisible()
+        assert samples[0] != samples[1]
+        toolbar.set_available(False)
+        assert not toolbar.popup_window.isVisible() and not more.isChecked()
+        assert background(more) == QColor(
+            BaseStyles.color("TOOLBAR_BG"),
+        )
+    finally:
+        toolbar.dispose()
+        BaseStyles.set_accent_color(original_accent)
+
+
+def test_more_scrollbar_tracks_theme_and_remains_usable(qt_application, monkeypatch):
+    from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+
+    from gui.styles import BaseStyles
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: SimpleNamespace(
+        availableGeometry=lambda: QRect(0, 0, 1000, 330),
+    ))
+    toolbar = RemoteToolbar()
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        _show_more(toolbar, qt_application)
+        popup = toolbar.popup_window
+        scroll = popup.findChild(QScrollArea)
+        assert scroll is not None
+        scrollbar = scroll.verticalScrollBar()
+
+        def subcontrol(control):
+            option = QStyleOptionSlider()
+            option.initFrom(scrollbar)
+            option.orientation = Qt.Orientation.Vertical
+            option.minimum = scrollbar.minimum()
+            option.maximum = scrollbar.maximum()
+            option.sliderPosition = scrollbar.sliderPosition()
+            option.sliderValue = scrollbar.value()
+            option.pageStep = scrollbar.pageStep()
+            option.singleStep = scrollbar.singleStep()
+            return scrollbar.style().subControlRect(
+                QStyle.ComplexControl.CC_ScrollBar, option, control, scrollbar,
+            )
+
+        for theme in ("Dark", "Light", "Dark"):
+            BaseStyles.switch_theme(theme)
+            QTest.mouseMove(popup, QPoint(6, 6))
+            qt_application.processEvents()
+            assert scrollbar.isVisible() and scrollbar.maximum() > 0
+            thumb = subcontrol(QStyle.SubControl.SC_ScrollBarSlider)
+            track = subcontrol(QStyle.SubControl.SC_ScrollBarAddPage)
+            assert not thumb.isEmpty() and not track.isEmpty()
+            image = _render_widget(scrollbar)
+            assert image.pixelColor(thumb.center()) == QColor(BaseStyles.color("SCROLLBAR_HANDLE"))
+            assert image.pixelColor(track.center()) == QColor(BaseStyles.color("SCROLLBAR_BG"))
+            QTest.mouseMove(scrollbar, thumb.center())
+            qt_application.processEvents()
+            assert _render_widget(scrollbar).pixelColor(thumb.center()) == QColor(
+                BaseStyles.color("SCROLLBAR_HANDLE_HOVER"),
+            )
+
+        QTest.keyClick(scrollbar, Qt.Key.Key_End)
+        qt_application.processEvents()
+        assert scrollbar.value() == scrollbar.maximum()
+        last = next(button for button in _buttons(toolbar)
+                    if button.property("remoteKey") == "MEDIA_NEXT")
+        last_rect = QRect(last.mapTo(scroll.viewport(), QPoint()), last.size())
+        assert scroll.viewport().rect().contains(last_rect)
+        requests = []
+        toolbar.key_requested.connect(requests.append)
+        QTest.mouseClick(last, Qt.MouseButton.LeftButton)
+        assert requests == ["MEDIA_NEXT"]
+        assert popup.isVisible()
+    finally:
+        toolbar.dispose()
