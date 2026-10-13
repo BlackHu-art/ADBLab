@@ -983,7 +983,10 @@ def test_scrcpy_service_parse_fps_returns_status_text():
 
 def test_remote_control_service_sends_keyevent_and_directional_swipe():
     adb = Mock()
-    adb.get_dimensions.return_value = ["1080", "2400"]
+    adb.shell.return_value = CommandResult(
+        success=True,
+        output="Viewport INTERNAL: displayId=0, logicalFrame=[0, 0, 1080, 2400], isActive=[1]",
+    )
     service = RemoteControlService(adb)
 
     service.send_keyevent("device-1", "HOME")
@@ -1045,13 +1048,13 @@ def test_adb_input_session_warm_opens_shell_without_writing_input():
     proc.stdin.flush.assert_not_called()
 
 
-def test_remote_control_service_reuses_cached_dimensions_for_fast_gestures():
+def test_remote_control_service_reuses_cached_natural_dimensions():
     adb = Mock()
     adb.get_dimensions.return_value = ["1080", "2400"]
     service = RemoteControlService(adb)
 
-    service.directional_swipe("device-1", "up")
-    service.directional_swipe("device-1", "down")
+    assert service.get_dimensions("device-1") == (1080, 2400)
+    assert service.get_dimensions("device-1") == (1080, 2400)
 
     adb.get_dimensions.assert_called_once_with(device_id="device-1")
 
@@ -1061,15 +1064,18 @@ def test_remote_control_service_uses_launch_plan_dimensions_without_adb_query():
     service = RemoteControlService(adb)
     service.remember_dimensions("device-1", ["720", "1280"])
 
-    service.expand_notifications("device-1")
+    assert service.get_dimensions("device-1") == (720, 1280)
 
     adb.get_dimensions.assert_not_called()
-    adb.shell_input.assert_called_once_with("swipe 360 0 360 1279 300", device_id="device-1")
+    adb.shell.assert_not_called()
 
 
 def test_remote_control_service_perform_action_dispatches_known_actions():
     adb = Mock()
-    adb.get_dimensions.return_value = ["1080", "2400"]
+    adb.shell.return_value = CommandResult(
+        success=True,
+        output="Viewport INTERNAL: displayId=0, logicalFrame=[0, 0, 1080, 2400], isActive=[1]",
+    )
     service = RemoteControlService(adb)
 
     service.perform_action("device-1", "swipe_left")
@@ -1096,7 +1102,7 @@ def test_remote_control_service_rotation_clears_dimension_cache():
     service.remember_dimensions("device-1", ["720", "1280"])
 
     service.rotate_portrait("device-1")
-    service.directional_swipe("device-1", "up")
+    assert service.get_dimensions("device-1") == (1080, 2400)
 
     adb.get_dimensions.assert_called_once_with(device_id="device-1")
 

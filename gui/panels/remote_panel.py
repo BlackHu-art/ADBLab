@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWi
     QWidget,
 )
 from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel, SwitchButton
+from shiboken6 import isValid
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
@@ -379,6 +380,7 @@ class RemotePanel(BasePanel):
         self._workspace_device_id = ""
         self._workspace_device_connected: bool | None = None
         self._target_devices: tuple[str, ...] | None = None
+        self._connected_remote_devices: frozenset[str] | None = None
         self._session_devices: tuple[str, ...] = ()
         self._session_process_keys: tuple[str, ...] = ()
         self._processes: dict[str, object] = {}
@@ -496,6 +498,22 @@ class RemotePanel(BasePanel):
             self._invalidate_device_admission()
         self._target_devices = targets
         self._update_action_states()
+
+    def set_connected_devices(self, devices: list[str]) -> None:
+        """接收完整在线快照，使投屏侧栏准入独立于主窗口勾选。"""
+        self._input_controller._set_connected_devices(devices)
+        dock = getattr(self, "_dock_controller", None)
+        if dock is not None:
+            dock.tick()
+
+    def _close_remote_views(self) -> None:
+        """GUI 关闭屏障先收回工具窗，计时器与输入同步停止接纳。"""
+        dock = getattr(self, "_dock_controller", None)
+        if dock is not None and isValid(dock):
+            dock.close()
+        window = getattr(self, "_standalone_remote", None)
+        if window is not None and isValid(window):
+            window.close()
 
     def activate_responsive_bindings(self) -> None:
         """在通用页面预处理后保留按钮自然宽度下限，并允许等宽网格扩展。"""
@@ -815,7 +833,8 @@ class RemotePanel(BasePanel):
             error = (tr("{count} 台连接失败，其余镜像继续运行。").format(count=len(failed))
                      if ready else tr("未能建立镜像连接，请重试。"))
         self._mirror_hint.setText(error or hint)
-        self._mirror_hint.setToolTip(hint)
+        self._mirror_hint.setToolTip(error or hint)
+        self._mirror_hint.setAccessibleDescription(error or hint)
         retry = bool(candidates) and (generic_error or all(
             device in failed for device in candidates))
         if not selected:
@@ -1178,6 +1197,7 @@ class RemotePanel(BasePanel):
     def _remote_input_shutdown_handle(self) -> _RemoteInputShutdown:
         """捕获一次 Remote producer 集合，并关闭后续 executor 准入。"""
 
+        RemotePanel._close_remote_views(self)
         lock = self._shutdown_lifecycle_lock()
         with lock:
             handle = getattr(self, "_remote_input_shutdown", None)

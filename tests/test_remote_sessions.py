@@ -277,13 +277,14 @@ def test_encoding_display_keeps_each_device_detection(remote_session, qt_applica
     remote.set_target_devices(["one", "two"])
     remote._start_scrcpy()
     assert _wait(qt_application, lambda: len(service.started) == 2)
-    assert "H.264" in remote.codec.text() and "H.265" in remote.codec.text()
+    assert remote.codec.text() == "自动视频编码"
+    assert "H.264" in remote.codec.toolTip() and "H.265" in remote.codec.toolTip()
     assert "c2.fixture.one.encoder" in remote.codec.toolTip()
     assert "c2.fixture.two.encoder" in remote.codec.toolTip()
     assert not remote.advanced_options.isHidden()
     assert remote.codec.accessibleDescription() == remote.codec.toolTip()
     remote.set_target_devices([])
-    assert remote.codec.text() == "自动"
+    assert remote.codec.text() == "自动视频编码"
     assert "启动时" in remote.codec.accessibleDescription()
     assert "c2.fixture" not in remote.codec.toolTip()
     assert remote.codec.accessibleDescription() == remote.codec.toolTip()
@@ -796,6 +797,96 @@ def test_successful_stop_retry_clears_previous_stop_error(remote_session, qt_app
     assert remote._mirror_error_label.isHidden()
     assert remote._mirror_diagnostic_label.isHidden()
     assert remote.btn_mirror_diagnostics.isHidden()
+
+
+@pytest.mark.parametrize(("width", "font_size"), [(420, 12), (640, 22), (1024, 12)])
+def test_real_session_actions_keep_visible_parameter_geometry(
+    remote_session, qt_application, monkeypatch, width, font_size,
+):
+    from gui.styles import BaseStyles
+    from gui.styles.typography import FontConfig, typography_manager
+    from tests.test_remote_first_frame import _VisiblePaintGeometry
+    from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry
+
+    remote, service = remote_session
+    monkeypatch.setattr("gui.panels.remote_panel_form.report_feedback", lambda *_a, **_k: None)
+    current = BaseStyles.current_font_config()
+    config = FontConfig(
+        ui_family=current.ui_family, ui_size=font_size,
+        log_size=current.log_size, mono_family=current.mono_family,
+    )
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    device = "synthetic-transition-device"
+    launch_gate = service.gates[device] = threading.Event()
+    stop_entered, stop_gate = threading.Event(), threading.Event()
+    original_stop = service.stop
+
+    def stop(key, timeout=2):
+        stop_entered.set()
+        assert stop_gate.wait(2), "停止阶段未释放受控进程"
+        return original_stop(key, timeout)
+
+    monkeypatch.setattr(service, "stop", stop)
+    remote.set_target_devices([device])
+    scroll = remote.panel._tab_scroll_areas[2]
+    content = scroll.widget()
+    scroll.resize(width, 1600)
+    scroll.show()
+    remote.apply_responsive_width(scroll.viewport().width())
+    toolbar = remote._session_list.parentWidget()
+    watched = (remote.btn_start, remote.btn_stop, remote.preset_selector,
+               remote.maxsize, remote.fps, remote.bitrate_slider, remote.buffer,
+               remote.orientation, remote.more_options)
+    assert _wait(qt_application, lambda: toolbar.isVisibleTo(scroll))
+    assert _wait(
+        qt_application, lambda: remote.panel._responsive_coordinator.diagnostics.stable,
+    )
+    wait_for_stable_geometry(qt_application, (toolbar, *watched))
+    assert all(widget.isVisibleTo(content) for widget in watched)
+    baseline = tuple(mapped_rect(widget, content).getRect() for widget in watched)
+    probe = _VisiblePaintGeometry(content, watched)
+
+    def assert_visible_phase():
+        previous = len(probe.samples)
+        for widget in watched:
+            widget.update()
+        assert _wait(qt_application, lambda: len(probe.samples) > previous)
+        differences = [
+            (index, before, after)
+            for sample in probe.samples
+            for index, (before, after) in enumerate(zip(baseline, sample))
+            if before != after
+        ]
+        assert not differences, differences[:20]
+
+    try:
+        assert_visible_phase()
+        remote.btn_start.click()
+        assert _wait(qt_application, lambda: device in service.prepared)
+        assert remote._session_state == remote._SESSION_STARTING
+        assert_visible_phase()
+        launch_gate.set()
+        assert _wait(qt_application, lambda: device in service.started)
+        assert remote._session_rows[device][1].text() == "连接中"
+        assert_visible_phase()
+        service.processes[device].output_lines.put("INFO: Texture: 1080x2400")
+        assert _wait(qt_application, lambda: remote._session_rows[device][1].text() == "就绪")
+        assert remote._status_label.text() == "镜像中 1 台"
+        assert_visible_phase()
+        remote.btn_stop.click()
+        assert _wait(qt_application, stop_entered.is_set)
+        assert remote._session_state == remote._SESSION_STOPPING
+        assert_visible_phase()
+        stop_gate.set()
+        assert _wait(qt_application, lambda: remote._session_state == remote._SESSION_IDLE)
+        assert remote._session_rows[device][1].text() == "已停止"
+        assert not remote._processes
+        assert_visible_phase()
+        assert scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        launch_gate.set()
+        stop_gate.set()
 
 
 @pytest.mark.parametrize(("width", "font_size"), [(420, 12), (640, 22), (1024, 12)])

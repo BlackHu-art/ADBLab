@@ -18,7 +18,9 @@ from gui.styles.typography import FontConfig, typography_manager
 from tests.test_responsive_panels import (
     _close_feature_panel,
     _resize_feature_viewport,
+    _resize_remote_controller,
     _show_feature_panel,
+    _show_remote_controller,
 )
 from tests.ui_geometry_helpers import (
     assert_non_overlapping,
@@ -30,6 +32,42 @@ from tests.ui_geometry_helpers import (
 )
 
 pytestmark = pytest.mark.ui
+
+
+@pytest.mark.parametrize("theme", ("Dark", "Light"))
+@pytest.mark.parametrize("enabled", (True, False))
+def test_command_button_text_uses_theme_colors_instead_of_stale_palette(
+    remote_layout, qt_application, theme, enabled,
+):
+    from PySide6.QtGui import QColor, QFont, QPalette
+
+    from gui.panels.remote_panel_controls import RemoteCommandButton
+
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    _show_remote_controller(qt_application, remote, 1280)
+    button = remote._remote_primary_key_buttons[0]
+    assert isinstance(button, RemoteCommandButton)
+    button.setText("MMMM")
+    try:
+        BaseStyles.switch_theme(theme)
+        button.setFont(QFont("Arial", 22))
+        button.resize(160, 100)
+        palette = button.palette()
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Disabled):
+            palette.setColor(group, QPalette.ColorRole.ButtonText, QColor("magenta"))
+        button.setPalette(palette)
+        button.setEnabled(enabled)
+        button.show()
+        qt_application.processEvents()
+        painted = button.grab().toImage()
+        expected = QColor(BaseStyles.color("TEXT_PRIMARY" if enabled else "TEXT_DISABLED"))
+        colors = {painted.pixelColor(x, y).name()
+                  for y in range(painted.height() // 2, painted.height())
+                  for x in range(painted.width())}
+        assert expected.name() in colors
+        assert QColor("magenta").name() not in colors
+    finally:
+        button.setText("返回")
 
 
 def test_invalid_saved_custom_parameters_keep_legal_control_values(
@@ -92,23 +130,28 @@ def remote_layout(qt_application, monkeypatch, isolated_app_settings):
         _close_feature_panel(panel)
 
 
-def test_wide_remote_page_places_unified_settings_above_all_device_controls(
+def test_wide_remote_page_keeps_session_above_settings_and_controls_in_separate_window(
     remote_layout, qt_application,
 ):
     _panel, remote, _scroll, content, _settings = remote_layout
-    controls, mirroring = remote._remote_section_groups
-    control_rect, setting_rect = mapped_rect(controls, content), mapped_rect(mirroring, content)
+    _window, _controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 1280,
+    )
+    (mirroring,) = remote._remote_section_groups
+    session = content.findChild(QWidget, "remoteMirrorSession")
+    session_rect, setting_rect = mapped_rect(session, content), mapped_rect(mirroring, content)
 
-    assert setting_rect.bottom() < control_rect.top(), "统一设置区必须位于所有控制按钮上方"
-    assert abs(control_rect.left() - setting_rect.left()) <= 2
-    assert abs(control_rect.width() - setting_rect.width()) <= 2
+    assert session_rect.bottom() < setting_rect.top(), "紧凑会话操作必须位于统一设置区上方"
+    assert not hasattr(remote, "btn_open_controller")
+    assert abs(session_rect.left() - setting_rect.left()) <= 2
+    assert abs(session_rect.width() - setting_rect.width()) <= 2
     system, recording = remote._remote_bottom_sections
-    assert controls.isAncestorOf(system)
+    assert controller_content.isAncestorOf(system)
     assert mirroring.isAncestorOf(recording)
     assert not recording.headerView.isVisibleTo(content), "合并后的开关区不重复显示标题"
     for button in remote._remote_control_buttons:
-        assert controls.isAncestorOf(button)
-        assert setting_rect.bottom() < mapped_rect(button, content).top()
+        assert controller_content.isAncestorOf(button)
+        assert not content.isAncestorOf(button)
     assert remote.advanced_options.isVisibleTo(content)
     assert remote.more_options.isVisibleTo(content)
     assert isinstance(remote.preset_selector, Pivot)
@@ -124,13 +167,15 @@ def test_wide_remote_page_places_unified_settings_above_all_device_controls(
         remote.preset_selector, remote.fps, remote.bitrate_slider,
         remote.maxsize, remote.codec, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
-        *remote._remote_control_buttons,
     ):
         assert widget.isVisibleTo(content)
         assert_positive_geometry(widget, content)
+    for button in remote._remote_control_buttons:
+        assert button.isVisibleTo(controller_content)
+        assert_positive_geometry(button, controller_content)
 
 
-def test_session_summary_stays_above_controls_and_settings_through_resizing(
+def test_session_summary_stays_above_settings_through_resizing(
     remote_layout, qt_application,
 ):
     panel, remote, scroll, content, _settings = remote_layout
@@ -138,15 +183,15 @@ def test_session_summary_stays_above_controls_and_settings_through_resizing(
     assert session is not None
     for width in (780, 420, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
-        controls, settings = (mapped_rect(section, content)
-                              for section in remote._remote_section_groups)
+        (settings,) = (mapped_rect(section, content)
+                       for section in remote._remote_section_groups)
         top = mapped_rect(session, content)
-        assert top.bottom() < settings.top() < settings.bottom() < controls.top()
-        assert top.left() <= min(controls.left(), settings.left())
-        assert top.right() >= max(controls.right(), settings.right())
+        assert top.bottom() < settings.top() < settings.bottom()
+        assert top.left() <= settings.left()
+        assert top.right() >= settings.right()
         assert scroll.horizontalScrollBar().maximum() == 0
-        assert abs(controls.left() - settings.left()) <= 2
-        assert abs(controls.width() - settings.width()) <= 2
+        assert abs(top.left() - settings.left()) <= 2
+        assert abs(top.width() - settings.width()) <= 2
         for control in (remote.btn_start, remote.btn_stop, remote._mirror_hint):
             assert session.isAncestorOf(control)
             assert_scroll_target_reachable(scroll, control)
@@ -156,9 +201,13 @@ def test_unified_settings_keep_options_expanded_and_queue_in_control_header(
     remote_layout, qt_application,
 ):
     panel, remote, scroll, content, _settings = remote_layout
+    _window, _controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 1280,
+    )
     for width in (1280, 320, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
-        controls, mirroring = remote._remote_section_groups
+        _resize_remote_controller(qt_application, remote, width)
+        (mirroring,) = remote._remote_section_groups
         _system, recording = remote._remote_bottom_sections
         assert mirroring.isAncestorOf(recording)
         assert not recording.headerView.isVisibleTo(content)
@@ -170,20 +219,25 @@ def test_unified_settings_keep_options_expanded_and_queue_in_control_header(
             assert option.isVisibleTo(content)
             assert separator.bottom() < mapped_rect(option, content).top()
             assert_scroll_target_reachable(scroll, option)
-        assert controls.headerView.isAncestorOf(remote._remote_queue_label)
-        assert remote._remote_queue_label.isVisibleTo(content)
+        assert controller_content.headerView.isAncestorOf(remote._remote_queue_label)
+        assert remote._remote_queue_label.isVisibleTo(controller_content)
         assert remote._remote_queue_label.width() >= (
             remote._remote_queue_label.fontMetrics().horizontalAdvance(
                 remote._remote_queue_label.text(),
             )
         )
-        assert_non_overlapping((controls.headerLabel, remote._remote_queue_label), content)
+        assert controller_content.headerLabel.isHidden()
+        assert not hasattr(remote, "btn_open_controller")
         assert scroll.horizontalScrollBar().maximum() == 0
 
 
-def test_section_heading_emphasis_survives_runtime_font_changes(remote_layout, qt_application):
+def test_hidden_control_titles_and_queue_survive_runtime_font_changes(
+    remote_layout, qt_application,
+):
     panel, remote, scroll, content, _settings = remote_layout
-    headings = [section.headerLabel for section in remote._remote_section_groups]
+    _window, _controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 1280,
+    )
     current = BaseStyles.current_font_config()
     for size in (12, 22, 12):
         config = FontConfig(
@@ -193,12 +247,17 @@ def test_section_heading_emphasis_survives_runtime_font_changes(remote_layout, q
         BaseStyles._sync_legacy_values(config)
         typography_manager.apply(config)
         _resize_feature_viewport(qt_application, panel, remote, scroll, 1280)
-        for label in headings:
-            assert label.isVisibleTo(content)
-            assert label.font().family() == "Segoe UI"
-            assert label.font().pointSize() == size
-            assert label.font().bold(), f"{label.text()} 不应在改变字体后丢失标题字重"
-            assert label.height() >= label.fontMetrics().height()
+        _resize_remote_controller(qt_application, remote, 1280)
+        (mirroring,) = remote._remote_section_groups
+        assert remote.btn_start.isVisibleTo(content)
+        assert remote.btn_start.font().pointSize() == size
+        assert not mirroring.headerLabel.isVisibleTo(content)
+        assert not controller_content.headerLabel.isVisibleTo(controller_content)
+        label = remote._remote_queue_label
+        assert label.isVisibleTo(controller_content)
+        assert label.font().family() == "Segoe UI"
+        assert label.font().pointSize() == size
+        assert label.height() >= label.fontMetrics().height()
 
 
 def test_parameter_selectors_save_stable_values_and_custom_clears_preset(remote_layout):
@@ -296,8 +355,11 @@ def test_each_preset_updates_fields_saved_values_and_launch_arguments(
         assert f"--video-buffer={expected[3]}" in args
 
 
-def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_layout):
-    _panel, remote, _scroll, content, _settings = remote_layout
+def test_remote_controls_keep_semantic_pairs_and_media_transport_order(
+    remote_layout, qt_application,
+):
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    _window, _scroll, content = _show_remote_controller(qt_application, remote, 1280)
     groups = (
         (remote._remote_navigation_binding, ("BACK", "HOME", "RECENTS", "POWER")),
         (remote._remote_key_binding, ("MENU", "ENTER", "DEL", "SETTINGS", "CAMERA", "SEARCH")),
@@ -317,7 +379,7 @@ def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_la
         "swipe_up", "swipe_down", "swipe_left", "swipe_right",
         "notif_expand", "notif_collapse", "rotate_portrait", "rotate_landscape",
     )
-    assert remote._remote_action_binding.applied_plan.mode.columns == 4
+    assert remote._remote_action_binding.applied_plan.mode.columns == 10
     by_code = {button.property("remoteKey"): button for button in remote._remote_key_buttons}
     assert by_code["ENTER"].text() == "回车"
     assert by_code["DEL"].text() == "退格"
@@ -326,8 +388,10 @@ def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_la
     assert mapped_rect(by_code["POWER"], content).top() == mapped_rect(
         by_code["BACK"], content,
     ).top()
-    screen = remote._remote_screen_binding.widgets()
-    navigation = remote._remote_navigation_binding.widgets()
+    screen = tuple(button for button in remote._remote_screen_binding.widgets()
+                   if button.property("remoteAction"))
+    navigation = tuple(button for button in remote._remote_navigation_binding.widgets()
+                       if button.property("remoteKey"))
     assert tuple(button.property("remoteAction") for button in screen) == (
         "rotate_portrait", "rotate_landscape", "notif_expand", "notif_collapse",
     )
@@ -337,12 +401,21 @@ def test_remote_controls_keep_semantic_pairs_and_media_transport_order(remote_la
         mapped_rect(button, content).top() for button in remote._remote_action_binding.widgets()
     )
     gestures = [mapped_rect(button, content)
-                for button in remote._remote_action_binding.widgets()]
-    system = [mapped_rect(button, content) for button in remote._remote_key_binding.widgets()]
+                for button in remote._remote_action_binding.widgets()
+                if button.property("remoteAction")]
+    system = [mapped_rect(button, content) for button in remote._remote_key_binding.widgets()
+              if button.property("remoteKey")]
     assert max(rect.right() for rect in gestures) < min(rect.left() for rect in system)
     assert abs(gestures[0].top() - system[0].top()) <= 2
     media = remote._remote_media_binding.widgets()
-    assert all(abs(button.width() - button.height()) <= 2 for button in media)
+    assert tuple(button.text() for button in media) == (
+        "音量 −", "上一个", "播放/暂停", "下一个", "音量 +",
+    )
+    assert max(button.width() for button in media) - min(button.width() for button in media) <= 2
+    media_rects = [mapped_rect(button, content) for button in media]
+    assert media_rects[0].left() == mapped_rect(media[0].parentWidget(), content).left()
+    assert all(0 < after.left() - before.right() - 1 <= 8
+               for before, after in zip(media_rects, media_rects[1:]))
     assert min(mapped_rect(button, content).top() for button in media) > max(
         rect.bottom() for rect in gestures
     )
@@ -359,10 +432,19 @@ def test_default_preset_is_selected_before_user_interaction(remote_layout):
     )) == ("1024", "30", "4", "50")
 
 
+@pytest.mark.parametrize("width,font_size", ((1280, 12), (292, 22)))
 def test_mirror_toolbar_keeps_height_across_selection_and_session_states(
-    remote_layout, qt_application,
+    remote_layout, qt_application, width, font_size,
 ):
-    _panel, remote, _scroll, content, _settings = remote_layout
+    panel, remote, scroll, content, _settings = remote_layout
+    current = BaseStyles.current_font_config()
+    config = FontConfig(
+        ui_family="Arial", ui_size=font_size,
+        log_size=current.log_size, mono_family=current.mono_family,
+    )
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    _resize_feature_viewport(qt_application, panel, remote, scroll, width)
     toolbar = content.findChild(type(remote._session_list.parentWidget()), "remoteMirrorSession")
     assert toolbar is not None
     wait_for_stable_geometry(qt_application, toolbar)
@@ -391,7 +473,16 @@ def test_mirror_toolbar_keeps_height_across_selection_and_session_states(
     remote._last_mirror_status = "Error"
     remote._refresh_mirror_presentation()
     wait_for_stable_geometry(qt_application, toolbar)
-    assert toolbar.height() == height
+    if width == 1280:
+        assert toolbar.height() == height
+    else:
+        assert toolbar.height() >= height
+        assert remote.btn_mirror_diagnostics.isVisibleTo(content)
+        assert_scroll_target_reachable(scroll, remote.btn_mirror_diagnostics)
+        assert remote._mirror_hint.height() >= remote._mirror_hint.heightForWidth(
+            remote._mirror_hint.width(),
+        )
+        assert_scroll_target_reachable(scroll, remote._mirror_hint)
     assert "重试" in remote._status_label.toolTip()
 
 
@@ -420,6 +511,90 @@ def test_preset_selection_fills_button_with_theme_accent(
         assert selected_image.pixelColor(*sample) != unselected_image.pixelColor(*sample)
         assert selected.isSelected
         assert sum(item.isSelected for item in pivot.items.values()) == 1
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+@pytest.mark.parametrize("accent,foreground", (("#003366", "#ffffff"), ("#ffee66", "#000000")))
+def test_selected_preset_keeps_contrast_through_mouse_states(
+    remote_layout, qt_application, theme, accent, foreground,
+):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    BaseStyles.switch_theme(theme)
+    BaseStyles.set_accent_color(accent)
+    if theme == "Dark" and accent == "#003366":
+        # Fluent 在深色主题提亮强调色，实际底板为亮蓝色，黑字对比度更高。
+        foreground = "#000000"
+    item = remote.preset_selector.items["Smooth"]
+    item.setText("MMMM")
+    before = item.geometry()
+    QTest.mouseMove(item, QPoint(item.width() // 2, item.height() // 2))
+    for pressed in (False, True):
+        if pressed:
+            QTest.mousePress(item, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        painted = item.grab().toImage()
+        colors = {painted.pixelColor(x, y).name()
+                  for y in range(3, painted.height() - 3)
+                  for x in range(3, painted.width() - 3)}
+        assert foreground in colors
+        assert item.geometry() == before
+    QTest.mouseRelease(item, Qt.MouseButton.LeftButton)
+    item.setEnabled(False)
+    qt_application.processEvents()
+    painted = item.grab().toImage()
+    assert painted.pixelColor(8, 4).name() == BaseStyles.color("BUTTON_BG").lower()
+
+
+@pytest.mark.parametrize("width,font_size", ((292, 22), (640, 12)))
+def test_session_hint_reserves_full_text_height_without_state_jumps(
+    qt_application, width, font_size,
+):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+
+    from gui.panels.remote_panel_controls import RemoteSessionHint
+
+    texts = ("准备", "正在准备服务；可取消启动，已打开的镜像也将停止", "未能建立镜像连接，请重试。")
+    hint = RemoteSessionHint(texts[0], texts)
+    try:
+        hint.setFont(QFont("Microsoft YaHei", font_size))
+        hint.resize(width, 36)
+        hint.show()
+        hint.refresh_height()
+        qt_application.processEvents()
+        height = hint.height()
+        for text in texts:
+            hint.setText(text)
+            qt_application.processEvents()
+            required = hint.fontMetrics().boundingRect(
+                0, 0, width, 10000, Qt.TextFlag.TextWordWrap, text,
+            ).height()
+            assert hint.height() >= required
+            assert hint.height() == height
+    finally:
+        hint.close()
+        hint.deleteLater()
+
+
+def test_preset_focus_tracks_keyboard_without_changing_geometry(remote_layout, qt_application):
+    from PySide6.QtCore import Qt
+
+    _panel, remote, _scroll, _content, _settings = remote_layout
+    item = remote.preset_selector.items["Smooth"]
+    before = item.geometry()
+    item.clearFocus()
+    item.setFocus(Qt.FocusReason.TabFocusReason)
+    qt_application.processEvents()
+    assert item.property("adblabKeyboardFocus") is True
+    assert item.geometry() == before
+    item.clearFocus()
+    item.setFocus(Qt.FocusReason.MouseFocusReason)
+    qt_application.processEvents()
+    assert item.property("adblabKeyboardFocus") is False
+    assert item.geometry() == before
 
 
 def test_parameter_labels_stay_above_controls_and_units_follow_them(remote_layout):
@@ -639,6 +814,7 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
 ):
     panel, remote, scroll, content, _settings = remote_layout
     expand_remote_options(remote, content, qt_application)
+    _show_remote_controller(qt_application, remote, 1280)
     remote.preset_selector.items["Quality"].click()
     remote.chk_fullscreen.setChecked(True)
     remote.chk_record.setChecked(True)
@@ -654,22 +830,24 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
 
     identities = tuple(id(widget) for widget in tracked())
     checks = tuple(getattr(remote, name).isChecked() for name in _OPTION_NAMES)
-    controls, mirroring = remote._remote_section_groups
+    (mirroring,) = remote._remote_section_groups
+    session = content.findChild(QWidget, "remoteMirrorSession")
     for width in (320, 420, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+        _resize_remote_controller(qt_application, remote, width)
         assert panel._responsive_coordinator.diagnostics.fallback_reason is None
-        control_rect = mapped_rect(controls, content)
+        session_rect = mapped_rect(session, content)
         settings_rect = mapped_rect(mirroring, content)
-        assert settings_rect.bottom() < control_rect.top()
-        assert abs(control_rect.left() - settings_rect.left()) <= 2
-        assert abs(control_rect.width() - settings_rect.width()) <= 2
+        assert session_rect.bottom() < settings_rect.top()
+        assert abs(session_rect.left() - settings_rect.left()) <= 2
+        assert abs(session_rect.width() - settings_rect.width()) <= 2
         assert scroll.horizontalScrollBar().maximum() == 0
         assert tuple(id(widget) for widget in tracked()) == identities
         assert tuple(getattr(remote, name).isChecked() for name in _OPTION_NAMES) == checks
         assert tuple(combo.currentData() for combo in (
             remote.preset, remote.fps, remote.bitrate,
         )) == ("Quality", "60", "12")
-        assert_non_overlapping((mirroring, controls), content)
+        assert_non_overlapping((session, mirroring), content)
         for widget in (remote.preset_selector, remote.preset):
             if widget.isVisibleTo(content):
                 assert_scroll_target_reachable(scroll, widget)
@@ -678,6 +856,9 @@ def test_remote_wide_narrow_wide_preserves_controls_values_and_check_states(
 def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_application):
     panel, remote, scroll, content, _settings = remote_layout
     expand_remote_options(remote, content, qt_application)
+    _window, controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 292,
+    )
     current = BaseStyles.current_font_config()
     config = FontConfig(
         ui_family="Arial", ui_size=22,
@@ -686,6 +867,7 @@ def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_a
     BaseStyles._sync_legacy_values(config)
     typography_manager.apply(config)
     _resize_feature_viewport(qt_application, panel, remote, scroll, 292)
+    _resize_remote_controller(qt_application, remote, 292)
     wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
     wait_for_stable_geometry(qt_application, (content, *remote._remote_section_groups))
     for selector, combo in ((remote.preset_selector, remote.preset),):
@@ -697,7 +879,6 @@ def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_a
     for widget in (
         remote.maxsize, remote.fps, remote.codec, remote.buffer, remote.orientation,
         *(getattr(remote, name) for name in _OPTION_NAMES),
-        *remote._remote_control_buttons,
     ):
         assert widget.isVisibleTo(content)
         assert widget.font().pointSize() == 22
@@ -709,6 +890,11 @@ def test_remote_font_growth_keeps_every_parameter_accessible(remote_layout, qt_a
                 widget.label.text(),
             )
         assert_scroll_target_reachable(scroll, widget)
+    for button in remote._remote_control_buttons:
+        assert button.isVisibleTo(controller_content)
+        assert button.font().pointSize() == 22
+        assert button.height() >= button.minimumSizeHint().height()
+        assert_scroll_target_reachable(controller_scroll, button)
     for theme in ("Dark", "Light"):
         BaseStyles.switch_theme(theme)
         wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
@@ -749,10 +935,14 @@ def test_all_remote_actions_dispatch_once_after_repeated_reflow(remote_layout, q
     remote._remote_executor = InlineExecutor()
     remote._remote_control = InputService()
     remote.set_target_devices(["synthetic-device"])
+    _window, _controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 420,
+    )
     for width in (420, 1280, 292, 1280):
         _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+        _resize_remote_controller(qt_application, remote, width)
     for button in remote._remote_control_buttons:
-        assert button.isVisibleTo(_content)
+        assert button.isVisibleTo(controller_content)
         assert button.isEnabled()
         button.click()
     qt_application.processEvents()

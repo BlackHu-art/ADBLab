@@ -7629,5 +7629,77 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>重试 {count} 台</source>
             <translation>重试 {count} 台</translation>
         </message>
+        <message>
+            <source>独立遥控器</source>
+            <translation>独立遥控器</translation>
+        </message>
+        <message>
+            <source>打开独立遥控器</source>
+            <translation>打开独立遥控器</translation>
+        </message>
+        <message>
+            <source>投屏操控</source>
+            <translation>投屏操控</translation>
+        </message>
+        <message>
+            <source>当前投屏设备</source>
+            <translation>当前投屏设备</translation>
+        </message>
+        <message>
+            <source>当前投屏设备不可用</source>
+            <translation>当前投屏设备不可用</translation>
+        </message>
+        <message>
+            <source>更多操作</source>
+            <translation>更多操作</translation>
+        </message>
+        <message>
+            <source>关闭更多操作</source>
+            <translation>关闭更多操作</translation>
+        </message>
+        <message>
+            <source>屏幕与通知</source>
+            <translation>屏幕与通知</translation>
+        </message>
+        <message>
+            <source>系统操作</source>
+            <translation>系统操作</translation>
+        </message>
+        <message>
+            <source>媒体控制</source>
+            <translation>媒体控制</translation>
+        </message>
+        <message>
+            <source>展开侧栏</source>
+            <translation>展开侧栏</translation>
+        </message>
+        <message>
+            <source>收起侧栏</source>
+            <translation>收起侧栏</translation>
+        </message>
+        <message>
+            <source>{action}（作用于{target}）</source>
+            <translation>{action}（作用于{target}）</translation>
+        </message>
+        <message>
+            <source>操作当前已选的 {count} 台在线设备 · 与投屏侧栏的单台控制独立</source>
+            <translation>操作当前已选的 {count} 台在线设备 · 与投屏侧栏的单台控制独立</translation>
+        </message>
+        <message>
+            <source>请在主窗口选择在线设备；无需先启动投屏。</source>
+            <translation>请在主窗口选择在线设备；无需先启动投屏。</translation>
+        </message>
+        <message>
+            <source>投屏窗口旁显示单台控制侧栏；更多按键和批量操作可打开独立遥控器。</source>
+            <translation>投屏窗口旁显示单台控制侧栏；更多按键和批量操作可打开独立遥控器。</translation>
+        </message>
+        <message>
+            <source>按键、手势与批量操作可使用独立遥控器，无需启动镜像。</source>
+            <translation>按键、手势与批量操作可使用独立遥控器，无需启动镜像。</translation>
+        </message>
+        <message>
+            <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
+            <translation>操作主窗口当前已选的在线设备，无需启动镜像</translation>
+        </message>
     </context>
 </TS>

@@ -1,14 +1,15 @@
 """把远程参数的既有下拉数据投影为原生 Fluent 选择器，保留配置与信号契约。"""
 
-from PySide6.QtCore import QEvent, QRectF, QSignalBlocker, QSize, Qt, Slot
-from PySide6.QtGui import QIcon, QPainter, QPalette
+from typing import cast
+
+from PySide6.QtCore import QEvent, QLineF, QSignalBlocker, QSize, Qt, Slot
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
     QStackedLayout,
-    QStyle,
-    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +29,7 @@ from qfluentwidgets import (
 
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
+    apply_focus_indicator,
     apply_font_role,
     apply_label_role,
     configure_fluent_control,
@@ -133,6 +135,35 @@ class RemoteSection(QWidget):
         self.headerLayout.activate()
         self.updateGeometry()
 
+class RemoteSessionHint(BodyLabel):
+    """为有限会话提示预留最大换行高度，状态变化不推动参数区。"""
+
+    def __init__(self, text: str, reserved_texts: tuple[str, ...]) -> None:
+        super().__init__(None)
+        self._reserved_texts = (text, *reserved_texts)
+        self._minimum_row_height = 36
+        self.setText(text)
+        self.setWordWrap(True)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def refresh_height(self, minimum: int | None = None) -> None:
+        if minimum is not None:
+            self._minimum_row_height = minimum
+        self.setFixedHeight(max(self._minimum_row_height, self.heightForWidth(self.width())))
+
+    def heightForWidth(self, width: int) -> int:
+        metrics = self.fontMetrics()
+        return max(metrics.boundingRect(
+            0, 0, max(1, width), 10000, Qt.TextFlag.TextWordWrap, text,
+        ).height() for text in self._reserved_texts) + 8
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self.refresh_height()
+
+
 class RemoteWindowToggle(TransparentTogglePushButton):
     """透明选中态沿用普通图标配色，避免原生强调色底板的反色图标失去对比度。"""
 
@@ -141,43 +172,59 @@ class RemoteWindowToggle(TransparentTogglePushButton):
 
 
 class RemoteCommandButton(TransparentPushButton):
-    """纵向图文按钮保留 Fluent 交互与图标绘制，仅改变内容排列和自然尺寸。"""
+    """无外框操作按钮沿用 Fluent 横向图文、悬停与按压反馈。"""
 
-    def sizeHint(self) -> QSize:
-        metrics = self.fontMetrics()
-        return QSize(max(self.iconSize().width(), metrics.horizontalAdvance(self.text())) + 20,
-                     self.iconSize().height() + metrics.height() + 20)
 
-    def minimumSizeHint(self) -> QSize:
-        return self.sizeHint()
+class RemoteToolbarSeparators(QWidget):
+    """按按钮实际网格位置绘制分隔线，不占布局空间或接收输入。"""
+
+    def __init__(self, buttons: tuple[QWidget, ...], parent: QWidget) -> None:
+        super().__init__(parent)
+        self._buttons = buttons
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        parent.installEventFilter(self)
+        self.setGeometry(parent.rect())
+        self.show()
+
+    def eventFilter(self, watched, event) -> bool:
+        if isinstance(watched, QWidget) and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.LayoutRequest,
+        ):
+            self.setGeometry(watched.rect())
+            self.raise_()
+            self.update()
+        return super().eventFilter(watched, event)
+
+    def separator_lines(self) -> tuple[QLineF, ...]:
+        """每个可见行只在相邻点击面之间画线，行尾和单列不留下竖线。"""
+        parent = self.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        if not isinstance(layout, QGridLayout):
+            return ()
+        rows: dict[int, list[QWidget]] = {}
+        for button in self._buttons:
+            index = layout.indexOf(button)
+            if index >= 0 and not button.isHidden():
+                row, _column, _row_span, _column_span = cast(
+                    tuple[int, int, int, int], layout.getItemPosition(index),
+                )
+                rows.setdefault(row, []).append(button)
+        lines = []
+        for buttons in rows.values():
+            ordered = sorted(buttons, key=lambda button: button.x())
+            for left, right in zip(ordered, ordered[1:]):
+                x = (left.geometry().right() + right.x() + 1) / 2
+                top = max(left.y(), right.y()) + 8
+                bottom = min(left.geometry().bottom(), right.geometry().bottom()) - 8
+                lines.append(QLineF(x, top, x, bottom))
+        return tuple(lines)
 
     def paintEvent(self, event) -> None:
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-        # PySide6 运行时提供这两个字段，桩文件尚未声明；清空原生内容避免重复绘制。
-        setattr(option, "text", "")
-        setattr(option, "icon", QIcon())
         painter = QPainter(self)
-        self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        metrics = self.fontMetrics()
-        height = self.iconSize().height() + 6 + metrics.height()
-        top = (self.height() - height) / 2
-        if not self.isEnabled():
-            painter.setOpacity(.43)
-        elif self.isPressed:
-            painter.setOpacity(.63)
-        self._drawIcon(self._icon, painter, QRectF(
-            (self.width() - self.iconSize().width()) / 2, top,
-            self.iconSize().width(), self.iconSize().height(),
-        ))
-        painter.setOpacity(1)
-        group = QPalette.ColorGroup.Active if self.isEnabled() else QPalette.ColorGroup.Disabled
-        painter.setPen(self.palette().color(group, QPalette.ColorRole.ButtonText))
-        painter.drawText(
-            QRectF(0, top + self.iconSize().height() + 6, self.width(), metrics.height()),
-            Qt.AlignmentFlag.AlignCenter, self.text(),
-        )
+        painter.setPen(QColor(BaseStyles.color("BORDER_COLOR")))
+        for line in self.separator_lines():
+            painter.drawLine(line)
 
 
 class RemoteSwitchButton(SwitchButton):
@@ -284,17 +331,28 @@ class RemoteChoiceEditor(QWidget):
             set_function_tooltip(item, item.text())
             item.setAccessibleName(item.text())
             font = BaseStyles.font_for_role(FontRole.UI)
+            apply_focus_indicator(item, keyboard_only=True)
             set_fluent_font_rule(item, (
                 f"PivotItem {{ {font_qss(font)} padding: 5px 10px 6px;"
                 "border: 1px solid transparent; border-radius: 6px;"
                 f"background: {BaseStyles.color('BUTTON_BG')};"
                 f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
                 f"PivotItem:hover {{ background: {BaseStyles.color('BUTTON_HOVER')}; }}"
-                "PivotItem[isSelected=true] {"
+                f"PivotItem:pressed {{ background: {BaseStyles.color('BUTTON_PRESSED')}; }}"
+                "PivotItem[isSelected=true], PivotItem[isSelected=true]:hover, "
+                "PivotItem[isSelected=true]:pressed {"
                 f"background: {accent.name()};"
                 f"color: {foreground}; }}"
-                f"PivotItem:focus {{ border-color: {BaseStyles.color('BORDER_COLOR')}; }}"
                 f"PivotItem:disabled {{ color: {BaseStyles.color('TEXT_DISABLED')}; }}"
+                "PivotItem[isSelected=true]:disabled {"
+                f"background: {BaseStyles.color('BUTTON_BG')};"
+                f"color: {BaseStyles.color('TEXT_DISABLED')};"
+                f"border: 1px solid {BaseStyles.color('BORDER_COLOR')}; }}"
+                "PivotItem:focus { border: 1px solid transparent; }"
+                'PivotItem[adblabKeyboardFocus="true"]:focus {'
+                f"border: 1px solid {BaseStyles.color('BORDER_FOCUS')}; }}"
+                'PivotItem[isSelected=true][adblabKeyboardFocus="true"]:focus {'
+                f"border: 1px solid {foreground}; }}"
             ))
             # 隐藏的 Pivot 仍参与堆叠布局高度；FPS 保留原度量，不抬高相邻下拉字段。
             item.setMinimumHeight(max(

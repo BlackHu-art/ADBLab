@@ -1,8 +1,15 @@
 """提供 Remote 面板的输入队列执行与队列状态回写。"""
 
+from __future__ import annotations
+
 import threading
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from gui.i18n import tr
+
+if TYPE_CHECKING:
+    from gui.panels.remote_panel_scrcpy import RemoteDeviceSession
 
 
 class RemotePanelInput:
@@ -11,6 +18,7 @@ class RemotePanelInput:
     def __init__(self, frame):
         self._frame = frame
         self._lock = threading.Lock()
+        self._session_input_tokens: dict[int, tuple[RemoteDeviceSession, threading.Event]] = {}
 
     def _input_closing(self) -> bool:
         """执行中的输入只响应关闭；选择变化由队列启动前的代次检查处理。"""
@@ -19,16 +27,17 @@ class RemotePanelInput:
             or getattr(self._frame, "_remote_input_closing", False)
         )
 
-    def _submit_remote_input(self, task):
-        """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
-        if not self._frame._can_operate_device():
+    def _submit_remote_input(self, task, *, cancelled: Callable[[], bool] | None = None):
+        """共用输入队列；广播检查选择代次，会话任务只接受已冻结的取消令牌。"""
+        if cancelled is None and not self._frame._can_operate_device():
             return
         revision = getattr(self._frame, "_device_admission_revision", 0)
 
         def _wrapped():
-            if self._input_closing() or revision != getattr(
-                self._frame, "_device_admission_revision", 0
-            ):
+            revoked = cancelled() if cancelled is not None else revision != getattr(
+                self._frame, "_device_admission_revision", 0,
+            )
+            if self._input_closing() or revoked:
                 self._frame._mark_remote_completed("failed")
                 return
             try:
@@ -65,6 +74,67 @@ class RemotePanelInput:
                     completed = getattr(self._frame, "_remote_completed", 0)
                 self._frame._emit_remote_queue_status(submitted, completed, "failed")
                 self._frame._log("ERROR", f"remote executor stopped: {type(exc).__name__}")
+
+    def _set_connected_devices(self, devices: list[str]) -> None:
+        """GUI 线程更新在线快照；断线永久撤销旧任务，重连只允许新提交。"""
+        connected = frozenset(devices)
+        self._frame._connected_remote_devices = connected
+        for session, _token in tuple(self._session_input_tokens.values()):
+            if session.config.device not in connected:
+                self._invalidate_session_input(session)
+
+    def _invalidate_session_input(self, session: RemoteDeviceSession) -> None:
+        """GUI 线程在停止、替换或离线时撤销该会话已排队及执行中的输入。"""
+        entry = self._session_input_tokens.pop(id(session), None)
+        if entry is not None:
+            entry[1].set()
+
+    def _session_input_cancelled(self, session: RemoteDeviceSession) -> Callable[[], bool] | None:
+        """GUI 线程确认会话归属，worker 仅持有取消事件及关闭标记，不查询控件。"""
+        device = session.config.device
+        connected = getattr(self._frame, "_connected_remote_devices", None)
+        if (
+            self._input_closing()
+            or getattr(self._frame, "_device_sessions", {}).get(device) is not session
+            or session.state not in {"connecting", "ready", "running"}
+            or not session.resource_owned
+            or session.cancel_event.is_set()
+            or (connected is not None and device not in connected)
+        ):
+            return None
+        entry = self._session_input_tokens.get(id(session))
+        if entry is None:
+            entry = (session, threading.Event())
+            self._session_input_tokens[id(session)] = entry
+        token = entry[1]
+        session_cancelled = session.cancel_event
+        return lambda: token.is_set() or session_cancelled.is_set() or self._input_closing()
+
+    def _send_session_keyevent(self, session: RemoteDeviceSession, key_name: str) -> None:
+        """工具栏按键固定到所属会话，不受全局勾选变化影响。"""
+        cancelled = self._session_input_cancelled(session)
+        if cancelled is None:
+            return
+        device = session.config.device
+        self._submit_remote_input(
+            lambda: self._frame._remote_control.send_keyevent(
+                device, key_name, cancelled=cancelled,
+            ),
+            cancelled=cancelled,
+        )
+
+    def _send_session_action(self, session: RemoteDeviceSession, action: str) -> None:
+        """工具栏动作与尺寸查询共用会话取消令牌，停止后不继续链式输入。"""
+        cancelled = self._session_input_cancelled(session)
+        if cancelled is None:
+            return
+        device = session.config.device
+        self._submit_remote_input(
+            lambda: self._frame._remote_control.perform_action(
+                device, action, cancelled=cancelled,
+            ),
+            cancelled=cancelled,
+        )
 
     def _mark_remote_submitted(self):
         with self._lock:

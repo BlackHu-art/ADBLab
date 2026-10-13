@@ -438,10 +438,13 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.remote_panel = SimpleNamespace(
         panel_header=QWidget(),
         remote_status_badge=QWidget(),
+        device_selection_requested=Mock(),
+        device_operations_changed=Mock(),
         category_stack=Mock(),
         set_workspace_device=Mock(side_effect=lambda device_id: device_id),
         set_device_selected=Mock(),
         set_target_devices=Mock(),
+        set_connected_devices=Mock(),
         apply_responsive_width=Mock(),
     )
 

@@ -2,11 +2,16 @@
 
 import pytest
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 
 from gui.styles import BaseStyles
 from gui.styles.typography import FontConfig, typography_manager
 from tests import test_remote_layout
-from tests.test_responsive_panels import _resize_feature_viewport
+from tests.test_responsive_panels import (
+    _resize_feature_viewport,
+    _resize_remote_controller,
+    _show_remote_controller,
+)
 from tests.ui_geometry_helpers import (
     assert_contained,
     assert_non_overlapping,
@@ -76,6 +81,9 @@ def test_runtime_font_changes_keep_headers_presets_actions_and_fields_aligned(
     remote_layout, qt_application,
 ):
     panel, remote, scroll, content, _settings = remote_layout
+    _window, _controller_scroll, controller_content = _show_remote_controller(
+        qt_application, remote, 2600,
+    )
     current = BaseStyles.current_font_config()
     heights = []
     for size in (12, 22, 12):
@@ -86,10 +94,15 @@ def test_runtime_font_changes_keep_headers_presets_actions_and_fields_aligned(
         BaseStyles._sync_legacy_values(config)
         typography_manager.apply(config)
         _resize_feature_viewport(qt_application, panel, remote, scroll, 2600)
+        _resize_remote_controller(qt_application, remote, 2600)
         sections = remote._remote_section_groups
         wait_for_stable_geometry(qt_application, (*sections, remote.maxsize, remote.btn_start))
-        headers = [mapped_rect(section.headerView, content) for section in sections]
-        assert headers[1].bottom() < headers[0].top(), "镜像设置始终放在设备操作上方"
+        (settings,) = sections
+        session = content.findChild(QWidget, "remoteMirrorSession")
+        assert session.isAncestorOf(remote.btn_start)
+        assert session.isAncestorOf(remote.btn_stop)
+        assert mapped_rect(session, content).bottom() < mapped_rect(settings, content).top()
+        assert_non_overlapping((session, settings), content)
         assert remote.preset_selector.isVisibleTo(content)
         presets = tuple(remote.preset_selector.items.values())
         buttons = (remote.btn_start, remote.btn_stop, *remote._remote_control_buttons, *presets)
@@ -111,11 +124,14 @@ def test_runtime_font_changes_keep_headers_presets_actions_and_fields_aligned(
             assert control.font().pointSize() == size
             assert control.height() >= control.minimumSizeHint().height()
         navigation = remote._remote_navigation_binding.widgets()
-        assert len({mapped_rect(control, content).top() for control in navigation}) == 1
+        assert len({mapped_rect(control, controller_content).top() for control in navigation}) == 1
         assert len({mapped_rect(control, content).top() for control in presets}) == 1
         assert max(mapped_rect(control, content).bottom() for control in presets) < min(
-            mapped_rect(control, content).top() for control in navigation
+            mapped_rect(control, content).top() for control in fields
         )
+        assert all(button.isVisibleTo(controller_content)
+                   for button in remote._remote_control_buttons)
+        assert_non_overlapping(remote._remote_control_buttons, controller_content)
         assert mapped_rect(remote.maxsize, content).top() == mapped_rect(remote.fps, content).top()
         heights.append(tuple(sizes))
     assert all(large > small for small, large in zip(heights[0], heights[1]))
