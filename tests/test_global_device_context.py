@@ -232,6 +232,7 @@ def test_remote_picker_updates_all_targets_and_keeps_empty_page(frame, qt_applic
     bar.open_picker()
     picker = bar._picker
     assert remote.selected_devices == []
+    assert remote._connected_remote_devices == frozenset({"demo-a", "demo-b"})
     assert not picker.select_all_button.isHidden()
     picker.select_all_button.click()
     assert remote.selected_devices == ["demo-a", "demo-b"]
@@ -239,6 +240,10 @@ def test_remote_picker_updates_all_targets_and_keeps_empty_page(frame, qt_applic
     assert remote.selected_devices == ["demo-b"]
     picker.clear_button.click()
     assert remote.selected_devices == []
+    assert remote._connected_remote_devices == frozenset({"demo-a", "demo-b"})
+    frame.left_panel.set_device_discovery_state("unavailable")
+    frame._sync_device_context()
+    assert remote._connected_remote_devices == frozenset()
     assert host.stack.currentWidget() is page
 
 

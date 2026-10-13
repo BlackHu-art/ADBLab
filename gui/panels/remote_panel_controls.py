@@ -1,7 +1,11 @@
 """把远程参数的既有下拉数据投影为原生 Fluent 选择器，保留配置与信号契约。"""
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, Slot
+from typing import cast
+
+from PySide6.QtCore import QEvent, QLineF, QSignalBlocker, QSize, Qt, Slot
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
@@ -17,12 +21,15 @@ from qfluentwidgets import (
     PushButton,
     Slider,
     SwitchButton,
+    TransparentPushButton,
     TransparentTogglePushButton,
     VerticalSeparator,
+    themeColor,
 )
 
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
+    apply_focus_indicator,
     apply_font_role,
     apply_label_role,
     configure_fluent_control,
@@ -50,7 +57,7 @@ def _refresh_session_surface(widget: QWidget, mica: bool) -> None:
 
 
 class RemoteWorkspaceDivider(VerticalSeparator):
-    """双栏时分隔操作和参数；依据实际几何跟随回流，不占布局宽度。"""
+    """并排时分隔两组操作；依据实际几何跟随回流，不占布局宽度。"""
 
     def __init__(self, parent: QWidget, sections: tuple[QWidget, ...]) -> None:
         super().__init__(parent)
@@ -77,7 +84,7 @@ class RemoteWorkspaceDivider(VerticalSeparator):
 
 
 class RemoteSection(QWidget):
-    """开放分区保留原有布局接口；仅会话区绘制底板，主题连接随控件销毁。"""
+    """开放分区保留布局接口，指定分区绘制底板，主题连接随控件销毁。"""
 
     def __init__(
         self, title: str, parent=None, *, surface: bool = False, divider: bool = False,
@@ -128,11 +135,96 @@ class RemoteSection(QWidget):
         self.headerLayout.activate()
         self.updateGeometry()
 
+class RemoteSessionHint(BodyLabel):
+    """为有限会话提示预留最大换行高度，状态变化不推动参数区。"""
+
+    def __init__(self, text: str, reserved_texts: tuple[str, ...]) -> None:
+        super().__init__(None)
+        self._reserved_texts = (text, *reserved_texts)
+        self._minimum_row_height = 36
+        self.setText(text)
+        self.setWordWrap(True)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def refresh_height(self, minimum: int | None = None) -> None:
+        if minimum is not None:
+            self._minimum_row_height = minimum
+        self.setFixedHeight(max(self._minimum_row_height, self.heightForWidth(self.width())))
+
+    def heightForWidth(self, width: int) -> int:
+        metrics = self.fontMetrics()
+        return max(metrics.boundingRect(
+            0, 0, max(1, width), 10000, Qt.TextFlag.TextWordWrap, text,
+        ).height() for text in self._reserved_texts) + 8
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self.refresh_height()
+
+
 class RemoteWindowToggle(TransparentTogglePushButton):
     """透明选中态沿用普通图标配色，避免原生强调色底板的反色图标失去对比度。"""
 
     def _drawIcon(self, icon, painter, rect):
         PushButton._drawIcon(self, icon, painter, rect)
+
+
+class RemoteCommandButton(TransparentPushButton):
+    """无外框操作按钮沿用 Fluent 横向图文、悬停与按压反馈。"""
+
+
+class RemoteToolbarSeparators(QWidget):
+    """按按钮实际网格位置绘制分隔线，不占布局空间或接收输入。"""
+
+    def __init__(self, buttons: tuple[QWidget, ...], parent: QWidget) -> None:
+        super().__init__(parent)
+        self._buttons = buttons
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        parent.installEventFilter(self)
+        self.setGeometry(parent.rect())
+        self.show()
+
+    def eventFilter(self, watched, event) -> bool:
+        if isinstance(watched, QWidget) and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.LayoutRequest,
+        ):
+            self.setGeometry(watched.rect())
+            self.raise_()
+            self.update()
+        return super().eventFilter(watched, event)
+
+    def separator_lines(self) -> tuple[QLineF, ...]:
+        """每个可见行只在相邻点击面之间画线，行尾和单列不留下竖线。"""
+        parent = self.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        if not isinstance(layout, QGridLayout):
+            return ()
+        rows: dict[int, list[QWidget]] = {}
+        for button in self._buttons:
+            index = layout.indexOf(button)
+            if index >= 0 and not button.isHidden():
+                row, _column, _row_span, _column_span = cast(
+                    tuple[int, int, int, int], layout.getItemPosition(index),
+                )
+                rows.setdefault(row, []).append(button)
+        lines = []
+        for buttons in rows.values():
+            ordered = sorted(buttons, key=lambda button: button.x())
+            for left, right in zip(ordered, ordered[1:]):
+                x = (left.geometry().right() + right.x() + 1) / 2
+                top = max(left.y(), right.y()) + 8
+                bottom = min(left.geometry().bottom(), right.geometry().bottom()) - 8
+                lines.append(QLineF(x, top, x, bottom))
+        return tuple(lines)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setPen(QColor(BaseStyles.color("BORDER_COLOR")))
+        for line in self.separator_lines():
+            painter.drawLine(line)
 
 
 class RemoteSwitchButton(SwitchButton):
@@ -170,6 +262,10 @@ class _ParameterPivot(Pivot):
             item.setSelected(False)
         self.update()
 
+    def paintEvent(self, event) -> None:
+        # 选中项用主题色底板表达状态，不再叠加导航页签的底部指示条。
+        QWidget.paintEvent(self, event)
+
 
 class RemoteChoiceEditor(QWidget):
     """宽度足够时展开全部选项，窄窗使用同一下拉框；配置始终只有一个来源。"""
@@ -185,12 +281,13 @@ class RemoteChoiceEditor(QWidget):
         self.pivot = _ParameterPivot(self)
         self.pivot.setAccessibleName(combo.accessibleName())
         self.pivot.hBoxLayout.setSpacing(6)
-        # 指示条是唯一选中标记，单独保留底部空间，避免被按钮背景覆盖。
-        self.pivot.hBoxLayout.setContentsMargins(0, 0, 0, 4)
+        self.pivot.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.pivot.setIndicatorLength(16)
         for index in range(combo.count()):
             value = str(combo.itemData(index))
             self.pivot.addItem(value, combo.itemText(index))
+        for item in self.pivot.items.values():
+            self.pivot.hBoxLayout.setStretchFactor(item, 1)
         if separators:
             for index in range(1, combo.count()):
                 separator = VerticalSeparator(self.pivot)
@@ -223,22 +320,39 @@ class RemoteChoiceEditor(QWidget):
 
     def refresh_metrics(self) -> None:
         """覆盖原生选项的固定像素字体，并按当前字号重新决定展开或下拉。"""
+        accent = themeColor()
+        channels = (accent.redF(), accent.greenF(), accent.blueF())
+        luminance = sum(weight * (value / 12.92 if value <= .04045 else
+                                 ((value + .055) / 1.055) ** 2.4)
+                        for weight, value in zip((.2126, .7152, .0722), channels))
+        foreground = "#000000" if luminance > .179 else "#ffffff"
         for item in self.pivot.items.values():
             apply_font_role(item)
             set_function_tooltip(item, item.text())
             item.setAccessibleName(item.text())
             font = BaseStyles.font_for_role(FontRole.UI)
+            apply_focus_indicator(item, keyboard_only=True)
             set_fluent_font_rule(item, (
                 f"PivotItem {{ {font_qss(font)} padding: 5px 10px 6px;"
-                f"border: 1px solid {BaseStyles.color('BORDER_COLOR')}; border-radius: 6px;"
+                "border: 1px solid transparent; border-radius: 6px;"
                 f"background: {BaseStyles.color('BUTTON_BG')};"
                 f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
                 f"PivotItem:hover {{ background: {BaseStyles.color('BUTTON_HOVER')}; }}"
-                "PivotItem[isSelected=true] {"
-                f"background: {BaseStyles.color('BUTTON_BG')};"
-                f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
-                f"PivotItem:focus {{ border-color: {BaseStyles.color('BORDER_COLOR')}; }}"
+                f"PivotItem:pressed {{ background: {BaseStyles.color('BUTTON_PRESSED')}; }}"
+                "PivotItem[isSelected=true], PivotItem[isSelected=true]:hover, "
+                "PivotItem[isSelected=true]:pressed {"
+                f"background: {accent.name()};"
+                f"color: {foreground}; }}"
                 f"PivotItem:disabled {{ color: {BaseStyles.color('TEXT_DISABLED')}; }}"
+                "PivotItem[isSelected=true]:disabled {"
+                f"background: {BaseStyles.color('BUTTON_BG')};"
+                f"color: {BaseStyles.color('TEXT_DISABLED')};"
+                f"border: 1px solid {BaseStyles.color('BORDER_COLOR')}; }}"
+                "PivotItem:focus { border: 1px solid transparent; }"
+                'PivotItem[adblabKeyboardFocus="true"]:focus {'
+                f"border: 1px solid {BaseStyles.color('BORDER_FOCUS')}; }}"
+                'PivotItem[isSelected=true][adblabKeyboardFocus="true"]:focus {'
+                f"border: 1px solid {foreground}; }}"
             ))
             # 隐藏的 Pivot 仍参与堆叠布局高度；FPS 保留原度量，不抬高相邻下拉字段。
             item.setMinimumHeight(max(

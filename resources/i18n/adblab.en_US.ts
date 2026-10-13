@@ -7629,5 +7629,77 @@ Android device management, apps and diagnostics</translation>
             <source>重试 {count} 台</source>
             <translation>Retry {count}</translation>
         </message>
+        <message>
+            <source>独立遥控器</source>
+            <translation>Standalone controller</translation>
+        </message>
+        <message>
+            <source>打开独立遥控器</source>
+            <translation>Open standalone controller</translation>
+        </message>
+        <message>
+            <source>投屏操控</source>
+            <translation>Mirroring controls</translation>
+        </message>
+        <message>
+            <source>当前投屏设备</source>
+            <translation>Current mirrored device</translation>
+        </message>
+        <message>
+            <source>当前投屏设备不可用</source>
+            <translation>Current mirrored device is unavailable</translation>
+        </message>
+        <message>
+            <source>更多操作</source>
+            <translation>More controls</translation>
+        </message>
+        <message>
+            <source>关闭更多操作</source>
+            <translation>Close more controls</translation>
+        </message>
+        <message>
+            <source>屏幕与通知</source>
+            <translation>Screen and notifications</translation>
+        </message>
+        <message>
+            <source>系统操作</source>
+            <translation>System controls</translation>
+        </message>
+        <message>
+            <source>媒体控制</source>
+            <translation>Media controls</translation>
+        </message>
+        <message>
+            <source>展开侧栏</source>
+            <translation>Expand sidebar</translation>
+        </message>
+        <message>
+            <source>收起侧栏</source>
+            <translation>Collapse sidebar</translation>
+        </message>
+        <message>
+            <source>{action}（作用于{target}）</source>
+            <translation>{action} (target: {target})</translation>
+        </message>
+        <message>
+            <source>操作当前已选的 {count} 台在线设备 · 与投屏侧栏的单台控制独立</source>
+            <translation>Controls the {count} selected online devices · Independent of each mirroring sidebar</translation>
+        </message>
+        <message>
+            <source>请在主窗口选择在线设备；无需先启动投屏。</source>
+            <translation>Select online devices in the main window; mirroring does not need to be started.</translation>
+        </message>
+        <message>
+            <source>投屏窗口旁显示单台控制侧栏；更多按键和批量操作可打开独立遥控器。</source>
+            <translation>A sidebar beside each mirroring window controls that device. Open the standalone controller for more keys and batch actions.</translation>
+        </message>
+        <message>
+            <source>按键、手势与批量操作可使用独立遥控器，无需启动镜像。</source>
+            <translation>Use the standalone controller for keys, gestures and batch actions; mirroring is not required.</translation>
+        </message>
+        <message>
+            <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
+            <translation>Control the online devices selected in the main window; mirroring is not required</translation>
+        </message>
     </context>
 </TS>

@@ -149,6 +149,10 @@ class RemotePanelScrcpy:
         frame._frozen_session_config = frozen or configs[0]
         frame._session_config = configs[0] if len(configs) == 1 else configs
         for config in configs:
+            old = sessions.get(config.device)
+            controller = getattr(frame, "_input_controller", None)
+            if old is not None and controller is not None:
+                controller._invalidate_session_input(old)
             sessions[config.device] = RemoteDeviceSession(config)
         frame._status_device_info = ""
         frame._launch_admission_revision = getattr(frame, "_device_admission_revision", 0)
@@ -270,7 +274,15 @@ class RemotePanelScrcpy:
     def _refresh_sessions(self) -> None:
         """从逐台资源投影整体按钮状态，停止排空前持续冻结启动配置。"""
         frame = self._frame
+        dock = getattr(frame, "_dock_controller", None)
+        if dock is not None:
+            dock.sync()
         sessions = getattr(frame, "_device_sessions", {})
+        controller = getattr(frame, "_input_controller", None)
+        if controller is not None:
+            for session in sessions.values():
+                if session.cancel_event.is_set() or session.state not in {"connecting", "ready"}:
+                    controller._invalidate_session_input(session)
         frame._processes = {
             device: session.process for device, session in sessions.items()
             if session.process is not None
@@ -327,7 +339,7 @@ class RemotePanelScrcpy:
         if label is None:
             return
         selected = getattr(self._frame, "selected_devices", ())
-        summaries, details = [], []
+        details = []
         kinds = {"hw": tr("硬件"), "sw": tr("软件"), "hybrid": tr("混合")}
         for device, session in getattr(self._frame, "_device_sessions", {}).items():
             plan = getattr(session, "launch_plan", None)
@@ -337,14 +349,12 @@ class RemotePanelScrcpy:
             name = {"h264": "H.264", "h265": "H.265", "av1": "AV1"}.get(codec, "H.264")
             encoder = getattr(plan, "encoder", None)
             if isinstance(encoder, str) and encoder:
-                summary = f"{name} · {kinds.get(plan.encoder_kind, tr('自动'))}"
-                details.append(f"{name} · {encoder}")
+                details.append(f"{name} · {kinds.get(plan.encoder_kind, tr('自动'))} · {encoder}")
             else:
                 summary = tr("{codec} · 默认（未取得列表）").format(codec=name)
                 details.append(summary)
-            if summary not in summaries:
-                summaries.append(summary)
-        label.setText(" / ".join(summaries) if summaries else tr("自动"))
+        # 逐台编码器信息长度不受控，放入提示以保持参数行在启动前后稳定。
+        label.setText(tr("自动视频编码"))
         label.setToolTip("\n".join(details) if details else tr("启动时按设备能力自动选择编码器"))
         label.setAccessibleDescription(label.toolTip())
 
@@ -886,6 +896,9 @@ class RemotePanelScrcpy:
         else:
             can_control = bool(selected_devices)
         can_control = can_control and not getattr(self._frame, "_closing", False)
+        controller_window = getattr(self._frame, "_standalone_remote", None)
+        if controller_window is not None:
+            controller_window.set_target_count(len(selected_devices or ()))
         for button in getattr(self._frame, "_remote_control_buttons", ()):
             self._frame._set_button_enabled(button, can_control)
         locked = state != RemotePanel._SESSION_IDLE
