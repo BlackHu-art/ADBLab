@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractButton, QLabel, QPushButton, QScrollArea, QToolButton
 
@@ -330,11 +330,12 @@ def test_more_button_reflects_popup_visibility_with_icons_and_accessible_text(qt
         toolbar.dispose()
 
 
+@pytest.mark.parametrize("portable", [False, True])
 @pytest.mark.parametrize("code", ["MENU", "swipe_up"])
-def test_command_receiver_can_synchronously_dispose_toolbar(qt_application, code):
+def test_command_receiver_can_synchronously_dispose_toolbar(qt_application, code, portable):
     from gui.widgets.remote_toolbar import RemoteToolbar
 
-    toolbar = RemoteToolbar()
+    toolbar = RemoteToolbar(portable=portable)
     toolbar.set_available(True)
     toolbar.show()
     _show_more(toolbar, qt_application)
@@ -519,7 +520,10 @@ def test_open_popup_updates_theme_accent_and_button_icons(qt_application):
         assert indicator is not None
         indicator_image = _render_widget(indicator)
         accent = QColor(BaseStyles.color("BORDER_FOCUS"))
-        assert any(indicator_image.pixelColor(x, y) == accent
+        assert indicator.palette().color(QPalette.ColorRole.WindowText) == accent
+        # 抗锯齿字形不保证存在完全不透明像素，但实际绘制的前景 RGB 必须跟随强调色。
+        assert any(indicator_image.pixelColor(x, y).alpha() > 0
+                   and indicator_image.pixelColor(x, y).getRgb()[:3] == accent.getRgb()[:3]
                    for x in range(indicator_image.width())
                    for y in range(indicator_image.height()))
         dark_icon = button.icon().pixmap(20, 20).toImage()
@@ -537,16 +541,17 @@ def test_open_popup_updates_theme_accent_and_button_icons(qt_application):
         BaseStyles.set_accent_color(original_accent)
 
 
+@pytest.mark.parametrize("portable", [False, True])
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_more_selection_tracks_accent_while_command_press_uses_theme_feedback(
-    qt_application, theme,
+    qt_application, theme, portable,
 ):
     from gui.styles import BaseStyles
     from gui.widgets.remote_toolbar import RemoteToolbar
 
     original_accent = BaseStyles.accent_color()
     BaseStyles.switch_theme(theme)
-    toolbar = RemoteToolbar()
+    toolbar = RemoteToolbar(portable=portable)
     try:
         toolbar.set_available(True)
         toolbar.show()
@@ -592,7 +597,8 @@ def test_more_selection_tracks_accent_while_command_press_uses_theme_feedback(
         BaseStyles.set_accent_color(original_accent)
 
 
-def test_more_scrollbar_tracks_theme_and_remains_usable(qt_application, monkeypatch):
+@pytest.mark.parametrize("portable", [False, True])
+def test_more_scrollbar_tracks_theme_and_remains_usable(qt_application, monkeypatch, portable):
     from PySide6.QtWidgets import QStyle, QStyleOptionSlider
 
     from gui.styles import BaseStyles
@@ -601,7 +607,7 @@ def test_more_scrollbar_tracks_theme_and_remains_usable(qt_application, monkeypa
     monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: SimpleNamespace(
         availableGeometry=lambda: QRect(0, 0, 1000, 330),
     ))
-    toolbar = RemoteToolbar()
+    toolbar = RemoteToolbar(portable=portable)
     try:
         toolbar.set_available(True)
         toolbar.show()

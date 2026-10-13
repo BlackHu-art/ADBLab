@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QFocusEvent,
     QHideEvent,
     QKeyEvent,
+    QMouseEvent,
     QMoveEvent,
     QPainter,
     QPaintEvent,
@@ -129,11 +130,13 @@ class _MorePopup(QFrame):
 
     dismissed = Signal()
 
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(self, parent: QWidget, *, embedded: bool = False) -> None:
         super().__init__(
             parent,
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowDoesNotAcceptFocus,
+            Qt.WindowType.Widget if embedded else (
+                Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            ),
         )
         self.setObjectName("remoteToolbarPopup")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -154,24 +157,37 @@ class _MorePopup(QFrame):
         super().hideEvent(event)
 
 
+class _DragHandle(QLabel):
+    """把拖动交给窗口系统；Wayland 不允许应用自行设置顶层全局坐标。"""
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            window = self.window()
+            handle = window.windowHandle() if window is not None else None
+            if handle is not None and handle.startSystemMove():
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
 class RemoteToolbar(QWidget):
     """单个会话的紧凑操作入口，不查询设备或管理 scrcpy 窗口。
 
     调用方负责按固定会话目标解释信号，并提供不含设备标识的友好标签。侧栏初始不可用；
     目标失效时调用 ``set_available(False)``，释放时调用幂等的 ``dispose()``。
     浮窗显示不激活应用，设备命令交由所属会话处理。
+    ``portable`` 模式使用系统拖动及窗内更多面板，不依赖外部窗口句柄或全局定位。
     """
 
     key_requested = Signal(str)
     action_requested = Signal(str)
     layout_changed = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(
-            parent,
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowDoesNotAcceptFocus,
-        )
+    def __init__(self, parent: QWidget | None = None, *, portable: bool = False) -> None:
+        flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        if not portable:
+            flags |= Qt.WindowType.WindowDoesNotAcceptFocus
+        super().__init__(parent, flags)
         self.setObjectName("remoteToolbar")
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -181,23 +197,36 @@ class RemoteToolbar(QWidget):
         self._available = False
         self._disposed = False
         self._collapsed = False
+        self._portable = portable
+        self._positioning_popup = False
         self._watching_application = False
         self._target_label = tr("当前投屏设备")
         self._commands: dict[str, tuple[_Command, QToolButton | QPushButton]] = {}
-        layout = QVBoxLayout(self)
+        self._rail = QWidget(self) if portable else self
+        if portable:
+            outer = QHBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(8)
+            outer.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+            outer.addWidget(self._rail, 0, Qt.AlignmentFlag.AlignTop)
+        layout = QVBoxLayout(self._rail)
         layout.setContentsMargins(5, 7, 5, 7)
         layout.setSpacing(4)
-        self._indicator = QLabel("•", self)
+        self._indicator = _DragHandle("•", self._rail) if portable else QLabel("•", self)
         self._indicator.setObjectName("remoteToolbarIndicator")
         self._indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._indicator.setFixedHeight(12)
+        if portable:
+            self._indicator.setCursor(Qt.CursorShape.OpenHandCursor)
+            self._indicator.setToolTip(self._target_label)
+            self._indicator.setAccessibleName(tr("设备操作"))
         layout.addWidget(self._indicator)
         self._common_buttons = []
         for command in _COMMON:
-            button = self._make_button(command, self, compact=True)
+            button = self._make_button(command, self._rail, compact=True)
             self._common_buttons.append(button)
             layout.addWidget(button)
-        self._more_button = QToolButton(self)
+        self._more_button = QToolButton(self._rail)
         self._more_button.setObjectName("remoteToolbarMore")
         self._more_button.setCheckable(True)
         self._more_button.setIconSize(QSize(20, 20))
@@ -205,16 +234,20 @@ class RemoteToolbar(QWidget):
         self._more_button.setFixedSize(44, 38)
         self._more_button.clicked.connect(self._toggle_popup)
         layout.addWidget(self._more_button)
-        self._collapse_button = QToolButton(self)
+        self._collapse_button = QToolButton(self._rail)
         self._collapse_button.setObjectName("remoteToolbarCollapse")
         self._collapse_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._collapse_button.setIconSize(QSize(20, 20))
         self._collapse_button.setFixedSize(44, 28)
         self._collapse_button.clicked.connect(self._toggle_collapsed)
         layout.addWidget(self._collapse_button)
-        self.setFixedWidth(56)
+        self._rail.setFixedWidth(56)
 
-        self._popup = _MorePopup(self)
+        self._popup = _MorePopup(self, embedded=portable)
+        if portable:
+            outer.addWidget(self._popup, 0, Qt.AlignmentFlag.AlignTop)
+            # 嵌入面板不能随父窗口首次显示而自动打开。
+            self._popup.hide()
         self._popup.dismissed.connect(self._popup_dismissed)
         popup_layout = QVBoxLayout(self._popup)
         popup_layout.setContentsMargins(14, 12, 14, 12)
@@ -285,7 +318,7 @@ class RemoteToolbar(QWidget):
 
     @property
     def popup_window(self) -> QWidget:
-        """向宿主提供同属此会话的工具窗，供原生窗口归属设置使用。"""
+        """返回同属此会话的更多面板；附着模式下它是可设置原生归属的工具窗。"""
         return self._popup
 
     def set_target_label(self, text: str) -> None:
@@ -295,6 +328,9 @@ class RemoteToolbar(QWidget):
         self._target_label = " ".join(str(text).split())[:80] or tr("当前投屏设备")
         self._target.setText(self._target_label)
         self._target.setToolTip(self._target_label)
+        if self._portable:
+            self._indicator.setToolTip(self._target_label)
+            self._indicator.setAccessibleDescription(self._target_label)
         self.setAccessibleDescription(self._target_label)
         self._refresh_tooltips()
         if self._popup.isVisible():
@@ -378,6 +414,8 @@ class RemoteToolbar(QWidget):
             app.installEventFilter(self)
             self._watching_application = True
         self._popup.show()
+        if self._portable:
+            self._refresh_portable_geometry()
         self._sync_more_button()
 
     def _sync_more_button(self) -> None:
@@ -398,6 +436,8 @@ class RemoteToolbar(QWidget):
         if app is not None and self._watching_application:
             app.removeEventFilter(self)
             self._watching_application = False
+        if self._portable:
+            self._refresh_portable_geometry()
 
     @Slot()
     def _toggle_collapsed(self) -> None:
@@ -405,11 +445,14 @@ class RemoteToolbar(QWidget):
             return
         self.dismiss_popup()
         self._collapsed = not self._collapsed
-        for widget in (self._indicator, *self._common_buttons, self._more_button):
+        self._indicator.setVisible(self._portable or not self._collapsed)
+        for widget in (*self._common_buttons, self._more_button):
             widget.setVisible(not self._collapsed)
-        self.setFixedWidth(32 if self._collapsed else 56)
+        self._rail.setFixedWidth(32 if self._collapsed else 56)
         self._collapse_button.setFixedWidth(20 if self._collapsed else 44)
         self._update_collapse_label()
+        if self._portable:
+            self._refresh_portable_geometry()
         self.adjustSize()
         self.layout_changed.emit()
 
@@ -422,7 +465,22 @@ class RemoteToolbar(QWidget):
         self._collapse_button.setAccessibleName(text)
 
     def _position_popup(self) -> None:
+        if self._positioning_popup:
+            return
         bounds = self.screen().availableGeometry()
+        if self._portable:
+            self._positioning_popup = True
+            try:
+                width = min(
+                    max(280, self._popup_content.sizeHint().width() + 48),
+                    max(120, bounds.width() - self._rail.width() - 24),
+                )
+                height = min(self._popup_content.sizeHint().height() + 100, bounds.height() - 16)
+                self._popup.setFixedSize(width, max(120, height))
+                self._refresh_portable_geometry()
+            finally:
+                self._positioning_popup = False
+            return
         frame = self.frameGeometry()
         width = min(max(280, self._popup_content.sizeHint().width() + 48), bounds.width())
         height = min(self._popup_content.sizeHint().height() + 100, bounds.height() - 16)
@@ -433,6 +491,14 @@ class RemoteToolbar(QWidget):
         x = max(bounds.left(), min(x, bounds.right() - width + 1))
         y = max(bounds.top(), min(frame.top(), bounds.bottom() - self._popup.height() + 1))
         self._popup.move(x, y)
+
+    def _refresh_portable_geometry(self) -> None:
+        """内嵌面板开合后恢复顶层自然尺寸，不依赖合成器的全局定位能力。"""
+        layout = self.layout()
+        assert layout is not None
+        layout.invalidate()
+        layout.activate()
+        self.adjustSize()
 
     @Slot()
     def _refresh_style(self) -> None:
@@ -520,6 +586,13 @@ class RemoteToolbar(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:
         _paint_floating_surface(self)
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self._portable and event.key() == Qt.Key.Key_Escape and self._popup.isVisible():
+            self.dismiss_popup()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def hideEvent(self, event: QHideEvent) -> None:
         self.dismiss_popup()
         super().hideEvent(event)
@@ -540,5 +613,11 @@ class RemoteToolbar(QWidget):
         super().resizeEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._portable and not self._disposed:
+            # 独立浮窗关闭后没有原生镜像窗口可重新附着，保留窄条供用户恢复。
+            if not self._collapsed:
+                self._toggle_collapsed()
+            event.ignore()
+            return
         self.dismiss_popup()
         super().closeEvent(event)

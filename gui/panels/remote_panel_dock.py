@@ -35,7 +35,7 @@ def dock_geometry(
 
 @dataclass
 class _DockEntry:
-    """窗口和输入共享原会话对象，旧窗口回调永远不能取得新会话。"""
+    """窗口和输入共享原会话对象；tracker 为 None 时使用便携浮窗，不查询外部窗口。"""
 
     session: Any
     tracker: Any
@@ -45,7 +45,7 @@ class _DockEntry:
 
 
 class RemotePanelDock(QObject):
-    """GUI 线程拥有侧栏及轮询器；只查询本机窗口，不等待进程或调用设备。"""
+    """GUI 线程拥有会话工具栏；支持时跟随原生窗口，否则显示可拖动的便携浮窗。"""
 
     def __init__(self, frame, parent: QWidget, *, tracker_factory=WindowsWindowTracker):
         super().__init__(parent)
@@ -88,11 +88,10 @@ class RemotePanelDock(QObject):
             if not isinstance(pid, int) or pid <= 0:
                 continue
             tracker = self._tracker_factory(pid, session.config.window_title)
-            if not tracker.supported:
-                continue
-            toolbar = RemoteToolbar(self._owner)
+            native_tracker = tracker if tracker.supported else None
+            toolbar = RemoteToolbar(self._owner, portable=native_tracker is None)
             toolbar.set_target_label(self._frame._mirror_device_name(device))
-            entry = _DockEntry(session, tracker, toolbar)
+            entry = _DockEntry(session, native_tracker, toolbar)
             self.entries[device] = entry
             toolbar.key_requested.connect(
                 lambda code, current=entry: self._dispatch(current, code, action=False),
@@ -101,8 +100,14 @@ class RemotePanelDock(QObject):
                 lambda code, current=entry: self._dispatch(current, code, action=True),
             )
             toolbar.layout_changed.connect(self.tick)
+            if native_tracker is None:
+                # Wayland 由合成器安排初始位置；操作仅绑定此会话，不能退回主窗口广播。
+                toolbar.show()
         self.tick()
         if self.entries:
+            self.timer.setInterval(60 if any(
+                entry.tracker is not None for entry in self.entries.values()
+            ) else 250)
             self.timer.start()
         else:
             self.timer.stop()
@@ -111,10 +116,14 @@ class RemotePanelDock(QObject):
         device = entry.session.config.device
         if self.entries.get(device) is not entry or not self._active(entry.session):
             return
-        # 每次点击重新确认句柄，避免关闭窗口到下一轮轮询之间仍接纳输入。
-        snapshot = entry.tracker.snapshot()
-        if snapshot is None or snapshot.minimized or not snapshot.visible:
+        connected = getattr(self._frame, "_connected_remote_devices", None)
+        if connected is not None and device not in connected:
             return
+        if entry.tracker is not None:
+            # 每次点击重新确认句柄，避免关闭窗口到下一轮轮询之间仍接纳输入。
+            snapshot = entry.tracker.snapshot()
+            if snapshot is None or snapshot.minimized or not snapshot.visible:
+                return
         controller = self._frame._input_controller
         callback = controller._send_session_action if action else controller._send_session_keyevent
         callback(entry.session, code)
@@ -125,11 +134,16 @@ class RemotePanelDock(QObject):
             if not self._active(entry.session):
                 self._remove(device)
                 continue
+            toolbar = entry.toolbar
+            connected = getattr(self._frame, "_connected_remote_devices", None)
+            toolbar.set_available(connected is None or device in connected)
+            if entry.tracker is None:
+                # 便携浮窗只跟随进程和会话寿命；不伪造外部窗口的几何、焦点或最小化状态。
+                continue
             snapshot = entry.tracker.snapshot()
             if entry.tracker.lost:
                 self._remove(device)
                 continue
-            toolbar = entry.toolbar
             if snapshot is None or snapshot.minimized or not snapshot.visible:
                 toolbar.hide()
                 toolbar.dismiss_popup()
@@ -141,8 +155,6 @@ class RemotePanelDock(QObject):
             if entry.foreground_hwnd is not None and entry.foreground_hwnd != foreground:
                 toolbar.dismiss_popup()
             entry.foreground_hwnd = foreground
-            connected = getattr(self._frame, "_connected_remote_devices", None)
-            toolbar.set_available(connected is None or device in connected)
             # Qt 的有效比例还包含用户设置的 QT_SCALE_FACTOR；仅使用目标窗口 DPI
             # 会把工具窗压缩为系统比例。跨屏后的 Qt DPI 通知会在下一轮重新定位。
             scale = toolbar.devicePixelRatioF()

@@ -59,12 +59,100 @@ class Tracker:
         return True
 
 
+class UnsupportedTracker:
+    supported = False
+
+    def __init__(self, _pid, _title):
+        pass
+
+    def snapshot(self):
+        raise AssertionError("便携工具栏不能依赖不可用的原生窗口查询")
+
+    def position_tool(self, *_args):
+        raise AssertionError("便携工具栏不能使用原生窗口定位")
+
+
 def session(device, pid=100):
     return SimpleNamespace(
         config=SimpleNamespace(device=device, no_window=False, window_title="mirror-" + device),
         process=SimpleNamespace(pid=pid, poll=lambda: None), state="ready", resource_owned=True,
         cancel_event=threading.Event(),
     )
+
+
+def test_unsupported_platform_shows_each_session_toolbar_and_preserves_its_target(qt_application):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QToolButton
+
+    from gui.panels.remote_panel_dock import RemotePanelDock
+
+    owner, frame = QWidget(), Frame()
+    first, second = session("a"), session("b", 200)
+    frame._device_sessions = {"a": first, "b": second}
+    frame.selected_devices = ["b"]
+    dock = RemotePanelDock(frame, owner, tracker_factory=UnsupportedTracker)
+    try:
+        dock.sync()
+        assert set(dock.entries) == {"a", "b"}
+        for device, target in (("a", first), ("b", second)):
+            toolbar = dock.entries[device].toolbar
+            assert toolbar.isVisible()
+            more = toolbar.findChild(QToolButton, "remoteToolbarMore")
+            QTest.mouseClick(more, Qt.MouseButton.LeftButton)
+            assert toolbar.popup_window.isVisible()
+            assert toolbar.popup_window.window() is toolbar
+            button = toolbar.findChild(QAbstractButton, "remoteToolbarCommand_HOME")
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            assert frame.calls[-1] == (target, "HOME")
+        dock.sync()
+        assert len(dock.entries) == 2
+        assert len(frame.calls) == 2
+        frame._connected_remote_devices = frozenset({"b"})
+        dock.tick()
+        first_toolbar = dock.entries["a"].toolbar
+        assert not first_toolbar.popup_window.isVisible()
+        assert not first_toolbar.findChild(QAbstractButton, "remoteToolbarCommand_HOME").isEnabled()
+        first_toolbar.key_requested.emit("HOME")
+        assert len(frame.calls) == 2
+    finally:
+        dock.close()
+        owner.close()
+
+
+def test_portable_toolbar_retires_on_exit_and_old_callbacks_cannot_target_replacement(
+    qt_application,
+):
+    from gui.panels.remote_panel_dock import RemotePanelDock
+
+    owner, frame = QWidget(), Frame()
+    first = session("a")
+    frame._device_sessions = {"a": first}
+    dock = RemotePanelDock(frame, owner, tracker_factory=UnsupportedTracker)
+    try:
+        dock.sync()
+        assert "a" in dock.entries
+        old = dock.entries["a"].toolbar
+        first.process.poll = lambda: 0
+        dock.tick()
+        assert not dock.entries
+        assert not old.isVisible()
+        assert not dock.timer.isActive()
+        assert frame.invalidated == [first]
+        replacement = session("a", 300)
+        frame._device_sessions["a"] = replacement
+        dock.sync()
+        assert dock.entries["a"].toolbar is not old
+        old.key_requested.emit("HOME")
+        assert frame.calls == []
+        dock.entries["a"].toolbar.key_requested.emit("HOME")
+        assert frame.calls == [(replacement, "HOME")]
+        dock.close()
+        assert not dock.entries
+        assert not dock.timer.isActive()
+    finally:
+        dock.close()
+        owner.close()
 
 
 def test_dock_lifecycle_keeps_target_and_hides_popup_on_minimize(qt_application):
@@ -132,7 +220,12 @@ def test_closed_window_cannot_rebind_or_send_to_replacement_session(qt_applicati
         owner.close()
 
 
-def test_destroyed_view_revokes_session_and_destroys_timer_and_tools(qt_application):
+@pytest.mark.parametrize(
+    "tracker_factory", (Tracker, UnsupportedTracker), ids=("native", "portable"),
+)
+def test_destroyed_view_revokes_session_and_destroys_timer_and_tools(
+    qt_application, tracker_factory,
+):
     from shiboken6 import delete, isValid
 
     from gui.panels.remote_panel_dock import RemotePanelDock
@@ -140,7 +233,7 @@ def test_destroyed_view_revokes_session_and_destroys_timer_and_tools(qt_applicat
     owner, frame = QWidget(), Frame()
     original = session("a")
     frame._device_sessions = {"a": original}
-    dock = RemotePanelDock(frame, owner, tracker_factory=Tracker)
+    dock = RemotePanelDock(frame, owner, tracker_factory=tracker_factory)
     dock.sync()
     timer, toolbar = dock.timer, dock.entries["a"].toolbar
     delete(owner)

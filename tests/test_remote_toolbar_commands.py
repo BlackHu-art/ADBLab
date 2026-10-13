@@ -12,7 +12,7 @@ from core.exec import CommandResult
 from gui.panels.remote_panel_dock import RemotePanelDock
 from gui.panels.remote_panel_input import RemotePanelInput
 from services.remote.control_service import RemoteControlService
-from tests.test_remote_dock import Frame, Tracker, session
+from tests.test_remote_dock import Frame, Tracker, UnsupportedTracker, session
 from tests.test_remote_session_input import QueuedExecutor
 
 pytestmark = pytest.mark.ui
@@ -90,8 +90,11 @@ class CommandRecorder:
 @pytest.mark.parametrize(("code", "expected"), EXPECTED_COMMANDS, ids=[
     code for code, _ in EXPECTED_COMMANDS
 ])
+@pytest.mark.parametrize(
+    "tracker_factory", (Tracker, UnsupportedTracker), ids=("native", "portable"),
+)
 def test_each_toolbar_button_reaches_its_device_command_after_selection_change(
-    qt_application, code, expected,
+    qt_application, code, expected, tracker_factory,
 ):
     owner, frame = QWidget(), Frame()
     frame._device_sessions = {"a": session("a"), "b": session("b", 200)}
@@ -107,7 +110,7 @@ def test_each_toolbar_button_reaches_its_device_command_after_selection_change(
         "_remote_input_succeeded",
     ):
         setattr(frame, name, getattr(controller, name))
-    dock = RemotePanelDock(frame, owner, tracker_factory=Tracker)
+    dock = RemotePanelDock(frame, owner, tracker_factory=tracker_factory)
     try:
         dock.sync()
         for device in ("a", "b"):
@@ -118,7 +121,7 @@ def test_each_toolbar_button_reaches_its_device_command_after_selection_change(
             popup = toolbar.popup_window
             button = toolbar.findChild(QAbstractButton, f"remoteToolbarCommand_{code}")
             assert button is not None
-            if button.window() is popup:
+            if popup.isAncestorOf(button):
                 popup.findChild(QScrollArea).ensureWidgetVisible(button)
                 qt_application.processEvents()
             before = len(bridge.commands)
