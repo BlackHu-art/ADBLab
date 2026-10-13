@@ -1,4 +1,4 @@
-"""验证紧凑遥控桌面的常显参数、统一按钮规格和录制联动。"""
+"""验证统一遥控桌面的常显参数、分组按钮规格、键盘顺序和录制联动。"""
 
 import pytest
 from PySide6.QtCore import QRect, Qt
@@ -126,15 +126,14 @@ def test_remote_key_tooltips_describe_actions_without_protocol_identifiers(compa
         assert button.accessibleDescription() == tooltip
 
 
-def test_media_and_volume_buttons_share_outer_edges(compact_remote):
+def test_media_and_volume_buttons_form_one_ordered_toolbar(compact_remote):
     remote, _scroll, content = compact_remote
     buttons = {button.property("remoteKey"): button for button in remote._remote_key_buttons}
-    assert mapped_rect(buttons["VOL_DOWN"], content).left() == mapped_rect(
-        buttons["MEDIA_PREV"], content,
-    ).left()
-    assert mapped_rect(buttons["VOL_UP"], content).right() == mapped_rect(
-        buttons["MEDIA_NEXT"], content,
-    ).right()
+    rectangles = [mapped_rect(buttons[code], content) for code in (
+        "VOL_DOWN", "MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT", "VOL_UP",
+    )]
+    assert len({rect.top() for rect in rectangles}) == 1
+    assert all(left.right() < right.left() for left, right in zip(rectangles, rectangles[1:]))
 
 
 def test_automatic_encoding_description_remains_fully_readable(
@@ -170,16 +169,15 @@ def test_common_parameters_start_visible_and_preserve_values_when_reflowed(
     assert remote.chk_fullscreen.isChecked()
 
 
-def test_swipe_pad_has_spatial_directions_below_primary_navigation(compact_remote):
+def test_swipe_toolbar_pairs_directions_below_primary_navigation(compact_remote):
     remote, _scroll, content = compact_remote
     actions = {button.property("remoteAction"): button for button in remote._remote_action_buttons}
     up, down, left, right = (
         mapped_rect(actions[action], content)
         for action in ("swipe_up", "swipe_down", "swipe_left", "swipe_right")
     )
-    assert up.bottom() < left.top() == right.top() < down.top()
-    assert left.right() < up.center().x() < right.left()
-    assert abs(up.center().x() - down.center().x()) <= 1
+    assert up.top() == down.top() == left.top() == right.top()
+    assert up.right() < down.left() < left.left() < right.left()
     navigation = [button for button in remote._remote_key_buttons
                   if button.property("remoteKey") in {"BACK", "HOME", "RECENTS"}]
     assert all(mapped_rect(button, content).bottom() < up.top() for button in navigation)
@@ -188,7 +186,7 @@ def test_swipe_pad_has_spatial_directions_below_primary_navigation(compact_remot
 
 
 @pytest.mark.parametrize("width", (320, 780))
-def test_tab_from_mirror_start_enters_navigation_before_settings(
+def test_tab_from_mirror_start_visits_settings_before_navigation(
     compact_remote, qt_application, width,
 ):
     remote, scroll, _content = compact_remote
@@ -198,25 +196,41 @@ def test_tab_from_mirror_start_enters_navigation_before_settings(
                 if button.property("remoteKey") == "BACK")
     remote.btn_start.setFocus(Qt.FocusReason.TabFocusReason)
     assert remote.btn_start.hasFocus()
-    for _ in range(6):
+    visited = []
+    for _ in range(48):
         focused = qt_application.focusWidget()
         assert focused is not None
         QTest.keyClick(focused, Qt.Key.Key_Tab)
-        assert not remote.maxsize.hasFocus(), "键盘顺序应先进入遥控操作再进入参数"
         if back.hasFocus():
             break
+        visited.append(qt_application.focusWidget())
     assert back.hasFocus()
+    for control in (remote.maxsize, remote.fps, remote.buffer, remote.orientation,
+                    remote.bitrate_slider):
+        assert control in visited, "键盘顺序应先访问完整设置，再进入设备操作"
+    for switch in remote.window_options_binding.widgets():
+        assert switch.indicator in visited
 
 
-def test_swipe_pad_keyboard_order_follows_its_visible_rows(compact_remote):
+def test_remote_keyboard_order_follows_navigation_controls_and_system_keys(compact_remote):
     remote, _scroll, _content = compact_remote
     remote.set_target_devices(["synthetic-device"])
     actions = {button.property("remoteAction"): button for button in remote._remote_action_buttons}
-    up = actions["swipe_up"]
-    up.setFocus(Qt.FocusReason.TabFocusReason)
-    assert up.hasFocus()
-    QTest.keyClick(up, Qt.Key.Key_Tab)
-    assert actions["swipe_left"].hasFocus()
+    keys = {button.property("remoteKey"): button for button in remote._remote_key_buttons}
+    order = (
+        keys["BACK"], keys["HOME"], keys["RECENTS"], keys["POWER"],
+        *(actions[action] for action in (
+            "rotate_portrait", "rotate_landscape", "notif_expand", "notif_collapse",
+        )),
+        *(actions[action] for action in ("swipe_up", "swipe_down", "swipe_left", "swipe_right")),
+        *(keys[code] for code in ("VOL_DOWN", "MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT", "VOL_UP")),
+        *(keys[code] for code in ("MENU", "ENTER", "DEL", "SETTINGS", "CAMERA", "SEARCH")),
+    )
+    order[0].setFocus(Qt.FocusReason.TabFocusReason)
+    assert order[0].hasFocus()
+    for before, after in zip(order, order[1:]):
+        QTest.keyClick(before, Qt.Key.Key_Tab)
+        assert after.hasFocus(), after.accessibleName()
 
 
 def test_advanced_and_more_options_stay_visible_without_losing_values(
@@ -245,21 +259,30 @@ def test_compact_presets_keep_automatic_encoding_and_legacy_preference(compact_r
     remote, _scroll, _content = compact_remote
     assert isinstance(remote.codec, QLabel)
     assert not remote.advanced_options.isHidden()
-    assert remote.codec.text() == "自动"
+    assert remote.codec.text() == "自动视频编码"
     assert "启动时" in remote.codec.accessibleDescription()
     remote._settings.set("scrcpy_codec", "h265")
     for preset in ("Quality", "Low Latency", "Balanced"):
         remote.preset_selector.items[preset].click()
-        assert remote.codec.text() == "自动"
+        assert remote.codec.text() == "自动视频编码"
         assert remote._settings.get("scrcpy_codec") == "h265"
 
 
-def test_remote_actions_share_compact_height_and_icon_targets_are_square(compact_remote):
+def test_remote_action_groups_keep_equal_heights_and_media_targets_are_square(compact_remote):
     remote, _scroll, _content = compact_remote
     buttons = (remote.btn_start, remote.btn_stop, *remote._remote_control_buttons)
-    heights = [button.height() for button in buttons]
-    assert min(heights) >= 36
-    assert max(heights) - min(heights) <= 2, "常用操作应保持一致的按钮高度"
+    groups = (
+        (remote.btn_start, remote.btn_stop),
+        remote._remote_navigation_binding.widgets(),
+        remote._remote_screen_binding.widgets(),
+        remote._remote_action_binding.widgets(),
+        remote._remote_media_binding.widgets(),
+        remote._remote_key_binding.widgets(),
+    )
+    for group in groups:
+        heights = [button.height() for button in group]
+        assert min(heights) >= 36
+        assert max(heights) - min(heights) <= 2, "同组操作应保持一致的按钮高度"
     for button in buttons:
         if not button.text():
             assert abs(button.width() - button.height()) <= 2
@@ -268,32 +291,35 @@ def test_remote_actions_share_compact_height_and_icon_targets_are_square(compact
 
 
 @pytest.mark.parametrize("width", (780, 1280))
-def test_parameters_and_switches_use_three_columns_without_hiding_options(
+def test_parameters_and_switches_use_four_columns_without_hiding_options(
     compact_remote, qt_application, width,
 ):
     remote, scroll, content = compact_remote
     _resize_feature_viewport(qt_application, remote.panel, remote, scroll, width)
-    assert remote.mirroring_binding.applied_plan.mode.columns == 3
-    assert remote.window_options_binding.applied_plan.mode.columns == 3
-    advanced = tuple(control.parentWidget() for control in (
-        remote.codec, remote.buffer, remote.orientation,
-    ))
-    rectangles = [mapped_rect(field, content) for field in advanced]
+    assert remote.mirroring_binding.applied_plan.mode.columns == 4
+    assert remote.window_options_binding.applied_plan.mode.columns == 4
+    fields = remote.mirroring_binding.widgets()
+    assert len(fields) == 4
+    assert all(field.isVisibleTo(content) for field in fields)
+    rectangles = [mapped_rect(field, content) for field in fields]
     assert len({rect.top() for rect in rectangles}) == 1
     assert max(rect.width() for rect in rectangles) - min(rect.width() for rect in rectangles) <= 2
     assert all(left.right() < right.left() for left, right in zip(rectangles, rectangles[1:]))
-    bitrate_editor = remote.mirroring_binding.widgets()[2]
+    bitrate_editor = remote.bitrate_slider.parentWidget()
     bitrate_title = bitrate_editor.title_label
     assert isinstance(bitrate_title, QLabel) and bitrate_title.text()
     assert bitrate_title.width() >= bitrate_title.fontMetrics().horizontalAdvance(
         bitrate_title.text(),
     )
-    assert bitrate_title.height() <= bitrate_title.fontMetrics().height() + 4
+    assert not bitrate_title.wordWrap()
+    assert bitrate_title.contentsRect().height() >= bitrate_title.fontMetrics().height()
+    assert abs(mapped_rect(bitrate_title, content).center().y()
+               - mapped_rect(bitrate_editor.value_label, content).center().y()) <= 1
     switches = remote.window_options_binding.widgets()
     assert len(switches) == 8
     assert all(switch.isVisibleTo(content) for switch in switches)
-    for start in (0, 3):
-        row = switches[start:start + 3]
+    for start in (0, 4):
+        row = switches[start:start + 4]
         assert len({mapped_rect(switch, content).top() for switch in row}) == 1
 
 
@@ -324,9 +350,17 @@ def test_compact_remote_groups_keep_semantic_order_and_separate_click_targets(co
     by_action = {
         button.property("remoteAction"): button for button in remote._remote_action_buttons
     }
-    assert max(mapped_rect(button, content).bottom() for button in by_action.values()) < (
-        mapped_rect(by_key["MENU"], content).top()
+    gesture_rects = [mapped_rect(by_action[action], content) for action in (
+        "swipe_up", "swipe_down", "swipe_left", "swipe_right",
+    )]
+    system_rects = [mapped_rect(by_key[key], content) for key in (
+        "MENU", "ENTER", "DEL", "SETTINGS", "CAMERA", "SEARCH",
+    )]
+    assert max(rect.right() for rect in gesture_rects) < min(
+        rect.left() for rect in system_rects
     )
+    assert abs(min(rect.top() for rect in gesture_rects)
+               - min(rect.top() for rect in system_rects)) <= 2
     previous, play, following = (
         mapped_rect(by_key[code], content) for code in ("MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT")
     )

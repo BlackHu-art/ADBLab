@@ -1,11 +1,14 @@
 """把远程参数的既有下拉数据投影为原生 Fluent 选择器，保留配置与信号契约。"""
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, Slot
+from PySide6.QtCore import QEvent, QRectF, QSignalBlocker, QSize, Qt, Slot
+from PySide6.QtGui import QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSizePolicy,
     QStackedLayout,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -17,8 +20,10 @@ from qfluentwidgets import (
     PushButton,
     Slider,
     SwitchButton,
+    TransparentPushButton,
     TransparentTogglePushButton,
     VerticalSeparator,
+    themeColor,
 )
 
 from gui.styles import BaseStyles, FontRole
@@ -50,7 +55,7 @@ def _refresh_session_surface(widget: QWidget, mica: bool) -> None:
 
 
 class RemoteWorkspaceDivider(VerticalSeparator):
-    """双栏时分隔操作和参数；依据实际几何跟随回流，不占布局宽度。"""
+    """并排时分隔两组操作；依据实际几何跟随回流，不占布局宽度。"""
 
     def __init__(self, parent: QWidget, sections: tuple[QWidget, ...]) -> None:
         super().__init__(parent)
@@ -77,7 +82,7 @@ class RemoteWorkspaceDivider(VerticalSeparator):
 
 
 class RemoteSection(QWidget):
-    """开放分区保留原有布局接口；仅会话区绘制底板，主题连接随控件销毁。"""
+    """开放分区保留布局接口，指定分区绘制底板，主题连接随控件销毁。"""
 
     def __init__(
         self, title: str, parent=None, *, surface: bool = False, divider: bool = False,
@@ -135,6 +140,46 @@ class RemoteWindowToggle(TransparentTogglePushButton):
         PushButton._drawIcon(self, icon, painter, rect)
 
 
+class RemoteCommandButton(TransparentPushButton):
+    """纵向图文按钮保留 Fluent 交互与图标绘制，仅改变内容排列和自然尺寸。"""
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(max(self.iconSize().width(), metrics.horizontalAdvance(self.text())) + 20,
+                     self.iconSize().height() + metrics.height() + 20)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def paintEvent(self, event) -> None:
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        # PySide6 运行时提供这两个字段，桩文件尚未声明；清空原生内容避免重复绘制。
+        setattr(option, "text", "")
+        setattr(option, "icon", QIcon())
+        painter = QPainter(self)
+        self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        metrics = self.fontMetrics()
+        height = self.iconSize().height() + 6 + metrics.height()
+        top = (self.height() - height) / 2
+        if not self.isEnabled():
+            painter.setOpacity(.43)
+        elif self.isPressed:
+            painter.setOpacity(.63)
+        self._drawIcon(self._icon, painter, QRectF(
+            (self.width() - self.iconSize().width()) / 2, top,
+            self.iconSize().width(), self.iconSize().height(),
+        ))
+        painter.setOpacity(1)
+        group = QPalette.ColorGroup.Active if self.isEnabled() else QPalette.ColorGroup.Disabled
+        painter.setPen(self.palette().color(group, QPalette.ColorRole.ButtonText))
+        painter.drawText(
+            QRectF(0, top + self.iconSize().height() + 6, self.width(), metrics.height()),
+            Qt.AlignmentFlag.AlignCenter, self.text(),
+        )
+
+
 class RemoteSwitchButton(SwitchButton):
     """开关尺寸由响应式布局分配，状态文本更新不能自行缩回自然宽度。"""
 
@@ -170,6 +215,10 @@ class _ParameterPivot(Pivot):
             item.setSelected(False)
         self.update()
 
+    def paintEvent(self, event) -> None:
+        # 选中项用主题色底板表达状态，不再叠加导航页签的底部指示条。
+        QWidget.paintEvent(self, event)
+
 
 class RemoteChoiceEditor(QWidget):
     """宽度足够时展开全部选项，窄窗使用同一下拉框；配置始终只有一个来源。"""
@@ -185,12 +234,13 @@ class RemoteChoiceEditor(QWidget):
         self.pivot = _ParameterPivot(self)
         self.pivot.setAccessibleName(combo.accessibleName())
         self.pivot.hBoxLayout.setSpacing(6)
-        # 指示条是唯一选中标记，单独保留底部空间，避免被按钮背景覆盖。
-        self.pivot.hBoxLayout.setContentsMargins(0, 0, 0, 4)
+        self.pivot.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.pivot.setIndicatorLength(16)
         for index in range(combo.count()):
             value = str(combo.itemData(index))
             self.pivot.addItem(value, combo.itemText(index))
+        for item in self.pivot.items.values():
+            self.pivot.hBoxLayout.setStretchFactor(item, 1)
         if separators:
             for index in range(1, combo.count()):
                 separator = VerticalSeparator(self.pivot)
@@ -223,6 +273,12 @@ class RemoteChoiceEditor(QWidget):
 
     def refresh_metrics(self) -> None:
         """覆盖原生选项的固定像素字体，并按当前字号重新决定展开或下拉。"""
+        accent = themeColor()
+        channels = (accent.redF(), accent.greenF(), accent.blueF())
+        luminance = sum(weight * (value / 12.92 if value <= .04045 else
+                                 ((value + .055) / 1.055) ** 2.4)
+                        for weight, value in zip((.2126, .7152, .0722), channels))
+        foreground = "#000000" if luminance > .179 else "#ffffff"
         for item in self.pivot.items.values():
             apply_font_role(item)
             set_function_tooltip(item, item.text())
@@ -230,13 +286,13 @@ class RemoteChoiceEditor(QWidget):
             font = BaseStyles.font_for_role(FontRole.UI)
             set_fluent_font_rule(item, (
                 f"PivotItem {{ {font_qss(font)} padding: 5px 10px 6px;"
-                f"border: 1px solid {BaseStyles.color('BORDER_COLOR')}; border-radius: 6px;"
+                "border: 1px solid transparent; border-radius: 6px;"
                 f"background: {BaseStyles.color('BUTTON_BG')};"
                 f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
                 f"PivotItem:hover {{ background: {BaseStyles.color('BUTTON_HOVER')}; }}"
                 "PivotItem[isSelected=true] {"
-                f"background: {BaseStyles.color('BUTTON_BG')};"
-                f"color: {BaseStyles.color('TEXT_PRIMARY')}; }}"
+                f"background: {accent.name()};"
+                f"color: {foreground}; }}"
                 f"PivotItem:focus {{ border-color: {BaseStyles.color('BORDER_COLOR')}; }}"
                 f"PivotItem:disabled {{ color: {BaseStyles.color('TEXT_DISABLED')}; }}"
             ))

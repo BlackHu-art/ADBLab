@@ -641,6 +641,40 @@ def test_dark_theme_switch_finishes_fluent_window_background_immediately(qt_appl
         frame.close()
 
 
+def test_accent_change_repaints_pages_with_item_views_without_slot_errors(
+    qt_application, monkeypatch,
+):
+    """强调色信号遍历真实表格时，不得误调用只接受模型索引的 update 重载。"""
+    import sys
+
+    from qfluentwidgets import TableWidget
+
+    settings = _MainFrameSettings()
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    original_accent = BaseStyles.accent_color()
+    callback_errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *error: callback_errors.append(error))
+    frame = build_main_frame(settings=settings)
+    table = TableWidget(frame._apps_page)
+    table.setColumnCount(1)
+    table.setRowCount(1)
+    try:
+        frame.show()
+        qt_application.processEvents()
+
+        BaseStyles.set_accent_color("#8B5CF6")
+        BaseStyles.set_accent_color("#0F6CBD")
+        qt_application.processEvents()
+
+        assert callback_errors == [], [str(error[1]) for error in callback_errors]
+        assert table.columnCount() == table.rowCount() == 1
+    finally:
+        BaseStyles.set_accent_color(original_accent)
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
 def test_theme_switch_keeps_mica_content_stack_edges_borderless(qt_application, monkeypatch):
     """共用表面保留一像素外边框，内容栈不能在内部恢复第二层边框。"""
 

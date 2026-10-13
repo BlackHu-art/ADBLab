@@ -2415,9 +2415,11 @@ class MainFrame(FluentWindow):
             page = getattr(self, name, None)
             if page is None:
                 continue
-            page.update()
+            QWidget.update(page)
             for child in page.findChildren(QWidget):
-                child.update()
+                # 表格等视图的 update 重载要求模型索引；此处只请求 QWidget 重绘，
+                # 其 viewport 也在后代列表中，不能误入数据视图的更新接口。
+                QWidget.update(child)
 
     def setMicaEffectEnabled(self, isEnabled: bool) -> None:
         """切换系统云母并同步 Qt 表面；不支持的平台保留实际生效的实色模式。"""

@@ -761,11 +761,13 @@ def test_responsive_spacing_tracks_viewport_without_replacing_widgets(
             qt_application, panel, feature_panel, scroll, 1280 if panel_name == "remote" else 900,
         )
         wide = tuple(binding.applied_plan.spacing for binding in feature_panel._responsive_rows)
-        assert 6 in wide
         if panel_name == "remote":
-            # Remote 各组保持固定间距，以独立栏的回流验证宽度响应。
-            assert feature_panel._remote_workspace_binding.applied_plan.mode.columns == 2
+            # 设置始终在上方；控制区内部双组按可用宽度展开。
+            assert feature_panel._remote_workspace_binding.applied_plan.mode.columns == 1
+            assert all(binding.applied_plan.mode.columns == 2
+                       for _row, binding in feature_panel._remote_split_groups)
         else:
+            assert 6 in wide
             assert wide != narrow
 
         _resize_feature_viewport(qt_application, panel, feature_panel, scroll, 292)
@@ -2642,11 +2644,9 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
     expected_columns = {
         remote._remote_navigation_binding: {1, 2, 4},
         remote._remote_key_binding: {1, 2, 3},
-        remote._remote_volume_binding: {3},
-        remote._remote_media_binding: {3},
-        remote._remote_action_binding: {1, 2, 3},
-        remote._remote_notification_binding: {1, 2},
-        remote._remote_orientation_binding: {1, 2},
+        remote._remote_media_binding: {1, 5},
+        remote._remote_action_binding: {1, 2, 4},
+        remote._remote_screen_binding: {1, 2, 4},
     }
     assert set(remote.remote_control_bindings) == set(expected_columns)
     try:
@@ -2661,7 +2661,10 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
         for width in range(180, 901, 8):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             assert remote.category_stack.current_key == "mirroring"
-            observed_workspace_columns.add(remote._remote_workspace_binding.applied_plan.mode.columns)
+            assert remote._remote_workspace_binding.applied_plan.mode.columns == 1
+            observed_workspace_columns.update(
+                binding.applied_plan.mode.columns for _row, binding in remote._remote_split_groups
+            )
             for binding, allowed in expected_columns.items():
                 plan = binding.applied_plan
                 assert plan is not None
@@ -2678,40 +2681,17 @@ def test_remote_control_real_viewport_scan_uses_group_specific_columns(
                     item_index = layout.indexOf(widget)
                     assert item_index >= 0
                     row, column, row_span, column_span = layout.getItemPosition(item_index)
-                    if binding is remote._remote_action_binding:
-                        expected = _expected_remote_direction_placement(widget, columns)
-                    else:
-                        expected = _expected_grid_placement(
-                            index, len(widgets), columns, span_tail,
-                        )
+                    expected = _expected_grid_placement(
+                        index, len(widgets), columns, span_tail,
+                    )
                     assert (row, column, row_span, column_span) == expected
                     assert_positive_geometry(widget, content)
                 assert_non_overlapping(widgets, content)
 
-        # 图标组可以维持紧凑规格，工作区本身必须随宽度真正切换单列和双列。
+        # 设置区始终纵向排列，控制区的内部双组随宽度真正回流。
         assert observed_workspace_columns == {1, 2}
     finally:
         _close_feature_panel(panel)
-
-
-def _expected_remote_direction_placement(widget, columns):
-    """方向盘按动作语义保留上下左右位置，窄屏退为可读的双列或单列。"""
-
-    action = widget.property("remoteAction")
-    if columns == 3:
-        return {
-            "swipe_up": (0, 1, 1, 1), "swipe_down": (2, 1, 1, 1),
-            "swipe_left": (1, 0, 1, 1), "swipe_right": (1, 2, 1, 1),
-            None: (1, 1, 1, 1),
-        }[action]
-    if columns == 2:
-        return {
-            "swipe_up": (0, 0, 1, 2), "swipe_down": (3, 0, 1, 2),
-            "swipe_left": (1, 0, 1, 1), "swipe_right": (1, 1, 1, 1),
-            None: (2, 0, 1, 2),
-        }[action]
-    return ({"swipe_up": 0, "swipe_left": 1, "swipe_right": 2,
-             "swipe_down": 3, None: 4}[action], 0, 1, 1)
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
@@ -2738,73 +2718,47 @@ def test_remote_control_groups_preserve_compact_targets_without_clipping(
                     assert max(widths) - min(widths) <= 2, widths
                 grid = row.layout()
                 assert isinstance(grid, QGridLayout)
-                is_direction_pad = binding is remote._remote_action_binding
                 cells = []
                 occupied_rows = set()
                 for index, button in enumerate(buttons):
                     position = grid.getItemPosition(grid.indexOf(button))
                     occupied_rows.add(position[0])
-                    expected = (
-                        _expected_remote_direction_placement(button, columns)
-                        if is_direction_pad
-                        else (index // columns, index % columns, 1, 1)
-                    )
-                    assert position == expected
-                    if is_direction_pad:
-                        # 跨列方向盘的 heightForWidth 探测会改写 Qt cellRect 缓存；
-                        # 此处以实际控件边界和下方语义间距验证最终布局。
-                        assert_contained(button, row)
-                    else:
-                        cell = grid.cellRect(position[0], position[1])
-                        cells.append(cell)
-                        # Latin 与中文回退字体的自然高度可不同；Fixed 按钮在同一行内居中。
-                        assert cell.contains(button.geometry())
-                        assert abs(button.geometry().center().y() - cell.center().y()) <= 1
+                    assert position == (index // columns, index % columns, 1, 1)
+                    assert_contained(button, row)
+                    cell = grid.cellRect(position[0], position[1])
+                    cells.append(cell)
+                    assert cell.contains(button.geometry())
+                    assert abs(button.geometry().center().y() - cell.center().y()) <= 1
                     if isinstance(button, (QPushButton, QToolButton)):
                         assert button.height() >= button.sizeHint().height()
                         assert button.height() >= 36
                         assert button.accessibleName()
                         if not button.text():
                             assert abs(button.width() - button.height()) <= 2
-                if is_direction_pad:
-                    assert buttons[0].y() == row.contentsRect().top()
-                    visual_rows = sorted({button.y() for button in buttons})
-                    for before, after in zip(visual_rows, visual_rows[1:]):
-                        bottom = max(button.geometry().bottom() for button in buttons
-                                     if button.y() == before)
-                        assert after - bottom - 1 == grid.verticalSpacing()
-                    if columns == 3:
-                        up, down, left, right, center = (button.geometry() for button in buttons)
-                        assert up.center().x() == down.center().x() == center.center().x()
-                        assert left.center().y() == right.center().y() == center.center().y()
-                        assert center.left() - left.right() - 1 == grid.horizontalSpacing()
-                        assert right.left() - center.right() - 1 == grid.horizontalSpacing()
-                else:
-                    assert cells[0].top() == row.contentsRect().top()
-                    # QGridLayout 换列后保留空行索引，只检查仍有可见成员的相邻行。
-                    visible_rows = sorted(occupied_rows)
-                    for before, after in zip(visible_rows, visible_rows[1:]):
-                        assert after == before + 1
-                        gap = grid.cellRect(after, 0).top() - grid.cellRect(
-                            before, 0,
-                        ).bottom() - 1
-                        assert gap == grid.verticalSpacing()
+                assert cells[0].top() == row.contentsRect().top()
+                # 回流后仅检查有控件的行，不能以 Qt 留存的空行索引判断间距。
+                visible_rows = sorted(occupied_rows)
+                for before, after in zip(visible_rows, visible_rows[1:]):
+                    assert after == before + 1
+                    gap = grid.cellRect(after, 0).top() - grid.cellRect(
+                        before, 0,
+                    ).bottom() - 1
+                    assert gap == grid.verticalSpacing()
                 for button in buttons:
                     assert button.width() + 2 >= button.sizeHint().width()
                     assert_positive_geometry(button, content)
                 assert_non_overlapping(buttons, content)
             assert_non_overlapping(rows, content)
             assert scroll.horizontalScrollBar().maximum() == 0
-            navigation, system = (binding.widgets()[0].parentWidget() for binding in (
-                remote._remote_navigation_binding, remote._remote_key_binding,
-            ))
-            action_regions = remote._remote_action_regions_binding.widgets()[0].parentWidget()
-            assert navigation.mapTo(content, navigation.rect().bottomLeft()).y() < (
-                action_regions.mapTo(content, QPoint()).y()
-            )
-            assert action_regions.mapTo(content, action_regions.rect().bottomLeft()).y() < (
-                system.mapTo(content, QPoint()).y()
-            )
+            navigation, gestures, media, screen, system = [
+                QRect(row.mapTo(content, QPoint()), row.size()) for row in rows
+            ]
+            assert max(navigation.bottom(), screen.bottom()) < min(gestures.top(), system.top())
+            assert gestures.bottom() < media.top()
+            if system.left() <= gestures.right():
+                assert media.bottom() < system.top()
+            else:
+                assert system.left() > max(gestures.right(), media.right())
     finally:
         _close_feature_panel(panel)
 
@@ -2992,10 +2946,10 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
         _expand_remote_settings(qt_application, remote, advanced=True)
         remote.set_target_devices(["synthetic-device"])
         status, queue = remote._status_label, remote._remote_queue_label
-        assert status.text() == "空闲"
+        assert status.text() == "待启动 1 台"
         assert status.accessibleName() == "远程会话状态"
-        assert status.toolTip() == "状态：空闲"
-        assert status.accessibleDescription() == "状态：空闲"
+        assert status.toolTip() == "状态：待启动 1 台"
+        assert status.accessibleDescription() == "状态：待启动 1 台"
         assert queue.accessibleDescription() == "排队：0 · 已发送：0 · 失败：0"
         for width in (292, 420, 700, 1280):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
@@ -3020,6 +2974,9 @@ def test_remote_status_wraps_or_keeps_full_accessible_text_at_large_font(
 ):
     """292px/22pt 下状态可换行；若行高受限，完整文本仍可直接访问。"""
 
+    from gui.panels.remote_panel_scrcpy import RemoteDeviceSession
+    from services.remote import ScrcpyConfig
+
     panel, remote, scroll, _content = _show_feature_panel(
         "remote",
         292,
@@ -3029,8 +2986,13 @@ def test_remote_status_wraps_or_keeps_full_accessible_text_at_large_font(
     )
     try:
         remote.set_target_devices(["synthetic-device"])
+        session = RemoteDeviceSession(ScrcpyConfig(
+            exe="scrcpy", adb="adb", device="synthetic-device", maxsize="1024", fps="30",
+            bitrate="4", codec="h264", buffer="50", orientation="0",
+        ), state="preparing")
+        remote._device_sessions = {"synthetic-device": session}
         for state, localized in (
-            (RemotePanel._SESSION_STARTING, "准备中"),
+            (RemotePanel._SESSION_STARTING, "准备中 1 台"),
             (RemotePanel._SESSION_STOPPING, "正在停止…"),
         ):
             remote._set_session_state(state)

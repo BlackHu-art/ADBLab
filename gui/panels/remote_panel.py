@@ -514,84 +514,26 @@ class RemotePanel(BasePanel):
         return changed or previous != tuple(widget.minimumWidth() for widget in widgets)
 
     def _responsive_context(self, container):
-        """从本代双栏计划向内传递宽度，避免子网格借用整页空间或上一帧几何。"""
+        """仅操作区的内部双组分配列宽，设置区始终使用整页可用空间。"""
         context = super()._responsive_context(container)
-        sections = (
-            *getattr(self, "_remote_section_groups", ()),
-            *getattr(self, "_remote_bottom_sections", ()),
-        )
-        if container.objectName() == "remoteWorkspaceRow":
-            for section in sections:
-                required = max((
-                    binding.conservative_responsive_plan(context).required_width
-                    for binding, (row, _widgets) in zip(
-                        self._responsive_rows, self._responsive_row_owners,
-                    ) if section.view.isAncestorOf(row)
-                ), default=0)
-                section.setMinimumWidth(max(
-                    min(context.width, 320), required, section.headerView.minimumSizeHint().width(),
-                ))
-            workspace = getattr(self, "_remote_workspace_binding", None)
-            for column in workspace.widgets() if workspace is not None else ():
-                column.setMinimumWidth(max(
-                    section.minimumWidth() for section in sections
-                    if column.isAncestorOf(section)
-                ))
-            return context
-        for section in sections:
-            if section.view.isAncestorOf(container):
-                workspace = getattr(self, "_remote_workspace_binding", None)
-                width = section.view.width()
-                if workspace is not None:
-                    # 分区现在归属独立栏；宽度仍从外层工作区计划传播，避免重复分栏。
-                    workspace_context = self._responsive_context(
-                        section.parentWidget().parentWidget(),
-                    )
-                    plan = workspace.responsive_plan(workspace_context)
-                    width = max(0, (
-                        workspace_context.width - plan.spacing * (plan.mode.columns - 1)
-                    ) // plan.mode.columns)
-                context = replace(context, width=min(context.width, width))
-                break
-        regions = getattr(self, "_remote_action_regions", ())
-        if container.objectName() == "remoteActionRegionsRow":
-            # 只从保守计划传播不可再收缩的下限，避免上一帧三列方向盘锁住窄窗。
-            for region in regions:
-                required_width = max((
-                    binding.conservative_responsive_plan(context).required_width
-                    for binding, (row, _widgets) in zip(
-                        self._responsive_rows, self._responsive_row_owners,
-                    )
-                    if region.isAncestorOf(row)
-                ), default=0)
-                minimum = max(min(context.width, 124), required_width)
-                if region.minimumWidth() != minimum:
-                    region.setMinimumWidth(minimum)
-            return context
-        for region in regions:
-            if region.isAncestorOf(container):
-                region_width = region.width()
-                binding = getattr(self, "_remote_action_regions_binding", None)
-                if binding is not None:
-                    # 使用本代外层候选宽度，不读取尚未应用的新分栏几何。
-                    regions_context = self._responsive_context(region.parentWidget())
-                    plan = binding.responsive_plan(regions_context)
-                    columns = plan.mode.columns
-                    region_width = max(0, (
-                        regions_context.width - plan.spacing * (columns - 1)
-                    ) // columns)
-                width = min(context.width, region_width)
-                if container.objectName() == "remoteDirectionPadRow":
-                    pad = self._remote_action_binding
-                    minimum = pad.conservative_responsive_plan(context).required_width
-                    width = min(width, max(
-                        minimum, self._remote_action_buttons[0].height() * 3 + 16,
-                    ))
-                    # 方向盘居中且按自然宽度收缩；内层计划须使用最终盘宽。
-                    plan = pad.responsive_plan(replace(context, width=width))
-                    if not plan.overflow_required:
-                        width = plan.required_width
-                return replace(context, width=width)
+        for outer, binding in getattr(self, "_remote_split_groups", ()):
+            if container is outer:
+                for region in binding.widgets():
+                    required = max((
+                        nested.conservative_responsive_plan(context).required_width
+                        for nested, (row, _widgets) in zip(
+                            self._responsive_rows, self._responsive_row_owners,
+                        ) if region.isAncestorOf(row)
+                    ), default=0)
+                    region.setMinimumWidth(max(min(context.width, 280), required))
+                return context
+            for region in binding.widgets():
+                if region.isAncestorOf(container):
+                    outer_context = self._responsive_context(outer)
+                    plan = binding.responsive_plan(outer_context)
+                    width = max(0, (outer_context.width - plan.spacing *
+                                    (plan.mode.columns - 1)) // plan.mode.columns)
+                    return replace(context, width=min(context.width, width))
         return context
 
     def get_remote_session_devices(self) -> list[str]:

@@ -3,7 +3,7 @@
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt
 from PySide6.QtTest import QTest
-from qfluentwidgets import SwitchButton, TransparentPushButton
+from qfluentwidgets import SwitchButton, TransparentPushButton, TransparentToolButton
 
 from gui.styles import BaseStyles
 from gui.styles.typography import FontConfig, typography_manager
@@ -188,18 +188,18 @@ def test_session_surface_follows_mica_backdrop_changes(qt_application, theme):
         host.deleteLater()
 
 
-def test_regular_remote_actions_keep_a_visible_boundary_in_light_theme(remote_layout):
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_remote_actions_are_transparent_without_idle_borders(remote_layout, theme):
     _panel, remote, scroll, content, _settings = remote_layout
-    BaseStyles.switch_theme("Light")
+    BaseStyles.switch_theme(theme)
     remote.set_target_devices(["synthetic-device"])
-    for button in (remote._remote_key_buttons[1], remote._remote_action_buttons[0]):
+    for button in remote._remote_control_buttons:
+        assert isinstance(button, (TransparentPushButton, TransparentToolButton))
+        assert button.property("adblabKeyboardFocusOnly")
         scroll.ensureWidgetVisible(button)
         button.clearFocus()
-        QTest.mouseMove(content, QPoint(0, 0))
-        picture = button.grab().toImage()
-        assert _pixel(picture, 1, button.height() // 2) != _pixel(
-            picture, button.width() // 2, 4,
-        ), "普通遥控按钮应与浅色操作面有可辨识边界"
+        QTest.mouseMove(scroll.windowHandle(), QPoint(scroll.width() - 2, 2))
+        _assert_no_rectangular_border(button)
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
@@ -221,7 +221,8 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         original_hint = button.minimumSizeHint()
         original_geometry = button.geometry()
         idle = (
-            _assert_no_rectangular_border(button) if isinstance(button, TransparentPushButton)
+            _assert_no_rectangular_border(button)
+            if isinstance(button, (TransparentPushButton, TransparentToolButton))
             else button.grab().toImage()
         )
         # QWidget 的 mouseMove 在离屏后端可能只移动位置而不生成 Enter；窗口事件
@@ -242,6 +243,8 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         # 在按钮外释放，验证按压绘制而不触发真实动作。
         QTest.mouseRelease(button, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
         QTest.mouseMove(_scroll.windowHandle(), QPoint(_scroll.width() - 2, 2))
+        # 鼠标按下已取得焦点，先离焦才能真实触发键盘 FocusIn。
+        button.clearFocus()
         button.setFocus(Qt.FocusReason.TabFocusReason)
         assert button.hasFocus()
         focused = button.grab().toImage()
