@@ -39,6 +39,8 @@ class _CurrentPageStack(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._page_layout = _CurrentPageLayout(self)
+        # 堆栈子页实际铺满容器；声明相同边界，避免响应行误扣样式的默认边距。
+        self._page_layout.setContentsMargins(0, 0, 0, 0)
 
     def addWidget(self, page: QWidget) -> int:
         return self._page_layout.addWidget(page)
