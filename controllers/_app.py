@@ -123,9 +123,8 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
                 )
         else:
             error = result.get("error", "Unknown error")
-            self._emit_operation(
-                "apk_info", False, f"❌ APK Analysis failed: {apk_path}\nError: {error}"
-            )
+            # 结果层会合并原始 error，保持同一正文，避免包装后再次追加成重复详情。
+            self._emit_operation("apk_info", False, error)
 
     def list_installed_packages(self, devices: list[str]):
         if not self._require_devices(devices, "installed_packages"):

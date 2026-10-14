@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from zipfile import BadZipFile, ZipFile
 
 if TYPE_CHECKING:
-    from utils.tool_manifest import ToolBundle
+    from utils.tool_manifest import Aapt2Bundle, ToolBundle
 
 ROOT = Path(__file__).resolve().parents[1]
 if __package__ in {None, ""}:
@@ -30,18 +30,20 @@ def _digest(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def _check_files(bundle: ToolBundle, target: Path) -> None:
+def _check_files(bundle: ToolBundle | Aapt2Bundle, target: Path) -> None:
     for name in bundle.required_files:
         path = target / name
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"工具文件缺失或不是常规文件：{name}")
-    if os.name != "nt" and not bundle.adb.endswith(".exe"):
-        for name in (bundle.adb, bundle.scrcpy):
+    if os.name != "nt":
+        for name in bundle.executable_files:
+            if name.endswith(".exe"):
+                continue
             if not os.access(target / name, os.X_OK):
                 raise ValueError(f"工具没有执行权限：{name}")
 
 
-def _check_prepared(bundle: ToolBundle, target: Path) -> None:
+def _check_prepared(bundle: ToolBundle | Aapt2Bundle, target: Path) -> None:
     _check_files(bundle, target)
     if not bundle.url:
         return
@@ -61,13 +63,18 @@ def _check_prepared(bundle: ToolBundle, target: Path) -> None:
             raise ValueError(f"工具文件校验失败：{name}")
 
 
-def _extract_bundle(bundle: ToolBundle, archive: Path, destination: Path) -> None:
+def _extract_bundle(bundle: ToolBundle | Aapt2Bundle, archive: Path, destination: Path) -> None:
     """按已校验清单指定的格式安全解压，不依赖离线归档的文件扩展名。"""
     from utils.archive import safe_extract_zip
 
     if bundle.archive_format == "zip":
         with ZipFile(archive) as package:
             safe_extract_zip(package, destination)
+        # ZIP 解压不恢复 Unix 执行位；只授权已校验清单中的平台入口，不信任归档 mode。
+        for name in bundle.executable_files:
+            executable = destination / bundle.archive_root / name
+            if not name.endswith(".exe") and executable.is_file() and not executable.is_symlink():
+                executable.chmod(executable.stat().st_mode | 0o111)
         return
     if bundle.archive_format != "tar.gz":
         raise ValueError("不支持的工具归档格式")
@@ -82,7 +89,8 @@ def _extract_bundle(bundle: ToolBundle, archive: Path, destination: Path) -> Non
 
 
 def prepare_bundle(
-    bundle: ToolBundle, *, root: Path, archive: Path | None = None, check_only: bool = False,
+    bundle: ToolBundle | Aapt2Bundle, *, root: Path,
+    archive: Path | None = None, check_only: bool = False,
 ) -> Path:
     """校验后才更新工具目录；准备失败不发布新清单，离线校验绝不联网或修复文件。"""
     target = root / bundle.directory
@@ -126,18 +134,27 @@ def prepare_bundle(
 
 def main(argv: list[str] | None = None) -> int:
     """准备当前主机对应工具；未提供内置包的平台明确提示使用系统工具。"""
-    from utils.tool_manifest import get_tool_bundle
+    from utils.tool_manifest import get_aapt2_bundle, get_tool_bundle
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="仅校验现有工具，不下载")
-    parser.add_argument("--archive", type=Path, help="使用已下载的官方归档")
+    parser.add_argument("--archive", type=Path, help="使用已下载的官方 scrcpy 归档")
+    parser.add_argument("--aapt2-archive", type=Path, help="使用已下载的官方 AAPT2 JAR 归档")
     args = parser.parse_args(argv)
-    bundle = get_tool_bundle()
-    if bundle is None:
-        print("当前平台/架构使用系统 ADB 和 scrcpy。")
+    bundles = [
+        (bundle, archive)
+        for bundle, archive in (
+            (get_tool_bundle(), args.archive), (get_aapt2_bundle(), args.aapt2_archive),
+        )
+        if bundle is not None
+    ]
+    if not bundles:
+        print("当前平台/架构使用系统 ADB、scrcpy 和 APK 解析工具。")
         return 0
     try:
-        prepare_bundle(bundle, root=ROOT, archive=args.archive, check_only=args.check)
+        for bundle, archive in bundles:
+            prepare_bundle(bundle, root=ROOT, archive=archive, check_only=args.check)
+            print(f"平台工具已就绪：{bundle.directory}")
     except OSError as error:
         print(
             f"工具准备失败：{error}。请检查网络或目录访问权限；如工具被占用，关闭后重试。",
@@ -147,7 +164,6 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, tarfile.TarError, BadZipFile) as error:
         print(f"工具准备失败：{error}", file=sys.stderr)
         return 1
-    print(f"平台工具已就绪：{bundle.directory}")
     return 0
 
 

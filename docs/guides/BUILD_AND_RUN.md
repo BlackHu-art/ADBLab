@@ -11,7 +11,7 @@
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6；精确版本见依赖清单 | `requirements.txt` |
 | ADB/scrcpy | Windows/Linux x86_64 提供内置工具；其他平台使用环境工具；macOS 补充默认 SDK 与 Homebrew 路径发现，具体顺序见下文配置 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
-| 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
+| APK 解析与可选工具 | Windows/Linux x64 内置 AAPT2；其他平台兼容 PATH 中的 aapt/aapt2；Java 用于 chkbugreport JAR | [APK 解析工具](#apk-解析工具)、`models/adb_testing.py` |
 
 ## 安装
 
@@ -84,13 +84,42 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
 
+## APK 解析工具
+
+本地 APK 信息使用独立 AAPT2，Windows x64 与 Linux x86_64 不需要安装 Android SDK 或修改
+系统 PATH。版本、官方 Google Maven 地址和 SHA256 由 `utils/tool_manifest.py` 固定；准备脚本
+校验归档后保留可执行文件及完整 `NOTICE`。APK 解析只读文件，不安装或运行 APK，不连接设备。
+
+`utils/apk_tools.py` 优先选择当前平台完整的内置工具；未准备或未提供内置包的平台依次兼容
+PATH 中的 `aapt`、`aapt2`。执行失败会返回原始错误，不切换工具重复执行。源码首次运行使用
+下方平台工具准备命令；`--aapt2-archive` 可指定离线官方 JAR，已有完整工具可直接复用。
+应用运行时不下载工具，缺失时明确提示准备或恢复工具包。
+
+spec 和 CLI 构建共用资源清单，将对应平台 AAPT2 与 `NOTICE` 一起收集。onedir 从资源目录
+运行，onefile 复用稳定运行时缓存。`--self-check packaging` 单独检查随包文件、执行权限和
+AAPT2 版本，不允许 PATH 掩盖漏打包；版本输出可能在 stderr，校验同时检查双流及退出状态。
+
+### 文件访问策略与解析失败
+
+AAPT2 版本命令成功只证明工具可启动，不能证明它能读取指定 APK。若返回
+`failed opening zip: Invalid file`，先保留原始错误并核对 APK 的 ZIP 结构；当应用解释器
+可以读取，而原生工具或冻结程序无法读取时，应比较同一文件在不同进程中的长度、文件头与
+摘要，并核对文件身份和修改时间，避免把文件访问视图差异误判为 APK 损坏。
+
+受文件加密或访问策略管理的开发环境还可能使 onedir 在 Python 初始化阶段报告
+`No module named 'encodings'`。应先确认实际 `base_library.zip` 的位置、成员和字节码版本；
+资源存在但冻结进程读到不同内容时，需要管理员按正常授权流程核对主程序、helper 和原生
+工具的读取权限。AAPT2 的授权路径需分别覆盖源码/onedir 的资源位置和 onefile 的稳定缓存。
+只有确认资源确实遗漏时才调整打包收集，不通过重写文件或更换目录绕过访问策略。处理后
+重新验证同一 APK 的源码和实际产物解析；仅有工具版本检查或静态路径测试不能代替验收。
+
 ## 启动
 
 ### Windows 本地开发
 
 使用项目 Python 3.11 虚拟环境安装依赖后，首次运行先准备当前平台工具。准备脚本下载
-官方 `scrcpy-win64-v4.1.zip`，校验固定 SHA256 后安全解压到
-`runtime-tools/windows-x86_64/`；该生成目录不进入 Git：
+官方 `scrcpy-win64-v4.1.zip` 和独立 AAPT2 Maven 归档，分别校验固定 SHA256 后安全解压到
+`runtime-tools/windows-x86_64/` 与 `runtime-tools/aapt2/windows-x86_64/`；生成目录不进入 Git：
 
 ```powershell
 ./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py
@@ -100,7 +129,7 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 离线准备及只读校验：
 
 ```powershell
-./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py --archive C:/downloads/scrcpy-win64-v4.1.zip
+./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py --archive C:/downloads/scrcpy-win64-v4.1.zip --aapt2-archive C:/downloads/aapt2-9.4.1-15978811-windows.jar
 ./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py --check
 ```
 
@@ -130,17 +159,26 @@ scrcpy 会为其子进程补齐 `SDL_VIDEO_DRIVER=x11`（SDL3）与 `SDL_VIDEODR
 这些选择在进程启动时确定，更新后需重启应用。显式原生 Wayland 使用可拖动的便携工具栏，
 不会自动贴边；可通过启动环境 `QT_QPA_PLATFORM=wayland` 选择该模式。
 
-准备脚本按共享清单下载官方 `scrcpy-linux-x86_64-v4.1.tar.gz`，校验 SHA256 后安全解压。
-包内为 scrcpy/server 4.1 和 ADB 37.0.0；文件及准备清单位于 Git 忽略的 `runtime-tools/`，
+准备脚本按共享清单下载官方 `scrcpy-linux-x86_64-v4.1.tar.gz` 与独立 AAPT2 Maven 归档，
+分别校验 SHA256 后安全解压。scrcpy 包内为 scrcpy/server 4.1 和 ADB 37.0.0；
+文件及准备清单位于 Git 忽略的 `runtime-tools/`，
 再次准备会校验已存在文件并复用。可以离线准备或只读校验：
 
 ```bash
-.venv/bin/python scripts/prepare_runtime_tools.py --archive /path/to/scrcpy-linux-x86_64-v4.1.tar.gz
+.venv/bin/python scripts/prepare_runtime_tools.py --archive /path/to/scrcpy-linux-x86_64-v4.1.tar.gz --aapt2-archive /path/to/aapt2-9.4.1-15978811-linux.jar
 .venv/bin/python scripts/prepare_runtime_tools.py --check
 ```
 
-应用启动时不联网下载工具。当前二进制已在 Ubuntu 24.04 x86_64 验证版本命令，要求 glibc 2.35
-及 libudev 等系统库；实际桌面显示、USB 权限与设备授权仍需按部署环境验证。Linux ARM/macOS
+应用启动时不联网下载工具。现有 scrcpy/ADB 二进制已在 Ubuntu 24.04 x86_64 验证版本命令，要求
+glibc 2.35 及 libudev 等系统库。固定版本 AAPT2 的 Linux 归档经摘要核对与 ELF 静态分析，
+确认为 x86_64，声明的最高 glibc 符号要求为 `GLIBC_2.16`；
+[Ubuntu 22.04 的 glibc 2.35](https://packages.ubuntu.com/jammy/libc6) 与
+[Ubuntu 24.04 的 glibc 2.39](https://packages.ubuntu.com/noble/libc6) 均满足这项要求。
+此结论仅覆盖 AAPT2 的架构和声明的动态依赖，不代表 Linux 实际执行或 APK 解析已验收。
+整个 ADBLab 产物还受 Python、Qt 和其他依赖的 ABI 约束，不能沿用 AAPT2 的 glibc 下限；
+应在计划支持的最低 Ubuntu 版本上构建并验证产物，参见
+[PyInstaller 的 Linux 兼容性说明](https://pyinstaller.org/en/v6.22.2/usage.html#making-gnu-linux-apps-forward-compatible)。
+实际桌面显示、USB 权限与设备授权仍需按部署环境验证。Linux ARM/macOS
 未交付内置包，需要兼容的系统 ADB/scrcpy。Windows 开发环境按上一节准备工具。
 完整产物打包与自检可使用：
 
@@ -360,6 +398,7 @@ CLI 与本地 spec 在构建前运行工具准备脚本，任一准备步骤失�
 | --- | --- | --- |
 | Windows x64 | Genymobile/scrcpy 的 v4.1 Release：`scrcpy-win64-v4.1.zip`，包含 ADB、scrcpy/server、DLL 与许可 | `runtime-tools/windows-x86_64/` |
 | Linux x64 | 同一 Release：`scrcpy-linux-x86_64-v4.1.tar.gz`，包含 ADB、scrcpy/server 与许可 | `runtime-tools/linux-x86_64/` |
+| Windows / Linux x64 | Google Maven 的 AAPT2，版本与摘要见 `utils/tool_manifest.py`；包含可执行文件和 `NOTICE` | `runtime-tools/aapt2/windows-x86_64/` 或 `runtime-tools/aapt2/linux-x86_64/` |
 | macOS x64 / arm64 | 不生成内置工具包；运行时发现用户安装的兼容工具 | 无 |
 
 只有校验通过的已有工具目录可复用；网络、摘要或准备过程失败会停止构建。生成目录不进入 Git，
@@ -429,7 +468,7 @@ pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints �
 | 问题 | 已确认原因/处理 |
 | --- | --- |
 | 找不到设备 | ADB 不可用、设备未授权/offline、网络 target 不完整；连接目标必须含 port |
-| APK 信息解析失败 | `aapt` 不在 PATH 或 APK 不存在 |
+| APK 信息解析失败 | 检查 [APK 解析工具](#apk-解析工具) 是否完整，以及 APK 是否存在且能被工具读取；保留工具返回的实际错误 |
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | Remote 提示 scrcpy 不可用 | 检查 SCRCPY_PATH；Windows/Linux x86_64 检查准备后的工具包，macOS/其他架构需兼容的系统工具 |
 | Linux 提示无法加载 xcb 插件 | 检查实际缺失的系统库；缺少 libxcb-cursor.so.0 时安装 libxcb-cursor0，再运行 GUI 自检 |

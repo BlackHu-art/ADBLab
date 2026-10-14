@@ -78,6 +78,16 @@ scrcpy 的 [Apache License 2.0 文本](https://github.com/Genymobile/scrcpy/blob
 随 Windows 包保存在 `LICENSE.txt`，随 Linux 包保存在 `LICENSE`。正式分发前仍需按实际
 制品清单核对其中 Android 平台二进制及动态库的各自许可和 notice 文件。
 
+## Android AAPT2
+
+APK 信息解析使用 Google 官方 Maven 分发的独立 [AAPT2](https://developer.android.com/tools/aapt2)，
+当前固定版本与 Windows/Linux x64 归档 SHA256 见 `utils/tool_manifest.py`。归档仅在平台工具
+准备阶段下载，生成目录为 `runtime-tools/aapt2/` 下的对应平台子目录，不进入 Git。
+
+归档的完整 `NOTICE` 包含 AAPT2 的 Apache License 2.0 及其依赖的第三方许可说明，准备和打包
+必须原样保留，随可执行文件一并分发；自检将缺少 `NOTICE` 视为工具包不完整。没有复制上游
+AAPT2 源码，也不要求终端用户安装 Android SDK 或 Java。
+
 ## ChkBugReport
 
 `resources/chkbugreport-0.5-215.jar` 的 manifest 入口为

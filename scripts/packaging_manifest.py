@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from utils.tool_manifest import get_tool_bundle
+from utils.tool_manifest import get_aapt2_bundle, get_tool_bundle
 
 COMMON_DATA = (
     ("resources/icons", "resources/icons"),
@@ -30,8 +30,11 @@ SUBMODULE_PACKAGES = ("mobileperf", "qfluentwidgets")
 def resource_datas(platform: str | None = None) -> list[tuple[str, str]]:
     """返回当前平台工具的资源列表，平台与架构不匹配的二进制不进入产物。"""
     platform = sys.platform if platform is None else platform
-    bundle = get_tool_bundle(platform)
-    tool_data = [(bundle.directory, bundle.directory)] if bundle else []
+    tool_data = [
+        (bundle.directory, bundle.directory)
+        for bundle in (get_tool_bundle(platform), get_aapt2_bundle(platform))
+        if bundle is not None
+    ]
     return [*COMMON_DATA, *tool_data]
 
 

@@ -58,6 +58,10 @@ def test_spec_and_cli_consume_the_same_resources_and_hidden_imports(monkeypatch,
     assert options["hiddenimports"] == ["mobileperf.included", "qfluentwidgets.included"]
     assert (("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64")
             in expected_data) is (platform == "win32")
+    assert (("runtime-tools/aapt2/windows-x86_64", "runtime-tools/aapt2/windows-x86_64")
+            in expected_data) is (platform == "win32")
+    assert (("runtime-tools/aapt2/linux-x86_64", "runtime-tools/aapt2/linux-x86_64")
+            in expected_data) is (platform == "linux")
     assert ("build/runtime-helpers", "runtime-helpers") in expected_data
 
 
@@ -82,7 +86,9 @@ def test_manifest_change_reaches_both_real_consumers(monkeypatch):
 
 def test_spec_finds_manifest_outside_repository_working_directory(tmp_path):
     code = r'''
-import json, runpy, sys, types, subprocess
+import json, runpy, sys, types, subprocess, platform
+# 标准库架构探测也可能启动子进程，不应被下面的构建替身接管。
+platform.machine = lambda: "x86_64"
 hooks = types.ModuleType("PyInstaller.utils.hooks")
 hooks.collect_submodules = lambda package: [package + ".included"]
 sys.modules["PyInstaller.utils.hooks"] = hooks
@@ -137,7 +143,9 @@ def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
 
 def test_build_dry_run_does_not_import_qt_or_invoke_packager(tmp_path):
     code = r'''
-import importlib.abc, runpy, subprocess, sys
+import importlib.abc, runpy, subprocess, sys, platform
+# 固定本用例架构，使禁止构建的断言仅约束待测命令。
+platform.machine = lambda: "x86_64"
 class BlockBuildImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split(".")[0] in {"PySide6", "PyInstaller"}:
