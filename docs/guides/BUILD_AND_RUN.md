@@ -95,6 +95,12 @@ PATH 中的 `aapt`、`aapt2`。执行失败会返回原始错误，不切换工�
 下方平台工具准备命令；`--aapt2-archive` 可指定离线官方 JAR，已有完整工具可直接复用。
 应用运行时不下载工具，缺失时明确提示准备或恢复工具包。
 
+若源码自检报告 `FAIL resource:aapt2.exe` / `FAIL resource:aapt2-NOTICE`（Linux 对应
+`aapt2`），先执行 `scripts/prepare_runtime_tools.py --check`。ADB/scrcpy 已就绪不代表独立
+AAPT2 目录已准备；运行不带 `--check` 的准备脚本会复用校验通过的工具，并补齐缺失目录。
+完成后再次运行 `--check` 和 `main.py --self-check packaging`。不要仅复制可执行文件而遗漏
+`NOTICE` 与 `.bundle.json`，也不要通过 PATH 工具掩盖随包资源缺失。
+
 spec 和 CLI 构建共用资源清单，将对应平台 AAPT2 与 `NOTICE` 一起收集。onedir 从资源目录
 运行，onefile 复用稳定运行时缓存。`--self-check packaging` 单独检查随包文件、执行权限和
 AAPT2 版本，不允许 PATH 掩盖漏打包；版本输出可能在 stderr，校验同时检查双流及退出状态。
@@ -117,7 +123,7 @@ AAPT2 版本命令成功只证明工具可启动，不能证明它能读取指�
 
 ### Windows 本地开发
 
-使用项目 Python 3.11 虚拟环境安装依赖后，首次运行先准备当前平台工具。准备脚本下载
+使用项目 Python 3.11 虚拟环境安装依赖后，首次运行或拉取工具清单变更后先准备当前平台工具。准备脚本下载
 官方 `scrcpy-win64-v4.1.zip` 和独立 AAPT2 Maven 归档，分别校验固定 SHA256 后安全解压到
 `runtime-tools/windows-x86_64/` 与 `runtime-tools/aapt2/windows-x86_64/`；生成目录不进入 Git：
 

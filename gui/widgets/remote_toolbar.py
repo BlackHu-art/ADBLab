@@ -16,6 +16,8 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QResizeEvent,
+    QScreen,
+    QShowEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -35,11 +37,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import FluentIcon
+from shiboken6 import isValid
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_font_role
 from gui.styles.icon_loader import ResourceIcon, get_themed_icon
+from gui.widgets.remote_toolbar_material import RemoteToolbarMaterial
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,12 @@ class _MorePopup(QFrame):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         _paint_floating_surface(self)
+
+    def isMicaEffectEnabled(self) -> bool:
+        """返回所属侧栏为此表面实际应用的原生材质状态。"""
+        owner = self.parentWidget()
+        material = getattr(owner, "_material", None)
+        return bool(material is not None and material.is_active(self))
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -278,11 +288,15 @@ class RemoteToolbar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.setWindowTitle(tr("设备操作"))
         self.setAccessibleName(tr("设备操作"))
-        self._available = False
+        self._available: bool | None = None
         self._disposed = False
         self._collapsed = False
         self._portable = portable
         self._positioning_popup = False
+        self._popup_measurement: tuple | None = None
+        self._popup_measured_size = QSize()
+        self._popup_screen: QScreen | None = None
+        self._screen_signal_connected = False
         self._watching_application = False
         self._target_label = tr("当前投屏设备")
         self._commands: dict[str, tuple[_Command, QToolButton | QPushButton]] = {}
@@ -388,6 +402,11 @@ class RemoteToolbar(QWidget):
         for button in self.findChildren(QAbstractButton):
             button.installEventFilter(self._button_focus_filter)
 
+        self._material = RemoteToolbarMaterial(
+            self, self._popup, parent.window() if parent is not None else None,
+        )
+        self._material.changed.connect(self._refresh_style)
+
         BaseStyles.theme_changed.connect(self._refresh_style)
         BaseStyles.accent_color_changed.connect(self._refresh_style)
         BaseStyles.fonts_changed.connect(self._refresh_style)
@@ -422,7 +441,10 @@ class RemoteToolbar(QWidget):
 
     def set_available(self, available: bool) -> None:
         """关闭操作准入时同时收起面板；收起按钮仍可用于管理侧栏外观。"""
-        self._available = bool(available) and not self._disposed
+        current = bool(available) and not self._disposed
+        if self._available == current:
+            return
+        self._available = current
         for _command, button in self._commands.values():
             button.setEnabled(self._available)
         self._more_button.setEnabled(self._available)
@@ -441,11 +463,18 @@ class RemoteToolbar(QWidget):
         if self._disposed:
             return
         self._disposed = True
+        self._material.dispose()
         self.set_available(False)
         self.hide()
         BaseStyles.theme_changed.disconnect(self._refresh_style)
         BaseStyles.accent_color_changed.disconnect(self._refresh_style)
         BaseStyles.fonts_changed.disconnect(self._refresh_style)
+        self._bind_popup_screen(None)
+
+    def isMicaEffectEnabled(self) -> bool:
+        """只暴露侧栏已生效的原生材质，不把主窗口的请求值当作生效状态。"""
+        material = getattr(self, "_material", None)
+        return bool(material is not None and material.is_active(self))
 
     def _make_button(
         self, command: _Command, parent: QWidget, *, compact: bool = False,
@@ -557,30 +586,66 @@ class RemoteToolbar(QWidget):
     def _position_popup(self) -> None:
         if self._positioning_popup:
             return
-        bounds = self.screen().availableGeometry()
-        if self._portable:
-            self._positioning_popup = True
-            try:
-                width = min(
-                    max(280, self._popup_content.sizeHint().width() + 48),
-                    max(120, bounds.width() - self._rail.width() - 24),
+        self._positioning_popup = True
+        try:
+            screen = self.screen()
+            bounds = screen.availableGeometry()
+            signature = (
+                screen, bounds.getRect(), self.devicePixelRatioF(),
+                self._popup_content.font().toString(),
+                self._rail.width() if self._portable else 0,
+            )
+            if signature != self._popup_measurement:
+                hint = self._popup_content.sizeHint()
+                width_limit = (
+                    max(120, bounds.width() - self._rail.width() - 24)
+                    if self._portable else bounds.width()
                 )
-                height = min(self._popup_content.sizeHint().height() + 100, bounds.height() - 16)
-                self._popup.setFixedSize(width, max(120, height))
-                self._refresh_portable_geometry()
-            finally:
-                self._positioning_popup = False
+                self._popup_measured_size = QSize(
+                    min(max(280, hint.width() + 48), width_limit),
+                    max(120, min(hint.height() + 100, bounds.height() - 16)),
+                )
+                self._popup_measurement = signature
+            size = self._popup_measured_size
+            if self._portable:
+                if self._popup.size() != size or self._popup.minimumSize() != size:
+                    self._popup.setFixedSize(size)
+                    self._refresh_portable_geometry()
+                return
+            frame = self.frameGeometry()
+            if self._popup.size() != size:
+                self._popup.resize(size)
+            x = frame.right() + 9
+            if x + size.width() > bounds.right() + 1:
+                x = frame.left() - size.width() - 8
+            x = max(bounds.left(), min(x, bounds.right() - size.width() + 1))
+            y = max(bounds.top(), min(frame.top(), bounds.bottom() - self._popup.height() + 1))
+            if self._popup.x() != x or self._popup.y() != y:
+                self._popup.move(x, y)
+        finally:
+            self._positioning_popup = False
+
+    def _bind_popup_screen(self, screen: QScreen | None) -> None:
+        """显示器约束变化只使自然尺寸缓存失效，不在连续移动中重做度量。"""
+        previous = self._popup_screen
+        if previous is screen:
             return
-        frame = self.frameGeometry()
-        width = min(max(280, self._popup_content.sizeHint().width() + 48), bounds.width())
-        height = min(self._popup_content.sizeHint().height() + 100, bounds.height() - 16)
-        self._popup.resize(width, max(120, height))
-        x = frame.right() + 9
-        if x + width > bounds.right() + 1:
-            x = frame.left() - width - 8
-        x = max(bounds.left(), min(x, bounds.right() - width + 1))
-        y = max(bounds.top(), min(frame.top(), bounds.bottom() - self._popup.height() + 1))
-        self._popup.move(x, y)
+        if previous is not None and isValid(previous):
+            previous.availableGeometryChanged.disconnect(self._popup_constraints_changed)
+            previous.logicalDotsPerInchChanged.disconnect(self._popup_constraints_changed)
+        self._popup_screen = screen
+        if screen is not None:
+            screen.availableGeometryChanged.connect(self._popup_constraints_changed)
+            screen.logicalDotsPerInchChanged.connect(self._popup_constraints_changed)
+        self._popup_constraints_changed()
+
+    @Slot()
+    def _popup_constraints_changed(self) -> None:
+        if self._disposed:
+            return
+        self._popup_measurement = None
+        if self._popup.isVisible():
+            self._position_popup()
 
     def _refresh_portable_geometry(self) -> None:
         """内嵌面板开合后恢复顶层自然尺寸，不依赖合成器的全局定位能力。"""
@@ -594,9 +659,12 @@ class RemoteToolbar(QWidget):
     def _refresh_style(self) -> None:
         if self._disposed:
             return
+        self._popup_measurement = None
         foreground = BaseStyles.color("TEXT_PRIMARY")
         secondary = BaseStyles.color("TEXT_SECONDARY")
         background = BaseStyles.color("TOOLBAR_BG")
+        toolbar_background = "transparent" if self.isMicaEffectEnabled() else background
+        popup_background = "transparent" if self._popup.isMicaEffectEnabled() else background
         border = BaseStyles.color("BORDER_COLOR")
         hover = BaseStyles.color("BUTTON_HOVER")
         pressed = BaseStyles.color("BUTTON_PRESSED")
@@ -612,8 +680,11 @@ class RemoteToolbar(QWidget):
         scroll_handle = BaseStyles.color("SCROLLBAR_HANDLE")
         scroll_hover = BaseStyles.color("SCROLLBAR_HANDLE_HOVER")
         style = f"""
-        QWidget#remoteToolbar, QFrame#remoteToolbarPopup {{
-            background: {background}; border: 1px solid {border}; border-radius: 10px;
+        QWidget#remoteToolbar {{
+            background: {toolbar_background}; border: 1px solid {border}; border-radius: 10px;
+        }}
+        QFrame#remoteToolbarPopup {{
+            background: {popup_background}; border: 1px solid {border}; border-radius: 10px;
         }}
         QLabel {{ color: {foreground}; background: transparent; border: none; }}
         QLabel#remoteToolbarTarget, QLabel#remoteToolbarGroup {{ color: {secondary}; }}
@@ -628,7 +699,9 @@ class RemoteToolbar(QWidget):
         QToolButton[remoteKeyboardFocus="true"]:focus,
         QPushButton[remoteKeyboardFocus="true"]:focus {{ border-color: {accent}; }}
         QToolButton:disabled, QPushButton:disabled {{ color: {disabled}; }}
-        QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; border: none; }}
+        QScrollArea, QScrollArea > QWidget > QWidget {{
+            background: {popup_background}; border: none;
+        }}
         QScrollBar:vertical {{ background: {scroll_background}; width: 8px;
             margin: 0; border: none; border-radius: 4px; }}
         QScrollBar::handle:vertical {{ background: {scroll_handle};
@@ -641,6 +714,9 @@ class RemoteToolbar(QWidget):
         """
         self.setStyleSheet(style)
         self._popup.setStyleSheet(style)
+        # setWidget 会开启内容自动填充；三层都让出背景才能显示实际 DWM 材质。
+        for surface in (self._popup_scroll, self._popup_scroll.viewport(), self._popup_content):
+            surface.setAutoFillBackground(False)
         apply_font_role(self, FontRole.UI)
         apply_font_role(self._popup, FontRole.UI)
         for command, button in self._commands.values():
@@ -686,6 +762,15 @@ class RemoteToolbar(QWidget):
     def hideEvent(self, event: QHideEvent) -> None:
         self.dismiss_popup()
         super().hideEvent(event)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle is not None and not self._disposed:
+            if not self._screen_signal_connected:
+                handle.screenChanged.connect(self._bind_popup_screen)
+                self._screen_signal_connected = True
+            self._bind_popup_screen(handle.screen())
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():

@@ -185,8 +185,13 @@ class _KeyboardFocusObserver(QObject):
         self.setObjectName("adblabKeyboardFocusObserver")
         widget.setProperty("adblabKeyboardFocus", False)
         widget.installEventFilter(self)
+        if isinstance(widget, QAbstractItemView):
+            widget.viewport().installEventFilter(self)
 
     def eventFilter(self, watched, event) -> bool:
+        owner = self.parent()
+        if isinstance(owner, QAbstractItemView) and watched is owner.viewport():
+            watched = owner
         if not isinstance(watched, QWidget) or not watched.property("adblabKeyboardFocusOnly"):
             return super().eventFilter(watched, event)
         keyboard = None
@@ -202,12 +207,20 @@ class _KeyboardFocusObserver(QObject):
         if keyboard is not None and watched.property("adblabKeyboardFocus") != keyboard:
             minimum, maximum = watched.minimumSize(), watched.maximumSize()
             watched.setProperty("adblabKeyboardFocus", keyboard)
-            watched.style().unpolish(watched)
-            watched.style().polish(watched)
+            if isinstance(watched, QAbstractItemView):
+                # Windows Fluent 表格持有独立原生样式，手工 unpolish 会触发原生崩溃。
+                # 重用已合成的 QSS 只重新计算选择器，保留主题、字体与注册来源。
+                watched.setStyleSheet(watched.styleSheet())
+            else:
+                watched.style().unpolish(watched)
+                watched.style().polish(watched)
             # Fluent 复选框 QSS 自带最小尺寸；刷新焦点不能覆盖字号和行布局的约束。
             watched.setMinimumSize(minimum)
             watched.setMaximumSize(maximum)
-            watched.update()
+            if isinstance(watched, QAbstractItemView):
+                QWidget.update(watched)
+            else:
+                watched.update()
         return super().eventFilter(watched, event)
 
 

@@ -1148,8 +1148,13 @@ def test_workspace_status_stays_visible_above_full_height_overview_content(qt_ap
 
 
 def test_remote_workspace_uses_shared_multi_selection_and_keeps_running_targets(
-    qt_application,
+    qt_application, monkeypatch,
 ):
+    """空选择主动作展开共享列表，勾选变化不改写已有镜像目标。"""
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr(
+        "models.device_store.DeviceStore.get_full_devices_info", lambda _devices: [],
+    )
     frame = build_main_frame()
     try:
         frame.show()
@@ -1161,14 +1166,25 @@ def test_remote_workspace_uses_shared_multi_selection_and_keeps_running_targets(
         assert page is not host.no_device_page
         assert frame.left_panel._scrcpy_tab is not None
         remote = frame.left_panel._scrcpy_tab
+        start_scrcpy = Mock()
+        monkeypatch.setattr(remote._scrcpy_controller, "_start_scrcpy", start_scrcpy)
+        qt_application.processEvents()
         assert remote.selected_devices == []
         assert remote.category_stack.current_key == "mirroring"
-        assert not remote.btn_start.isEnabled()
+        assert remote.btn_start.isVisible()
+        assert remote.btn_start.isEnabled()
+        assert remote.btn_start.text() == "选择设备"
         assert remote.remote_status_badge.text() == "未选择"
 
         bar = frame._global_device_bar
-        bar.open_picker()
+        assert not bar.is_selector_expanded
+        QTest.mouseClick(remote.btn_start, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert bar.is_selector_expanded
         picker = bar._picker
+        assert picker is not None and picker.isVisibleTo(frame)
+        assert remote.selected_devices == []
+        start_scrcpy.assert_not_called()
         assert not picker.select_all_button.isHidden()
         picker.select_all_button.click()
         assert remote.selected_devices == ["device-1", "device-2"]
@@ -1196,9 +1212,21 @@ def test_remote_workspace_uses_shared_multi_selection_and_keeps_running_targets(
         assert remote.fps.isEnabled()
         frame._on_devices_updated([])
         assert remote.selected_devices == []
-        assert not remote.btn_start.isEnabled()
+        assert remote.btn_start.isEnabled()
+        assert remote.btn_start.text() == "选择设备"
         assert not remote.btn_stop.isEnabled()
         assert remote.remote_status_badge.text() == "未选择"
+        bar.collapse_selector()
+        assert not bar.is_selector_expanded
+        QTest.mouseClick(remote.btn_start, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert bar.is_selector_expanded
+        assert picker.isVisibleTo(frame)
+        assert not any(
+            picker.device_list.item(index).flags() & Qt.ItemFlag.ItemIsUserCheckable
+            for index in range(picker.device_list.count())
+        )
+        start_scrcpy.assert_not_called()
         assert host.stack.currentWidget() is page
     finally:
         frame._unbind_window_screen()

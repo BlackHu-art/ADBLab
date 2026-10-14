@@ -7705,5 +7705,146 @@ Android device management, apps and diagnostics</translation>
             <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
             <translation>Control the online devices selected in the main window; mirroring is not required</translation>
         </message>
+
+        <message>
+            <source>此项不能为空，请输入内容</source>
+            <translation>This field is required. Enter a value.</translation>
+        </message>
+        <message>
+            <source>请输入 {minimum}–{maximum} 范围内的整数</source>
+            <translation>Enter an integer between {minimum} and {maximum}.</translation>
+        </message>
+        <message>
+            <source>请输入 {minimum}–{maximum} 范围内的数值，最多 {decimals} 位小数</source>
+            <translation>Enter a number between {minimum} and {maximum} with at most {decimals} decimal places.</translation>
+        </message>
+        <message>
+            <source>输入格式无效，请检查后重试</source>
+            <translation>Invalid input format. Check the value and try again.</translation>
+        </message>
+        <message>
+            <source>仍在等待采集结束</source>
+            <translation>Still waiting for capture to finish</translation>
+        </message>
+        <message>
+            <source>后台任务尚未完成清理，请稍候。</source>
+            <translation>The background task is still cleaning up. Please wait.</translation>
+        </message>
+        <message>
+            <source>正在停止采集</source>
+            <translation>Stopping capture</translation>
+        </message>
+        <message>
+            <source>完成后可以重新开始采集。</source>
+            <translation>You can start a new capture when this finishes.</translation>
+        </message>
+        <message>
+            <source>日志采集启动失败</source>
+            <translation>Log capture failed to start</translation>
+        </message>
+        <message>
+            <source>日志采集意外结束</source>
+            <translation>Log capture ended unexpectedly</translation>
+        </message>
+        <message>
+            <source>正在清理本次采集，请稍候。</source>
+            <translation>Cleaning up this capture. Please wait.</translation>
+        </message>
+        <message>
+            <source>请检查设备连接，再点击上方「开始」重试。</source>
+            <translation>Check the device connection, then click "Start" above to retry.</translation>
+        </message>
+        <message>
+            <source>请检查设备连接，可点击上方「停止」结束本次采集。</source>
+            <translation>Check the device connection. Click "Stop" above to end this capture.</translation>
+        </message>
+        <message>
+            <source>请连接当前设备后再开始采集。</source>
+            <translation>Connect the current device before starting capture.</translation>
+        </message>
+        <message>
+            <source>设备未连接</source>
+            <translation>Device not connected</translation>
+        </message>
+        <message>
+            <source>正在启动日志采集</source>
+            <translation>Starting log capture</translation>
+        </message>
+        <message>
+            <source>正在准备日志流，请稍候。</source>
+            <translation>Preparing the log stream. Please wait.</translation>
+        </message>
+        <message>
+            <source>正在等待目标应用启动</source>
+            <translation>Waiting for the target app to start</translation>
+        </message>
+        <message>
+            <source>请在设备上打开目标应用，随后会自动显示日志。</source>
+            <translation>Open the target app on the device. Its logs will appear automatically.</translation>
+        </message>
+        <message>
+            <source>正在重试应用查询</source>
+            <translation>Retrying app lookup</translation>
+        </message>
+        <message>
+            <source>暂时无法获取应用进程，重试期间仅等待该应用的日志。</source>
+            <translation>The app process is temporarily unavailable. Only this app's logs will be shown while retrying.</translation>
+        </message>
+        <message>
+            <source>正在切换应用过滤</source>
+            <translation>Switching app filter</translation>
+        </message>
+        <message>
+            <source>正在等待当前过滤条件下的新日志。</source>
+            <translation>Waiting for new logs that match the current filter.</translation>
+        </message>
+        <message>
+            <source>可调整日志等级，或等待符合条件的新日志。</source>
+            <translation>Adjust the log level or wait for new logs that match the filter.</translation>
+        </message>
+        <message>
+            <source>可调整日志等级查看已有记录。</source>
+            <translation>Adjust the log level to view existing records.</translation>
+        </message>
+        <message>
+            <source>当前条件下暂无日志</source>
+            <translation>No logs match the current filter</translation>
+        </message>
+        <message>
+            <source>已清空显示，采集仍在继续。</source>
+            <translation>Display cleared; capture is still running.</translation>
+        </message>
+        <message>
+            <source>采集正在运行，新日志到达后会显示在这里。</source>
+            <translation>Capture is running. New logs will appear here as they arrive.</translation>
+        </message>
+        <message>
+            <source>正在等待新日志</source>
+            <translation>Waiting for new logs</translation>
+        </message>
+        <message>
+            <source>尚未选择操作设备</source>
+            <translation>No device selected</translation>
+        </message>
+        <message>
+            <source>请在顶部设备列表中勾选当前设备。</source>
+            <translation>Select the current device in the device list at the top.</translation>
+        </message>
+        <message>
+            <source>点击上方「开始」启动新的采集。</source>
+            <translation>Click "Start" above to begin a new capture.</translation>
+        </message>
+        <message>
+            <source>准备采集设备日志</source>
+            <translation>Ready to capture device logs</translation>
+        </message>
+        <message>
+            <source>点击上方「开始」，应用可留空以查看全部日志。</source>
+            <translation>Click "Start" above. Leave the app field empty to view all logs.</translation>
+        </message>
+        <message>
+            <source>正在启动日志采集…</source>
+            <translation>Starting log capture…</translation>
+        </message>
     </context>
 </TS>

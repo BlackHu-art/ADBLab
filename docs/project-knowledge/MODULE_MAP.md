@@ -1,7 +1,7 @@
 ---
 status: current
-last_verified: 2026-10-09
-related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
+last_verified: 2026-10-14
+related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
 # 模块地图
@@ -9,6 +9,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 本页只回答“功能在哪、边界是什么、从哪里验证”。调用顺序见
 [BUSINESS_FLOW](BUSINESS_FLOW.md)，线程与生命周期见 [ARCHITECTURE](ARCHITECTURE.md)，外部依赖见
 [DEPENDENCY_MAP](DEPENDENCY_MAP.md)。测试列均相对于 `tests/`，只列代表性入口，不维护文件数量。
+界面组件的组合、呈现接入方式和有意保留的例外见 [UI_IMPLEMENTATION](UI_IMPLEMENTATION.md)。
 
 ## 启动、界面与功能宿主
 
@@ -30,6 +31,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 业务面板与分类布局 | DeviceManager、AppPanel、SystemPanel 和 RemotePanel 的内容、信号、设备上下文和响应式布局 | `gui/panels/`、`gui/widgets/category_stack.py`、`gui/widgets/responsive_*.py` | `test_app_panel_categories.py`、`test_system_panel_categories.py`、`test_responsive_panels.py`、`test_model_panels.py` |
 | 内嵌功能页 | App Manager、File Explorer、Live Logcat、Performance、Screenshot 与 Settings About 页面 | `gui/features/`、`gui/dialogs/app_manager*.py`、`gui/dialogs/file_explorer*.py`、`gui/dialogs/live_logcat*.py`、`gui/dialogs/performance_launcher*.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/screenshot_viewer_*.py` | `test_app_manager_selection.py`、`test_screenshot_page.py`、`test_model_performance_launcher.py` |
 | 瞬态交互与样式 | 窗口内非模态消息、模态输入与短操作表单、系统文件选择器，以及主题、字体、无边框内容分区和复合控件 | `gui/notifications.py`、`gui/dialogs/fluent_dialog.py`、`gui/styles/`、`gui/widgets/content_section.py`、`gui/widgets/preset_spin_box.py` | `test_fluent_dialog_contract.py`、`test_fluent_components.py`、`test_content_section.py`、`test_feature_typography.py` |
+| 页面滚动、展开与响应式协调 | 局部滚轮控制、按屏幕刷新率近似采样、自然内容裁切、有界布局收敛；文本及图片保留专用输入语义，具体接入见 [UI 实现](UI_IMPLEMENTATION.md) | `gui/widgets/settings_scroll.py`、`gui/widgets/frame_animation.py`、`gui/widgets/layout_settle.py`、`gui/widgets/responsive_*.py`、`gui/widgets/setting_card_layout.py` | `test_page_scroll_integration.py`、`test_frame_animation.py`、`test_scroll_reflow_efficiency.py`、`test_device_selector_animation.py`、`test_connection_expansion_animation.py`、`test_device_details_animation.py` |
 
 ## 业务协调、执行与资源生命周期
 

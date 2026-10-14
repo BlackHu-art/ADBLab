@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QLocale, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QLocale, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -87,6 +87,71 @@ class _SuffixedIntValidator(QIntValidator):
             numeric_text = numeric_text[: -len(self._suffix)].rstrip()
         state = cast(Any, super().validate(numeric_text, position))[0]
         return state, input_text, position
+
+
+class _FieldValidationFeedback(QObject):
+    """由必填输入框持有错误反馈，首次编辑或提交后才显示，随控件销毁断开连接。"""
+
+    def __init__(self, field: LineEdit):
+        super().__init__(field)
+        self.setObjectName("adblabFieldValidationFeedback")
+        self._field = field
+        self._active = False
+        self._original_hints: tuple[str, str] | None = None
+        field.textEdited.connect(self.validate)
+        field.textChanged.connect(self.refresh)
+        field.installEventFilter(self)
+
+    def validate(self, *_args) -> bool:
+        """提交总按当前 validator 校验；无效文本只用于判断，不进入提示文案。"""
+
+        self._active = True
+        acceptable = bool(self._field.text().strip()) and self._field.hasAcceptableInput()
+        self._show_error(not acceptable)
+        return acceptable
+
+    def refresh(self, *_args) -> None:
+        """同步已触碰字段的程序赋值和范围变化，不让初始化空值提前报错。"""
+
+        if self._active:
+            if self._field.isEnabled():
+                self.validate()
+            else:
+                self._show_error(False)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._field and event.type() == QEvent.Type.EnabledChange:
+            self.refresh()
+        return super().eventFilter(watched, event)
+
+    def _show_error(self, invalid: bool) -> None:
+        field = self._field
+        field.setError(invalid)
+        if invalid:
+            if self._original_hints is None:
+                self._original_hints = (field.toolTip(), field.accessibleDescription())
+            message = self._error_message()
+            field.setToolTip(message)
+            field.setAccessibleDescription(message)
+        elif self._original_hints is not None:
+            field.setToolTip(self._original_hints[0])
+            field.setAccessibleDescription(self._original_hints[1])
+            self._original_hints = None
+
+    def _error_message(self) -> str:
+        validator = self._field.validator()
+        if isinstance(validator, QIntValidator):
+            return tr("请输入 {minimum}–{maximum} 范围内的整数").format(
+                minimum=validator.bottom(), maximum=validator.top(),
+            )
+        if isinstance(validator, QDoubleValidator):
+            return tr("请输入 {minimum}–{maximum} 范围内的数值，最多 {decimals} 位小数").format(
+                minimum=f"{validator.bottom():g}", maximum=f"{validator.top():g}",
+                decimals=validator.decimals(),
+            )
+        if not self._field.text().strip():
+            return tr("此项不能为空，请输入内容")
+        return tr("输入格式无效，请检查后重试")
 
 
 class BasePanel(QWidget):
@@ -663,20 +728,26 @@ class BasePanel(QWidget):
                 break
 
     def _validate_fields(self, *fields, focus_invalid: bool = True) -> bool:
-        """统一验证必填字段和 Qt validator，失败时不进入业务信号层。"""
+        """同步所有必填字段的错误态，聚焦首个失败项且不进入业务信号层。"""
 
+        first_invalid = None
         for field in fields:
-            target = cast(Any, self._input_widget(field))
-            text = target.text().strip() if hasattr(target, "text") else ""
-            acceptable = bool(text) and (
-                not hasattr(target, "hasAcceptableInput") or target.hasAcceptableInput()
-            )
-            target.setProperty("inputInvalid", not acceptable)
-            if not acceptable:
-                if focus_invalid:
-                    target.setFocus(Qt.FocusReason.OtherFocusReason)
-                return False
-        return True
+            target = cast(LineEdit, self._input_widget(field))
+            if not self._field_feedback(target).validate() and first_invalid is None:
+                first_invalid = target
+        if first_invalid is not None and focus_invalid:
+            first_invalid.setFocus(Qt.FocusReason.OtherFocusReason)
+        return first_invalid is None
+
+    @staticmethod
+    def _field_feedback(field: LineEdit) -> _FieldValidationFeedback:
+        """只为已声明必填的字段幂等注册反馈，不影响可选字段的空值语义。"""
+
+        feedback = field.findChild(
+            _FieldValidationFeedback, "adblabFieldValidationFeedback",
+            Qt.FindChildOption.FindDirectChildrenOnly,
+        )
+        return feedback if feedback is not None else _FieldValidationFeedback(field)
 
     def _set_combo_int_validator(
         self,
@@ -694,6 +765,7 @@ class BasePanel(QWidget):
             else QIntValidator(minimum, maximum, combo)
         )
         combo.setValidator(validator)
+        self._field_feedback(combo)
 
     def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建 qfluentwidgets 只读下拉框。"""

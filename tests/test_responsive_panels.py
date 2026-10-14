@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QFont, QIntValidator, QRegularExpressionValidator
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -25,9 +25,10 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
-from qfluentwidgets import HeaderCardWidget
+from qfluentwidgets import FluentSystemColor, HeaderCardWidget
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
+from gui.features.media import ScreenshotPage
 from gui.panels.app_panel import AppPanel
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
@@ -1935,6 +1936,185 @@ def test_monkey_throttle_unit_is_visual_only_and_persists_numeric_value(
         app_panel.monkey_throttle.setText("60,000 ms")
         assert not editor.hasAcceptableInput()
         assert app_panel._collect_monkey_params() is None
+    finally:
+        _close_feature_panel(panel)
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_system_field_errors_follow_edits_theme_and_preserve_action_admission(
+    qt_application, monkeypatch, theme,
+):
+    """真实端口输入使用 Fluent 错误色，纠正后恢复提示且仅发送一次业务请求。"""
+    BaseStyles.switch_theme(theme)
+    panel, system, _scroll, _content = _show_feature_panel(
+        "system", 680, 12, qt_application, monkeypatch,
+    )
+    try:
+        devices = ["test-device"]
+        panel.update_device_list(devices)
+        monkeypatch.setattr(
+            type(panel._devices_tab), "selected_devices", property(lambda _: devices),
+        )
+        system.update_action_states()
+        _show_widget_category(qt_application, system, system.tcpip_port_input)
+        field = system.tcpip_port_input
+        field.setToolTip("TCP/IP port help")
+        field.setAccessibleDescription("TCP/IP port description")
+        request = QSignalSpy(panel.signals.tcpip_mode_requested)
+        assert not field.isError()
+        field.setFocus()
+        field.selectAll()
+        QTest.keyClick(field, Qt.Key.Key_Backspace)
+
+        assert field.isError()
+        assert "1" in field.toolTip() and "65535" in field.toolTip()
+        assert field.accessibleDescription() == field.toolTip()
+        assert field.focusedBorderColor() == FluentSystemColor.CRITICAL_FOREGROUND.color()
+        assert not system.btn_tcpip_mode.isEnabled()
+        system.btn_tcpip_mode.clicked.emit()
+        assert request.count() == 0
+        QTest.keyClicks(field, "5555")
+        assert not field.isError()
+        assert field.toolTip() == "TCP/IP port help"
+        assert field.accessibleDescription() == "TCP/IP port description"
+        assert system.btn_tcpip_mode.isEnabled()
+        system.btn_tcpip_mode.click()
+        assert request.count() == 1
+        assert list(request.at(0)) == [devices, "5555"]
+        field.selectAll()
+        QTest.keyClick(field, Qt.Key.Key_Backspace)
+        assert field.isError()
+        assert request.count() == 1
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_system_validation_marks_all_required_fields_and_rechecks_changed_range(
+    qt_application, monkeypatch,
+):
+    """首次空值不报错，提交定位首项；范围切换不保留过期错误，未选设备不提交。"""
+    panel, system, _scroll, _content = _show_feature_panel(
+        "system", 680, 12, qt_application, monkeypatch,
+    )
+    try:
+        devices = ["test-device"]
+        panel.update_device_list(devices)
+        monkeypatch.setattr(
+            type(panel._devices_tab), "selected_devices", property(lambda _: devices),
+        )
+        system.update_action_states()
+        assert not system.fwd_local.isError() and not system.fwd_remote.isError()
+        assert not system.intent_controls.data_uri.isError()
+        _show_widget_category(qt_application, system, system.fwd_local)
+        forward = QSignalSpy(panel.signals.forward_port_requested)
+        reverse = QSignalSpy(panel.signals.reverse_port_requested)
+        system.btn_forward.clicked.emit()
+        assert system.fwd_local.isError() and system.fwd_remote.isError()
+        assert system.fwd_local.hasFocus()
+        assert forward.count() == reverse.count() == 0
+        system.fwd_local.setText("2345")
+        assert not system.fwd_local.isError() and system.fwd_remote.isError()
+        system.fwd_remote.setText("3456")
+        assert not system.fwd_remote.isError()
+        system.btn_forward.click()
+        system.btn_reverse.click()
+        assert list(forward.at(0)) == [devices, "2345", "3456"]
+        assert list(reverse.at(0)) == [devices, "3456", "2345"]
+        devices.clear()
+        system.btn_reverse.clicked.emit()
+        assert reverse.count() == 1
+
+        _show_widget_category(qt_application, system, system.battery_val)
+        system.battery_param.setCurrentText("status")
+        system.battery_val.setText("50")
+        assert not system._validate_fields(system.battery_val, focus_invalid=False)
+        assert system.battery_val.isError()
+        system.battery_param.setCurrentText("level")
+        assert not system.battery_val.isError()
+        system.battery_param.setCurrentText("status")
+        assert system.battery_val.isError()
+        assert "5" in system.battery_val.toolTip()
+        system.battery_val.setEnabled(False)
+        assert not system.battery_val.isError()
+        system.battery_val.setEnabled(True)
+        assert system.battery_val.isError()
+        system.battery_val.setText("3")
+        assert not system.battery_val.isError()
+
+        _show_widget_category(qt_application, system, system.emu_geo_lon)
+        field = system.emu_geo_lon
+        field.setText("180")
+        field.selectAll()
+        QTest.keyClick(field, Qt.Key.Key_Backspace)
+        assert field.isError()
+        assert "-180" in field.toolTip() and "180" in field.toolTip()
+        assert "6" in field.toolTip()
+        field.setText("12.5")
+        assert not field.isError()
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_app_validation_recovers_text_and_monkey_without_extra_submission(
+    qt_application, monkeypatch,
+):
+    """文本与带单位 Monkey 数值共用校验反馈，修正和关闭重建不残留错误状态。"""
+    panel, apps, _scroll, _content = _show_feature_panel(
+        "apps", 680, 12, qt_application, monkeypatch,
+    )
+    media = ScreenshotPage()
+    media.set_device_tools(apps.text_screen_tools, apps.text_screen_tools_parking)
+    media.resize(680, 700)
+    media.show()
+    qt_application.processEvents()
+    try:
+        devices = ["test-device"]
+        panel.update_device_list(devices)
+        monkeypatch.setattr(
+            type(panel._devices_tab), "selected_devices", property(lambda _: devices),
+        )
+        apps._update_action_states()
+        assert apps.email_text_sender.isVisibleTo(media)
+        text_request = QSignalSpy(panel.signals.send_text_requested)
+        apps.btn_send_text.click()
+        assert apps.email_text_sender.isError()
+        assert apps.email_text_sender.toolTip()
+        assert text_request.count() == 0
+        apps.email_text_sender.setText("hello")
+        assert not apps.email_text_sender.isError()
+        assert not apps.email_text_sender.toolTip()
+        apps.btn_send_text.click()
+        assert text_request.count() == 1
+        assert list(text_request.at(0)) == [devices, "hello"]
+
+        media.close()
+        panel.activateWindow()
+        _show_widget_category(qt_application, apps, apps.monkey_throttle)
+        apps.monkey_throttle.setText("60001 ms")
+        apps.monkey_events.window().activateWindow()
+        apps.monkey_events.setFocus()
+        wait_until(qt_application, apps.monkey_events.hasFocus)
+        assert not apps._validate_fields(apps.monkey_throttle, focus_invalid=False)
+        assert apps.monkey_events.hasFocus()
+        assert apps.monkey_throttle.isError()
+        assert "60000" in apps.monkey_throttle.toolTip()
+        apps.monkey_throttle.setText("321 ms")
+        assert not apps.monkey_throttle.isError()
+        assert apps._collect_monkey_params()["throttle"] == 321
+    finally:
+        media.request_dispose("test")
+        assert media.is_disposed
+        media.close()
+        media.deleteLater()
+        destroyed = QSignalSpy(apps.monkey_throttle.destroyed)
+        _close_feature_panel(panel)
+        assert destroyed.count() == 1
+    panel, apps, _scroll, _content = _show_feature_panel(
+        "apps", 680, 12, qt_application, monkeypatch,
+    )
+    try:
+        assert not apps.email_text_sender.isError()
+        assert not apps.monkey_throttle.isError()
     finally:
         _close_feature_panel(panel)
 

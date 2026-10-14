@@ -10,10 +10,12 @@
 | 项目用途与能力 | [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md) |
 | 功能在哪、从哪里测试 | [MODULE_MAP](project-knowledge/MODULE_MAP.md) |
 | 分层、对象归属、并发与关闭 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md) |
+| UI 组合、材质字体、控件、布局与滚动动画 | [UI_IMPLEMENTATION](project-knowledge/UI_IMPLEMENTATION.md) |
 | 导航、设备目标、业务成功/失败/取消路径 | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md) |
 | 数据对象、配置字段、存储与保留 | [DATA_FLOW](project-knowledge/DATA_FLOW.md) |
 | 依赖、外部工具及命令边界 | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md) |
 | 未闭环问题与验证缺口 | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
+| UI 尚未统一的实现与候选优化 | [UI 优化账本](project-knowledge/RISKS_AND_DEBT.md#ui-一致性与体验优化) |
 | 项目专有术语 | [glossary](project-knowledge/glossary.md) |
 | 环境、运行、翻译资源、打包与版本 | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
 | ADB 执行环境自动适配与独立快速命令 | [ADB_FAST](guides/ADB_FAST.md) |

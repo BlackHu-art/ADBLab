@@ -5,8 +5,14 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontMetrics
-from PySide6.QtWidgets import QLabel, QPushButton, QScrollArea, QStyleOptionViewItem
+from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
+from PySide6.QtWidgets import (
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QStyleOptionViewItem,
+    QTableWidgetItem,
+)
 from qfluentwidgets import HeaderCardWidget
 
 from core.settings_manager import AppSettings
@@ -309,6 +315,71 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             )
             BaseStyles.reload_from_settings()
             qt_application.processEvents()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("initial_size", [12, 22])
+def test_file_labels_and_preview_actions_follow_font_settings_without_losing_state(
+    qt_application, monkeypatch, theme, initial_size,
+):
+    """初建和已打开预览都跟随字体往返变化，不重建目录或丢失未保存编辑。"""
+    families = [family for family in QFontDatabase.families() if not family.startswith("@")]
+    assert len(families) >= 2, "font change coverage requires two available font families"
+    initial_family, changed_family = families[:2]
+    settings = {
+        "font_family": initial_family, "ui_font_size": initial_size, "log_font_size": 9,
+    }
+
+    class Settings:
+        def get(self, key, default=None):
+            return settings.get(key, default)
+
+    monkeypatch.setattr(AppSettings, "instance", staticmethod(lambda: Settings()))
+    monkeypatch.setattr(FileExplorerPage, "_refresh", lambda _self: pytest.fail("unexpected I/O"))
+    BaseStyles.switch_theme(theme)
+    BaseStyles.reload_from_settings()
+    page = FileExplorerPage(device_ip="test-device")
+    page.resize(1500, 850)
+    page.table.setRowCount(1)
+    selected = QTableWidgetItem("notes.txt")
+    page.table.setItem(0, page.NAME_COL, selected)
+    page.table.selectRow(0)
+    page.table.setColumnWidth(page.NAME_COL, 320)
+    page._show_text_preview("notes.txt", "original", "/storage/emulated/0/notes.txt")
+    page.preview_text_edit.appendPlainText("unsaved change")
+    document = page.preview_text_edit.document()
+    cursor = page.preview_text_edit.textCursor()
+    cursor.setPosition(2)
+    page.preview_text_edit.setTextCursor(cursor)
+    page.show()
+    qt_application.processEvents()
+    try:
+        for family, size in [(initial_family, initial_size), (changed_family, 22),
+                             (initial_family, 12)]:
+            settings.update(font_family=family, ui_font_size=size)
+            BaseStyles.reload_from_settings()
+            qt_application.processEvents()
+            for widget, expected_size in (
+                (page._path_label, size), (page.status_bar, size - 1),
+                (page.preview_save_as_btn, size), (page.preview_save_device_btn, size),
+            ):
+                assert widget.isVisibleTo(page)
+                assert widget.font().family() == family
+                assert widget.font().pointSize() == expected_size
+            for button in (page.preview_save_as_btn, page.preview_save_device_btn):
+                assert button.height() >= button.fontMetrics().height() + 10
+                assert button.isEnabled()
+            assert page.current_path == "/storage/emulated/0"
+            assert page.table.columnWidth(page.NAME_COL) == 320
+            assert page.table.item(0, page.NAME_COL) is selected
+            assert selected.isSelected()
+            assert page.preview_text_edit.document() is document
+            assert document.isModified()
+            assert page.preview_text_edit.toPlainText() == "original\nunsaved change"
+            assert page.preview_text_edit.textCursor().position() == 2
+    finally:
+        assert page.request_dispose("test")
+        page.close()
 
 
 def test_performance_large_font_keeps_bounded_scrollable_content(

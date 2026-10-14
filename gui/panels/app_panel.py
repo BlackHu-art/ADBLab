@@ -99,6 +99,7 @@ class AppPanel(BasePanel):
         gts_l = g_ts.viewLayout
         gts_l.setSpacing(2)
         self.email_text_sender = self._in(tr("输入邮箱、验证码或其他文本…"))
+        self._field_feedback(self.email_text_sender)
         self.btn_send_text = self._b(
             tr("发送文本"), "text-aa.svg", tooltip=tr("在所选设备上输入这段文本")
         )

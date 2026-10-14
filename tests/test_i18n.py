@@ -63,6 +63,100 @@ def test_application_catalog_translates_real_text_and_preserves_unknown_entries(
     assert i18n.tr("未收录的测试词条") == "未收录的测试词条"
 
 
+@pytest.mark.parametrize("language,expected", [
+    ("zh_CN", (
+        "此项不能为空，请输入内容",
+        "请输入 1–65535 范围内的整数",
+        "请输入 0–100 范围内的数值，最多 2 位小数",
+        "输入格式无效，请检查后重试",
+    )),
+    ("zh_HK", (
+        "此項不能為空，請輸入內容",
+        "請輸入 1–65535 範圍內的整數",
+        "請輸入 0–100 範圍內的數值，最多 2 位小數",
+        "輸入格式無效，請檢查後重試",
+    )),
+    ("en_US", (
+        "This field is required. Enter a value.",
+        "Enter an integer between 1 and 65535.",
+        "Enter a number between 0 and 100 with at most 2 decimal places.",
+        "Invalid input format. Check the value and try again.",
+    )),
+])
+def test_form_validation_hints_use_bundled_translations(installed_translators, language, expected):
+    """错误原因通过实际内嵌词库翻译，保留整数和小数范围占位符。"""
+    installed_translators(language)
+    actual = (
+        i18n.tr("此项不能为空，请输入内容"),
+        i18n.tr("请输入 {minimum}–{maximum} 范围内的整数").format(minimum=1, maximum=65535),
+        i18n.tr("请输入 {minimum}–{maximum} 范围内的数值，最多 {decimals} 位小数").format(
+            minimum=0, maximum=100, decimals=2,
+        ),
+        i18n.tr("输入格式无效，请检查后重试"),
+    )
+    assert actual == expected
+
+
+@pytest.mark.parametrize("language,ready,starting,cleared,status,reading", [
+    ("zh_CN",
+     "准备采集设备日志\n点击上方「开始」，应用可留空以查看全部日志。",
+     "正在启动日志采集\n正在准备日志流，请稍候。",
+     "正在等待新日志\n已清空显示，采集仍在继续。",
+     "正在启动日志采集…",
+     "缓存 2 / 8000 行 · 已暂停跟随（2 行新日志）\n"
+     "仅保留最近 8000 行原始日志，超出后移除最旧记录；导出保存当前筛选结果"),
+    ("zh_HK",
+     "準備擷取裝置日誌\n點擊上方「開始」，應用程式可留空以查看全部日誌。",
+     "正在啟動日誌擷取\n正在準備日誌串流，請稍候。",
+     "正在等待新日誌\n已清空顯示，擷取仍在繼續。",
+     "正在啟動日誌擷取…",
+     "緩存 2 / 8000 行 · 已暫停跟隨（2 行新日誌）\n"
+     "僅保留最近 8000 行原始日誌，超出後移除最舊記錄；匯出會儲存目前的篩選結果"),
+    ("en_US",
+     'Ready to capture device logs\n'
+     'Click "Start" above. Leave the app field empty to view all logs.',
+     "Starting log capture\nPreparing the log stream. Please wait.",
+     "Waiting for new logs\nDisplay cleared; capture is still running.",
+     "Starting log capture…",
+     "Buffered 2 / 8000 lines · Following paused (2 new lines)\n"
+     "Only the latest 8000 original log lines are retained; the oldest are removed "
+     "when the limit is reached. Export saves the current filtered results."),
+], ids=["zh_CN", "zh_HK", "en_US"])
+def test_logcat_empty_hints_and_reading_status_use_bundled_translations(
+    installed_translators, monkeypatch, language, ready, starting, cleared, status, reading,
+):
+    """真实页面从内嵌词库显示空态和启动状态，阅读计数保留格式参数。"""
+    from gui.dialogs.live_logcat import LiveLogcatPage, LogcatWorker
+    from tests.test_live_logcat_empty_state import _release_worker
+    from tests.test_phase2_live_logcat_gate import FakeQtTaskSupervisor
+
+    installed_translators(language)
+    monkeypatch.setattr(LogcatWorker, "start", lambda _worker: None)
+    page = LiveLogcatPage(device_ip="demo", task_supervisor=FakeQtTaskSupervisor())
+    try:
+        assert page.output.placeholderText() == ready
+        assert page.output.accessibleDescription() == ready
+        page._start()
+        assert page.output.placeholderText() == starting
+        assert page.status_bar.text() == page.status_bar.toolTip() == status
+        page._on_worker_status(page.worker, "正在采集")
+        page._clear()
+        assert page.output.placeholderText() == cleared
+        assert page.output.accessibleDescription() == cleared
+        assert page.output.document().isEmpty()
+        page.follow_action.trigger()
+        page._on_line("first device record", "I")
+        page._on_line("second device record", "I")
+        page._flush_pending_lines()
+        assert page.cache_ring.toolTip() == reading
+        assert page.cache_ring.accessibleDescription() == reading
+        assert page.output.toPlainText() == "first device record\nsecond device record"
+        assert page.output.placeholderText() == page.output.accessibleDescription() == ""
+    finally:
+        _release_worker(page)
+        page.close()
+
+
 @pytest.mark.parametrize("language,qr,code,paired", [
     ("zh_CN", "扫码配对", "配对码", "已配对，连接尚未确认"),
     ("zh_HK", "掃碼配對", "配對碼", "已配對，連線尚未確認"),

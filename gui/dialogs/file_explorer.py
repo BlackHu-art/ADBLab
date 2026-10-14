@@ -52,6 +52,8 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import (
     add_menu_action,
+    apply_focus_indicator,
+    apply_font_role,
     apply_label_role,
     apply_reading_surface,
     create_transient_menu,
@@ -734,7 +736,8 @@ class FileExplorerPage(QWidget):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         mono_font = bs.font_for_role(FontRole.MONO)
-        self.setStyleSheet(f"QTableView:focus {{ border: 2px solid {bs.color('BORDER_FOCUS')}; }}")
+        # 公共入口随强调色刷新，仅键盘导航显示外框且始终预留相同边宽。
+        apply_focus_indicator(self.table, selector="QTableView", keyboard_only=True)
         self.setFont(ui_font)
         # 页头由 CardWidget 绘制，主题变化仍需保留设备连接与操作选择的区分。
         if hasattr(self, "header_card"):
@@ -749,6 +752,8 @@ class FileExplorerPage(QWidget):
             max(38, self.table.fontMetrics().height() + 16)
         )
         # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
+        self._path_label.setFont(ui_font)
+        self.status_bar.setFont(bs.font_for_role(FontRole.UI_SMALL))
         self.path_field.setFont(mono_font)
         self.search_field.setFont(ui_font)
         for field in (self.path_field, self.search_field):
@@ -775,6 +780,8 @@ class FileExplorerPage(QWidget):
         self.preview_title.setFont(bs.font_for_role(FontRole.UI))
         self.preview_empty_label.setFont(bs.font_for_role(FontRole.UI))
         self.preview_loading_label.setFont(bs.font_for_role(FontRole.UI))
+        for button in (self.preview_save_as_btn, self.preview_save_device_btn):
+            apply_font_role(button, FontRole.UI, ensure_height=True)
         self.preview_image.image_info.setFont(bs.font_for_role(FontRole.UI_SMALL))
         self.preview_text_edit.setFont(mono_font)
         self.preview_text_edit.document().setDefaultFont(mono_font)

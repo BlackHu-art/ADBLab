@@ -59,6 +59,118 @@ class FakeWindowApi:
         return True
 
 
+class FakeWindowSubscription:
+    def __init__(self, callback):
+        self.callback = callback
+        self.active = True
+        self.closes = 0
+
+    def close(self):
+        self.active = False
+        self.closes += 1
+
+
+class EventWindowApi(FakeWindowApi):
+    def __init__(self):
+        super().__init__()
+        self.subscriptions = []
+
+    def subscribe_changes(self, hwnd, pid, callback):
+        subscription = FakeWindowSubscription(callback)
+        self.subscriptions.append((hwnd, pid, subscription))
+        return subscription
+
+
+def test_event_callback_waits_for_verified_binding_and_only_marks_dirty():
+    api = EventWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    changes = []
+    setter = getattr(tracker, "set_change_callback", None)
+    assert callable(setter), "窗口变化应能主动通知侧栏，不能只依赖周期轮询"
+    setter(lambda: changes.append(True))
+    assert not tracker.event_tracking
+    assert api.subscriptions == []
+
+    assert tracker.snapshot() is not None
+    assert tracker.event_tracking
+    hwnd, pid, subscription = api.subscriptions[0]
+    assert (hwnd, pid) == (21, 200)
+
+    def unexpected_read(*_args):
+        pytest.fail("原生事件回调只能通知变更，不得同步查询或定位窗口")
+
+    api.identity = unexpected_read
+    api.snapshot = unexpected_read
+    api.position_tool = unexpected_read
+    subscription.callback()
+    assert changes == [True]
+
+
+@pytest.mark.parametrize("end", ["unsubscribe", "close", "lost"])
+def test_event_subscription_closes_and_rejects_late_notifications(end):
+    api = EventWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    changes = []
+    tracker.set_change_callback(lambda: changes.append(True))
+    assert tracker.snapshot() is not None
+    subscription = api.subscriptions[0][2]
+    if end == "unsubscribe":
+        tracker.set_change_callback(None)
+    elif end == "close":
+        tracker.close()
+        tracker.close()
+    else:
+        api.windows[21] = (900, "session-title")
+        assert tracker.snapshot() is None
+        assert tracker.lost
+
+    subscription.callback()
+    assert changes == []
+    assert subscription.closes == 1
+    assert not tracker.event_tracking
+
+
+def test_replaced_event_callback_rejects_the_previous_subscription():
+    api = EventWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    assert tracker.snapshot() is not None
+    changes = []
+    tracker.set_change_callback(lambda: changes.append("old"))
+    first = api.subscriptions[0][2]
+    def callback():
+        changes.append("new")
+
+    tracker.set_change_callback(callback)
+    tracker.set_change_callback(callback)
+
+    first.callback()
+    api.subscriptions[1][2].callback()
+    assert len(api.subscriptions) == 2
+    assert first.closes == 1
+    assert changes == ["new"]
+
+
+@pytest.mark.parametrize("mode", ["unsupported", "failure", "inactive"])
+def test_missing_or_failed_event_support_preserves_snapshot_fallback(mode):
+    api = FakeWindowApi()
+    if mode == "failure":
+        def fail_subscription(*_args):
+            raise OSError("hook unavailable")
+
+        api.subscribe_changes = fail_subscription
+    elif mode == "inactive":
+        subscription = FakeWindowSubscription(lambda: None)
+        subscription.active = False
+        api.subscribe_changes = lambda *_args: subscription
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    tracker.set_change_callback(lambda: pytest.fail("注册失败不应产生事件"))
+
+    assert tracker.snapshot() is not None
+    assert not tracker.event_tracking
+    assert tracker.snapshot() is not None
+    assert not tracker.lost
+
+
 def test_exact_title_requires_root_or_descendant_pid():
     api = FakeWindowApi()
     api.windows = {9: (900, "session-title"), 10: (200, "session-title-extra")}

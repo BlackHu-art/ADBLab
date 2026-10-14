@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 _LOGGER = logging.getLogger(__name__)
 PhysicalRect = tuple[int, int, int, int]
@@ -45,6 +45,23 @@ class _WindowApi(Protocol):
     ) -> bool: ...
 
 
+class _WindowSubscription(Protocol):
+    """可选事件能力；订阅和释放必须在调用方的同一消息循环线程完成。"""
+
+    @property
+    def active(self) -> bool: ...
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class _EventWindowApi(Protocol):
+    """独立可选事件协议，基础窗口后端无须实现。"""
+
+    def subscribe_changes(
+        self, hwnd: int, pid: int, callback: Callable[[], None],
+    ) -> _WindowSubscription | None: ...
+
+
 class WindowsWindowTracker:
     """复用原生 API 绑定启动进程及其后代窗口；失效后永久结束，调用方负责关闭。"""
 
@@ -67,6 +84,9 @@ class WindowsWindowTracker:
         self._next_discovery = float("-inf")
         self._bound: tuple[int, int] | None = None
         self._lost = False
+        self._change_callback: Callable[[], None] | None = None
+        self._event_subscription: _WindowSubscription | None = None
+        self._event_generation = 0
 
     @property
     def supported(self) -> bool:
@@ -78,11 +98,66 @@ class WindowsWindowTracker:
         """已绑定身份是否失效；首次窗口尚未出现不属于失效。"""
         return self._lost
 
+    @property
+    def event_tracking(self) -> bool:
+        """是否已订阅绑定窗口的变化；为假时调用方继续使用轮询兜底。"""
+        return self._event_subscription is not None and self._event_subscription.active
+
+    def set_change_callback(self, callback: Callable[[], None] | None) -> None:
+        """在 GUI 消息循环线程设置变更通知；通知只标记待刷新，不能同步定位。
+
+        首次身份绑定前保留通知，绑定后才订阅原生事件。取消、替换和关闭会作废旧
+        通知；无事件能力的后端继续按原有 snapshot 接口工作。
+        """
+        if callback is self._change_callback or self._lost:
+            return
+        self._stop_event_tracking()
+        self._change_callback = callback
+        self._start_event_tracking()
+
+    def _start_event_tracking(self) -> None:
+        bound = self._bound
+        if bound is None or self._change_callback is None or self._lost:
+            return
+        api = self._api
+        if not isinstance(api, _EventWindowApi):
+            return
+        generation = self._event_generation
+
+        def changed() -> None:
+            if self._lost or generation != self._event_generation or bound != self._bound:
+                return
+            callback = self._change_callback
+            if callback is not None:
+                callback()
+
+        try:
+            subscription = api.subscribe_changes(*bound, changed)
+            if subscription is not None:
+                if subscription.active:
+                    self._event_subscription = subscription
+                else:
+                    subscription.close()
+        except OSError:
+            _LOGGER.debug("订阅投屏窗口事件失败，继续轮询", exc_info=True)
+
+    def _stop_event_tracking(self) -> None:
+        """先作废通知再释放，防止释放期间重入或已排队的回调继续影响侧栏。"""
+        self._event_generation += 1
+        subscription, self._event_subscription = self._event_subscription, None
+        if subscription is not None:
+            subscription.close()
+
+    def _mark_lost(self) -> None:
+        self._lost = True
+        self._change_callback = None
+        self._stop_event_tracking()
+
     def close(self) -> None:
         """会话结束时撤销绑定并释放自有原生连接；重复关闭不重复释放。"""
+        self._mark_lost()
         api, self._api = self._api, None
         self._bound = None
-        self._lost = True
         close = getattr(api, "close", None)
         if callable(close):
             try:
@@ -112,16 +187,17 @@ class WindowsWindowTracker:
                     if snapshot is not None and snapshot.pid == identity[0]:
                         if api.identity(hwnd) == identity:
                             self._bound = (hwnd, identity[0])
+                            self._start_event_tracking()
                             return snapshot
                 return None
             hwnd, pid = self._bound
             if api.identity(hwnd) != (pid, self._title):
-                self._lost = True
+                self._mark_lost()
                 return None
             snapshot = api.snapshot(hwnd)
             # 几何查询可能短暂失败；仅身份变化才终止，避免把最小化当成退出。
             if api.identity(hwnd) != (pid, self._title):
-                self._lost = True
+                self._mark_lost()
                 return None
             if snapshot is None or snapshot.pid != pid:
                 return None
@@ -264,6 +340,19 @@ class _Win32WindowApi:
         kernel.Process32NextW.restype = wintypes.BOOL
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.CloseHandle.restype = wintypes.BOOL
+
+    def subscribe_changes(
+        self, hwnd: int, pid: int, callback: Callable[[], None],
+    ) -> _WindowSubscription | None:
+        """只为已验证窗口安装可释放的事件通知；缺少 API 时保留周期轮询。"""
+        if not all(
+            callable(getattr(self._user32, name, None))
+            for name in ("SetWinEventHook", "UnhookWinEvent")
+        ):
+            return None
+        from services.remote.window_events import WinEventSubscription
+
+        return WinEventSubscription(self._user32, hwnd, pid, callback)
 
     def process_parents(self) -> dict[int, int]:
         """一次 Toolhelp32 快照只读取父 PID，句柄始终在本调用内释放。"""

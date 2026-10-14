@@ -40,6 +40,71 @@ def _show_more(toolbar, application):
     assert toolbar.popup_window.isVisible()
 
 
+@pytest.mark.parametrize("available", [False, True])
+def test_unchanged_availability_does_not_rewrite_button_state_or_tooltips(
+    qt_application, monkeypatch, available,
+):
+    """窗口跟随轮询不重复刷新稳定的操作准入、提示和更多面板。"""
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    toolbar = RemoteToolbar()
+    try:
+        toolbar.set_available(available)
+        writes = []
+        for button in (*_buttons(toolbar), _more_button(toolbar)):
+            monkeypatch.setattr(button, "setEnabled", lambda value: writes.append(value))
+        monkeypatch.setattr(toolbar, "_refresh_tooltips", lambda: writes.append("tooltip"))
+        monkeypatch.setattr(toolbar, "dismiss_popup", lambda: writes.append("dismiss"))
+        for _ in range(8):
+            toolbar.set_available(available)
+        assert writes == []
+    finally:
+        toolbar.dispose()
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_popup_motion_reuses_measurement_until_font_or_screen_constraints_change(
+    qt_application, monkeypatch, portable,
+):
+    """同屏移动仅更新位置；字体和可用区变化重新度量以保留完整操作行。"""
+    from gui.styles import BaseStyles
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    bounds = QRect(0, 0, 1600, 1000)
+    screen = SimpleNamespace(availableGeometry=lambda: QRect(bounds))
+    monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: screen)
+    toolbar = RemoteToolbar(portable=portable)
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        _show_more(toolbar, qt_application)
+        measurements = []
+        original = toolbar._popup_content.sizeHint
+        monkeypatch.setattr(toolbar._popup_content, "sizeHint", lambda: (
+            measurements.append(True), original(),
+        )[1])
+        for x in range(100, 180, 10):
+            toolbar.move(x, 80)
+            toolbar._position_popup()
+        assert measurements == []
+        bounds.setHeight(330)
+        toolbar._position_popup()
+        assert measurements
+        assert toolbar.popup_window.height() <= 330
+        measurements.clear()
+        BaseStyles.fonts_changed.emit(None)
+        toolbar._position_popup()
+        assert measurements
+        measurements.clear()
+        toolbar.windowHandle().screen().logicalDotsPerInchChanged.emit(120)
+        assert measurements
+        measurements.clear()
+        toolbar.windowHandle().screen().availableGeometryChanged.emit(bounds)
+        assert measurements
+    finally:
+        toolbar.dispose()
+
+
 def test_all_23_actions_emit_the_existing_protocol_exactly_once(qt_application):
     from gui.widgets.remote_toolbar import RemoteToolbar
 

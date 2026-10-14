@@ -1,14 +1,15 @@
 ---
 status: current
-last_verified: 2026-10-11
-related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
+last_verified: 2026-10-14
+related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
 # 架构说明
 
 本页维护分层、对象归属、线程和资源生命周期。功能入口与代表性测试见
 [MODULE_MAP](MODULE_MAP.md)，设备选择和业务行为见 [BUSINESS_FLOW](BUSINESS_FLOW.md)，
-持久化见 [DATA_FLOW](DATA_FLOW.md)。界面的具体尺寸、颜色和排版以组件实现及对应 Qt 测试为准。
+持久化见 [DATA_FLOW](DATA_FLOW.md)。界面呈现机制与共享组件接入见
+[UI_IMPLEMENTATION](UI_IMPLEMENTATION.md)，具体尺寸、颜色和排版以组件实现及对应 Qt 测试为准。
 
 ## 总体架构
 
@@ -118,7 +119,7 @@ flowchart LR
     Ready -->|"否"| Pending["空态 / pending route"]
     Pending -->|"前台明确选择"| Active["创建或激活会话"]
     Ready -->|"是或无需设备"| Active
-    Active -->|"切页"| Inactive["停用绘制，保留资源"]
+    Active -->|"切页"| Inactive["停用页面约定的瞬态工作，保留资源"]
     Inactive -->|"返回"| Active
     Active -->|"显式关闭"| Dispose["request_dispose / 等待资源"]
     Dispose -->|"归零"| Removed["移除旧代次"]
@@ -272,43 +273,14 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 
 ## 主题、字体与日志
 
-- `TypographyManager` 是字体状态源，使用 `UI/UI_SMALL/MONO/LOG/TITLE` 角色，界面字体与日志
-  字体各有变更信号，不借用主题信号。响应式布局复用原控件，按字体和可用空间重排。
-- `gui/styles/fluent.py::use_smooth_scroll()` 为普通页面、设备候选、文件/应用列表、结果表格和
-  图表滚动区安装局部 `SettingsWheelScroll`；设置页直接持有同一控制器。普通垂直滚轮使用无回弹的阻尼过渡；
-  同向输入续接位置、速度和动画时钟，反向清除旧余速，待执行距离最多一页。
-  触控板及其他输入保留原生处理，外部定位、拖动、范围变化、离页和关闭取消待执行目标；
-  重复安装不增加时钟。`QPlainTextEdit` 的滚条使用行单位，关闭旧 Fluent 缓动后保留原生按行滚动，
-  不改变日志跟随和选区。图片查看器的缩放/翻页、菜单和兼容横向工具条保持各自输入策略。
-- 上述像素滚动、两张 ADB 设置卡、设备选择区、连接区及设备详情使用局部 `FrameAnimation`。
-  当前窗口所在屏幕的刷新率只决定近似采样间隔，实际经过时间决定进度；跨屏或刷新率变化
-  不重置进度。Qt 插值器始终保持停止态，避免和默认动画时钟重复驱动；空闲、隐藏及关闭时
-  停止计时，几何终态和布局门禁由各控件收口。这不是垂直同步或实际帧率保证，未改全局
-  Qt 动画和其他库控件的动画策略。设置卡的属性桥保持停止态不写属性、箭头从当前角度续接。
-  动画仅弱引用祖先窗口，避免子控件改变外层窗口的所有权或在清理时重入祖先析构。
-- `gui/styles/cached_icon.py` 为配置过的 Fluent 按钮、功能卡、设置卡和项目 SVG 复用静态矢量
-  解析结果，按路径、主题色和属性区分缓存；GUI 线程使用有界缓存，后台绘图独立解析，应用退出时
-  释放。保留 painter 的缩放、旋转和透明度，不缓存整页背景，不替换未知图标或全局 Fluent 绘制函数。
-- `BaseStyles` 协调主题、强调色和应用色板；`gui/window_effects.py` 管 Windows 材质，
-  `gui/window_layout.py` 与 ScreenAdapter 管窗口尺寸及屏幕变化。配置键见
-  [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
-- 主窗口沿用参考 FluentWindow 的根背景与半透明内容层，关闭云母时仍保留内容层的层次；
-  页面承载容器保持透明，避免重复填充遮住材质。下拉框本体保留原生交互态；实际宿主开启云母时，
-  下拉选项使用 Acrylic 截图模糊底板，能力缺失、空图或图像处理失败时回退到可操作的实色菜单。
-  普通窗口继续使用原生菜单，菜单工厂保留原控件的值、校验、动作和焦点释放契约。
-  `gui/styles/material.py` 按实际宿主同步主按钮禁用底板及图表视口，覆盖延迟创建、重挂与主题切换；
-  关闭云母时恢复普通表面。局部字体规则与按钮、焦点样式合成，避免刷新材质时覆盖字号。
-  `gui/styles/reading_surface.py` 提供只读输出与详情框的通用策略：实际宿主开启云母时透出内容层，
-  关闭或不支持时恢复原生 Fluent 样式；可编辑文本保留原生输入底板，切换材质不重建文档和阅读状态。
-  应用列表与 Live Log 的局部材质使用持续透明的页面底板，具体行为见
-  [应用管理](BUSINESS_FLOW.md#3-应用管理与安装批次)与 [Live Logcat](BUSINESS_FLOW.md#5-live-logcat)。
-- `FramelessResizeController` 立即更新窗口边缘热区几何，将同一批滚动条及祖先几何事件合并后
-  再计算输入遮罩；只度量可见轨道，页面重新显示时重新登记其裁剪祖先。回调属于窗口 QObject，
-  销毁后不再投递。响应式网格在位置和列数不变时原位更新尺寸与 stretch，保留原布局项，避免
-  连续缩放触发无意义的控件摘除重挂。
-- `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
-  设置持久化；它不参与导航选中或历史。设备任务页标题由全局设备栏消费页面的可访问名称。
-  会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部会话控件说明。
+- 主窗口统一拥有内容材质面与页面外边界；BaseStyles、TypographyManager、窗口材质控制器
+  分别维护主题/强调色、字体和实际宿主材质。页面负责订阅对应变化及刷新自己的显式字体和度量，
+  不能通过重建任务页面切换外观。控件工厂、QSS 合成、图标例外、滚动/动画与响应式接入细则集中在
+  [UI 实现](UI_IMPLEMENTATION.md)，未统一项集中在 [UI 优化账本](RISKS_AND_DEBT.md#ui-一致性与体验优化)。
+- 页面标题由全局设备栏消费可访问名称，会话状态从当前 WorkspaceFeatureHost 投影；
+  侧栏主题入口只更新外观与设置，不参与导航选中或历史。
+- UI 的绘制状态不替代任务状态。切页停用各页面约定的瞬态工作，保留仍在运行的任务与资源；
+  局部动画只负责视觉过渡，业务取消、晚到结果拦截与资源释放仍走原生命周期。
 - 通用操作由 `ActionResults` 管理请求身份与不可变结果，`ActionEnvelope` 穿过原异步模型边界；
   `ActionFeedbackPresenter` 订阅 `action_result_changed` 并将快照投影到任务中心“本次操作”，
   同时驱动分级 Toast、报告文件入口及诊断正文阅读器，

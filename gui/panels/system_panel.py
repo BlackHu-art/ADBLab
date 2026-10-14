@@ -447,6 +447,9 @@ class SystemPanel(BasePanel):
             self.emu_geo_lon,
             self.emu_geo_lat,
         ):
+            # Intent 由独立的多模式校验与行内提示负责，不能叠加必填字段规则。
+            if field not in (self.broadcast_action, self.activity_spec, self.deep_link_uri):
+                self._field_feedback(field)
             field.textChanged.connect(lambda _text: self._update_action_states())
         self._action_buttons = tuple(
             button for button in w.findChildren(QPushButton)
@@ -731,6 +734,7 @@ class SystemPanel(BasePanel):
         maximum = 100 if param == "level" else 5
         minimum = 0 if param == "level" else 1
         self.battery_val.setValidator(QIntValidator(minimum, maximum, self.battery_val))
+        self._field_feedback(self.battery_val).refresh()
         self._update_action_states()
 
     def _update_action_states(self) -> None:
