@@ -1,10 +1,11 @@
 """应用管理器视图控制器 — 加载/填充应用列表、筛选与选择同步、详情懒加载。"""
 
 import weakref
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from functools import lru_cache
+from time import perf_counter
 
-from PySide6.QtCore import QModelIndex, QPoint, Qt
+from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem
 from PySide6.QtWidgets import QTreeView, QTreeWidgetItem
 
@@ -81,6 +82,72 @@ class AppManagerViews:
 
     def __init__(self, frame):
         self._frame = frame
+        self._population: Generator[None, None, None] | None = None
+        self._population_timer: QTimer | None = None
+        self._population_paused = False
+        self._population_request = None
+        self._population_device = ""
+        self._population_worker_finished = False
+
+    @property
+    def populating(self) -> bool:
+        """列表快照尚未完整交付时，详情补全和刷新继续遵守加载忙碌边界。"""
+        return self._population is not None
+
+    def pause_population(self) -> None:
+        """离页只暂停展示批次，保留原设备快照供再次激活时继续。"""
+        self._population_paused = True
+        if self._population_timer is not None:
+            self._population_timer.stop()
+
+    def resume_population(self) -> None:
+        """恢复尚未失效的展示快照；设备和请求身份仍在每个批次复核。"""
+        self._population_paused = False
+        if self.populating:
+            self._schedule_population()
+
+    def cancel_population(self) -> None:
+        """关闭或替换快照时丢弃尚未建行的数据，停止页面拥有的计时器。"""
+        if self._population_timer is not None:
+            self._population_timer.stop()
+        if self._population is not None:
+            self._population.close()
+        self._population = None
+        self._population_worker_finished = False
+
+    def defer_load_finished(self, request_id) -> bool:
+        """worker 退出不能提前结束仍在 GUI 中分批交付的加载。"""
+        if self.populating and request_id == self._population_request:
+            self._population_worker_finished = True
+            return True
+        return False
+
+    def _schedule_population(self) -> None:
+        if self._population_paused:
+            return
+        if self._population_timer is None:
+            self._population_timer = QTimer(self._frame)
+            self._population_timer.setSingleShot(True)
+            self._population_timer.timeout.connect(self._continue_population)
+        self._population_timer.start(0)
+
+    def _continue_population(self) -> None:
+        """每次只消费一个有行数及时间预算的批次，不嵌套处理 Qt 事件。"""
+        if self._population is None or self._population_paused:
+            return
+        if self._frame._closing or self._frame.device_ip != self._population_device or (
+            self._population_request is not None
+            and self._population_request != self._frame._active_load_request
+        ):
+            self.cancel_population()
+            return
+        try:
+            next(self._population)
+        except StopIteration:
+            self._population = None
+            self._finish_population()
+        else:
+            self._schedule_population()
 
     def _load_apps(self):
         from gui.dialogs import app_manager as _app_manager
@@ -91,7 +158,7 @@ class AppManagerViews:
             # 未通过设备准入时没有执行加载，保留原加载结果及真实错误提示。
             self._frame.status_bar.setText(tr("请在顶部设备栏勾选当前在线设备后刷新。"))
             return False
-        if getattr(self._frame, "_load_in_progress", False):
+        if getattr(self._frame, "_load_in_progress", False) or self.populating:
             self._frame._load_refresh_pending = True
             self._frame.status_bar.setText(tr("刷新已排队，将在当前加载完成后执行。"))
             return False
@@ -138,6 +205,9 @@ class AppManagerViews:
         ):
             return
         previous_selection = set(getattr(self._frame, "selected_packages", set()))
+        self.cancel_population()
+        # GUI 分批消费期间，调用方不再拥有可改变待交付内容的列表引用。
+        apps = list(apps)
         self._frame._detail_filter_timer.stop()
         self._cancel_detail_worker()
         self._frame._icons_controller.reset(preserve_cache=True)
@@ -159,13 +229,38 @@ class AppManagerViews:
         self._frame._pending_detail_packages.clear()
         self._frame._detail_row_by_pkg = {}
         self._frame._detail_icon_by_pkg = {}
+        if not hasattr(self._frame, "selected_packages"):
+            self._frame.selected_packages = set()
+        self._frame.selected_packages.clear()
+        self._frame.selected_packages.update(previous_selection & available_packages)
         self._frame._syncing_selection = True
-        self._frame.tree.setSortingEnabled(False)
-        self._frame.model.removeRows(0, self._frame.model.rowCount())
-        for row, (name, pkg, st, at) in enumerate(apps):
+        try:
+            self._frame.tree.setSortingEnabled(False)
+            self._frame.model.removeRows(0, self._frame.model.rowCount())
+            self._frame.icon_list.clear()
+        finally:
+            self._frame._syncing_selection = False
+        self._population_request = request_id
+        self._population_device = self._frame.device_ip
+        if request_id is not None:
+            self._frame._load_result_received = True
+        self._population = self._populate_rows(apps)
+        self._frame._update_selection_ui()
+        self._continue_population()
+
+    def _populate_rows(self, apps):
+        """成对增量构造两种视图，按行同步选择，允许批次之间切换和筛选。"""
+        sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
+        immediate = len(apps) <= 128
+        started = perf_counter()
+        for row, ((name, pkg, st, at), icon_app) in enumerate(zip(apps, sorted_apps)):
             name, version, _installed = self._frame._detail_cache.get(pkg, (name, "", ""))
             cb = QStandardItem()
             cb.setCheckable(True)
+            cb.setCheckState(
+                Qt.CheckState.Checked if pkg in self._frame.selected_packages
+                else Qt.CheckState.Unchecked
+            )
             self._frame.model.appendRow(
                 [
                     cb,
@@ -180,51 +275,56 @@ class AppManagerViews:
                 item = self._frame.model.item(row, column)
                 item.setToolTip(item.text())
             self._frame._detail_row_by_pkg[pkg] = row
+            name, pkg, st, at = icon_app
+            name, version, _installed = self._frame._detail_cache.get(pkg, (name, "", ""))
+            item = QTreeWidgetItem(["", name, pkg, ""])
+            item.setIcon(0, self._frame._gen_icon(name, at, 48))
+            item.setData(0, Qt.ItemDataRole.UserRole, pkg)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, at)
+            item.setData(0, STATUS_ROLE, st)
+            item.setData(0, VERSION_ROLE, version)
+            refresh_row_description(item)
+            color = "TEXT_DISABLED" if st == "Disabled" else "TEXT_PRIMARY"
+            item.setForeground(1, BaseStyles.get_color(color))
+            self._frame.icon_list.addTopLevelItem(item)
+            self._frame._detail_icon_by_pkg[pkg] = item
+            self._filter_icon(item)
+            self._frame._syncing_selection = True
+            try:
+                item.setSelected(pkg in self._frame.selected_packages)
+            finally:
+                self._frame._syncing_selection = False
+            if not immediate and ((row + 1) % 64 == 0 or perf_counter() - started >= 0.006):
+                yield
+                started = perf_counter()
+
+    def _finish_population(self):
+        """两种视图交付完整后才发布成功并放行详情、图标及排队的刷新。"""
         self._frame.tree.setSortingEnabled(True)
-        self._frame.icon_list.clear()
-        self._frame.icon_list.setUpdatesEnabled(False)
-        try:
-            sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
-            for name, pkg, st, at in sorted_apps:
-                name, version, _installed = self._frame._detail_cache.get(pkg, (name, "", ""))
-                icon = self._frame._gen_icon(name, at, 48)
-                item = QTreeWidgetItem(["", name, pkg, ""])
-                item.setIcon(0, icon)
-                item.setData(0, Qt.ItemDataRole.UserRole, pkg)
-                item.setData(0, Qt.ItemDataRole.UserRole + 1, at)
-                item.setData(0, STATUS_ROLE, st)
-                item.setData(0, VERSION_ROLE, version)
-                refresh_row_description(item)
-                color = "TEXT_DISABLED" if st == "Disabled" else "TEXT_PRIMARY"
-                item.setForeground(1, BaseStyles.get_color(color))
-                self._frame.icon_list.addTopLevelItem(item)
-                self._frame._detail_icon_by_pkg[pkg] = item
-        finally:
-            self._frame.icon_list.setUpdatesEnabled(True)
-        if not hasattr(self._frame, "selected_packages"):
-            self._frame.selected_packages = set()
-        self._frame.selected_packages.clear()
-        self._frame.selected_packages.update(previous_selection & available_packages)
-        self._frame._syncing_selection = False
-        self._frame._sync_selection_views()
-        self._frame._filter()
         self._frame._form_controller._update_view_geometry()
         record_success = getattr(self._frame, "_record_load_success", None)
-        if callable(record_success) and request_id is not None:
-            record_success(request_id, len(apps))
+        if callable(record_success) and self._population_request is not None:
+            record_success(self._population_request, len(self._frame._apps_data))
         else:
             self._frame.status_bar.setText(
-                tr("已加载 {value0} 个应用，正在读取详情…").format(value0=len(apps))
+                tr("已加载 {value0} 个应用，正在读取详情…").format(
+                    value0=len(self._frame._apps_data),
+                )
             )
         details_page = getattr(self._frame, "details_page", None)
         if (
             getattr(self._frame, "_details_open", False)
             and details_page is not None
-            and details_page.package_name not in available_packages
+            and details_page.package_name not in self._frame._detail_row_by_pkg
         ):
             self._frame.close_details()
         self._frame._schedule_visible_detail_load()
         self._frame._icons_controller.schedule()
+        if self._population_worker_finished:
+            self._population_worker_finished = False
+            self._frame._on_load_worker_finished(self._population_request)
+        else:
+            self._frame._update_selection_ui()
 
     def _on_metadata(self, metadata):
         """只接收 worker 的当前代次元数据，指纹用于验证候选图标缓存。"""
@@ -401,6 +501,7 @@ class AppManagerViews:
             or not getattr(self._frame, "_active", True)
             or not self._frame._can_operate()
             or self._frame._load_in_progress
+            or self.populating
             or self._frame.load_state == "error"
         ):
             return
@@ -528,19 +629,26 @@ class AppManagerViews:
         # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。
         for i in range(self._frame.icon_list.topLevelItemCount()):
             item = self._frame.icon_list.topLevelItem(i)
-            pkg = (item.data(0, Qt.ItemDataRole.UserRole) or "").lower()
-            name = (item.text(1) or "").lower()
-            type_match = (
-                ft == "All"
-                or (ft == "User Apps" and item.data(0, Qt.ItemDataRole.UserRole + 1) == "User")
-                or (ft == "System Apps" and item.data(0, Qt.ItemDataRole.UserRole + 1) == "System")
-            )
-            text_match = not text or text in name or text in pkg
-            item.setHidden(not (type_match and text_match))
+            self._filter_icon(item, text, ft)
         self._frame._schedule_visible_detail_load()
         icons = getattr(self._frame, "_icons_controller", None)
         if icons is not None:
             icons.schedule()
+
+    def _filter_icon(self, item, text=None, app_type=None):
+        """新交付的行直接采用最新筛选条件，无需每个批次重新扫描旧行。"""
+        if text is None:
+            text = self._frame.search_input.text().strip().lower()
+            app_type = self._frame.type_filter.currentData()
+        pkg = (item.data(0, Qt.ItemDataRole.UserRole) or "").lower()
+        name = (item.text(1) or "").lower()
+        type_match = (
+            app_type == "All"
+            or (app_type == "User Apps" and item.data(0, Qt.ItemDataRole.UserRole + 1) == "User")
+            or (app_type == "System Apps"
+                and item.data(0, Qt.ItemDataRole.UserRole + 1) == "System")
+        )
+        item.setHidden(not (type_match and (not text or text in name or text in pkg)))
 
     def _on_table_item_changed(self, item):
         """将表格复选状态写回唯一选择集，再同步到图标视图。"""
@@ -567,6 +675,11 @@ class AppManagerViews:
             package for index in self._frame.icon_list.selectionModel().selectedRows(0)
             if (package := index.data(Qt.ItemDataRole.UserRole))
         }
+        if self.populating:
+            # 未交付到图标视图的选择不能被一次前台选择动作误认为取消。
+            selected_icons.update(
+                self._frame.selected_packages - self._frame._detail_icon_by_pkg.keys(),
+            )
         changed = self._frame.selected_packages ^ selected_icons
         self._frame.selected_packages.clear()
         self._frame.selected_packages.update(selected_icons)
@@ -613,7 +726,8 @@ class AppManagerViews:
                 icon_items.append((item, package))
                 available_packages.add(package)
 
-        self._frame.selected_packages.intersection_update(available_packages)
+        if not self.populating:
+            self._frame.selected_packages.intersection_update(available_packages)
         self._frame._syncing_selection = True
         try:
             for checkbox_item, package in table_rows:
@@ -637,7 +751,7 @@ class AppManagerViews:
 
         count = len(self._frame.selected_packages)
         batch_running = bool(self._frame._batch_workers)
-        load_running = bool(getattr(self._frame, "_load_in_progress", False))
+        load_running = bool(getattr(self._frame, "_load_in_progress", False)) or self.populating
         device_connected = self._frame._can_operate()
         self._frame.selection_label.setText(tr('已选 {value0} 项').format(value0=count))
         for action in self._frame._command_bar.actions():

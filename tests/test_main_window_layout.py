@@ -207,10 +207,10 @@ def populate_device_workbench(frame, count=8):
 
 
 @pytest.mark.parametrize("theme,width,font_size", [("Light", 1120, 12), ("Dark", 720, 22)])
-def test_main_title_bar_keeps_brand_area_empty_without_clearing_window_metadata(
+def test_main_title_bar_shows_brand_with_live_font_and_window_metadata(
     qt_application, monkeypatch, theme, width, font_size,
 ):
-    """标题栏品牌区域留空，系统窗口信息和标题栏操作仍保留。"""
+    """品牌常驻标题栏并随字体更新，窗口元数据及拖动区仍保留。"""
     settings = _MainFrameSettings()
     settings.values.update(ui_font_size=font_size, mica_enabled=False, window_width=width)
     monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
@@ -233,10 +233,27 @@ def test_main_title_bar_keeps_brand_area_empty_without_clearing_window_metadata(
         bar = frame.titleBar
         icon = bar.iconLabel
         assert icon.isHidden()
-        assert bar.titleLabel.isHidden()
+        title = bar.titleLabel
+        assert title.isVisibleTo(frame)
+        assert title.text() == "ADBLab"
         assert frame.windowTitle() == "ADBLab"
         assert not frame.windowIcon().isNull()
         assert bar.canDrag(QPoint(60, bar.height() // 2))
+        for size in (12, 22, 8):
+            settings.values["ui_font_size"] = size
+            BaseStyles.reload_from_settings()
+            qt_application.processEvents()
+            assert title.font().pointSizeF() == size
+            assert title.width() >= title.fontMetrics().horizontalAdvance(title.text())
+            assert title.height() >= title.fontMetrics().height()
+            assert bar.rect().contains(title.geometry())
+            assert bar.canDrag(title.geometry().center())
+            assert title.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            for next_theme in ("Dark", "Light"):
+                BaseStyles.switch_theme(next_theme)
+                qt_application.processEvents()
+                assert title.font().pointSizeF() == size
+                assert bar.rect().contains(title.geometry())
         assert all(button.isVisibleTo(frame) for button in (bar.minBtn, bar.maxBtn, bar.closeBtn))
         frame._bind_window_screen()
         for notification in (
@@ -246,10 +263,11 @@ def test_main_title_bar_keeps_brand_area_empty_without_clearing_window_metadata(
             notification(frame._bound_screen)
             qt_application.processEvents()
             assert icon.isHidden()
-            assert bar.titleLabel.isHidden()
+            assert title.isVisibleTo(frame)
         frame.setWindowTitle("ADBLab - title update")
         assert icon.isHidden()
-        assert bar.titleLabel.isHidden()
+        assert title.isVisibleTo(frame)
+        assert title.text() == "ADBLab - title update"
         assert frame.windowTitle() == "ADBLab - title update"
     finally:
         frame._unbind_window_screen()
@@ -3179,6 +3197,91 @@ def test_settings_page_applies_typography_in_one_batch(qt_application):
             }
         ]
         reload_styles.assert_called_once_with()
+    finally:
+        frame._close_ready = True
+        frame.close()
+
+
+@pytest.mark.parametrize("family", ["Segoe UI", "Microsoft YaHei UI"])
+def test_navigation_items_follow_font_settings_through_expand_and_collapse(
+    qt_application, monkeypatch, family,
+):
+    settings = _MainFrameSettings()
+    settings.values.update(font_family=family, ui_font_size=12)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    BaseStyles.reload_from_settings()
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("navigation-font", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        panel = frame.navigationInterface.panel
+        for size in (12, 22, 8):
+            settings.values["ui_font_size"] = size
+            BaseStyles.reload_from_settings()
+            for expanded in (False, True):
+                if expanded:
+                    frame._expand_navigation_panel(use_animation=False)
+                else:
+                    panel.expandAni.stop()
+                    panel.collapse()
+                wait_until(qt_application, lambda: panel.expandAni.state()
+                           == QAbstractAnimation.State.Stopped)
+                wait_for_stable_geometry(qt_application, (panel, panel.scrollWidget))
+                for key in frame._navigation_labels:
+                    item = frame._navigation_widget(key)
+                    text_item = getattr(item, "itemWidget", item)
+                    assert text_item.font().family() == family
+                    assert text_item.font().pointSizeF() == size
+                    assert text_item.height() >= text_item.fontMetrics().height()
+                    if expanded:
+                        margins = text_item._margins()
+                        assert text_item.width() - 57 - margins.left() - margins.right() >= (
+                            text_item.fontMetrics().horizontalAdvance(text_item.text())
+                        )
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_font_change_during_expansion_reconciles_final_width(
+    qt_application, monkeypatch,
+):
+    settings = _MainFrameSettings()
+    settings.values.update(font_family="Segoe UI", ui_font_size=12)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    BaseStyles.reload_from_settings()
+    frame = build_main_frame(settings=settings)
+    try:
+        frame.show()
+        panel = frame.navigationInterface.panel
+        key = next(iter(frame._navigation_labels))
+        item = frame._navigation_widget(key)
+        item.setText("Applications and diagnostics")
+        frame._sync_navigation_typography()
+        panel.expandAni.stop()
+        panel.collapse()
+        wait_until(qt_application, lambda: panel.expandAni.state()
+                   == QAbstractAnimation.State.Stopped)
+        frame._expand_navigation_panel(use_animation=True)
+        panel.expandAni.pause()
+        panel.expandAni.setCurrentTime(30)
+        settings.values["ui_font_size"] = 22
+        BaseStyles.reload_from_settings()
+        expected_width = panel.expandWidth
+        panel.expandAni.resume()
+        panel.expandAni.setCurrentTime(panel.expandAni.duration())
+        wait_for_stable_geometry(qt_application, (panel, panel.scrollWidget))
+        assert panel.width() == expected_width
+        assert item.font().pointSizeF() == 22
+        assert item.width() <= panel.width()
+        text_item = getattr(item, "itemWidget", item)
+        margins = text_item._margins()
+        assert text_item.width() - 57 - margins.left() - margins.right() >= (
+            text_item.fontMetrics().horizontalAdvance(item.text())
+        )
     finally:
         frame._close_ready = True
         frame.close()

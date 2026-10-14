@@ -206,6 +206,7 @@ class AppManagerPage(QWidget):
         if self._dispose_requested:
             return
         self._active = True
+        self._views_controller.resume_population()
         if not self._activated_once:
             self._activated_once = True
             self._load_apps()
@@ -223,6 +224,7 @@ class AppManagerPage(QWidget):
         """离开前台时暂停增量详情加载，但不终止业务 worker。"""
 
         self._active = False
+        self._views_controller.pause_population()
         self._icons_controller.pause()
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()
@@ -413,6 +415,8 @@ class AppManagerPage(QWidget):
     def _on_load_worker_finished(self, request_id: int) -> None:
         if request_id != self._active_load_request:
             self._maybe_finish_dispose()
+            return
+        if self._views_controller.defer_load_finished(request_id):
             return
         self._load_in_progress = False
         if not self._closing and not self._load_result_received:
@@ -703,6 +707,7 @@ class AppManagerPage(QWidget):
             return True
         self._dispose_requested = True
         self._closing = True
+        self._views_controller.cancel_population()
         self._batch_controller.cancel_pending()
         self._icons_controller.reset()
         self._active = False

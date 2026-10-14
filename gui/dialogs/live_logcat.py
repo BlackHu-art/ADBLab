@@ -162,6 +162,7 @@ class LiveLogcatPage(QWidget):
         if self._closing:
             return
         self._view_active = True
+        self._stream_controller._render_paused = False
         if isinstance(payload, dict):
             package = str(payload.get("package_name", "") or "").strip()
             if package:
@@ -177,6 +178,7 @@ class LiveLogcatPage(QWidget):
         """暂停批量绘制但继续消费日志，防止切页隐式停止设备进程。"""
 
         self._view_active = False
+        self._stream_controller._render_paused = True
         self._line_flush_timer.stop()
 
     def set_device_connected(self, connected: bool) -> None:
@@ -527,9 +529,8 @@ class LiveLogcatPage(QWidget):
         self._close_pending = True
         self._closing = True
         should_stop_owner = False
-        self._line_flush_timer.stop()
+        self._stream_controller._cancel_render()
         self._worker_release_timer.stop()
-        self._pending_visible_lines.clear()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         safe_disconnect(BaseStyles.accent_color_changed, self._refresh_reading_icons)

@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt
 
 from gui.dialogs.app_manager import AppManagerPage
 from tests.test_app_manager_icons import png
+from tests.ui_geometry_helpers import wait_until
 
 pytestmark = pytest.mark.ui
 
@@ -13,6 +14,8 @@ pytestmark = pytest.mark.ui
 def app_page(qt_application):
     page = AppManagerPage(device_ip="")
     page._populate([(f"App {i}", f"example.app{i}", "Enabled", "User") for i in range(200)])
+    wait_until(qt_application, lambda: not page._views_controller.populating)
+    assert page.model.rowCount() == page.icon_list.topLevelItemCount() == 200
     yield page
     page.close()
 

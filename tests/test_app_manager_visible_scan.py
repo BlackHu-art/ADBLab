@@ -1,6 +1,7 @@
 """可见应用补全只检查视口附近的行，排序和隐藏不改变包名身份。"""
 
 from collections import Counter
+from time import monotonic
 
 import pytest
 from PySide6.QtCore import Qt
@@ -30,6 +31,12 @@ def manager(qt_application, monkeypatch):
         (f"App {index:03}", f"example.app{index:03}", "Enabled", "User")
         for index in range(600)
     ])
+    # 大列表让出事件循环后再验证视口扫描，不能依赖同步建完第 533 行。
+    deadline = monotonic() + 5
+    while page._views_controller.populating and monotonic() < deadline:
+        qt_application.processEvents()
+    assert page.model.rowCount() == page.icon_list.topLevelItemCount() == 600
+    assert not page._views_controller.populating
     page.show()
     yield page, workers
     page.request_dispose()

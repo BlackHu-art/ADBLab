@@ -549,10 +549,7 @@ class AppManagerForm:
         icons.setFont(font)
         icons.header().setFont(font)
         row_height = AppManagerRowDelegate.row_height(font)
-        for index in range(icons.topLevelItemCount()):
-            item = icons.topLevelItem(index)
-            for column in range(4):
-                item.setFont(column, font)
+        # 行委托直接读取视图字体；逐格写入字体会把分批加载的尾部变回全量阻塞。
         icons.doItemsLayout()
         icons.setMinimumHeight(
             row_height * 2 + icons.header().sizeHint().height()

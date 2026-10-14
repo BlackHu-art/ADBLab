@@ -9,6 +9,45 @@ from tests.ui_geometry_helpers import wait_for_stable_geometry
 pytestmark = pytest.mark.ui
 
 
+@pytest.mark.parametrize("width,font_size", [(978, 12), (420, 22)])
+def test_height_only_resize_keeps_setting_cards_in_place(
+    qt_application, make_page, monkeypatch, width, font_size,
+):
+    page = make_page(width, font_size)
+    calls = []
+    for presentation in page._card_presentations:
+        original = presentation.reflow
+
+        def record(value, original=original):
+            calls.append(value)
+            original(value)
+
+        monkeypatch.setattr(presentation, "reflow", record)
+    for height in (680, 540, 740):
+        page.resize(width, height)
+        wait_for_stable_geometry(qt_application, (page, page.widget()))
+    assert calls == [], "纯高度变化不能重复测量、重挂普通设置卡"
+
+    page.resize(width + 100, page.height())
+    wait_for_stable_geometry(qt_application, (page, page.widget()))
+    assert calls, "真实宽度变化必须继续重新布局"
+
+
+def test_same_width_explicit_reflow_keeps_updated_setting_text_readable(qt_application, make_page):
+    page = make_page(420, 22)
+    card = page.scan_card
+    before = card.height()
+    description = "设备发现状态更新后的详细说明。" * 15
+    card.setContent(description)
+    page._reflow_settings()
+    wait_for_stable_geometry(qt_application, (page, page.widget(), card))
+    assert card.contentLabel.text() == description
+    assert card.height() > before
+    assert card.contentLabel.height() >= card.contentLabel.heightForWidth(
+        card.contentLabel.width(),
+    )
+
+
 class _WidthChanges(QObject):
     """记录真正的宽度变化，避免仅检查每帧最终值掩盖同步往返。"""
 

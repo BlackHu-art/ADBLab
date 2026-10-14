@@ -1,10 +1,82 @@
 """独立侧栏原生材质只消费宿主状态，失败后保持可读实色底板。"""
 
 import pytest
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 
 pytestmark = pytest.mark.ui
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("mica_enabled", [False, True])
+@pytest.mark.parametrize("portable", [False, True])
+def test_toolbar_surfaces_keep_nonzero_alpha_for_blank_hit_targets(
+    qt_application, monkeypatch, theme, mica_enabled, portable,
+):
+    """Mica 可透出，但操作面内部不能成为 Windows 分层窗口的零 alpha 穿透区。"""
+    from gui.styles import BaseStyles
+    from gui.widgets import remote_toolbar_material as material
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    monkeypatch.setattr(host, "isMicaEffectEnabled", lambda: mica_enabled, raising=False)
+    monkeypatch.setattr(material, "_native_mica_available", lambda: True)
+    monkeypatch.setattr(material, "_apply_native_mica", lambda hwnd, enabled, dark: enabled)
+    toolbar = RemoteToolbar(host, portable=portable)
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        toolbar._more_button.click()
+        qt_application.processEvents()
+        assert toolbar.isMicaEffectEnabled() is mica_enabled
+        assert toolbar.popup_window.isMicaEffectEnabled() is mica_enabled
+        for surface, button in (
+            (toolbar, toolbar._common_buttons[0]),
+            (toolbar.popup_window, toolbar._commands["rotate_portrait"][1]),
+        ):
+            image = surface.grab().toImage()
+            ratio = image.devicePixelRatio()
+            points = (
+                QPoint(20, 4),
+                button.mapTo(surface, QPoint(4, button.height() // 2)),
+            )
+            for point in points:
+                alpha = image.pixelColor(round(point.x() * ratio), round(point.y() * ratio)).alpha()
+                assert alpha > 0, (surface.objectName(), point, theme, mica_enabled, portable)
+                if mica_enabled:
+                    assert alpha < 20, "命中底层应保留原生 Mica 的可见性"
+                else:
+                    assert alpha == 255
+            # 让实际样式系统绘制各输入状态；不能让最低 alpha 覆盖原有反馈。
+            sample = button.mapTo(surface, QPoint(4, button.height() // 2))
+            QTest.mouseMove(button, QPoint(4, button.height() // 2))
+            qt_application.processEvents()
+            assert button.underMouse()
+            for pressed in (False, True):
+                if pressed:
+                    QTest.mousePress(button, Qt.MouseButton.LeftButton)
+                feedback = surface.grab().toImage().pixelColor(
+                    round(sample.x() * ratio), round(sample.y() * ratio),
+                )
+                expected = BaseStyles.color("BUTTON_PRESSED" if pressed else "BUTTON_HOVER")
+                assert feedback == QColor(expected)
+            QTest.mouseRelease(button, Qt.MouseButton.LeftButton)
+            QTest.mouseMove(surface, QPoint(20, 4))
+            assert toolbar.popup_window.isVisible()
+        more = toolbar._more_button
+        assert more.isChecked()
+        position = more.mapTo(toolbar, QPoint(4, more.height() // 2))
+        image = toolbar.grab().toImage()
+        ratio = image.devicePixelRatio()
+        selected = image.pixelColor(round(position.x() * ratio), round(position.y() * ratio))
+        assert selected.alpha() > 20
+        assert selected != QColor(BaseStyles.color("TOOLBAR_BG"))
+    finally:
+        toolbar.dispose()
+        host.close()
 
 
 def test_toolbar_mica_follows_host_and_theme_without_recreating_controls(

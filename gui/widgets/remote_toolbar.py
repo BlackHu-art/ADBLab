@@ -663,8 +663,11 @@ class RemoteToolbar(QWidget):
         foreground = BaseStyles.color("TEXT_PRIMARY")
         secondary = BaseStyles.color("TEXT_SECONDARY")
         background = BaseStyles.color("TOOLBAR_BG")
-        toolbar_background = "transparent" if self.isMicaEffectEnabled() else background
-        popup_background = "transparent" if self._popup.isMicaEffectEnabled() else background
+        # Windows 分层窗口把零 alpha 当作鼠标穿透区；1/255 让操作面命中且仍透出 DWM。
+        # QSS 的数值 1 表示完全不透明，因此用 0.004 量化到 8 位 alpha 的最低非零值。
+        mica_background = "rgba(0, 0, 0, 0.004)"
+        toolbar_background = mica_background if self.isMicaEffectEnabled() else background
+        popup_background = mica_background if self._popup.isMicaEffectEnabled() else background
         border = BaseStyles.color("BORDER_COLOR")
         hover = BaseStyles.color("BUTTON_HOVER")
         pressed = BaseStyles.color("BUTTON_PRESSED")

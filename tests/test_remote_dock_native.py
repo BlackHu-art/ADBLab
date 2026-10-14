@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton, QWidget
@@ -136,6 +136,96 @@ def external_window():
         assert not reader.is_alive()
         process.stdout.close()
         process.stderr.close()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_native_mica_blank_surfaces_keep_full_pointer_hit_targets(qt_application, theme):
+    """仅查询合成窗口的原生命中；Qt 直接分发点击不能证明窗口没有穿透。"""
+    from gui.styles import BaseStyles
+    from gui.widgets.remote_toolbar import RemoteToolbar
+    from gui.window_effects import is_mica_supported
+
+    if not is_mica_supported():
+        pytest.skip("原生 Mica 命中回归需要 Windows 11 支持；实色和绘制回归独立覆盖")
+
+    class Host(QWidget):
+        enabled = False
+
+        def isMicaEffectEnabled(self):
+            return self.enabled
+
+    api = _Win32WindowApi()
+    user = api._user32
+    user.WindowFromPoint.argtypes = [wintypes.POINT]
+    user.WindowFromPoint.restype = wintypes.HWND
+    user.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user.GetAncestor.restype = wintypes.HWND
+    user.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user.ClientToScreen.restype = wintypes.BOOL
+    BaseStyles.switch_theme(theme)
+    host = Host()
+    host.setWindowFlags(
+        Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.WindowDoesNotAcceptFocus | Qt.WindowType.WindowStaysOnTopHint,
+    )
+    host.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    host.setGeometry(80, 80, 700, 760)
+    host.setStyleSheet("background: #883399;")
+    toolbar = RemoteToolbar(host)
+    toolbar.set_available(True)
+    toolbar.move(120, 120)
+    popup = toolbar.popup_window
+    foreground = int(user.GetForegroundWindow() or 0)
+    try:
+        host.show()
+        toolbar.show()
+        toolbar._more_button.click()
+        _wait(qt_application, popup.isVisible, "合成更多面板未展开")
+        handles = (int(toolbar.winId()), int(popup.winId()))
+        geometries = (toolbar.geometry(), popup.geometry())
+        for mica_enabled in (False, True, False):
+            host.enabled = mica_enabled
+            toolbar._material.refresh(force=True)
+            qt_application.processEvents()
+            assert toolbar.isMicaEffectEnabled() is mica_enabled
+            assert popup.isMicaEffectEnabled() is mica_enabled
+            for surface, button in (
+                (toolbar, toolbar._common_buttons[0]),
+                (popup, toolbar._commands["rotate_portrait"][1]),
+            ):
+                surface.repaint()
+                hwnd = int(surface.winId())
+                assert user.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0013)
+                ratio = surface.devicePixelRatioF()
+                image = surface.grab().toImage()
+                alpha = image.pixelColor(round(20 * ratio), round(4 * ratio)).alpha()
+                assert 0 < alpha < 20 if mica_enabled else alpha == 255
+                for point in (
+                    QPoint(20, 4),
+                    button.mapTo(surface, QPoint(4, button.height() // 2)),
+                    button.mapTo(surface, QPoint(button.width() - 5, button.height() // 2)),
+                ):
+                    with api._physical_coordinates():
+                        origin = wintypes.POINT(0, 0)
+                        assert user.ClientToScreen(hwnd, ctypes.byref(origin))
+                        position = wintypes.POINT(
+                            origin.x + round(point.x() * ratio),
+                            origin.y + round(point.y() * ratio),
+                        )
+
+                        def hits_surface():
+                            return user.GetAncestor(user.WindowFromPoint(position), 2) == hwnd
+
+                        _wait(
+                            qt_application, hits_surface,
+                            f"{surface.objectName()} {point} 在 {theme}/Mica={mica_enabled} 穿透",
+                        )
+            assert (int(toolbar.winId()), int(popup.winId())) == handles
+            assert (toolbar.geometry(), popup.geometry()) == geometries
+            assert int(user.GetForegroundWindow() or 0) == foreground
+    finally:
+        toolbar.dispose()
+        host.close()
 
 
 def test_native_dark_more_icons_and_mouse_feedback_stay_legible(

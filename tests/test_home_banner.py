@@ -10,12 +10,12 @@ import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QObject, QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QRegion
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLayout, QWidget
 from shiboken6 import isValid
 
 from core.settings_manager import AppSettings
 from gui.pages.fluent_pages import ActionCard, ActionCardView, HomePage
-from gui.styles import BaseStyles, FontRole
+from gui.styles import BaseStyles
 from gui.widgets.home_banner import HomeBanner
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import (
@@ -95,7 +95,6 @@ def test_home_banner_renders_original_pixels_at_device_resolution(
     banner = HomeBanner(content)
     # 此处单独验证绘制，避免布局留白把 40px 测试画布撑到 64px。
     banner.layout().setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-    banner.title_label.hide()
     content.hide()
     banner.resize(128, height)
     rendered = QImage(
@@ -127,7 +126,6 @@ def test_home_banner_keeps_all_image_landmarks_when_aspect_ratio_changes(
     content = QWidget()
     banner = HomeBanner(content)
     banner.layout().setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-    banner.title_label.hide()
     content.hide()
     banner.resize(128, height)
     rendered = QImage(
@@ -160,8 +158,9 @@ def test_home_banner_spans_page_and_keeps_wrapped_cards_inside(
     assert mapped_rect(banner, page.viewport()).topLeft() == QPoint(0, 0)
     assert banner.width() == page.viewport().width()
     assert page.horizontalScrollBar().maximum() == 0
-    assert banner.title_label.mapTo(banner, QPoint()).x() == 32
-    assert banner.title_label.font() == BaseStyles.font_for_role(FontRole.TITLE)
+    tools = banner.findChild(ActionCardView)
+    assert mapped_rect(tools, banner).topLeft() == QPoint(32, 24)
+    assert not any(label.text() == "ADBLab" for label in page.findChildren(QLabel))
     first_row = [card for card in cards if card.y() == cards[0].y()]
     assert min(mapped_rect(card, banner).left() for card in cards) == 32
     row_right = max(mapped_rect(card, banner).right() for card in first_row)
@@ -224,7 +223,8 @@ def test_home_banner_font_change_preserves_shortcut_focus_and_routes(
     wait_until(qt_application, lambda: page.banner.height() > previous_height)
     assert page.tool_cards == cards
     assert cards["file_explorer"].hasFocus()
-    assert page.banner.title_label.font() == BaseStyles.font_for_role(FontRole.TITLE)
+    tools = page.banner.findChild(ActionCardView)
+    assert tools.title_label.font().pointSizeF() == 22
     for card in cards.values():
         assert_scroll_target_reachable(page, card)
         card.setFocus()

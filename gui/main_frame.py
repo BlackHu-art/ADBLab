@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
+from typing import cast
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -29,6 +30,7 @@ from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     FluentStyleSheet,
+    FluentTitleBar,
     FluentWindow,
     NavigationDisplayMode,
     NavigationItemPosition,
@@ -94,7 +96,13 @@ from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole
-from .styles.fluent import refresh_fluent_widget_style, use_smooth_scroll
+from .styles.fluent import (
+    apply_label_role,
+    font_qss,
+    refresh_fluent_widget_style,
+    set_fluent_font_rule,
+    use_smooth_scroll,
+)
 from .styles.theme import apply_dark_title_bar
 
 
@@ -746,12 +754,12 @@ class MainFrame(FluentWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
-        # 标题栏品牌区域留空，系统窗口名称和图标仍供任务栏及辅助技术使用。
-        getattr(self.titleBar, "titleLabel").hide()
+        # 复用系统标题标签，名称处的鼠标操作仍交给标题栏处理拖动和双击。
+        label = cast(FluentTitleBar, self.titleBar).titleLabel
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        label.show()
         getattr(self.titleBar, "iconLabel").hide()
-        title_bar_height = 40
-        self.titleBar.setFixedHeight(title_bar_height)
-        self.widgetLayout.setContentsMargins(0, title_bar_height, 0, 0)
+        self._sync_title_bar_typography()
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
@@ -1516,6 +1524,7 @@ class MainFrame(FluentWindow):
         self._navigation_labels.update({
             route_key: label for _s, _f, route_key, _icon, label, _subtitle in workspace_navigation
         })
+        self._sync_navigation_typography()
         panel = self.navigationInterface.panel
         try:
             panel.menuButton.clicked.disconnect(panel.toggle)
@@ -1861,6 +1870,7 @@ class MainFrame(FluentWindow):
         """导航形态变化后同步当前入口并在动画尾沿重排内容。"""
 
         self._sync_navigation_accessibility()
+        self._sync_navigation_typography()
         self._navigation_wide_state = (
             mode == NavigationDisplayMode.EXPAND
             and self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
@@ -1889,6 +1899,7 @@ class MainFrame(FluentWindow):
         """在导航最终宽度提交后刷新当前项位置和响应式布局。"""
 
         panel = self.navigationInterface.panel
+        self._sync_navigation_typography()
         if panel.displayMode == NavigationDisplayMode.COMPACT:
             # 上游收起尾沿会重新设置 QStyle，清除面板背景填充和调色板。
             # 恢复当前材质策略，避免关闭云母后透明或开启后重新被实色遮挡。
@@ -2396,6 +2407,7 @@ class MainFrame(FluentWindow):
 
         self._refresh_save_path()
         self._refresh_window_chrome_theme()
+        self._sync_title_bar_typography()
         self._theme_navigation_widget.sync_theme()
         self.left_panel.apply_device_theme()
         task_page = getattr(self, "_task_page", None)
@@ -2628,6 +2640,64 @@ class MainFrame(FluentWindow):
         """应用新的界面字体。"""
 
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._sync_title_bar_typography()
+        self._sync_navigation_typography()
+
+    def _sync_title_bar_typography(self) -> None:
+        """标题栏沿用界面字体，大字号时同步预留正文顶部空间。"""
+        label = cast(FluentTitleBar, self.titleBar).titleLabel
+        apply_label_role(label, FontRole.UI)
+        # Fluent 标题栏的父级 QSS 固定 13px，局部声明才能保留用户设置的字号。
+        set_fluent_font_rule(
+            label, f"QLabel#titleLabel {{ {font_qss(BaseStyles.font_for_role(FontRole.UI))} }}",
+        )
+        label.adjustSize()
+        height = max(40, label.fontMetrics().height() + 4)
+        self.titleBar.setFixedHeight(height)
+        self.widgetLayout.setContentsMargins(0, height, 0, 0)
+
+    def _sync_navigation_typography(self) -> None:
+        """同步导航显式字体及文字空间，保留原有控件、路由和选中状态。
+
+        Fluent 树节点的文本控件单独设置字体且在展开收起时恢复固定尺寸，
+        因此字体变化和导航形态提交后都需更新叶子尺寸，不能仅依赖窗口继承。
+        """
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is None:
+            return
+        items = [self._navigation_widget(key) for key in getattr(self, "_navigation_labels", {})]
+        items.append(getattr(self, "_theme_navigation_widget", None))
+        items = [item for item in items if item is not None]
+        if not items:
+            return
+        font = BaseStyles.font_for_role(FontRole.UI)
+        for item in items:
+            item.setFont(font)
+        width = max(220, max(item.fontMetrics().horizontalAdvance(item.text()) + 67
+                             for item in items))
+        panel = navigation.panel
+        width_changed = panel.expandWidth != width
+        if width_changed:
+            navigation.setExpandWidth(width)
+        for item in items:
+            text_item = getattr(item, "itemWidget", item)
+            text_item.setFixedSize(
+                40 if text_item.isCompacted else width - 10,
+                max(36, text_item.fontMetrics().height() + 2),
+            )
+            if text_item is not item:
+                item.setFixedSize(item.sizeHint())
+        if width_changed and panel.displayMode in (
+            NavigationDisplayMode.EXPAND, NavigationDisplayMode.MENU,
+        ):
+            if panel.expandAni.state() != QAbstractAnimation.State.Stopped:
+                # 动画继续使用原几何终点会覆盖新字号需要的宽度；收起仍保留原终点。
+                if panel.expandAni.property("expand"):
+                    target = panel.expandAni.endValue()
+                    target.setWidth(width)
+                    panel.expandAni.setEndValue(target)
+            else:
+                panel.resize(width, panel.height())
 
     def _toggle_theme(self):
         return self._actions.toggle_theme()

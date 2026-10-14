@@ -30,6 +30,9 @@ from utils.adb_values import normalize_android_package
 class LiveLogcatStream:
     """组合进 LiveLogcatPage 的流式控制器，通过 ``self._frame`` 访问页面。"""
 
+    RENDER_BATCH_LINES = 256
+    RENDER_BATCH_CHARS = 256 * 1024
+
     def __init__(self, frame):
         # 控制器由页面持有，反向使用弱引用，避免 Qt 包装对象进入 Python 引用环。
         self._frame_ref = weakref.ref(frame)
@@ -37,6 +40,10 @@ class LiveLogcatStream:
         self._empty_capture_state = "idle"
         self._empty_filter_wait = ""
         self._empty_cleared = False
+        self._render_generation = 0
+        self._render_paused = False
+        self._rebuild_reading = None
+        self._rebuild_remaining = 0
 
     @property
     def _frame(self):
@@ -58,32 +65,106 @@ class LiveLogcatStream:
         return True
 
     def _rebuild(self):
-        self._frame._line_flush_timer.stop()
-        self._frame._pending_visible_lines.clear()
-        self._frame._pending_visible_entries.clear()
+        if self._frame._closing:
+            return
+        reading = self._rebuild_reading or self._capture_rebuild_reading()
+        self._cancel_render()
         self._frame._pending_evicted_visible = 0
         visible_entries = [entry for entry in self._frame.entries if self._passes(entry[1])]
-        self._frame._rendered_visible_entries = deque(visible_entries)
-        visible = [entry[0] for entry in visible_entries]
+        self._frame._rendered_visible_entries.clear()
+        self._frame._pending_visible_entries.extend(visible_entries)
+        self._frame._pending_visible_lines.extend(entry[0] for entry in visible_entries)
+        self._rebuild_remaining = len(visible_entries)
+        self._rebuild_reading = reading
         output = self._frame.output
-        position = output.verticalScrollBar().value()
         self._frame._updating_output = True
         try:
-            output.setPlainText("\n".join(visible))
-            output.verticalScrollBar().setValue(
-                output.verticalScrollBar().maximum()
-                if self._frame.follow_btn.isChecked() else position
-            )
+            output.clear()
         finally:
             self._frame._updating_output = False
         self._frame._unseen_lines = 0
-        self._update_content_actions(bool(visible))
+        self._flush_pending_lines()
+
+    def _cancel_render(self) -> None:
+        """取消旧代次的待绘制内容；采集原始缓存由调用方按操作语义处理。"""
+        self._render_generation += 1
+        self._frame._line_flush_timer.stop()
+        self._frame._pending_visible_lines.clear()
+        self._frame._pending_visible_entries.clear()
+        self._rebuild_reading = None
+        self._rebuild_remaining = 0
+
+    def _capture_rebuild_reading(self):
+        """以记录身份保存筛选前的阅读点；相同文本的日志仍是不同记录。"""
+        output = self._frame.output
+        entries = list(self._frame._rendered_visible_entries)
+        evicted = self._frame._pending_evicted_visible
+
+        def endpoint(cursor):
+            index = cursor.blockNumber() - evicted
+            return (entries[index], cursor.positionInBlock()) if 0 <= index < len(entries) else None
+
+        cursor = output.textCursor()
+        anchor = QTextCursor(cursor)
+        anchor.setPosition(cursor.anchor())
+        block = output.firstVisibleBlock()
+        return {
+            "top": endpoint(QTextCursor(block)),
+            "line_offset": max(0, output.verticalScrollBar().value() - block.firstLineNumber()),
+            "vertical": output.verticalScrollBar().value(),
+            "horizontal": output.horizontalScrollBar().value(),
+            "cursor": endpoint(cursor),
+            "anchor": endpoint(anchor),
+        }
+
+    def _restore_rebuild_reading(self) -> None:
+        """分片重建尚未到达阅读点时保留目标，用户主动滚动或选择后停止恢复。"""
+        reading = self._rebuild_reading
+        if reading is None:
+            return
+        output = self._frame.output
+        indexes = {
+            id(entry): index for index, entry in enumerate(self._frame._rendered_visible_entries)
+        }
+
+        def position(endpoint):
+            if endpoint is None or id(endpoint[0]) not in indexes:
+                return None
+            block = output.document().findBlockByNumber(indexes[id(endpoint[0])])
+            return block.position() + min(endpoint[1], block.length() - 1)
+
+        cursor_position = position(reading["cursor"])
+        anchor_position = position(reading["anchor"])
+        if cursor_position is not None and anchor_position is not None:
+            cursor = QTextCursor(output.document())
+            cursor.setPosition(anchor_position)
+            cursor.setPosition(cursor_position, QTextCursor.MoveMode.KeepAnchor)
+            output.setTextCursor(cursor)
+        vertical = output.verticalScrollBar()
+        if self._frame.follow_btn.isChecked():
+            vertical.setValue(vertical.maximum())
+        else:
+            top_position = position(reading["top"])
+            if top_position is None:
+                vertical.setValue(reading["vertical"])
+            else:
+                cursor = QTextCursor(output.document())
+                cursor.setPosition(top_position)
+                vertical.setValue(cursor.block().firstLineNumber() + reading["line_offset"])
+        output.horizontalScrollBar().setValue(reading["horizontal"])
+
+    def _on_output_selection(self) -> None:
+        """分片间的用户选择优先于筛选开始时保存的旧选区。"""
+        if not self._frame._updating_output:
+            self._rebuild_reading = None
 
     def _update_content_actions(self, has_visible_content: bool | None = None):
         """按已知可见状态更新动作，避免复制整份日志文档。"""
 
         if has_visible_content is None:
-            has_visible_content = not self._frame.output.document().isEmpty()
+            has_visible_content = bool(
+                self._frame._rendered_visible_entries or self._frame._pending_visible_entries
+            )
         self._frame.clear_action.setEnabled(bool(self._frame.entries) or has_visible_content)
         self._frame.export_action.setEnabled(has_visible_content)
         self._refresh_empty_hint()
@@ -157,7 +238,9 @@ class LiveLogcatStream:
         if self._frame._closing:
             return
         output = self._frame.output
-        text = "\n".join(self._empty_hint()) if output.document().isEmpty() else ""
+        # 头部淘汰可能独占一片；已有待绘制记录时不能短暂显示“暂无日志”。
+        empty = output.document().isEmpty() and not self._frame._pending_visible_entries
+        text = "\n".join(self._empty_hint()) if empty else ""
         if output.placeholderText() != text:
             output.setPlaceholderText(text)
             output.setAccessibleDescription(text)
@@ -188,6 +271,7 @@ class LiveLogcatStream:
         """手动上翻暂停跟随；程序追加和重排不改变用户的阅读选择。"""
         if self._frame._updating_output or self._frame._closing:
             return
+        self._rebuild_reading = None
         bar = self._frame.output.verticalScrollBar()
         follow = bar.value() == bar.maximum()
         self._frame.follow_action.setChecked(follow)
@@ -248,9 +332,7 @@ class LiveLogcatStream:
                 self._empty_filter_wait = "switching"
                 self._refresh_empty_hint()
                 # 旧代次尚未落屏的内容不能越过 Enter 提交形成的过滤边界。
-                self._frame._line_flush_timer.stop()
-                self._frame._pending_visible_lines.clear()
-                self._frame._pending_visible_entries.clear()
+                self._cancel_render()
                 if self._frame._pending_evicted_visible and self._frame._view_active:
                     self._schedule_line_flush()
                 message = (
@@ -324,12 +406,10 @@ class LiveLogcatStream:
             self._refresh_empty_hint()
             return
         self._frame._worker_release_timer.stop()
+        self._cancel_render()
         self._frame.entries.clear()
-        self._frame._pending_visible_lines.clear()
-        self._frame._pending_visible_entries.clear()
         self._frame._rendered_visible_entries.clear()
         self._frame._pending_evicted_visible = 0
-        self._frame._line_flush_timer.stop()
         self._frame.output.clear()
         self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
@@ -387,12 +467,10 @@ class LiveLogcatStream:
             self._frame._task_supervisor.stop_async(self._frame._supervisor_task_id)
 
     def _clear(self):
+        self._cancel_render()
         self._frame.entries.clear()
-        self._frame._pending_visible_lines.clear()
-        self._frame._pending_visible_entries.clear()
         self._frame._rendered_visible_entries.clear()
         self._frame._pending_evicted_visible = 0
-        self._frame._line_flush_timer.stop()
         self._frame.output.clear()
         self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
@@ -414,6 +492,9 @@ class LiveLogcatStream:
                 bar.setValue(reading_block.firstLineNumber())
             # Qt 重排会自动显露追加日志留下的尾部光标；完成重排后恢复阅读位置，保留选区。
             output.horizontalScrollBar().setValue(0)
+            if self._rebuild_reading is not None:
+                self._rebuild_reading["horizontal"] = 0
+                self._rebuild_reading["line_offset"] = 0
         finally:
             self._frame._updating_output = False
 
@@ -443,7 +524,12 @@ class LiveLogcatStream:
         )
         if fp:
             try:
-                text = self._frame.output.toPlainText()
+                # 文档可能只完成部分绘制；逻辑可见队列包含完整筛选结果，且排除已淘汰记录。
+                text = "\n".join(
+                    entry[0] for entries in (
+                        self._frame._rendered_visible_entries, self._frame._pending_visible_entries,
+                    ) for entry in entries
+                )
                 # 先写临时文件再原子替换，避免中途失败留下半截日志文件。
                 directory = os.path.dirname(os.path.abspath(fp))
                 fd, tmp_path = tempfile.mkstemp(prefix=".logcat_", suffix=".tmp", dir=directory)
@@ -520,6 +606,7 @@ class LiveLogcatStream:
             elif pending and pending[0] is oldest:
                 pending.popleft()
                 self._frame._pending_visible_lines.popleft()
+                self._rebuild_remaining = max(0, self._rebuild_remaining - 1)
         entry = (text, level, pid)
         self._empty_cleared = False
         self._frame.entries.append(entry)
@@ -561,18 +648,45 @@ class LiveLogcatStream:
             self._frame._line_flush_timer.start(75)
 
     def _flush_pending_lines(self):
-        if self._frame._closing:
+        self._frame._line_flush_timer.stop()
+        if self._frame._closing or self._render_paused:
             return
         if not self._frame._pending_visible_lines and not self._frame._pending_evicted_visible:
+            self._rebuild_reading = None
             self._update_content_actions()
             return
-        lines = self._frame._pending_visible_lines
-        self._frame._pending_visible_lines = deque(maxlen=self._frame.MAX_BUFFER)
-        evicted = self._frame._pending_evicted_visible
-        self._frame._pending_evicted_visible = 0
-        self._frame._rendered_visible_entries.extend(self._frame._pending_visible_entries)
-        self._frame._pending_visible_entries.clear()
-        # 高频 logcat 输出合并成一次 QTextDocument 更新，Stop/过滤按钮会更容易抢到事件循环。
+        generation = self._render_generation
+        lines = []
+        new_lines = 0
+        char_count = 0
+        # 淘汰也分片，先移除旧头部，避免 QTextDocument 的容量上限提前删除仍在阅读的记录。
+        evicted = 0
+        block = self._frame.output.document().firstBlock()
+        while evicted < min(self._frame._pending_evicted_visible, self.RENDER_BATCH_LINES):
+            size = block.length()
+            if evicted and char_count + size > self.RENDER_BATCH_CHARS:
+                break
+            char_count += size
+            evicted += 1
+            block = block.next()
+        self._frame._pending_evicted_visible -= evicted
+        if not self._frame._pending_evicted_visible:
+            while (self._frame._pending_visible_lines
+                   and len(lines) + evicted < self.RENDER_BATCH_LINES):
+                size = len(self._frame._pending_visible_lines[0]) + 1
+                if (lines or evicted) and char_count + size > self.RENDER_BATCH_CHARS:
+                    break
+                char_count += size
+                lines.append(self._frame._pending_visible_lines.popleft())
+                self._frame._rendered_visible_entries.append(
+                    self._frame._pending_visible_entries.popleft()
+                )
+                # 取消阅读位置恢复不等于新增记录，历史重绘不能计入暂停跟随的新日志数。
+                if self._rebuild_remaining:
+                    self._rebuild_remaining -= 1
+                else:
+                    new_lines += 1
+        # 每片按行数和字符预算收口；超长单行独占一片而不截断，下一片经事件循环续排。
         output = self._frame.output
         horizontal_scroll = output.horizontalScrollBar()
         horizontal_position = horizontal_scroll.value()
@@ -596,6 +710,8 @@ class LiveLogcatStream:
                 cursor.removeSelectedText()
             if lines:
                 output.appendPlainText("\n".join(lines))
+            if generation != self._render_generation:
+                return
             # QTextCursor 会跟踪头部删除后的记录位置；固定滚动值会随淘汰悄悄换成另一条日志。
             if follow_tail:
                 vertical_scroll.setValue(vertical_scroll.maximum())
@@ -605,13 +721,18 @@ class LiveLogcatStream:
                     if reading_block.isValid() else 0
                 )
             horizontal_scroll.setValue(horizontal_position)
+            self._restore_rebuild_reading()
         finally:
             self._frame._updating_output = False
         if not follow_tail:
             self._frame._unseen_lines = min(
-                self._frame.MAX_BUFFER, self._frame._unseen_lines + len(lines)
+                self._frame.MAX_BUFFER, self._frame._unseen_lines + new_lines
             )
         self._update_content_actions()
+        if self._frame._pending_visible_lines or self._frame._pending_evicted_visible:
+            self._frame._line_flush_timer.start(1)
+        else:
+            self._rebuild_reading = None
 
     def _on_status(self, msg: str):
         if self._frame._closing:

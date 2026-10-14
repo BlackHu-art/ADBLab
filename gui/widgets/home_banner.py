@@ -5,18 +5,16 @@ from __future__ import annotations
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import StrongBodyLabel
 
-from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_label_role
+from gui.styles import BaseStyles
 from utils.resource_path import resource_path
 
 
 class HomeBanner(QWidget):
-    """承载首页标题与快捷卡片，不固定高度、不持有业务状态。
+    """承载首页快捷卡片，不固定高度、不持有业务状态。
 
     仅持有一份本地横幅原图，不缓存窗口缩放版本；卡片作为子控件随横幅释放。
-    主题和字体使用 QObject 绑定槽，销毁后自动断连。
+    主题使用 QObject 绑定槽，销毁后自动断连；字体由内容控件同步。
     左上角半径由主窗口材质策略设置，其余边缘始终贴合页面滚动区。
     """
 
@@ -27,21 +25,11 @@ class HomeBanner(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._top_left_radius = 0
         self._background = QPixmap(resource_path("resources/images/gallery_header.png"))
-        self.title_label = StrongBodyLabel("ADBLab", self)
-        self.title_label.setWordWrap(True)
-        self.title_label.setMinimumWidth(0)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred,
-        )
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setContentsMargins(32, 24, 32, 32)
         layout.setSpacing(24)
-        layout.addWidget(self.title_label)
         layout.addWidget(content)
         BaseStyles.theme_changed.connect(self._refresh_background)
-        BaseStyles.ui_font_changed.connect(self._sync_font)
-        self._sync_font()
 
     def set_top_left_radius(self, radius: int) -> None:
         """与主窗口的内容壳同步左上圆角；独立使用时默认为直角。"""
@@ -53,10 +41,6 @@ class HomeBanner(QWidget):
 
     def _refresh_background(self, _value: str) -> None:
         self.update()
-
-    def _sync_font(self, _config=None) -> None:
-        apply_label_role(self.title_label, FontRole.TITLE)
-        self.updateGeometry()
 
     def sizeHint(self) -> QSize:
         """按实际宽度测量内容，避免滚动区沿用创建时的单列高度。"""

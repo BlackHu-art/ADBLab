@@ -325,6 +325,12 @@ class LiveLogcatForm:
         self._frame.output.verticalScrollBar().valueChanged.connect(
             self._frame._stream_controller._on_output_scroll
         )
+        self._frame.output.selectionChanged.connect(
+            self._frame._stream_controller._on_output_selection
+        )
+        self._frame.output.horizontalScrollBar().valueChanged.connect(
+            self._frame._stream_controller._on_output_selection
+        )
 
         self._frame.highlighter = LogcatHighlighter(self._frame.output.document())
         self._set_running_actions(False)

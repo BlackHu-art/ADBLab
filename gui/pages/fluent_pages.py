@@ -1381,6 +1381,7 @@ class SettingsPage(ScrollArea):
 
         if not hasattr(self, "_card_presentations"):
             return
+        self._settings_reflow_width = self.viewport().width()
         margins = self.expand_layout.contentsMargins()
         width = max(1, self.viewport().width() - margins.left() - margins.right())
         for presentation in self._card_presentations:
@@ -1408,7 +1409,10 @@ class SettingsPage(ScrollArea):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._reflow_settings()
+        # 卡片换行只依赖可用宽度；高度变化由滚动容器承担，不重挂所有操作控件。
+        # 字体、文案和状态更新仍显式调用重排，不能被这个尺寸事件短路。
+        if self.viewport().width() != getattr(self, "_settings_reflow_width", None):
+            self._reflow_settings()
 
     def _pick_save_directory(self) -> None:
         self._frame._on_save_path_clicked()

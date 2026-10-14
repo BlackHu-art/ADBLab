@@ -22,6 +22,9 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md, .
 左栏使用语义路由，不能由左栏项目数推断物理 QWidget 页数。MainFrame 中宿主内部的功能导航隐藏，
 独立使用宿主时仍保留这些接口。
 
+项目名称由窗口原标题栏标签显示，位于返回按钮右侧；标签随界面字体设置更新，名称区域继续支持
+拖动和双击窗口。首页横幅只承载常用工具，不再重复显示项目大标题，正文顶部保留 24px 留白。
+
 ```mermaid
 flowchart TD
     Main[MainFrame] --> Nav[Fluent 左栏与语义返回历史]
@@ -69,6 +72,9 @@ flowchart TD
   跟随主宿主实际云母开关及深浅主题；原生调用成功后才让 Qt 表面透出材质。
   不支持或应用失败时保留主题底板。工具窗继续不抢焦点，DWM 可按非激活状态显示实色后备，
   不通过伪造激活状态维持纹理；材质切换不重建按键或改变会话目标。
+  [工具栏表面](../../gui/widgets/remote_toolbar.py) 在云母下保留约 1/255 的非零透明度，
+  避免 Windows 分层窗口把完全透明的按键空白区当作鼠标穿透区域；不能用纯透明 QSS 替代。
+  命中验证使用真实原生窗口及 `WindowFromPoint`，不能只向 Qt 控件直接投递点击。
 - [ContentSection](../../gui/widgets/content_section.py) 保留 HeaderCardWidget 的布局接口，
   绕过结构卡片底板和边框绘制，使用标题与留白组织内容。它不要求子按钮、输入框也全部透明，
   也不替代需要常驻边界的交互卡片；章节之间的分割线由消费页面布局决定。
@@ -92,6 +98,10 @@ flowchart TD
 [apply_font_role / apply_label_role / set_fluent_font_rule](../../gui/styles/fluent.py)；
 `apply_font_role()` 只执行当次设置，不自动为控件订阅字体变更信号。
 `control_height()` 根据实际字体度量计算最小高度，避免字号改变后仍锁死原高度。
+
+主导航由 [MainFrame._sync_navigation_typography](../../gui/main_frame.py) 同步显式设置字体的
+Fluent 叶子控件及主题入口。字体改变、导航形态提交和动画结束时重新度量行高、展开宽度；
+展开动画中改字号同步更新动画终点，收起仍保留紧凑宽度。沿用原导航项、路由和选中状态。
 
 文件管理的路径标签使用 UI、底部状态使用 UI_SMALL；文本预览的两个保存按钮在初建和字体变更时
 同步角色字体与最小高度。刷新保留当前目录、手动列宽、列表选择以及预览文档、修改状态和光标位置。
@@ -154,6 +164,9 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 [FramelessResizeController](../../gui/widgets/frameless_resize.py) 为可见覆盖滚动条让出输入热区，
 并合并滚动条及祖先几何事件的遮罩计算。
 
+[SettingsPage](../../gui/pages/fluent_pages.py) 记录最近布局的实际视口宽度，纯高度变化不再遍历
+普通设置卡。实际宽度变化和文案、字体、主题等显式刷新仍执行重排，不能只按宽度缓存所有内容变化。
+
 ## 5. 设备选择、连接与展开
 
 [DeviceContextBar / DevicePicker](../../gui/widgets/device_context_bar.py) 消费现有设备与会话快照，
@@ -190,6 +203,20 @@ FrameAnimation 空闲不启动计时器，隐藏、最小化和关闭时停止�
 [任务中心](../../gui/pages/tasks_page.py)、[应用行](../../gui/dialogs/app_manager_rows.py)、
 [性能日志](../../gui/dialogs/performance_launcher_log.py)和
 [Logcat 数据流](../../gui/dialogs/live_logcat_stream.py)。
+
+应用管理的 [AppManagerViews](../../gui/dialogs/app_manager_views.py) 对超过 128 项的快照分批
+构建表格及图标视图，每批最多 64 项或约 6 ms；小列表即时完成。每批核对设备及加载请求，离页
+暂停、返回继续，关闭或替换快照取消旧批次。筛选和选择仍可更新，完整交付前维持加载忙碌状态，
+worker 结束不提前发布成功。行委托读取视图字体，字号变化不逐格写入字体。
+
+Logcat 积压追加、头部淘汰和筛选重建共用分批渲染，每片最多 256 行或 256 Ki 字符，后续片段
+经页面计时器交还事件循环。保留 8000 条缓存上限及完整单行，超长单行可能单独占用较长时间。
+重建按记录身份恢复阅读点和选区，用户主动滚动或选择优先；历史重绘不计入新日志数。清空、重启、
+过滤边界和关闭使旧批次失效，离页暂停显示但继续接收日志。导出从已绘制和待绘制的逻辑可见队列
+读取完整结果，不把分批中的半份文档当作完整导出；有待绘制记录时不闪现暂无日志提示。
+
+上述预算限制连续 UI 工作量，不保证单次 Qt 绘制、Python 垃圾回收或超长单行低于目标帧时；
+分批也可能增加总完成时间。性能验收应同时记录最长连续片段、总耗时和数据完整性。
 
 ## 7. 交互状态、反馈与资源归属
 
@@ -231,6 +258,9 @@ Logcat 空态由采集状态和缓冲区共同决定，在视口内绘制提示�
 | 响应式与滚动 | `test_responsive_layout_controller.py`、`test_page_scroll_integration.py`、`test_page_scroll_edges.py`、`test_scroll_reflow_efficiency.py` |
 | 动画与缓存 | `test_frame_animation.py`、`test_settings_scroll.py`、`test_cached_icons.py`、`test_ui_incremental_updates.py` |
 | 会话与空态 | `test_feature_contracts.py`、`test_workspace_feature_host.py`、`test_live_logcat_empty_state.py` |
+| 分批交付与取消 | `test_app_manager_population.py`、`test_live_logcat_render_batches.py` |
+| 导航字体与同宽布局 | `test_main_window_layout.py`、`test_settings_reflow_efficiency.py` |
+| 投屏工具窗原生命中 | `test_remote_toolbar_material.py`、`test_remote_dock_native.py` |
 
 离屏验证适合字段对齐、事件顺序、缓存复用和终态几何；原生云母观感、不同显示器的实际滚动帧时、
 触控板输入及真实设备下的交互负载仍需目标环境验证。文档链接检查只证明引用与元数据有效，
