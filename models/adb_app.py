@@ -6,7 +6,6 @@
 import os
 import re
 import shlex
-import shutil
 
 from PySide6.QtCore import QCoreApplication
 
@@ -15,6 +14,7 @@ from core.adb_query import query_timeout
 from core.exec import CommandRunner
 from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from utils.adb_values import normalize_android_package
+from utils.apk_tools import resolve_apk_tool
 
 from .adb_model import ADBModelCore, async_command
 from .base.focus_detector import detect_current_package
@@ -277,17 +277,21 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def parse_apk_info_async(self, apk_path: str) -> dict:
+        """使用内置或兼容环境工具只读解析 APK；沿用命令超时与关闭取消边界。"""
         if not os.path.isfile(apk_path):
             return {
                 "success": False,
                 "error": f"APK file not found: {apk_path}",
                 "apk_path": apk_path,
             }
-        aapt = shutil.which("aapt")
+        aapt = resolve_apk_tool()
         if not aapt:
             return {
                 "success": False,
-                "error": "aapt executable not found in PATH",
+                "error": (
+                    "APK analysis tool not found. Prepare or restore bundled AAPT2, "
+                    "or configure aapt/aapt2 in PATH."
+                ),
                 "apk_path": apk_path,
             }
         return self._run_readonly(

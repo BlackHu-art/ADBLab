@@ -15,6 +15,111 @@ import main
 from core import settings_manager
 
 
+@pytest.mark.parametrize("entry", ["gui", "splash", "self-check"])
+def test_gui_entries_choose_compatible_display_before_qt_construction(monkeypatch, entry):
+    from PySide6 import QtWidgets
+
+    from utils import gui_platform
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setenv("DISPLAY", ":77")
+    for key in ("QT_QPA_PLATFORM", "SDL_VIDEO_DRIVER", "SDL_VIDEODRIVER"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(gui_platform, "_xcb_plugin_loadable", lambda: True)
+
+    class ReachedQtBoundary(Exception):
+        pass
+
+    def application_boundary(*_args, **_kwargs):
+        assert os.environ.get("QT_QPA_PLATFORM") == "xcb;wayland"
+        assert "SDL_VIDEO_DRIVER" not in os.environ
+        assert "SDL_VIDEODRIVER" not in os.environ
+        raise ReachedQtBoundary
+
+    monkeypatch.setattr(QtWidgets, "QApplication", application_boundary)
+    monkeypatch.setattr(settings_manager.AppSettings, "instance", lambda **_kwargs: {})
+    monkeypatch.setattr(settings_manager, "_error_sink", None)
+    monkeypatch.setattr(main, "_configure_console_logging", lambda _settings: None)
+    monkeypatch.setattr(main, "_configure_gui_scaling", lambda _value: None)
+    monkeypatch.setattr("utils.adb_resolver.set_client_preference", lambda _value: None)
+    monkeypatch.setitem(
+        sys.modules, "gui.startup_worker", SimpleNamespace(run_startup_splash=application_boundary),
+    )
+
+    with pytest.raises(ReachedQtBoundary):
+        if entry == "gui":
+            main._run_gui_session(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+        elif entry == "splash":
+            main._dispatch_cli(["--startup-splash", "synthetic-splash-server"])
+        else:
+            main._self_check_gui()
+
+
+@pytest.mark.parametrize("entry", ["gui", "self-check"])
+@pytest.mark.parametrize(
+    "requested, selected, inherited",
+    [
+        (None, "xcb", "xcb"),
+        (None, "wayland", "wayland"),
+        ("wayland;xcb", "xcb", "wayland;xcb"),
+        ("offscreen", "offscreen", "offscreen"),
+    ],
+)
+def test_gui_propagates_resolved_auto_platform_before_starting_children(
+    monkeypatch, entry, requested, selected, inherited,
+):
+    from PySide6 import QtWidgets
+
+    from utils import gui_platform
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setenv("DISPLAY", ":77")
+    for key in ("QT_QPA_PLATFORM", "SDL_VIDEO_DRIVER", "SDL_VIDEODRIVER"):
+        monkeypatch.delenv(key, raising=False)
+    if requested is not None:
+        monkeypatch.setenv("QT_QPA_PLATFORM", requested)
+    monkeypatch.setattr(gui_platform, "_xcb_plugin_loadable", lambda: True)
+
+    class ReachedChildBoundary(Exception):
+        pass
+
+    def child_boundary(*_args):
+        actual = os.environ.get("QT_QPA_PLATFORM")
+        assert actual == inherited
+        child = gui_platform.scrcpy_environment(os.environ)
+        expected_sdl = "x11" if inherited == "xcb" else None
+        assert child.get("SDL_VIDEO_DRIVER") == expected_sdl
+        assert child.get("SDL_VIDEODRIVER") == expected_sdl
+        raise ReachedChildBoundary
+
+    class Application:
+        def __init__(self, _argv):
+            assert os.environ.get("QT_QPA_PLATFORM") == (requested or "xcb;wayland")
+
+        def platformName(self):
+            return selected
+
+        setWindowIcon = child_boundary
+
+    monkeypatch.setattr(QtWidgets, "QApplication", Application)
+    if entry == "self-check":
+        monkeypatch.setattr(QtWidgets, "QWidget", child_boundary)
+    monkeypatch.setattr("PySide6.QtGui.QIcon", lambda _path: None)
+    monkeypatch.setattr(settings_manager.AppSettings, "instance", lambda **_kwargs: {})
+    monkeypatch.setattr(settings_manager, "_error_sink", None)
+    monkeypatch.setattr(main, "_configure_console_logging", lambda _settings: None)
+    monkeypatch.setattr(main, "_configure_gui_scaling", lambda _value: None)
+    monkeypatch.setattr("utils.adb_resolver.set_client_preference", lambda _value: None)
+
+    with pytest.raises(ReachedChildBoundary):
+        if entry == "gui":
+            main._run_gui_session(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+        else:
+            main._self_check_gui()
+
+
 @pytest.mark.parametrize("platform_plugin", ["offscreen", "adblab-invalid-platform"])
 def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plugin):
     """独立进程实际加载指定 QPA 插件；失败插件不能被静默替换成离屏模式。"""
@@ -53,10 +158,28 @@ def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plug
     assert not (tmp_path / "config").exists()
 
 
+@pytest.fixture
+def isolated_packaging_tools(monkeypatch):
+    """界面能力用例不依赖本机工具准备状态；工具完整性由专项测试覆盖。"""
+    monkeypatch.setattr("utils.tool_check.check_bundled_tools", lambda: [])
+    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+
+    def bridge_self_check(command, **kwargs):
+        assert command == ["synthetic-bridge", "--self-check"]
+        assert kwargs == {
+            "capture_output": True, "timeout": 10,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0), "check": False,
+        }
+        return subprocess.CompletedProcess(command, 0, b"scrcpy-adb-bridge: ready\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", bridge_self_check)
+
+
 @pytest.mark.parametrize("available", [False, True])
 @pytest.mark.ui
 def test_packaging_check_reports_acrylic_capability(
-    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys, available,
+    qt_application, isolated_app_settings, isolated_packaging_tools,
+    tmp_path, monkeypatch, capsys, available,
 ):
     """主包可导入不代表覆盖磨砂可用，自检必须报告图像依赖的实际能力。"""
     from PySide6.QtNetwork import QSslSocket
@@ -66,14 +189,6 @@ def test_packaging_check_reports_acrylic_capability(
     monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
     monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
-    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
-    monkeypatch.setattr(
-        subprocess, "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
-        ),
-    )
-
     result = main._self_check_packaging()
 
     output = capsys.readouterr().out
@@ -82,7 +197,7 @@ def test_packaging_check_reports_acrylic_capability(
 
 
 def test_packaging_check_reports_missing_tls_without_network(
-    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys,
+    qt_application, isolated_app_settings, isolated_packaging_tools, tmp_path, monkeypatch, capsys,
 ):
     from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
 
@@ -100,7 +215,8 @@ def test_packaging_check_reports_missing_tls_without_network(
 
 @pytest.mark.parametrize("loadable", [False, True])
 def test_packaging_check_reports_translation_catalog_loadability(
-    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys, loadable,
+    qt_application, isolated_app_settings, isolated_packaging_tools,
+    tmp_path, monkeypatch, capsys, loadable,
 ):
     """资源路径存在并不证明 Qt 能解码内嵌词库。"""
 
@@ -114,14 +230,6 @@ def test_packaging_check_reports_translation_catalog_loadability(
     monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
     if not loadable:
         monkeypatch.setattr(QTranslator, "load", lambda _translator, _path: False)
-    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
-    monkeypatch.setattr(
-        subprocess, "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
-        ),
-    )
-
     result = main._self_check_packaging()
     output = capsys.readouterr().out
     for language in ("zh_CN", "en_US", "zh_HK"):
@@ -146,7 +254,7 @@ def test_packaging_check_reports_translation_catalog_loadability(
     ],
 )
 def test_packaging_check_reports_missing_visual_resource(
-    qt_application, isolated_app_settings, tmp_path, monkeypatch, capsys,
+    qt_application, isolated_app_settings, isolated_packaging_tools, tmp_path, monkeypatch, capsys,
     missing_paths, expected_check,
 ):
     """首页、启动原图和许可均为发布资源，缺失时不能只检查目录存在。"""
@@ -165,14 +273,6 @@ def test_packaging_check_reports_missing_visual_resource(
     monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
     monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
-    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
-    monkeypatch.setattr(
-        subprocess, "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
-        ),
-    )
-
     def forbidden_request(*_args):
         raise AssertionError("Packaging self-check must stay offline")
 

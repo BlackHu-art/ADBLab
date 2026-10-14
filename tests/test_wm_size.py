@@ -1,4 +1,4 @@
-"""尺寸输出经真实桥接解析后驱动 Remote 坐标，不连接设备。"""
+"""验证基础尺寸与当前输入区域各自的解析契约，不连接设备。"""
 
 from unittest.mock import Mock
 
@@ -11,18 +11,38 @@ from services.remote.scrcpy_service import ScrcpyService
 
 
 @pytest.mark.parametrize("old_cache", [False, True])
-def test_override_dimensions_reach_control_coordinates(monkeypatch, old_cache):
+@pytest.mark.parametrize(("orientation", "logical_frame", "expected_swipe"), [
+    (0, "[0, 0, 720, 1280]", "swipe 360 1152 360 128 300"),
+    (1, "[0, 0, 1280, 720]", "swipe 640 648 640 72 300"),
+])
+def test_override_dimensions_and_current_viewport_reach_control_coordinates(
+    monkeypatch, old_cache, orientation, logical_frame, expected_swipe,
+):
     bridge = ADBBridge(path="unused-adb")
-    monkeypatch.setattr(bridge, "shell", Mock(return_value=CommandResult(
-        True, "Physical size: 1080x2400\nOverride size: 720x1280\n", "", 0,
-    )))
-    send = Mock()
+
+    def query(command, *, device_id):
+        assert device_id == "test-device"
+        if command == "wm size":
+            output = "Physical size: 1080x2400\nOverride size: 720x1280\n"
+        elif command == "dumpsys input":
+            output = (
+                "Viewport INTERNAL: displayId=0, uniqueId=fixture, port=0, "
+                f"orientation={orientation}, logicalFrame={logical_frame}, "
+                "physicalFrame=[0, 0, 1080, 2400], deviceSize=[1080, 2400], isActive=[1]"
+            )
+        else:
+            pytest.fail(f"Unexpected device query: {command}")
+        return CommandResult(True, output, "", 0)
+
+    monkeypatch.setattr(bridge, "shell", query)
+    send = Mock(return_value=True)
     monkeypatch.setattr(bridge, "shell_input", send)
     service = RemoteControlService(adb=bridge, dimension_ttl_seconds=-1)
     if old_cache:
         service.remember_dimensions("test-device", ["1080", "2400"])
-    service.directional_swipe("test-device", "up")
-    send.assert_called_once_with("swipe 360 1152 360 128 300", device_id="test-device")
+    assert service.get_dimensions("test-device") == (720, 1280)
+    assert service.directional_swipe("test-device", "up") is True
+    send.assert_called_once_with(expected_swipe, device_id="test-device")
 
 
 @pytest.mark.parametrize(("output", "expected"), [

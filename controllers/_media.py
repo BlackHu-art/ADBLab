@@ -27,6 +27,7 @@ from core.log_service import LogService
 from models.adb_advanced import ADBAdvanced
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package, truncate_diagnostic_output
+from utils.diagnostic_artifacts import diagnostic_log_filename
 
 
 def _emit_readonly_diagnostic_result(
@@ -879,11 +880,8 @@ class ADBMediaMixin(_ADBControllerBase):
             )
             return
         for ip in devices:
-            timestamp = datetime.now().strftime("%H%M%S")
-            sanitized = re.sub(r"\W+", "_", ip)
-            log_path = os.path.join(
-                save_dir, f"logcat_{timestamp}_{sanitized}_{uuid.uuid4().hex}.txt"
-            )
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_path = os.path.join(save_dir, diagnostic_log_filename("logcat", ip, timestamp))
             self.advanced_model.logcat_filtered_async(
                 ip, log_path, buffer, priority, tag_filter, regex
             )

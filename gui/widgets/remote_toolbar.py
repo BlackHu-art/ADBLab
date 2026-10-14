@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -168,6 +168,90 @@ class _DragHandle(QLabel):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+
+class _PowerButton(QToolButton):
+    """鼠标或空格保持按下时只触发一次长按；取消和长按后的释放不产生短按。"""
+
+    long_pressed = Signal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._holding = False
+        self._consumed = False
+        self._hold_timer = QTimer(self)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._hold_timer.setInterval(600)
+        self._hold_timer.timeout.connect(self._long_press)
+
+    def _begin_hold(self) -> None:
+        self._holding = True
+        self._consumed = False
+        self._hold_timer.start()
+
+    def _cancel_hold(self) -> None:
+        if self._holding:
+            self._consumed = True
+            self._holding = False
+            self._hold_timer.stop()
+            self.setDown(False)
+
+    def _finish_hold(self) -> bool:
+        self._hold_timer.stop()
+        self._holding = False
+        if self._consumed:
+            self.setDown(False)
+        return self._consumed
+
+    def _long_press(self) -> None:
+        if self._holding and self.isDown() and self.isEnabled() and self.isVisible():
+            self._consumed = True
+            # 接收方可同步销毁窗口，发出意图后不能再访问按钮或定时器。
+            self.long_pressed.emit()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+            event.position().toPoint(),
+        ):
+            self._begin_hold()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if not self.rect().contains(event.position().toPoint()):
+            self._cancel_hold()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._finish_hold():
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            if event.isAutoRepeat():
+                event.accept()
+                return
+            self._begin_hold()
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            if event.isAutoRepeat() or self._finish_hold():
+                event.accept()
+                return
+        super().keyReleaseEvent(event)
+
+    def event(self, event: QEvent) -> bool:
+        # QWidget 初始化也会分发事件，此时计时器尚未建立。
+        if hasattr(self, "_hold_timer") and (
+            event.type() in {QEvent.Type.Hide, QEvent.Type.Leave, QEvent.Type.FocusOut,
+                             QEvent.Type.WindowDeactivate, QEvent.Type.UngrabMouse}
+            or (event.type() == QEvent.Type.EnabledChange and not self.isEnabled())
+        ):
+            self._cancel_hold()
+        return super().event(event)
 
 
 class RemoteToolbar(QWidget):
@@ -366,7 +450,13 @@ class RemoteToolbar(QWidget):
     def _make_button(
         self, command: _Command, parent: QWidget, *, compact: bool = False,
     ) -> QToolButton | QPushButton:
-        button = QToolButton(parent) if compact else QPushButton(tr(command.label), parent)
+        if command.code == "POWER":
+            button = _PowerButton(parent)
+            button.long_pressed.connect(lambda: self._request(
+                _Command("电源", "power_long_press", "power.svg", False),
+            ))
+        else:
+            button = QToolButton(parent) if compact else QPushButton(tr(command.label), parent)
         button.setObjectName(f"remoteToolbarCommand_{command.code}")
         button.setProperty("remoteKey" if command.is_key else "remoteAction", command.code)
         button.setAccessibleName(tr(command.label))
@@ -396,7 +486,7 @@ class RemoteToolbar(QWidget):
                 action=tr(command.label), target=self._target_label,
             ) if self._available else tr("当前投屏设备不可用")
             if command.code == "POWER" and self._available:
-                tooltip += "\n" + tr("点按电源键，切换屏幕开关")
+                tooltip += "\n" + tr("点按切换屏幕开关；按住 0.6 秒触发长按")
             button.setToolTip(tooltip)
             button.setAccessibleDescription(tooltip)
 

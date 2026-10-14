@@ -58,6 +58,10 @@ def test_spec_and_cli_consume_the_same_resources_and_hidden_imports(monkeypatch,
     assert options["hiddenimports"] == ["mobileperf.included", "qfluentwidgets.included"]
     assert (("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64")
             in expected_data) is (platform == "win32")
+    assert (("runtime-tools/aapt2/windows-x86_64", "runtime-tools/aapt2/windows-x86_64")
+            in expected_data) is (platform == "win32")
+    assert (("runtime-tools/aapt2/linux-x86_64", "runtime-tools/aapt2/linux-x86_64")
+            in expected_data) is (platform == "linux")
     assert ("build/runtime-helpers", "runtime-helpers") in expected_data
 
 

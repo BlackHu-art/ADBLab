@@ -12,6 +12,11 @@ from scripts import prepare_runtime_tools as prepare
 from utils import tool_manifest
 
 
+@pytest.fixture(autouse=True)
+def isolate_aapt2_preparation(monkeypatch):
+    monkeypatch.setattr(tool_manifest, "get_aapt2_bundle", lambda: None)
+
+
 def test_windows_bundle_selects_verified_official_zip():
     bundle = tool_manifest.get_tool_bundle("win32", "AMD64")
     assert bundle.directory == "runtime-tools/windows-x86_64"

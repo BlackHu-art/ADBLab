@@ -22,6 +22,7 @@ _INTENT_FAILURE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "power_long_press": ("long_press_power", ()),
     "swipe_up": ("directional_swipe", ("up",)),
     "swipe_down": ("directional_swipe", ("down",)),
     "swipe_left": ("directional_swipe", ("left",)),
@@ -112,6 +113,12 @@ class RemoteControlService:
                 return None
             code = key_name
         return self._shell_input(f"keyevent {code}", device_id, cancelled)
+
+    def long_press_power(
+        self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
+    ):
+        """发送一次系统电源长按事件；由设备策略决定响应，不模拟硬件强制关机。"""
+        return self._shell_input("keyevent --longpress 26", device_id, cancelled)
 
     def perform_action(
         self, device_id: str, action: str, *, cancelled: Callable[[], bool] | None = None,

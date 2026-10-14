@@ -567,8 +567,14 @@ def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses(monkeypat
     }
     for platform in ("win32", "darwin", "linux"):
         tools = {
-            "win32": {("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64")},
-            "linux": {("runtime-tools/linux-x86_64", "runtime-tools/linux-x86_64")},
+            "win32": {
+                ("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64"),
+                ("runtime-tools/aapt2/windows-x86_64", "runtime-tools/aapt2/windows-x86_64"),
+            },
+            "linux": {
+                ("runtime-tools/linux-x86_64", "runtime-tools/linux-x86_64"),
+                ("runtime-tools/aapt2/linux-x86_64", "runtime-tools/aapt2/linux-x86_64"),
+            },
             "darwin": set(),
         }
         expected = common | tools[platform]

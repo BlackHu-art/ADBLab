@@ -46,7 +46,7 @@ class _WindowApi(Protocol):
 
 
 class WindowsWindowTracker:
-    """仅绑定启动进程及其后代窗口；绑定失效后永久结束，调用方拥有实例寿命。"""
+    """复用原生 API 绑定启动进程及其后代窗口；失效后永久结束，调用方负责关闭。"""
 
     def __init__(
         self,
@@ -77,6 +77,18 @@ class WindowsWindowTracker:
     def lost(self) -> bool:
         """已绑定身份是否失效；首次窗口尚未出现不属于失效。"""
         return self._lost
+
+    def close(self) -> None:
+        """会话结束时撤销绑定并释放自有原生连接；重复关闭不重复释放。"""
+        api, self._api = self._api, None
+        self._bound = None
+        self._lost = True
+        close = getattr(api, "close", None)
+        if callable(close):
+            try:
+                close()
+            except OSError:
+                _LOGGER.debug("关闭投屏窗口连接失败", exc_info=True)
 
     def snapshot(self) -> NativeWindowSnapshot | None:
         """同步读取一次状态，不等待窗口出现；初始发现节流且不启动外部命令。"""
@@ -145,6 +157,28 @@ class WindowsWindowTracker:
             visited.add(pid)
             pid = parents.get(pid, 0)
         return False
+
+
+def create_window_tracker(
+    root_pid: int, title: str, *, platform_name: str,
+) -> WindowsWindowTracker:
+    """仅为能定位工具窗及镜像的后端创建跟踪器；其余交给便携工具栏。
+
+    GUI 提供已经创建的 Qt 后端名称，不能仅凭 Wayland 会话中也存在 DISPLAY 就使用
+    X11 句柄。显式 SDL 非 x11 选择保留，原生连接由返回的跟踪器负责关闭。
+    """
+    api = None
+    if sys.platform == "linux" and platform_name == "xcb":
+        from utils.gui_platform import sdl_allows_x11
+
+        if sdl_allows_x11(os.environ) and ";" not in os.environ.get("QT_QPA_PLATFORM", ""):
+            from services.remote.x11_window_tracking import X11WindowApi
+
+            try:
+                api = X11WindowApi()
+            except OSError:
+                _LOGGER.debug("X11 窗口跟随不可用，使用便携工具栏", exc_info=True)
+    return WindowsWindowTracker(root_pid, title, api=api)
 
 
 class _ProcessEntry(ctypes.Structure):

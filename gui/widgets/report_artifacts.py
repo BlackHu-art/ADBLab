@@ -4,12 +4,13 @@ from collections import OrderedDict
 
 from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, PushButton
+from qfluentwidgets import BodyLabel, PushButton
 
 from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_font_role, configure_fluent_control, set_function_tooltip
+from gui.widgets.eliding_combo_box import ElidingComboBox
 
 
 class ReportArtifactsView(QWidget):
@@ -25,7 +26,7 @@ class ReportArtifactsView(QWidget):
         layout.setContentsMargins(0, 8, 0, 0)
         self.heading = BodyLabel(tr("已生成文件"), self)
         layout.addWidget(self.heading)
-        self.files = ComboBox(self)
+        self.files = ElidingComboBox(self)
         self.files.setMinimumWidth(0)
         self.files.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.files.setAccessibleName(tr("已生成的报告和日志"))
