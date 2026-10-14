@@ -7270,6 +7270,10 @@ Android device management, apps and diagnostics</translation>
             <translation>Press the power key to toggle the screen</translation>
         </message>
         <message>
+            <source>点按切换屏幕开关；按住 0.6 秒触发长按</source>
+            <translation>Tap to toggle the screen; hold for 0.6 seconds to send a long press</translation>
+        </message>
+        <message>
             <source>自动（启动时检测）</source>
             <translation>Auto (detect on start)</translation>
         </message>

@@ -7270,6 +7270,10 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>点按电源键，切换屏幕开关</translation>
         </message>
         <message>
+            <source>点按切换屏幕开关；按住 0.6 秒触发长按</source>
+            <translation>点按切换屏幕开关；按住 0.6 秒触发长按</translation>
+        </message>
+        <message>
             <source>自动（启动时检测）</source>
             <translation>自动（启动时检测）</translation>
         </message>

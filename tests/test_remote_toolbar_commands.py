@@ -14,6 +14,7 @@ from gui.panels.remote_panel_input import RemotePanelInput
 from services.remote.control_service import RemoteControlService
 from tests.test_remote_dock import Frame, Tracker, UnsupportedTracker, session
 from tests.test_remote_session_input import QueuedExecutor
+from tests.ui_geometry_helpers import wait_until
 
 pytestmark = pytest.mark.ui
 
@@ -25,6 +26,7 @@ EXPECTED_COMMANDS = (
     ("VOL_UP", (("input", "keyevent 24"),)),
     ("VOL_DOWN", (("input", "keyevent 25"),)),
     ("POWER", (("input", "keyevent 26"),)),
+    ("power_long_press", (("input", "keyevent --longpress 26"),)),
     ("rotate_portrait", (
         ("shell", "settings put system accelerometer_rotation 0"),
         ("shell", "settings put system user_rotation 0"),
@@ -119,13 +121,19 @@ def test_each_toolbar_button_reaches_its_device_command_after_selection_change(
             QTest.mouseClick(more, Qt.MouseButton.LeftButton)
             qt_application.processEvents()
             popup = toolbar.popup_window
-            button = toolbar.findChild(QAbstractButton, f"remoteToolbarCommand_{code}")
+            button_code = "POWER" if code == "power_long_press" else code
+            button = toolbar.findChild(QAbstractButton, f"remoteToolbarCommand_{button_code}")
             assert button is not None
             if popup.isAncestorOf(button):
                 popup.findChild(QScrollArea).ensureWidgetVisible(button)
                 qt_application.processEvents()
             before = len(bridge.commands)
-            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            if code == "power_long_press":
+                QTest.mousePress(button, Qt.MouseButton.LeftButton)
+                wait_until(qt_application, lambda: bool(executor.pending))
+                QTest.mouseRelease(button, Qt.MouseButton.LeftButton)
+            else:
+                QTest.mouseClick(button, Qt.MouseButton.LeftButton)
             assert len(bridge.commands) == before, "设备命令须进入队列而非阻塞鼠标事件"
             frame.selected_devices = ["b" if device == "a" else "a"]
             frame._device_admission_revision = getattr(frame, "_device_admission_revision", 0) + 1

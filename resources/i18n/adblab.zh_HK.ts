@@ -7270,6 +7270,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>點按電源鍵，切換螢幕開關</translation>
         </message>
         <message>
+            <source>点按切换屏幕开关；按住 0.6 秒触发长按</source>
+            <translation>點按切換螢幕開關；按住 0.6 秒觸發長按</translation>
+        </message>
+        <message>
             <source>自动（启动时检测）</source>
             <translation>自動（啟動時偵測）</translation>
         </message>

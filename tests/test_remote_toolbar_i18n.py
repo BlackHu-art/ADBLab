@@ -24,6 +24,16 @@ _LABELS = (
     ("媒体控制", "Media controls", "媒體控制"),
     ("展开侧栏", "Expand sidebar", "展開側欄"),
     ("收起侧栏", "Collapse sidebar", "收起側欄"),
+    (
+        "点按电源键，切换屏幕开关",
+        "Press the power key to toggle the screen",
+        "點按電源鍵，切換螢幕開關",
+    ),
+    (
+        "点按切换屏幕开关；按住 0.6 秒触发长按",
+        "Tap to toggle the screen; hold for 0.6 seconds to send a long press",
+        "點按切換螢幕開關；按住 0.6 秒觸發長按",
+    ),
     ("{action}（作用于{target}）", "{action} (target: {target})", "{action}（套用至{target}）"),
     (
         "操作当前已选的 {count} 台在线设备 · 与投屏侧栏的单台控制独立",
@@ -151,6 +161,38 @@ def test_translated_action_labels_keep_fixed_target_description_and_protocol(rem
         assert requested == [("key", "BACK"), ("action", "swipe_up"), ("key", "MEDIA_PLAY")]
         toolbar.set_available(False)
         assert back_button.toolTip() == unavailable
+    finally:
+        toolbar.dispose()
+        toolbar.deleteLater()
+
+
+@pytest.mark.parametrize("remote_language", ["zh_CN", "en_US", "zh_HK"], indirect=True)
+def test_power_tooltip_and_accessible_description_explain_tap_and_hold(remote_language):
+    tooltip, unavailable = {
+        "zh_CN": (
+            "电源（作用于Device 2）\n点按切换屏幕开关；按住 0.6 秒触发长按",
+            "当前投屏设备不可用",
+        ),
+        "en_US": (
+            "Power (target: Device 2)\n"
+            "Tap to toggle the screen; hold for 0.6 seconds to send a long press",
+            "Current mirrored device is unavailable",
+        ),
+        "zh_HK": (
+            "電源（套用至Device 2）\n點按切換螢幕開關；按住 0.6 秒觸發長按",
+            "目前投屏裝置無法使用",
+        ),
+    }[remote_language]
+    toolbar = RemoteToolbar()
+    try:
+        power = toolbar._commands["POWER"][1]
+        toolbar.set_target_label("Device 2")
+        toolbar.set_available(True)
+        assert power.toolTip() == tooltip
+        assert power.accessibleDescription() == tooltip
+        toolbar.set_available(False)
+        assert power.toolTip() == unavailable
+        assert power.accessibleDescription() == unavailable
     finally:
         toolbar.dispose()
         toolbar.deleteLater()
