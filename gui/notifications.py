@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from math import ceil
+from math import ceil, floor
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QFontMetricsF
-from PySide6.QtWidgets import QFrame, QLayout, QLineEdit, QSizePolicy, QWidget
+from PySide6.QtGui import QFontMetricsF, QTextLayout
+from PySide6.QtWidgets import (
+    QFrame,
+    QLayout,
+    QLineEdit,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
+    QWidget,
+)
 from qfluentwidgets import (
     FluentStyleSheet,
     HyperlinkButton,
@@ -40,6 +48,18 @@ def _top_margin(owner: QWidget) -> int:
     if isinstance(title_bar, QWidget) and title_bar.isVisible():
         return title_bar.height() + 12
     return 24
+
+
+def _text_line_metrics(widget: QWidget, text: str) -> tuple[int, int]:
+    """按控件实际绘制设备度量整行，包含中文等回退字体的行高与基线。"""
+    layout = QTextLayout(text, widget.font(), widget)
+    layout.beginLayout()
+    line = layout.createLine()
+    layout.endLayout()
+    if not line.isValid():
+        metrics = widget.fontMetrics()
+        return metrics.height(), metrics.ascent()
+    return ceil(line.height()), floor(line.ascent() + .5)
 
 
 class ToastNotification(InfoBar):
@@ -183,17 +203,63 @@ class ToastNotification(InfoBar):
         )
         self.titleLabel.setVisible(bool(title))
         self.titleLabel.setFixedWidth(title_width)
-        self.titleLabel.setFixedHeight(title_metrics.height())
         self.titleLabel.setText(title_metrics.elidedText(
             title, Qt.TextElideMode.ElideRight, title_width,
         ))
+        title_height, _ = _text_line_metrics(self.titleLabel, self.titleLabel.text())
         self.content_edit.setFixedWidth(max(1, available - title_width))
-        body_height = self.content_edit.fontMetrics().height() + 8
-        self.content_edit.setFixedHeight(body_height)
+        body_metrics = self.content_edit.fontMetrics()
+        body_text = self.content_edit.displayText()
+        line_height, line_ascent = _text_line_metrics(self.content_edit, body_text)
+        native_height = max(body_metrics.height(), body_metrics.boundingRect(body_text).height())
+        body_height = max(body_metrics.height() + 8, native_height + 2, line_height + 2)
         height = max(
-            body_height, action_height, self.closeButton.height(), self.iconWidget.height(),
+            title_height + 2, body_height, action_height,
+            self.closeButton.height(), self.iconWidget.height(),
         )
+        self.titleLabel.setFixedHeight(height)
+        self.content_edit.setFixedHeight(height)
         self.setFixedSize(width, height + margins.top() + margins.bottom())
+        self.hBoxLayout.invalidate()
+        self.hBoxLayout.activate()
+        self._align_text_baselines(native_height, line_height, line_ascent)
+
+    def _align_text_baselines(
+        self, native_height: int, line_height: int, line_ascent: int,
+    ) -> None:
+        """共享实际文字基线；保留原生输入框的选择、复制、命中与横向滚动。"""
+        self.titleLabel.setContentsMargins(0, 0, 0, 0)
+        _, title_ascent = _text_line_metrics(self.titleLabel, self.titleLabel.text())
+        title_rect = self.titleLabel.style().itemTextRect(
+            self.titleLabel.fontMetrics(), self.titleLabel.rect(),
+            int(self.titleLabel.alignment()), True, self.titleLabel.text(),
+        )
+        title_baseline = self.titleLabel.y() + title_rect.y() + title_ascent
+        if self.action_button is not None:
+            button = self.action_button
+            option = QStyleOptionButton()
+            button.initStyleOption(option)
+            rect = button.style().subElementRect(
+                QStyle.SubElement.SE_PushButtonContents, option, button,
+            )
+            rect = button.style().itemTextRect(
+                button.fontMetrics(), rect, int(Qt.AlignmentFlag.AlignCenter), True, button.text(),
+            )
+            _, ascent = _text_line_metrics(button, button.text())
+            baseline = button.y() + rect.y() + ascent
+        elif self.title:
+            baseline = title_baseline
+        else:
+            baseline = self.content_edit.y() + (self.content_edit.height() - line_height) // 2
+            baseline += line_ascent
+        # 负下边距扩展文字区域而不收紧上沿，避免移动基线时裁掉回退字形。
+        self.titleLabel.setContentsMargins(0, 0, 0, -2 * (baseline - title_baseline))
+        # QLineEdit 原生绘制把回退字体的 ascent 抵消为主字体 ascent，需单独补偿。
+        native_baseline = (
+            self.content_edit.y() + (self.content_edit.height() - native_height + 1) // 2
+            + self.content_edit.fontMetrics().ascent()
+        )
+        self.content_edit.setTextMargins(0, 0, 0, -2 * (baseline - native_baseline))
 
     def restart_timeout(self) -> None:
         """重复通知延长阅读时间，不再添加一个相同提示。"""

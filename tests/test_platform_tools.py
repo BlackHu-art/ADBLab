@@ -13,6 +13,8 @@ import pytest
 def test_linux_bundled_adb_precedes_path(tmp_path, monkeypatch):
     from utils import adb_resolver
 
+    # 模拟平台也固定架构，避免 uname 按临时 sys.platform 缓存错误的宿主信息。
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
     executable = tmp_path / "adb"
     executable.write_bytes(b"linux adb")
     executable.chmod(0o755)
@@ -114,6 +116,7 @@ def test_unsupported_architecture_does_not_select_x64_tools():
 def test_linux_scrcpy_prefers_bundle(tmp_path, monkeypatch):
     from services.remote import scrcpy_service
 
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
     executable = tmp_path / "scrcpy"
     executable.write_bytes(b"binary")
     executable.chmod(0o755)
@@ -138,9 +141,10 @@ def test_scrcpy_version_failure_can_be_retried():
     assert service.version("/tools/scrcpy") == "4.1"
 
 
-def test_linux_packaging_includes_only_linux_tools():
+def test_linux_packaging_includes_only_linux_tools(monkeypatch):
     from scripts.packaging_manifest import resource_datas
 
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
     resources = resource_datas("linux")
     assert ("runtime-tools/linux-x86_64", "runtime-tools/linux-x86_64") in resources
     assert not any("windows-x86_64" in source for source, _ in resources)
@@ -182,6 +186,7 @@ def test_packaging_check_does_not_hide_missing_bundle_with_system_tools(
     from utils import tool_check
     from utils.tool_manifest import get_tool_bundle
 
+    monkeypatch.setattr(tool_check, "get_aapt2_bundle", lambda: None)
     monkeypatch.setattr(tool_check, "get_tool_bundle", lambda: get_tool_bundle(platform, "x86_64"))
     monkeypatch.setattr(tool_check, "resource_path", lambda name: str(tmp_path / name))
     checks = tool_check.check_bundled_tools()
@@ -222,6 +227,7 @@ def test_self_check_rejects_corrupt_source_despite_valid_cache(tmp_path, monkeyp
     from utils import runtime_tools, tool_check
     from utils.tool_manifest import LINUX_BUNDLE
 
+    monkeypatch.setattr(tool_check, "get_aapt2_bundle", lambda: None)
     source = tmp_path / "source"
     bundle_root = source / LINUX_BUNDLE.directory
     bundle_root.mkdir(parents=True)
@@ -250,6 +256,7 @@ def test_self_check_rejects_mismatched_server(tmp_path, monkeypatch):
     from utils import tool_check
     from utils.tool_manifest import LINUX_BUNDLE
 
+    monkeypatch.setattr(tool_check, "get_aapt2_bundle", lambda: None)
     for name in LINUX_BUNDLE.required_files:
         (tmp_path / name).write_bytes(b"mismatched file")
         (tmp_path / name).chmod(0o755)

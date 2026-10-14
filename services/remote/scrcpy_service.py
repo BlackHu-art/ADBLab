@@ -18,6 +18,7 @@ from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.native_process import NativeCommandScope
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
+from utils.gui_platform import scrcpy_environment
 from utils.runtime_tools import bundled_tool_path
 from utils.scrcpy_bridge import resolve_scrcpy_bridge
 from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
@@ -382,8 +383,8 @@ class ScrcpyService:
         )
 
     def _launch_backend(self, config: ScrcpyConfig, version: str) -> dict:
-        """在启动前冻结受支持设备的执行方式，仅给 scrcpy 子进程覆盖 ADB。"""
-        environment = dict(os.environ)
+        """冻结执行方式与显示环境；ADB 和 SDL 覆盖只作用于 scrcpy 子进程。"""
+        environment = scrcpy_environment(os.environ)
         environment["ADB"] = config.adb
         runtime = adb_runtime()
         helper = resolve_scrcpy_bridge()

@@ -1567,6 +1567,10 @@ class MainFrame(FluentWindow):
         panel = self.left_panel.remote_panel
         if panel is None:
             return device_id
+        context = self.left_panel.device_context_snapshot()
+        panel.set_connected_devices(
+            list(context.connected_devices) if context.discovery_state == "ready" else [],
+        )
         panel.set_target_devices(self._remote_operation_devices())
         panel.category_stack.set_current(category)
         panel.apply_responsive_width(0)
@@ -2012,6 +2016,7 @@ class MainFrame(FluentWindow):
         state = context.discovery_state
         remote = panel.remote_panel
         if remote is not None:
+            remote.set_connected_devices(connected if state == "ready" else [])
             remote.set_target_devices(self._remote_operation_devices())
         bar = getattr(self, "_global_device_bar", None)
         if bar is not None:
@@ -2415,9 +2420,11 @@ class MainFrame(FluentWindow):
             page = getattr(self, name, None)
             if page is None:
                 continue
-            page.update()
+            QWidget.update(page)
             for child in page.findChildren(QWidget):
-                child.update()
+                # 表格等视图的 update 重载要求模型索引；此处只请求 QWidget 重绘，
+                # 其 viewport 也在后代列表中，不能误入数据视图的更新接口。
+                QWidget.update(child)
 
     def setMicaEffectEnabled(self, isEnabled: bool) -> None:
         """切换系统云母并同步 Qt 表面；不支持的平台保留实际生效的实色模式。"""

@@ -11,7 +11,6 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    ComboBox,
     FlowLayout,
     PlainTextEdit,
     PushButton,
@@ -33,6 +32,7 @@ from gui.styles.fluent import (
     configure_fluent_control,
     set_function_tooltip,
 )
+from gui.widgets.eliding_combo_box import ElidingComboBox
 
 STATE_LABELS = {
     "running": "执行中",
@@ -77,9 +77,9 @@ class ActionResultView(QWidget):
         self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.message_label)
         row = QHBoxLayout()
-        self.history = ComboBox()
+        self.history = ElidingComboBox()
         self.history.setAccessibleName(tr("本分区最近操作"))
-        self.targets = ComboBox()
+        self.targets = ElidingComboBox()
         self.targets.setAccessibleName(tr("本次操作的设备结果"))
         for control in (self.history, self.targets):
             control.setMinimumWidth(0)
@@ -120,7 +120,7 @@ class ActionResultView(QWidget):
         commands.addWidget(self.export_button)
         detail_layout.addLayout(commands)
         layout.addWidget(self.detail_host)
-        self.artifacts = ComboBox()
+        self.artifacts = ElidingComboBox()
         self.artifacts.setMinimumWidth(0)
         self.artifacts.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.artifacts.setAccessibleName(tr("本次操作产物"))

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-14
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -13,6 +13,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 
 | 等级 | 未闭环事项 | 当前保护与剩余工作 | 状态 |
 | --- | --- | --- | --- |
+| Medium | Windows 开发环境的进程文件读取视图不一致阻塞 APK 与 onedir 验收 | 已确认同一 APK 和 `base_library.zip` 在开发解释器与冻结进程中长度、文件头和摘要不同，资源中的 `encodings` 成员完整且可由开发解释器导入；需要环境管理员核对原生工具、主程序和 helper 的文件访问授权，再复验指定 APK 与实际产物。处理边界见 [构建指南](../guides/BUILD_AND_RUN.md#文件访问策略与解析失败) | 待确认 |
+| Medium | 内置 AAPT2 尚缺 Ubuntu 实际解析验收 | Linux x86_64 官方归档、ELF 依赖与执行权限链已静态核对；仍需目标 Ubuntu 的版本命令、APK 解析及实际冻结产物验证，不能把 AAPT2 的 glibc 符号要求当作整个应用的最低系统版本。兼容范围见 [Linux 本地开发](../guides/BUILD_AND_RUN.md#linux-本地开发) | 待确认 |
 | High | Qt 依赖安全升级尚未完成 | 当前 PySide6 6.8.1.1 携带受 Qt SVG 公告影响的版本；外部图片入口已固定为栅格解码器，内置 SVG 仍用于可信资源。升级到公开修复版本需要先确认最低系统范围并完成 GUI/打包兼容验证，入口缓解不等于依赖已修补 | Partial |
 | Medium | 无线配对的手机与局域网兼容矩阵尚未实测 | 服务、Qt 交互及本地客户端生命周期使用离线替身验证；仍需 Android 11+ 实机覆盖扫码入口、六位码、mDNS/防火墙/网络隔离、配对与连接端口变化及取消后的信任记录。实现不能保证所有厂商提供二维码扫描入口 | 待确认 |
 | High | 打包发布会自动删除保留范围外的 tag/Release，且没有独立的历史版本登记 | [Build](../../.github/workflows/Build-exe.yaml) 拒绝覆盖现存同版本，并仅保留最新 5 个版本 tag 及对应 Release；被删除版本的不可复用登记与发布审批仍需项目决策 | Partial |

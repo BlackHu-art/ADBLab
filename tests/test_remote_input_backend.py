@@ -167,6 +167,79 @@ def test_fast_input_uses_remote_result_without_native_replay(
     native.assert_not_called()
 
 
+@pytest.mark.parametrize("raw, success", [
+    (ExecutionResult(returncode=0), True),
+    (ExecutionResult(stderr=b"unsupported input", returncode=1), False),
+    (ExecutionResult(kind="timeout"), False),
+    (ExecutionResult(kind="transport"), False),
+])
+def test_power_long_press_fast_sends_once_and_preserves_remote_result(
+    fast_backend, monkeypatch, raw, success,
+):
+    _, calls = fast_backend
+    bridge = ADBBridge(ADB)
+    native = Mock(side_effect=AssertionError("power input must not replay natively"))
+    monkeypatch.setattr(bridge._process_runner, "start", native)
+    monkeypatch.setattr(execution, "run_native", native)
+
+    def capture(command, args, **kwargs):
+        calls.append((command, args, kwargs["serial"]))
+        return raw
+
+    monkeypatch.setattr(runtime_module, "capture", capture)
+    service = RemoteControlService(bridge)
+    assert service.perform_action(SERIAL, "power_long_press") is success
+    assert calls == [("shell", ["input keyevent --longpress 26"], SERIAL)]
+    native.assert_not_called()
+
+
+@pytest.mark.parametrize("fast", [True, False])
+def test_power_long_press_cancelled_before_start_sends_nothing(fast_backend, monkeypatch, fast):
+    runtime, calls = fast_backend
+    runtime.set_native_only(not fast)
+    bridge = ADBBridge(ADB)
+    start = Mock(side_effect=AssertionError("cancelled power input must not start adb"))
+    monkeypatch.setattr(bridge._process_runner, "start", start)
+
+    assert RemoteControlService(bridge).perform_action(
+        SERIAL, "power_long_press", cancelled=lambda: True,
+    ) is False
+    assert calls == []
+    start.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [None, "write", "flush"])
+def test_power_long_press_persistent_send_never_replays_uncertain_input(monkeypatch, failure):
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    bridge = ADBBridge(ADB)
+    writes = []
+
+    class Pipe(io.StringIO):
+        def write(self, text):
+            writes.append(text)
+            if failure == "write":
+                raise BrokenPipeError("partial power input")
+            return super().write(text)
+
+        def flush(self):
+            if failure == "flush":
+                raise BrokenPipeError("power input flush uncertain")
+
+    proc = SimpleNamespace(stdin=Pipe(), poll=lambda: None)
+    monkeypatch.setattr(bridge._process_runner, "start", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(bridge._process_runner, "stop", lambda *_args, **_kwargs: None)
+    fallback = Mock(side_effect=AssertionError("sent power input must not replay"))
+    monkeypatch.setattr(execution.CommandRunner, "run", fallback)
+    try:
+        assert RemoteControlService(bridge).perform_action(
+            SERIAL, "power_long_press",
+        ) is (failure is None)
+        assert writes == ["input keyevent --longpress 26\n"]
+        fallback.assert_not_called()
+    finally:
+        bridge.close_input_sessions()
+
+
 @pytest.mark.parametrize("fast", [True, False])
 def test_cancelled_input_and_warmup_do_not_start_work(fast_backend, monkeypatch, fast):
     runtime, calls = fast_backend

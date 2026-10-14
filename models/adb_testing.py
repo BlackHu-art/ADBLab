@@ -3,10 +3,10 @@
 本模块只依赖核心 adb_model，避免模型之间形成循环依赖。
 """
 
+import errno
 import logging
 import os
 import random
-import re
 import shlex
 import shutil
 import subprocess
@@ -27,6 +27,7 @@ from core.monkey_process import MonkeyProcessLease
 from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
 from utils.atomic_text import atomic_write_text
+from utils.diagnostic_artifacts import diagnostic_prefix
 from utils.resource_path import resource_path
 
 from .adb_model import ADBModelCore, async_command
@@ -121,7 +122,7 @@ class ADBTesting(ADBModelCore):
                 self._aborted_devices.discard(device_ip)
 
     def _start_testing_process(
-        self, key: str, cmd: list[str], *, stdout=None,
+        self, key: str, cmd: list[str], *, stdout=None, stderr=None,
         monkey_batch: tuple[str, str] | None = None,
     ):
         """按 model 终态与 shutdown 原子排序启动测试长进程。"""
@@ -147,7 +148,8 @@ class ADBTesting(ADBModelCore):
                         raise
                     state.lease = lease
                     return proc
-            return self._procs.start(key, cmd, stdout=stdout)
+            options = {"stderr": stderr} if stderr is not None else {}
+            return self._procs.start(key, cmd, stdout=stdout, **options)
 
     def _stop_monkey_lease(self, device_ip: str, state: _MonkeyBatchState) -> bool:
         """生命周期锁内停止精确远端身份；失败保留批次，不能放行同设备的新任务。"""
@@ -848,79 +850,139 @@ class ADBTesting(ADBModelCore):
     def capture_bugreport_async(
         self, device_ip: str, save_root: str, index: int, callback=None
     ) -> dict:
+        """在独占目录采集报告；长进程不占短命令锁，失败只移除本次空目录。"""
         def log(msg):
             if callback:
-                callback(f"[{device_ip}] {msg}")
+                callback(f"[{index}] {msg}")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        sanitized = re.sub(r"\W+", "_", device_ip)
-        os.makedirs(save_root, exist_ok=True)
-        # 独占目录定义本次产物集合，后处理不得借用其他运行的历史文件。
-        target_dir = tempfile.mkdtemp(prefix=f"{sanitized}_bugreport_{timestamp}_", dir=save_root)
-        log(f"Created directory: {target_dir}")
-
-        log("Getting Android version...")
-        r = self._run(
-            ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"],
-        )
-        version_str = r["output"] if r["success"] else ""
-        log(f"Android version: {version_str or 'unknown'}")
-
+        result = {"device_ip": device_ip, "index": index, "success": False}
+        target_dir = None
         try:
-            android_version = tuple(map(int, (version_str or "0").split(".")))
-        except ValueError:
-            return {
-                "device_ip": device_ip,
-                "index": index,
-                "success": False,
-                "message": "Invalid Android version format",
-            }
+            # 短预检保留客户端启动保护；失败或关闭后不能继续启动报告进程。
+            log("Getting Android version...")
+            r = self._run_readonly(
+                ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"],
+            )
+            if not r["success"] or self.is_shutting_down():
+                result["message"] = f"Bugreport failed: {r.get('error') or 'Cancelled'}"
+                if r.get("cancelled") or self.is_shutting_down():
+                    result["cancelled"] = True
+                return result
+            try:
+                android_version = tuple(map(int, r["output"].split(".")))
+            except ValueError:
+                result["message"] = "Invalid Android version format"
+                return result
 
-        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            os.makedirs(save_root, exist_ok=True)
+            # 独占目录定义本次产物集合，后处理不得借用其他运行的历史文件。
+            target_dir = tempfile.mkdtemp(
+                prefix=diagnostic_prefix("bugreport", device_ip, timestamp), dir=save_root,
+            )
+            log(f"Created directory: {os.path.basename(target_dir)}")
+            log("Running: adb bugreport ... this may take several minutes (up to 10 minutes)")
             if android_version >= (8, 0):
-                log("Running: adb bugreport <dir> ... this may take 1-2 minutes")
                 bugreport_cmd = ["adb", "-s", device_ip, "bugreport", target_dir]
             else:
-                log("Running: adb bugreport <file> ... this may take 1-2 minutes")
                 output_file = os.path.join(target_dir, "bugreport.txt")
                 bugreport_cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
-            bugreport = self._run(bugreport_cmd, timeout=180)
+            bugreport = self._run_bugreport_process(bugreport_cmd)
             if not bugreport["success"]:
-                return {
-                    "device_ip": device_ip,
-                    "index": index,
-                    "success": False,
-                    "message": f"Bugreport failed: {bugreport.get('error', 'unknown error')}",
-                }
+                result["message"] = f"Bugreport failed: {bugreport['error']}"
+                if bugreport.get("cleanup_pending"):
+                    result["cleanup_pending"] = True
+                if bugreport.get("cancelled"):
+                    result["cancelled"] = True
+                return result
+            if self.is_shutting_down():
+                result.update(cancelled=True, message="Bugreport failed: Cancelled")
+                return result
             log("Bugreport command completed")
+            artifacts = [
+                entry for entry in os.scandir(target_dir)
+                if entry.name.startswith("bugreport") and entry.name.endswith((".zip", ".txt"))
+                and entry.is_file() and entry.stat().st_size > 0
+            ]
+            if not artifacts:
+                result["message"] = "No bugreport file was produced"
+                return result
+            if not self._extract_bugreport_zips(target_dir, log):
+                result["message"] = "Failed to extract bugreport ZIP"
+                return result
+            if self.is_shutting_down():
+                result.update(cancelled=True, message="Bugreport failed: Cancelled")
+                return result
+            if not self._scan_and_convert_bugreport_txt(target_dir, log):
+                log("No bugreport text files converted to HTML.")
+            if self.is_shutting_down():
+                result.update(cancelled=True, message="Bugreport failed: Cancelled")
+                return result
+            result.update(
+                success=True, message=f"Bugreport saved in {target_dir}", bugreport_path=target_dir,
+            )
+            return result
         except Exception as e:
-            return {
-                "device_ip": device_ip,
-                "index": index,
-                "success": False,
-                "message": f"Bugreport failed: {e}",
-            }
+            result["message"] = f"Bugreport failed: {e}"
+            if self.is_shutting_down():
+                result["cancelled"] = True
+            return result
+        finally:
+            if (target_dir is not None and not result["success"]
+                    and not result.get("cleanup_pending")):
+                try:
+                    # 仅移除本次空目录；部分下载和已有报告留给用户，不递归清理。
+                    os.rmdir(target_dir)
+                except OSError as exc:
+                    if exc.errno not in {errno.ENOTEMPTY, errno.EEXIST, errno.ENOENT}:
+                        logging.getLogger(__name__).warning("Bugreport 空目录清理失败")
 
-        if not self._extract_bugreport_zips(target_dir, log):
-            return {
-                "device_ip": device_ip,
-                "index": index,
-                "success": False,
-                "message": "Failed to extract bugreport ZIP",
-            }
-
-        found_html = self._scan_and_convert_bugreport_txt(target_dir, log)
-        if not found_html:
-            log("No bugreport text files converted to HTML.")
-
-        return {
-            "device_ip": device_ip,
-            "index": index,
-            "success": True,
-            "message": f"Bugreport saved in {target_dir}",
-            "bugreport_path": target_dir,
-        }
+    def _run_bugreport_process(self, command: list[str]) -> dict:
+        """独占管理采集客户端，最多等待十分钟；取消/超时另留两秒确认本机进程退出。"""
+        key = f"bugreport_{uuid.uuid4().hex}"
+        deadline = time.monotonic() + 600
+        result = {"success": False, "error": "Bugreport did not complete"}
+        # 输出落入临时流，防止报告进度填满管道；错误信息仅读取有界尾部。
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
+            try:
+                proc = self._start_testing_process(key, command, stdout=output, stderr=error)
+                while True:
+                    code = proc.poll()
+                    if self.is_shutting_down():
+                        result.update(error="Cancelled", cancelled=True)
+                        break
+                    if time.monotonic() >= deadline:
+                        result["error"] = "Timeout(600s)"
+                        break
+                    if code is not None:
+                        if code == 0:
+                            result = {"success": True}
+                        else:
+                            detail = ""
+                            for stream in (error, output):
+                                stream.seek(0, os.SEEK_END)
+                                stream.seek(max(0, stream.tell() - 16384))
+                                detail = stream.read(16384).decode(
+                                    "utf-8", errors="replace",
+                                ).strip()
+                                if detail:
+                                    break
+                            result["error"] = detail or f"adb bugreport exited with code {code}"
+                        break
+                    self._shutdown_started.wait(min(0.1, max(0, deadline - time.monotonic())))
+            except Exception as exc:
+                result = {"success": False, "error": str(exc)}
+                if self.is_shutting_down():
+                    result["cancelled"] = True
+            finally:
+                self._procs.stop(key, timeout=2)
+                if key in self._procs.active_keys:
+                    result = {
+                        "success": False, "error": "Bugreport client exit was not confirmed",
+                        "cleanup_pending": True,
+                    }
+        return result
 
     def _extract_bugreport_zips(self, target_dir: str, log) -> bool:
         zip_files = [f for f in os.listdir(target_dir) if f.endswith(".zip")]
@@ -944,6 +1006,8 @@ class ADBTesting(ADBModelCore):
         found_html = False
         for root, _, files in os.walk(target_dir):
             for f in files:
+                if self.is_shutting_down():
+                    return found_html
                 if f.startswith("bugreport") and f.endswith(".txt"):
                     txt_path = os.path.join(root, f)
                     log(f"Found bugreport text: {f}")
@@ -963,7 +1027,7 @@ class ADBTesting(ADBModelCore):
         cmd = ["java", "-jar", jar_path, bugreport_txt_path]
         if log:
             log(f"Converting to HTML: {os.path.basename(bugreport_txt_path)}")
-        r = CommandRunner.run(cmd, timeout=120)
+        r = CommandRunner.run(cmd, timeout=120, cancelled=self.is_shutting_down)
         if r.success:
             if log:
                 log("Bugreport HTML generated successfully.")

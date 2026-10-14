@@ -1,5 +1,6 @@
 """封装不依赖界面的 Remote 设备控制操作。"""
 
+import re
 from collections.abc import Callable
 from time import monotonic
 
@@ -11,10 +12,17 @@ from .control_mapping import (
     directional_swipe,
     notification_swipe,
     parse_dimensions,
+    parse_input_viewport_dimensions,
 )
 
 DEFAULT_DIMENSION_TTL_SECONDS = 30.0
+_INTENT_FAILURE = re.compile(
+    r"^\s*(?:Error(?:\s+type\s+\d+|:)|Exception(?:\s|:)"
+    r"|[\w.$]*Exception\b|Permission Denial:|Status:\s*(?:timeout|failed|error)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
 REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "power_long_press": ("long_press_power", ()),
     "swipe_up": ("directional_swipe", ("up",)),
     "swipe_down": ("directional_swipe", ("down",)),
     "swipe_left": ("directional_swipe", ("left",)),
@@ -60,7 +68,7 @@ class RemoteControlService:
         """读取缓存或可取消的设备尺寸；关闭后不再启动查询。"""
         if cancelled is not None and cancelled():
             return None
-        # wm size 是同步 ADB 命令；缓存可避免连续点击手势按钮时卡住 UI。
+        # 该缓存保留启动预检提供的自然尺寸；输入坐标另查当前逻辑区域。
         cached = self._dimensions_cache.get(device_id)
         now = monotonic()
         if cached and now - cached[1] <= self.dimension_ttl_seconds:
@@ -77,10 +85,27 @@ class RemoteControlService:
 
         return cached[0] if cached else None
 
+    def _get_input_dimensions(
+        self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[int, int] | None:
+        """在输入工作线程查询当前区域；旋转可由外部改变，不能复用自然尺寸缓存。"""
+        if cancelled is not None and cancelled():
+            return None
+        result = self._shell("dumpsys input", device_id, cancelled)
+        if (cancelled is not None and cancelled()) or not result.success:
+            return None
+        return parse_input_viewport_dimensions(result.output)
+
     def send_keyevent(
         self, device_id: str, key_name: str, *, cancelled: Callable[[], bool] | None = None,
     ):
-        """把逻辑按键名转换为 Android keyevent 并发送到指定设备。"""
+        """发送逻辑按键；设置入口显式打开系统设置，避免 ROM 将设置键用于其他动作。"""
+        if key_name == "SETTINGS":
+            # 与系统 Intent 入口保持相同失败语义：am 可能输出错误但返回零退出码。
+            result = self._shell("am start -a android.settings.SETTINGS 2>&1", device_id, cancelled)
+            if result.success and _INTENT_FAILURE.search(result.output):
+                return False
+            return result
         code = KEYCODES.get(key_name)
         if code is None:
             # 只接受显式数字 keycode，其余一律拒绝，避免未校验字符串进入设备 shell。
@@ -88,6 +113,12 @@ class RemoteControlService:
                 return None
             code = key_name
         return self._shell_input(f"keyevent {code}", device_id, cancelled)
+
+    def long_press_power(
+        self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
+    ):
+        """发送一次系统电源长按事件；由设备策略决定响应，不模拟硬件强制关机。"""
+        return self._shell_input("keyevent --longpress 26", device_id, cancelled)
 
     def perform_action(
         self, device_id: str, action: str, *, cancelled: Callable[[], bool] | None = None,
@@ -136,25 +167,30 @@ class RemoteControlService:
         *, cancelled: Callable[[], bool] | None = None,
     ):
         """尺寸查询与方向手势共用取消信号，查询取消后不发送输入。"""
-        coords = directional_swipe(self.get_dimensions(device_id, cancelled=cancelled), direction)
+        dimensions = self._get_input_dimensions(device_id, cancelled=cancelled)
+        if dimensions is None:
+            return False
+        coords = directional_swipe(dimensions, direction)
         return self.swipe(device_id, *coords, duration_ms=duration_ms, cancelled=cancelled)
 
     def expand_notifications(
         self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
     ):
         """在尺寸查询和展开通知栏之间保留取消边界。"""
-        coords = notification_swipe(
-            self.get_dimensions(device_id, cancelled=cancelled), expand=True,
-        )
+        dimensions = self._get_input_dimensions(device_id, cancelled=cancelled)
+        if dimensions is None:
+            return False
+        coords = notification_swipe(dimensions, expand=True)
         return self.swipe(device_id, *coords, duration_ms=300, cancelled=cancelled)
 
     def collapse_notifications(
         self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
     ):
         """在尺寸查询和收起通知栏之间保留取消边界。"""
-        coords = notification_swipe(
-            self.get_dimensions(device_id, cancelled=cancelled), expand=False,
-        )
+        dimensions = self._get_input_dimensions(device_id, cancelled=cancelled)
+        if dimensions is None:
+            return False
+        coords = notification_swipe(dimensions, expand=False)
         return self.swipe(device_id, *coords, duration_ms=300, cancelled=cancelled)
 
     def rotate_portrait(

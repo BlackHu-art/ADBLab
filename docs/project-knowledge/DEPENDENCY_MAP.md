@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-14
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -63,7 +63,7 @@ Workspace 作为 QWidget 承载，不代表独立窗口边界。`core` 仅 `log_
 | ADB | 几乎所有设备操作 | `utils/adb_resolver.py` 解析或固定客户端，`services/adb_clients.py` 识别版本，CommandRunner/MobilePerf 执行；平台顺序、缓存与模式见 [ADB_FAST](../guides/ADB_FAST.md#客户端选择与执行模式) | 操作失败，由设置页提示未找到客户端，不阻止窗口启动；支持内置包的平台自检文件、权限和版本命令 |
 | scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py`、`utils/tool_manifest.py` | Remote 启动失败；工具准备和平台范围见 [构建指南](../guides/BUILD_AND_RUN.md#linux-本地开发) |
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
-| aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
+| AAPT2 / aapt | 本地 APK 元数据解析 | `utils/apk_tools.py`、`models/adb_app.py`；内置平台与兼容选择见 [APK 解析工具](../guides/BUILD_AND_RUN.md#apk-解析工具) | 返回工具缺失或解析失败，不影响其他设备功能 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
 | Android `app_process` + `resources/app-icon-helper.jar` | 在设备端批量读取应用名称、版本或图标 | `services/app_metadata.py`、`services/app_icons.py`、`tools/app_icons/Main.java` | 图标保留占位；元数据仅在明确不支持时执行有限兼容查询；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
 | Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |

@@ -24,6 +24,11 @@ class ToolBundle:
     server_sha256: str = "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
     archive_format: Literal["tar.gz", "zip"] = "tar.gz"
 
+    @property
+    def executable_files(self) -> tuple[str, ...]:
+        """列出准备后需要执行权限的主机程序。"""
+        return (self.adb, self.scrcpy)
+
 
 WINDOWS_BUNDLE = ToolBundle(
     directory="runtime-tools/windows-x86_64",
@@ -46,6 +51,52 @@ LINUX_BUNDLE = ToolBundle(
     "ad56ae8bfeedf41e824945c11dbf55fcb092b3e615b9b486f48a50e30d389635",
     "scrcpy-linux-x86_64-v4.1",
 )
+
+
+@dataclass(frozen=True)
+class Aapt2Bundle:
+    """独立 APK 分析工具归档，不混入 scrcpy 的上游文件清单。"""
+
+    directory: str
+    executable: str
+    required_files: tuple[str, ...]
+    url: str
+    sha256: str
+    version: str = "9.4.1-15978811"
+    runtime_version: str = "2.20-15978811"
+    archive_root: str = ""
+    archive_format: Literal["zip"] = "zip"
+
+    @property
+    def executable_files(self) -> tuple[str, ...]:
+        """列出需要执行权限的 AAPT2 程序。"""
+        return (self.executable,)
+
+
+_AAPT2_URL = "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/9.4.1-15978811"
+AAPT2_WINDOWS_BUNDLE = Aapt2Bundle(
+    "runtime-tools/aapt2/windows-x86_64", "aapt2.exe", ("aapt2.exe", "NOTICE"),
+    f"{_AAPT2_URL}/aapt2-9.4.1-15978811-windows.jar",
+    "5fe3c8ee5c6b3f47efd1fced1d6418084037f54f13290816c5db717e6b5c92aa",
+)
+AAPT2_LINUX_BUNDLE = Aapt2Bundle(
+    "runtime-tools/aapt2/linux-x86_64", "aapt2", ("aapt2", "NOTICE"),
+    f"{_AAPT2_URL}/aapt2-9.4.1-15978811-linux.jar",
+    "f5bebd466ecf14d341fd465f2756a16d86052f29eb4532003d5ff7bcffd08de5",
+)
+
+
+def get_aapt2_bundle(platform: str | None = None, machine: str | None = None) -> Aapt2Bundle | None:
+    """仅在已交付平台选用内置 APK 工具，其他平台保留环境工具兼容。"""
+    platform = sys.platform if platform is None else platform
+    machine = (host_platform.machine() if machine is None else machine).lower()
+    if machine not in {"x86_64", "amd64"}:
+        return None
+    if platform == "win32":
+        return AAPT2_WINDOWS_BUNDLE
+    if platform == "linux":
+        return AAPT2_LINUX_BUNDLE
+    return None
 
 
 def get_tool_bundle(platform: str | None = None, machine: str | None = None) -> ToolBundle | None:

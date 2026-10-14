@@ -10,6 +10,7 @@ from pathlib import Path
 from time import perf_counter
 
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
+from utils.gui_platform import configure_gui_platform
 from utils.resource_path import resource_path, setup_qt_search_paths
 from utils.user_data import user_data_root
 
@@ -35,6 +36,7 @@ def _dispatch_cli(argv: list[str]) -> int | None:
         parser = argparse.ArgumentParser(description="Run ADBLab startup splash")
         parser.add_argument("server_name")
         args = parser.parse_args(argv[1:])
+        configure_gui_platform([sys.argv[0]])
         from gui.startup_worker import run_startup_splash
 
         return run_startup_splash(args.server_name)
@@ -71,10 +73,13 @@ def _run_self_check(argv: list[str]) -> int:
 
 def _self_check_gui() -> int:
     """在独立进程验证真实 QPA 插件与事件循环；由调用方提供显示环境和超时。"""
+    automatic_platform = configure_gui_platform([sys.argv[0]])
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QWidget
 
     app = QApplication([])
+    if automatic_platform:
+        os.environ["QT_QPA_PLATFORM"] = app.platformName()
     window = QWidget()
     window.setWindowTitle("ADBLab GUI self-check")
     window.resize(320, 160)
@@ -335,6 +340,7 @@ def _run_gui() -> int:
 
 def _run_gui_session(trace) -> int:
     """创建 QApplication、加载主题并进入主界面事件循环。"""
+    automatic_platform = configure_gui_platform(sys.argv)
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(windows_app_user_model_id())
 
@@ -364,6 +370,9 @@ def _run_gui_session(trace) -> int:
     from gui.startup_process import StartupSplashProcess
 
     app = QApplication(sys.argv)
+    if automatic_platform:
+        # 自动候选已由 Qt 完成连接验证，子进程继承实际平台，避免混用 X11/Wayland。
+        os.environ["QT_QPA_PLATFORM"] = app.platformName()
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
     splash = StartupSplashProcess(parent=app)

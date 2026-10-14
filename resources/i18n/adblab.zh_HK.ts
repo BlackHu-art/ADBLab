@@ -7270,6 +7270,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>點按電源鍵，切換螢幕開關</translation>
         </message>
         <message>
+            <source>点按切换屏幕开关；按住 0.6 秒触发长按</source>
+            <translation>點按切換螢幕開關；按住 0.6 秒觸發長按</translation>
+        </message>
+        <message>
             <source>自动（启动时检测）</source>
             <translation>自動（啟動時偵測）</translation>
         </message>
@@ -7628,6 +7632,78 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>重试 {count} 台</source>
             <translation>重試 {count} 台</translation>
+        </message>
+        <message>
+            <source>独立遥控器</source>
+            <translation>獨立遙控器</translation>
+        </message>
+        <message>
+            <source>打开独立遥控器</source>
+            <translation>開啟獨立遙控器</translation>
+        </message>
+        <message>
+            <source>投屏操控</source>
+            <translation>投屏操控</translation>
+        </message>
+        <message>
+            <source>当前投屏设备</source>
+            <translation>目前投屏裝置</translation>
+        </message>
+        <message>
+            <source>当前投屏设备不可用</source>
+            <translation>目前投屏裝置無法使用</translation>
+        </message>
+        <message>
+            <source>更多操作</source>
+            <translation>更多操作</translation>
+        </message>
+        <message>
+            <source>关闭更多操作</source>
+            <translation>關閉更多操作</translation>
+        </message>
+        <message>
+            <source>屏幕与通知</source>
+            <translation>螢幕與通知</translation>
+        </message>
+        <message>
+            <source>系统操作</source>
+            <translation>系統操作</translation>
+        </message>
+        <message>
+            <source>媒体控制</source>
+            <translation>媒體控制</translation>
+        </message>
+        <message>
+            <source>展开侧栏</source>
+            <translation>展開側欄</translation>
+        </message>
+        <message>
+            <source>收起侧栏</source>
+            <translation>收起側欄</translation>
+        </message>
+        <message>
+            <source>{action}（作用于{target}）</source>
+            <translation>{action}（套用至{target}）</translation>
+        </message>
+        <message>
+            <source>操作当前已选的 {count} 台在线设备 · 与投屏侧栏的单台控制独立</source>
+            <translation>操作目前已選的 {count} 台在線裝置 · 與投屏側欄的單台控制獨立</translation>
+        </message>
+        <message>
+            <source>请在主窗口选择在线设备；无需先启动投屏。</source>
+            <translation>請在主視窗選擇在線裝置；無需先啟動投屏。</translation>
+        </message>
+        <message>
+            <source>投屏窗口旁显示单台控制侧栏；更多按键和批量操作可打开独立遥控器。</source>
+            <translation>投屏視窗旁顯示單台控制側欄；更多按鍵和批次操作可開啟獨立遙控器。</translation>
+        </message>
+        <message>
+            <source>按键、手势与批量操作可使用独立遥控器，无需启动镜像。</source>
+            <translation>按鍵、手勢與批次操作可使用獨立遙控器，無需啟動鏡像。</translation>
+        </message>
+        <message>
+            <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
+            <translation>操作主視窗目前已選的在線裝置，無需啟動鏡像</translation>
         </message>
     </context>
 </TS>

@@ -8,7 +8,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject
-from PySide6.QtWidgets import QGridLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLayout, QWidget, QWidgetItem
 from shiboken6 import isValid
 
 from gui.widgets.responsive_layout import (
@@ -184,14 +184,17 @@ class ResponsiveGridBinding:
         ):
             while layout.count():
                 layout.takeAt(0)
+            use_live_height = bool(self._live_container().property("responsiveLiveHeight"))
             for placement in plan.placements:
-                layout.addWidget(
-                    widgets[placement.item_index],
-                    placement.row,
-                    placement.column,
-                    placement.row_span,
-                    placement.column_span,
-                )
+                widget = widgets[placement.item_index]
+                if use_live_height:
+                    # 深层滚动页可选择实时高度项，避免 Qt 缓存跨列数回流的旧高度。
+                    # 控件已在构建时归属本行，替换布局项不改变所有权和信号连接。
+                    layout.addItem(QWidgetItem(widget), placement.row, placement.column,
+                                   placement.row_span, placement.column_span)
+                else:
+                    layout.addWidget(widget, placement.row, placement.column,
+                                     placement.row_span, placement.column_span)
         for column in range(max(previous_columns, plan.mode.columns)):
             stretch = plan.column_stretches[column] if column < plan.mode.columns else 0
             if layout.columnStretch(column) != stretch:
@@ -212,7 +215,12 @@ class ResponsiveGridBinding:
             # 外部 viewport 作为规划宽度时，每行必须独立落实该宽度。共享滚动内容
             # 可以由某个溢出行撑宽，但不得把其他未溢出网格的 stretch 列一并摊宽。
             container.setMaximumWidth(self._initial_maximum_width)
-            container.setMinimumWidth(self._initial_minimum_width)
+            # 显式最小尺寸约束由 Qt 同步写回；保留当前网格下限，避免每轮先清零
+            # 再被布局恢复，使几何反馈在两种宽度约束之间反复切换。
+            minimum_width = self._initial_minimum_width
+            if layout.sizeConstraint() == QLayout.SizeConstraint.SetMinimumSize:
+                minimum_width = max(minimum_width, layout.minimumSize().width())
+            container.setMinimumWidth(minimum_width)
             if plan.overflow_required:
                 row_width = min(
                     self._initial_maximum_width,

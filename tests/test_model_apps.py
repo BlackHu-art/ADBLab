@@ -763,12 +763,48 @@ def test_parse_apk_info_reports_missing_aapt():
     model = ADBApp()
     with (
         patch("models.adb_app.os.path.isfile", return_value=True),
-        patch("models.adb_app.shutil.which", return_value=None),
+        patch("models.adb_app.resolve_apk_tool", return_value=None),
     ):
         result = ADBApp.parse_apk_info_async.__wrapped__(model, "demo.apk")
 
     assert result["success"] is False
-    assert "aapt executable not found" in result["error"]
+    assert "APK analysis tool not found" in result["error"]
+    assert "AAPT2" in result["error"]
+
+
+@pytest.mark.parametrize("response", [
+    CommandResult(True, output="package: name='com.example.app'"),
+    CommandResult(False, error="invalid APK", returncode=1),
+    CommandResult(False, error="Timeout(15s)", outcome="timed_out"),
+    CommandResult(False, error="Cancelled", outcome="cancelled"),
+])
+def test_parse_apk_info_uses_resolved_tool_and_preserves_execution_contract(response):
+    model = ADBApp()
+    shutting_down = False
+    model.is_shutting_down = lambda: shutting_down
+    apk_path = "C:/folder with spaces/test.apk"
+    tool = "C:/bundled tools/aapt2.exe"
+    with (
+        patch("models.adb_app.os.path.isfile", return_value=True),
+        patch("models.adb_app.resolve_apk_tool", return_value=tool),
+        patch("core.exec.CommandRunner.run", return_value=response) as run,
+    ):
+        result = ADBApp.parse_apk_info_async.__wrapped__(model, apk_path)
+    run.assert_called_once()
+    assert run.call_args.args[0] == [tool, "dump", "badging", apk_path]
+    assert run.call_args.kwargs["timeout"] == 15
+    assert run.call_args.kwargs["shell"] is False
+    cancelled = run.call_args.kwargs["cancelled"]
+    assert not cancelled()
+    shutting_down = True
+    assert cancelled()
+    assert result["apk_path"] == apk_path
+    assert result["success"] is response.success
+    if response.success:
+        assert result["output"] == response.output
+    else:
+        assert result["error"] == response.error
+    assert bool(result.get("cancelled")) is (response.outcome == "cancelled")
 
 
 def test_app_manager_visible_details_respect_device_admission():

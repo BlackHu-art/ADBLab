@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-14
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -42,7 +42,7 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
   `QLocalServer`/`QLocalSocket` 进行本机 IPC，ADB/scrcpy 另有本地协议与子进程边界，见
   [ARCHITECTURE](ARCHITECTURE.md#启动与组合根) 和 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
-- 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及应用更新检查对 GitHub 公共 Releases API 的匿名 HTTPS 只读请求。除该更新检查外，主应用没有其他出站 HTTP 客户端。
+- 主要外部边界：Android ADB server/device、scrcpy、APK 解析工具 AAPT2/aapt、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及应用更新检查对 GitHub 公共 Releases API 的匿名 HTTPS 只读请求。除该更新检查外，主应用没有其他出站 HTTP 客户端。
 - 主要平台：Windows 是主支持目标；Windows x64 与 Linux x64 发行包随当前平台工具清单提供 ADB/scrcpy，
   macOS 继续发现用户安装的兼容工具。仓库没有各桌面系统版本的完整兼容矩阵；完整功能状态仍待目标环境实机确认。
 
@@ -53,7 +53,7 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 | 语言 | Python 为主；设备端应用元数据/图标 helper 使用 Java；配置与构建使用 YAML/JSON/TOML/PowerShell/Bash | `*.py`、`tools/app_icons/Main.java`、工作流与配置文件 |
 | GUI | PySide6 提供 Qt 组件与线程模型；通用控件、导航和主题使用 PySide6-Fluent-Widgets | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
-| 外部命令 | ADB、scrcpy、aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`services/remote/`、`models/adb_testing.py` |
+| 外部命令 | ADB、scrcpy、AAPT2/aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`utils/apk_tools.py`、`services/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |
 | 测试与静态检查 | pytest、Ruff、Pyright | `requirements-dev.txt`、`ruff.toml`、`pyproject.toml`、`tests/` |
 | 打包/发布 | PyInstaller、GitHub Actions、GitHub Release | `requirements-build.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |

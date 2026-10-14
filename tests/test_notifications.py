@@ -4,8 +4,8 @@ from math import ceil
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QEnterEvent, QFont, QFontMetricsF, QPalette
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QEnterEvent, QFont, QFontDatabase, QFontMetricsF, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 from qfluentwidgets import HyperlinkButton, InfoBar, InfoBarIcon, InfoBarPosition
@@ -23,6 +23,134 @@ def window(qt_application):
     owner.show()
     yield owner
     owner.close()
+
+
+def _rendered_text_rows(image, owner, control, role, *, prefix=None):
+    """从实际绘制的文字中取纵向范围，避免仅检查控件外框而漏掉基线偏移。"""
+    origin = control.mapTo(owner, QPoint(0, 0))
+    scale = image.devicePixelRatio()
+    foreground = control.palette().color(role)
+    surface = control.parentWidget().mapTo(owner, QPoint(12, 5))
+    background = image.pixelColor(round(surface.x() * scale), round(surface.y() * scale))
+    contrast = [a - b for a, b in zip(foreground.getRgb()[:3], background.getRgb()[:3])]
+    squared_contrast = sum(value * value for value in contrast)
+    assert squared_contrast > 0
+    pixels = []
+    for y in range(round(origin.y() * scale), round((origin.y() + control.height()) * scale)):
+        for x in range(round(origin.x() * scale), round((origin.x() + control.width()) * scale)):
+            pixel = image.pixelColor(x, y)
+            coverage = sum((a - b) * weight for a, b, weight in zip(
+                pixel.getRgb()[:3], background.getRgb()[:3], contrast,
+            )) / squared_contrast
+            if coverage > .25:
+                pixels.append((x / scale, y / scale))
+    assert pixels, "提示文字没有实际绘制出来"
+    if prefix:
+        left = min(x for x, _y in pixels)
+        width = QFontMetricsF(control.font()).horizontalAdvance(prefix)
+        pixels = [(x, y) for x, y in pixels if x < left + width - 2]
+    rows = [y for _x, y in pixels]
+    return min(rows), max(rows)
+
+
+@pytest.mark.parametrize("family", ["Sans Serif", "Serif", "Monospace", "CJK"])
+@pytest.mark.parametrize("font_size", [8, 12, 22])
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_toast_rendered_text_aligns_across_fonts_and_sizes(
+    window, qt_application, monkeypatch, family, font_size, theme,
+):
+    if family == "CJK":
+        available = set(QFontDatabase.families())
+        family = next((name for name in (
+            "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+        ) if name in available), None)
+        if family is None:
+            pytest.skip("本机未安装可直接验证的中文字体；其余字体覆盖中文回退")
+    monkeypatch.setattr(BaseStyles, "font_for_role", lambda *_args: QFont(family, font_size))
+    BaseStyles.switch_theme(theme)
+    # 相同的中英混排文案令可见字形底边成为独立于实现算法的对齐证据。
+    text = "任务 Ag"
+    notice = show_toast(
+        window, text, text, duration=-1, action_text=text, on_action=lambda: None,
+    )
+    qt_application.processEvents()
+    QTest.mouseMove(window, QPoint(1, 1))
+    image = window.grab().toImage()
+    controls = (
+        (notice.titleLabel, QPalette.ColorRole.WindowText),
+        (notice.content_edit, QPalette.ColorRole.Text),
+        (notice.action_button, QPalette.ColorRole.ButtonText),
+    )
+    bounds = [_rendered_text_rows(image, window, control, role) for control, role in controls]
+    bottoms = [bottom for _top, bottom in bounds]
+    assert max(bottoms) - min(bottoms) <= 1, (family, font_size, bounds)
+    for (control, _role), (top, bottom) in zip(controls, bounds):
+        origin = control.mapTo(window, QPoint(0, 0))
+        assert origin.y() < top <= bottom < origin.y() + control.height() - 1
+
+
+@pytest.mark.parametrize("font_size", [8, 12, 22])
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("action", [True, False])
+def test_punctuation_fallback_uses_same_visible_baseline(
+    window, qt_application, monkeypatch, font_size, theme, action,
+):
+    monkeypatch.setattr(BaseStyles, "font_for_role", lambda *_args: QFont("Sans Serif", font_size))
+    BaseStyles.switch_theme(theme)
+    notice = show_toast(
+        window, "任务 Bugreport", "任务，请稍候。", duration=-1,
+        action_text="任务" if action else None, on_action=lambda: None,
+    )
+    qt_application.processEvents()
+    image = window.grab().toImage()
+    controls = [
+        (notice.titleLabel, QPalette.ColorRole.WindowText),
+        (notice.content_edit, QPalette.ColorRole.Text),
+    ]
+    if action:
+        controls.append((notice.action_button, QPalette.ColorRole.ButtonText))
+    # 只比较相同中文前缀，避免英文下伸部、逗号的形状差异被误判为基线错位。
+    bounds = [_rendered_text_rows(image, window, control, role, prefix="任务")
+              for control, role in controls]
+    bottoms = [bottom for _top, bottom in bounds]
+    assert max(bottoms) - min(bottoms) <= 1, (font_size, theme, action, bounds)
+
+
+def test_toast_font_changes_keep_selection_copy_and_horizontal_reading(
+    window, qt_application, monkeypatch,
+):
+    if qt_application.platformName() != "offscreen":
+        pytest.skip("真实系统剪贴板不用于自动化复制测试")
+    content = "任务，请稍候。\n" + "日志文字 ABC " * 5000 + " END"
+    notice = show_toast(
+        window, "任务 Bugreport", content, duration=-1,
+        action_text="查看任务", on_action=lambda: None,
+    )
+    reader = notice.content_edit
+    reader.setFocus()
+    reader.setSelection(0, 6)
+    selected = reader.selectedText()
+    window.resize(360, 700)
+    for family, size, theme in (
+        ("Sans Serif", 8, "Light"), ("Serif", 22, "Dark"), ("Monospace", 12, "Light"),
+    ):
+        monkeypatch.setattr(BaseStyles, "font_for_role", lambda *_args: QFont(family, size))
+        BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+        BaseStyles.switch_theme(theme)
+        qt_application.processEvents()
+        assert reader.selectedText() == selected
+        QTest.keyClick(reader, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        assert QApplication.clipboard().text() == selected
+        assert window.rect().contains(notice.geometry())
+    QTest.keyClick(reader, Qt.Key.Key_End)
+    qt_application.processEvents()
+    assert reader.cursorPosition() == len(reader.text())
+    assert reader.rect().contains(reader.cursorRect().center())
+    QTest.keyClick(reader, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    QTest.keyClick(reader, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == content.replace("\n", " ")
+    QTest.keyClicks(reader, "must remain read-only")
+    assert reader.text() == content.replace("\n", " ")
 
 
 @pytest.mark.parametrize("width,font_size", [(360, 12), (360, 22), (860, 12), (860, 22)])
