@@ -266,17 +266,29 @@ class ActionFeedbackPresenter(QObject):
             self.frame._open_workspace_feature(section.split(".")[0], "overview")
 
     def _reveal(self, view) -> None:
-        """只定位当前可见分区；后台更新和任务中心镜像均不抢夺滚动位置。"""
+        """只纵向定位仍可见的结果，宽内容不能把整页横移到导航下方。"""
         if not view.isVisibleTo(self.frame):
             return
-        ancestor = view.parentWidget()
-        while ancestor is not None:
-            if isinstance(ancestor, QScrollArea):
-                QTimer.singleShot(
-                    0, view, lambda area=ancestor: area.ensureWidgetVisible(view, 0, 12)
-                )
-                break
-            ancestor = ancestor.parentWidget()
+
+        def reveal() -> None:
+            if not view.isVisibleTo(self.frame):
+                return
+            ancestor = view.parentWidget()
+            while ancestor is not None:
+                if isinstance(ancestor, QScrollArea):
+                    content = ancestor.widget()
+                    if content is None or not content.isAncestorOf(view):
+                        return
+                    center = view.mapTo(content, view.rect().center())
+                    # 隐藏横向滚动条仍允许程序滚动；只沿当前水平位置定位纵向中心。
+                    ancestor.ensureVisible(
+                        ancestor.horizontalScrollBar().value(), center.y(), 0,
+                        min(view.height() // 2 + 12, ancestor.viewport().height() // 2),
+                    )
+                    return
+                ancestor = ancestor.parentWidget()
+
+        QTimer.singleShot(0, view, reveal)
 
     def export_result(self, request_id: str, text: str) -> None:
         """系统选择器只获取路径，正文写入交给现有串行后台文件队列。"""
