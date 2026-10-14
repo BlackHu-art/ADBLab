@@ -69,6 +69,25 @@ def test_exact_title_requires_root_or_descendant_pid():
     assert tracker.lost is False
 
 
+def test_closed_tracker_releases_connection_and_rejects_further_reads_and_placement():
+    api = FakeWindowApi()
+    closed = []
+    api.close = lambda: closed.append(True)
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    snapshot = tracker.snapshot()
+    assert snapshot is not None
+    close = getattr(tracker, "close", None)
+    assert callable(close), "原生连接必须随所属会话释放"
+    close()
+    close()
+    assert closed == [True]
+    assert tracker.lost
+    assert not tracker.supported
+    assert tracker.snapshot() is None
+    assert not tracker.position_tool(88, snapshot, (0, 0, 100, 400))
+    assert api.placements == []
+
+
 @pytest.mark.parametrize("pid", [100, 150, 200])
 def test_binds_root_and_nested_launcher_descendants(pid):
     api = FakeWindowApi()

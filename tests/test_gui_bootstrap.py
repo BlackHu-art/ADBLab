@@ -15,6 +15,111 @@ import main
 from core import settings_manager
 
 
+@pytest.mark.parametrize("entry", ["gui", "splash", "self-check"])
+def test_gui_entries_choose_compatible_display_before_qt_construction(monkeypatch, entry):
+    from PySide6 import QtWidgets
+
+    from utils import gui_platform
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setenv("DISPLAY", ":77")
+    for key in ("QT_QPA_PLATFORM", "SDL_VIDEO_DRIVER", "SDL_VIDEODRIVER"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(gui_platform, "_xcb_plugin_loadable", lambda: True)
+
+    class ReachedQtBoundary(Exception):
+        pass
+
+    def application_boundary(*_args, **_kwargs):
+        assert os.environ.get("QT_QPA_PLATFORM") == "xcb;wayland"
+        assert "SDL_VIDEO_DRIVER" not in os.environ
+        assert "SDL_VIDEODRIVER" not in os.environ
+        raise ReachedQtBoundary
+
+    monkeypatch.setattr(QtWidgets, "QApplication", application_boundary)
+    monkeypatch.setattr(settings_manager.AppSettings, "instance", lambda **_kwargs: {})
+    monkeypatch.setattr(settings_manager, "_error_sink", None)
+    monkeypatch.setattr(main, "_configure_console_logging", lambda _settings: None)
+    monkeypatch.setattr(main, "_configure_gui_scaling", lambda _value: None)
+    monkeypatch.setattr("utils.adb_resolver.set_client_preference", lambda _value: None)
+    monkeypatch.setitem(
+        sys.modules, "gui.startup_worker", SimpleNamespace(run_startup_splash=application_boundary),
+    )
+
+    with pytest.raises(ReachedQtBoundary):
+        if entry == "gui":
+            main._run_gui_session(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+        elif entry == "splash":
+            main._dispatch_cli(["--startup-splash", "synthetic-splash-server"])
+        else:
+            main._self_check_gui()
+
+
+@pytest.mark.parametrize("entry", ["gui", "self-check"])
+@pytest.mark.parametrize(
+    "requested, selected, inherited",
+    [
+        (None, "xcb", "xcb"),
+        (None, "wayland", "wayland"),
+        ("wayland;xcb", "xcb", "wayland;xcb"),
+        ("offscreen", "offscreen", "offscreen"),
+    ],
+)
+def test_gui_propagates_resolved_auto_platform_before_starting_children(
+    monkeypatch, entry, requested, selected, inherited,
+):
+    from PySide6 import QtWidgets
+
+    from utils import gui_platform
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setenv("DISPLAY", ":77")
+    for key in ("QT_QPA_PLATFORM", "SDL_VIDEO_DRIVER", "SDL_VIDEODRIVER"):
+        monkeypatch.delenv(key, raising=False)
+    if requested is not None:
+        monkeypatch.setenv("QT_QPA_PLATFORM", requested)
+    monkeypatch.setattr(gui_platform, "_xcb_plugin_loadable", lambda: True)
+
+    class ReachedChildBoundary(Exception):
+        pass
+
+    def child_boundary(*_args):
+        actual = os.environ.get("QT_QPA_PLATFORM")
+        assert actual == inherited
+        child = gui_platform.scrcpy_environment(os.environ)
+        expected_sdl = "x11" if inherited == "xcb" else None
+        assert child.get("SDL_VIDEO_DRIVER") == expected_sdl
+        assert child.get("SDL_VIDEODRIVER") == expected_sdl
+        raise ReachedChildBoundary
+
+    class Application:
+        def __init__(self, _argv):
+            assert os.environ.get("QT_QPA_PLATFORM") == (requested or "xcb;wayland")
+
+        def platformName(self):
+            return selected
+
+        setWindowIcon = child_boundary
+
+    monkeypatch.setattr(QtWidgets, "QApplication", Application)
+    if entry == "self-check":
+        monkeypatch.setattr(QtWidgets, "QWidget", child_boundary)
+    monkeypatch.setattr("PySide6.QtGui.QIcon", lambda _path: None)
+    monkeypatch.setattr(settings_manager.AppSettings, "instance", lambda **_kwargs: {})
+    monkeypatch.setattr(settings_manager, "_error_sink", None)
+    monkeypatch.setattr(main, "_configure_console_logging", lambda _settings: None)
+    monkeypatch.setattr(main, "_configure_gui_scaling", lambda _value: None)
+    monkeypatch.setattr("utils.adb_resolver.set_client_preference", lambda _value: None)
+
+    with pytest.raises(ReachedChildBoundary):
+        if entry == "gui":
+            main._run_gui_session(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+        else:
+            main._self_check_gui()
+
+
 @pytest.mark.parametrize("platform_plugin", ["offscreen", "adblab-invalid-platform"])
 def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plugin):
     """独立进程实际加载指定 QPA 插件；失败插件不能被静默替换成离屏模式。"""

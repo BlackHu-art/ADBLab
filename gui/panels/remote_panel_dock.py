@@ -1,16 +1,18 @@
 """把逐台遥控侧栏绑定到外部投屏窗口，并管理独立遥控器的视图寿命。"""
 
+import sys
 from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QDialog, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
 from gui.widgets.remote_toolbar import RemoteToolbar
-from services.remote.window_tracking import WindowsWindowTracker
+from services.remote.window_tracking import create_window_tracker
 
 
 def dock_geometry(
@@ -47,11 +49,15 @@ class _DockEntry:
 class RemotePanelDock(QObject):
     """GUI 线程拥有会话工具栏；支持时跟随原生窗口，否则显示可拖动的便携浮窗。"""
 
-    def __init__(self, frame, parent: QWidget, *, tracker_factory=WindowsWindowTracker):
+    def __init__(self, frame, parent: QWidget, *, tracker_factory=None):
         super().__init__(parent)
         self._frame = frame
         self._owner = parent
-        self._tracker_factory = tracker_factory
+        self._tracker_factory = tracker_factory or (
+            lambda pid, title: create_window_tracker(
+                pid, title, platform_name=QGuiApplication.platformName(),
+            )
+        )
         self.entries: dict[str, _DockEntry] = {}
         self._retired: dict[str, object] = {}
         self._closed = False
@@ -89,7 +95,15 @@ class RemotePanelDock(QObject):
                 continue
             tracker = self._tracker_factory(pid, session.config.window_title)
             native_tracker = tracker if tracker.supported else None
-            toolbar = RemoteToolbar(self._owner, portable=native_tracker is None)
+            independent = (
+                sys.platform == "linux" and QGuiApplication.platformName() == "xcb"
+                and native_tracker is not None
+            )
+            # X11 下有父控件的 winId() 会连带将主导航原生化，造成实际画面停止刷新。
+            # 独立工具窗由 entries 持有并经 _remove 释放，原生瞬态归属仍绑定镜像窗口。
+            toolbar = RemoteToolbar(
+                None if independent else self._owner, portable=native_tracker is None,
+            )
             toolbar.set_target_label(self._frame._mirror_device_name(device))
             entry = _DockEntry(session, native_tracker, toolbar)
             self.entries[device] = entry
@@ -183,6 +197,9 @@ class RemotePanelDock(QObject):
         self._frame._input_controller._invalidate_session_input(entry.session)
         entry.toolbar.dispose()
         entry.toolbar.deleteLater()
+        close = getattr(entry.tracker, "close", None)
+        if callable(close):
+            close()
 
     def close(self) -> None:
         """关闭先撤销输入并停计时器，再释放工具窗；重复关闭无副作用。"""

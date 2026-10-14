@@ -120,6 +120,16 @@ Windows 包完整保留 ADB、scrcpy/server、DLL、图标、启动辅助文件�
 .venv/bin/python main.py
 ```
 
+GUI 启动在 Linux 检测到 `DISPLAY` 且当前 PySide6 的 xcb 插件可加载时，默认使用
+X11/XWayland 兼容模式，使投屏侧栏可以随镜像窗口移动、缩放和最小化。
+仅调整本应用进程的 Qt 后端选择，不修改系统桌面会话或用户配置；自动模式优先尝试 xcb，
+X11 连接不可用时由 Qt 回退到 Wayland，再将实际后端传给子进程。实际使用 xcb 时，启动
+scrcpy 会为其子进程补齐 `SDL_VIDEO_DRIVER=x11`（SDL3）与 `SDL_VIDEODRIVER=x11`（SDL2）。
+已有 Qt 环境变量或 `-platform` / `--platform` 参数优先；显式 SDL 非 x11 选择或两代变量
+冲突也保持原样。缺少可用 xcb 插件时保留 Qt 原有后端选择，不自动安装系统依赖。
+这些选择在进程启动时确定，更新后需重启应用。显式原生 Wayland 使用可拖动的便携工具栏，
+不会自动贴边；可通过启动环境 `QT_QPA_PLATFORM=wayland` 选择该模式。
+
 准备脚本按共享清单下载官方 `scrcpy-linux-x86_64-v4.1.tar.gz`，校验 SHA256 后安全解压。
 包内为 scrcpy/server 4.1 和 ADB 37.0.0；文件及准备清单位于 Git 忽略的 `runtime-tools/`，
 再次准备会校验已存在文件并复用。可以离线准备或只读校验：

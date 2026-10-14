@@ -1,5 +1,6 @@
 """投屏启动策略必须显式绑定 ADB 入口和会话环境。"""
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
@@ -45,6 +46,28 @@ def test_fast_plan_binds_only_scrcpy_child_environment(service, monkeypatch, tmp
     assert Path(plan.env["ADBLAB_SCRCPY_SERVER"]) == tmp_path / "scrcpy-server"
     import os
     assert os.environ["ADB"] == "unrelated-adb.exe"
+
+
+@pytest.mark.parametrize("backend", ["native", "direct"])
+def test_xcb_plan_selects_x11_only_in_scrcpy_child_environment(
+    service, monkeypatch, tmp_path, backend,
+):
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":77")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
+    for key in ("SDL_VIDEO_DRIVER", "SDL_VIDEODRIVER"):
+        monkeypatch.delenv(key, raising=False)
+    (tmp_path / "scrcpy-server").write_bytes(b"server")
+    if backend == "native":
+        monkeypatch.setattr("services.remote.scrcpy_service.resolve_scrcpy_bridge", lambda: None)
+
+    plan = service.build_launch_plan(_scrcpy_config(exe=str(tmp_path / "scrcpy.exe")))
+
+    assert plan.backend == backend
+    assert plan.env["SDL_VIDEO_DRIVER"] == "x11"
+    assert plan.env["SDL_VIDEODRIVER"] == "x11"
+    assert "SDL_VIDEO_DRIVER" not in os.environ
+    assert "SDL_VIDEODRIVER" not in os.environ
 
 
 @pytest.mark.parametrize("client_name", ["adb.exe", "custom-adb.exe"])

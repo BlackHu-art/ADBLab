@@ -72,12 +72,144 @@ class UnsupportedTracker:
         raise AssertionError("便携工具栏不能使用原生窗口定位")
 
 
+@pytest.mark.parametrize("reason", ["exit", "cancel", "close"])
+def test_retiring_session_releases_native_connection_once(qt_application, reason):
+    from gui.panels.remote_panel_dock import RemotePanelDock
+
+    closed = []
+
+    class OwnedTracker(Tracker):
+        def close(self):
+            closed.append(self.pid)
+
+    owner, frame = QWidget(), Frame()
+    current = session("a")
+    frame._device_sessions = {"a": current}
+    dock = RemotePanelDock(frame, owner, tracker_factory=OwnedTracker)
+    try:
+        dock.sync()
+        if reason == "exit":
+            current.process.poll = lambda: 0
+            dock.tick()
+        elif reason == "cancel":
+            current.cancel_event.set()
+            dock.sync()
+        else:
+            dock.close()
+        assert not dock.entries
+        assert closed == [100]
+        dock.close()
+        assert closed == [100]
+    finally:
+        dock.close()
+        owner.close()
+
+
 def session(device, pid=100):
     return SimpleNamespace(
         config=SimpleNamespace(device=device, no_window=False, window_title="mirror-" + device),
         process=SimpleNamespace(pid=pid, poll=lambda: None), state="ready", resource_owned=True,
         cancel_event=threading.Event(),
     )
+
+
+def _set_dock_platform(monkeypatch, system, qt_platform):
+    from gui.panels import remote_panel_dock
+
+    monkeypatch.setattr(remote_panel_dock, "sys", SimpleNamespace(platform=system), raising=False)
+    monkeypatch.setattr(
+        remote_panel_dock, "QGuiApplication", SimpleNamespace(platformName=lambda: qt_platform),
+    )
+    return remote_panel_dock
+
+
+@pytest.mark.parametrize(
+    "system, qt_platform, tracker_factory, independent",
+    [
+        ("linux", "xcb", Tracker, True),
+        ("win32", "windows", Tracker, False),
+        ("linux", "offscreen", Tracker, False),
+        ("linux", "wayland", UnsupportedTracker, False),
+        ("linux", "xcb", UnsupportedTracker, False),
+    ],
+    ids=("linux-xcb", "windows", "offscreen", "wayland", "xcb-portable"),
+)
+def test_toolbar_owner_is_isolated_only_for_linux_xcb_native_tracking(
+    qt_application, monkeypatch, system, qt_platform, tracker_factory, independent,
+):
+    module = _set_dock_platform(monkeypatch, system, qt_platform)
+    owner, frame = QWidget(), Frame()
+    frame._device_sessions = {"a": session("a")}
+    dock = module.RemotePanelDock(frame, owner, tracker_factory=tracker_factory)
+    try:
+        dock.sync()
+        toolbar = dock.entries["a"].toolbar
+        assert toolbar.parentWidget() is (None if independent else owner)
+        assert toolbar.isVisible()
+    finally:
+        dock.close()
+        owner.close()
+
+
+@pytest.mark.parametrize("reason", ["exit", "cancel", "close", "owner_destroyed"])
+def test_independent_xcb_toolbar_retires_popup_and_rejects_late_input(
+    qt_application, monkeypatch, reason,
+):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QToolButton
+    from shiboken6 import delete, isValid
+
+    module = _set_dock_platform(monkeypatch, "linux", "xcb")
+    closed = []
+
+    class OwnedTracker(Tracker):
+        def close(self):
+            closed.append(self.pid)
+
+    owner, frame = QWidget(), Frame()
+    current = session("a")
+    frame._device_sessions = {"a": current}
+    dock = module.RemotePanelDock(frame, owner, tracker_factory=OwnedTracker)
+    try:
+        dock.sync()
+        timer, toolbar = dock.timer, dock.entries["a"].toolbar
+        popup = toolbar.popup_window
+        assert toolbar.parentWidget() is None
+        assert popup.parentWidget() is toolbar
+        toolbar.findChild(QToolButton, "remoteToolbarMore").click()
+        assert popup.isVisible()
+        if reason == "exit":
+            current.process.poll = lambda: 0
+            dock.tick()
+        elif reason == "cancel":
+            current.cancel_event.set()
+            dock.sync()
+        elif reason == "close":
+            dock.close()
+        else:
+            delete(owner)
+        assert not dock.entries
+        assert frame.invalidated == [current]
+        assert closed == [100]
+        assert not isValid(timer) or not timer.isActive()
+        assert not toolbar.isVisible()
+        assert not popup.isVisible()
+        assert not toolbar._watching_application
+        toolbar.key_requested.emit("HOME")
+        toolbar.action_requested.emit("rotate_portrait")
+        assert frame.calls == []
+        if isValid(dock):
+            dock.close()
+        assert closed == [100]
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(toolbar)
+        assert not isValid(popup)
+    finally:
+        if isValid(dock):
+            dock.close()
+        if isValid(owner):
+            delete(owner)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_unsupported_platform_shows_each_session_toolbar_and_preserves_its_target(qt_application):
@@ -226,6 +358,8 @@ def test_closed_window_cannot_rebind_or_send_to_replacement_session(qt_applicati
 def test_destroyed_view_revokes_session_and_destroys_timer_and_tools(
     qt_application, tracker_factory,
 ):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QToolButton
     from shiboken6 import delete, isValid
 
     from gui.panels.remote_panel_dock import RemotePanelDock
@@ -236,10 +370,20 @@ def test_destroyed_view_revokes_session_and_destroys_timer_and_tools(
     dock = RemotePanelDock(frame, owner, tracker_factory=tracker_factory)
     dock.sync()
     timer, toolbar = dock.timer, dock.entries["a"].toolbar
+    popup = toolbar.popup_window
+    toolbar.findChild(QToolButton, "remoteToolbarMore").click()
+    assert popup.isVisible()
     delete(owner)
     assert frame.invalidated == [original]
     assert not isValid(timer)
+    if isValid(toolbar):
+        assert not toolbar.isVisible()
+        assert not popup.isVisible()
+        toolbar.key_requested.emit("HOME")
+    assert frame.calls == []
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert not isValid(toolbar)
+    assert not isValid(popup)
 
 
 def test_record_only_session_does_not_create_window_tracker(qt_application):
