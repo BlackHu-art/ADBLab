@@ -18,6 +18,7 @@ def test_bugreport_same_time_owns_new_directory_and_never_converts_old_files(tmp
 
     with (
         patch.object(model, "_run", side_effect=run),
+        patch.object(model, "_run_bugreport_process", side_effect=run),
         patch.object(model, "_convert_bugreport_to_html") as convert,
         patch("models.adb_testing.datetime") as clock,
     ):
@@ -82,6 +83,7 @@ def test_bugreport_conversion_failure_does_not_use_prior_report(tmp_path):
 
     with (
         patch.object(model, "_run", side_effect=run),
+        patch.object(model, "_run_bugreport_process", side_effect=run),
         patch.object(
             model, "_convert_bugreport_to_html", side_effect=RuntimeError("conversion failed")
         ) as convert,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
 from datetime import datetime
 
 from PySide6.QtCore import QCoreApplication
@@ -16,6 +15,7 @@ from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
+from utils.diagnostic_artifacts import diagnostic_log_filename
 
 
 class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
@@ -220,9 +220,8 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
             self._save_single_device_log(device_ip, save_dir)
 
     def _save_single_device_log(self, device_ip: str, save_dir: str):
-        timestamp = datetime.now().strftime("%H%M%S")
-        sanitized_ip = re.sub(r"\W+", "_", device_ip)
-        log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}_{uuid.uuid4().hex}.txt")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = os.path.join(save_dir, diagnostic_log_filename("log", device_ip, timestamp))
         self.testing_model.retrieve_device_logs_async(device_ip, log_path)
 
     def _process_retrieve_logs_result(self, result: dict):

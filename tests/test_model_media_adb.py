@@ -529,12 +529,12 @@ def test_settings_get_async_returns_value_alias():
 def test_capture_bugreport_reports_command_failure(tmp_path):
     model = ADBTesting()
 
-    with patch.object(model, "_run") as run:
-        run.side_effect = [
-            {"success": True, "output": "11"},
-            {"success": False, "error": "bugreport crashed"},
-        ]
-
+    with (
+        patch.object(model, "_run", return_value={"success": True, "output": "11"}),
+        patch.object(model, "_run_bugreport_process", return_value={
+            "success": False, "error": "bugreport crashed",
+        }),
+    ):
         result = ADBTesting.capture_bugreport_async.__wrapped__(
             model,
             "device-1",
