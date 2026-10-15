@@ -19,13 +19,29 @@ from core.adb_transport import (
     adb_client_lock,
     capture,
 )
-from core.native_process import (
-    NativeCommandScope,
-    cancel_and_drain_native,
-    close_native_pipes,
-    popen_native,
-)
+from core.native_process import NativeCommandScope, close_native_pipes, popen_native
 from utils import adb_debug
+
+_native_cleanup_lock = threading.Lock()
+_native_cleanup_scopes: set[NativeCommandScope] = set()
+
+
+def native_cleanup_count() -> int:
+    """保留无显式 owner 且命令线程已交还的残留；仅确认退出才解除应用级归属。"""
+    with _native_cleanup_lock:
+        released = [scope for scope in _native_cleanup_scopes if not scope.is_running()]
+        _native_cleanup_scopes.difference_update(released)
+        return len(_native_cleanup_scopes)
+
+
+def wait_for_native_cleanup(timeout: float) -> bool:
+    """后台在共享预算内重试残留清理；不接管显式作用域，也不重放业务命令。"""
+    deadline = time.monotonic() + max(0.0, timeout)
+    with _native_cleanup_lock:
+        scopes = tuple(_native_cleanup_scopes)
+    for scope in scopes:
+        scope.wait(max(0.0, deadline - time.monotonic()))
+    return native_cleanup_count() == 0
 
 
 def native_capture(
@@ -40,8 +56,12 @@ def native_capture(
 ) -> ExecutionResult:
     """执行可取消短命令；输入仅发送一次，环境取副本，不停止独立 ADB 服务。
 
-    结束后最多另用 0.5 秒回收客户端；显式作用域在启动前登记并保留清理失败的句柄。
+    结束后最多另用 0.5 秒回收客户端；无显式作用域时使用独占内部归属，清理失败
+    转交应用关闭屏障继续监督，不能用业务返回代替进程退出。
     """
+    internal_scope = command_scope is None
+    if internal_scope:
+        command_scope = NativeCommandScope()
     deadline = time.monotonic() + timeout
     if cancelled() or (command_scope is not None and command_scope._stop_requested()):
         return ExecutionResult(kind="cancelled")
@@ -121,8 +141,6 @@ def native_capture(
             try:
                 if command_scope is not None:
                     command_scope._cleanup_process(proc, completed=completed, timeout=0.5)
-                elif not completed:
-                    cancel_and_drain_native(proc, timeout=0.5)
             finally:
                 # 普通 Popen.__exit__ 会无界等待 reader 的流锁，必须走相同的有界所有权边界。
                 close_native_pipes(proc)
@@ -135,6 +153,10 @@ def native_capture(
     finally:
         if command_scope is not None and token is not None:
             command_scope._finish_command(token)
+            if internal_scope and command_scope.is_running():
+                command_scope.request_stop()
+                with _native_cleanup_lock:
+                    _native_cleanup_scopes.add(command_scope)
         if held_adb_lock:
             adb_client_lock.release()
 
@@ -229,6 +251,7 @@ class AdbRuntime:
         self._topology: dict[str, str] = {}
         self._generation = 0
         self._active = 0
+        self._native_scopes: set[NativeCommandScope] = set()
         self._path: str | None = None
         self._ready_sent = False
         self._full_probe = True
@@ -553,7 +576,7 @@ class AdbRuntime:
                 self._publish()
                 started = time.monotonic()
                 # 仅首次引导容纳原生客户端和服务冷启动，不延长扫描及业务命令预算。
-                bootstrap = native_capture([path, "start-server"], self.BOOTSTRAP_TIMEOUT, stop)
+                bootstrap = self.run_native([path, "start-server"], self.BOOTSTRAP_TIMEOUT, stop)
                 elapsed = time.monotonic() - started
                 self._diagnostic(
                     f"ADB bootstrap result={bootstrap.kind} returncode={bootstrap.returncode} "
@@ -767,7 +790,7 @@ class AdbRuntime:
                 continue
             if measure_host:
                 started = time.monotonic()
-                baseline = native_capture(
+                baseline = self.run_native(
                     [path, "devices", "-l"], self.PROBE_TIMEOUT, yield_benchmark,
                 )
                 native_elapsed = time.monotonic() - started
@@ -831,7 +854,7 @@ class AdbRuntime:
                     samples.pop(0)
                     continue
             started = time.monotonic()
-            baseline = native_capture(
+            baseline = self.run_native(
                 [path, "-s", serial, "shell", self.PROBE_COMMAND],
                 self.PROBE_TIMEOUT, yield_benchmark,
             )
@@ -1271,6 +1294,27 @@ class AdbRuntime:
                 self._active -= 1
                 self._condition.notify_all()
 
+    def run_native(
+        self, cmd: list[str], timeout: float, cancelled: CancelCheck | None = None,
+    ) -> ExecutionResult:
+        """执行归属本实例的原生命令；启动、执行和未释放客户端共享同一关闭屏障。"""
+        with self._condition:
+            if self._closed:
+                return ExecutionResult(kind="cancelled")
+            scope = NativeCommandScope()
+            self._native_scopes.add(scope)
+            self._active += 1
+        try:
+            return native_capture(cmd, timeout, cancelled or (lambda: False), command_scope=scope)
+        finally:
+            # 命令已经交还资源，后续 wait 可接管失败清理；不影响其他实例的客户端。
+            scope.request_stop()
+            with self._condition:
+                if not scope.is_running():
+                    self._native_scopes.discard(scope)
+                self._active -= 1
+                self._condition.notify_all()
+
     def prepare_shutdown(self) -> None:
         """停止探测并取消已有请求；随后进入的必要清理由新一代停止信号管理。"""
         with self._condition:
@@ -1281,6 +1325,8 @@ class AdbRuntime:
             self._probe_stop.set()
             self._request_stop.set()
             self._request_stop = threading.Event()
+            for scope in self._native_scopes:
+                scope.request_stop()
             self._condition.notify_all()
 
     def close(self) -> None:
@@ -1289,12 +1335,22 @@ class AdbRuntime:
         with self._condition:
             self._closed = True
             self._request_stop.set()
+            # 清理阶段允许新请求，最终封闭必须再停止当时仍在集合内的全部资源。
+            for scope in self._native_scopes:
+                scope.request_stop()
             self._condition.notify_all()
 
     def is_running(self) -> bool:
-        """包含探测线程的实际存活状态，不以取消请求代替退出确认。"""
+        """包含探测线程及本实例未释放客户端，不以取消请求代替退出确认。"""
         with self._condition:
-            return self._active > 0 or bool(self._thread and self._thread.is_alive())
+            # 已准入命令可能尚未进入 scope；执行方交还前不能把空作用域误判为已释放。
+            if self._active:
+                return True
+            released = [scope for scope in self._native_scopes if not scope.is_running()]
+            self._native_scopes.difference_update(released)
+            return bool(
+                self._native_scopes or (self._thread and self._thread.is_alive())
+            )
 
     def wait(self, timeout: float) -> bool:
         """在共享预算内等待探测和活动请求结束，不阻塞 GUI 调用方。"""
@@ -1306,4 +1362,7 @@ class AdbRuntime:
         with self._condition:
             while self._active and time.monotonic() < deadline:
                 self._condition.wait(max(0, deadline - time.monotonic()))
+            scopes = tuple(self._native_scopes)
+        for scope in scopes:
+            scope.wait(max(0.0, deadline - time.monotonic()))
         return not self.is_running()

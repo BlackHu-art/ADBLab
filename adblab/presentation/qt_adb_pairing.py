@@ -139,12 +139,12 @@ class _PairingResources:
         self.worker.abort()
 
     def is_running(self):
-        return self.worker.isRunning() or self.scope.is_running()
+        # finished 发出后线程仍可能收尾；零等待确认 join，不阻塞 GUI 状态检查。
+        return not self.worker.wait(0) or self.scope.is_running()
 
     def wait(self, timeout):
         deadline = time.monotonic() + max(0.0, timeout)
-        self.worker.wait(max(0, int(timeout * 1000)))
-        if self.worker.isRunning():
+        if not self.worker.wait(max(0, int(timeout * 1000))):
             return False
         return self.scope.wait(max(0.0, deadline - time.monotonic()))
 
@@ -347,7 +347,8 @@ class QtAdbPairing(QObject):
             return
         if resources.is_running():
             if not resources.worker.isRunning():
-                self._publish("CleanupFailed", "cleanup_failed")
+                if resources.scope.is_running():
+                    self._publish("CleanupFailed", "cleanup_failed")
                 self.retry_stop()
             return
         worker = self._worker

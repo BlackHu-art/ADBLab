@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import copy
+import errno
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from utils.user_data import user_config_path
@@ -17,6 +21,42 @@ KINDS = frozenset({"monkey", "performance"})
 STATES = frozenset({"succeeded", "failed", "cancelled", "partial"})
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_PARAMETER_BYTES = 16 * 1024
+WRITE_LOCK_TIMEOUT = 2.0
+
+
+@contextmanager
+def _write_lock(path: Path) -> Iterator[None]:
+    """后台有界等待跨进程写锁；固定旁文件不删除，避免替换 JSON 后产生两把锁。
+
+    锁由 OS 随句柄关闭或进程退出释放；只协调使用此协议的实例，不改结果库格式。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(f".{path.name}.lock").open("a+b") as lease:
+        if lease.seek(0, os.SEEK_END) == 0:
+            lease.write(b"1")
+            lease.flush()
+        lease.seek(0)
+        deadline = time.monotonic() + WRITE_LOCK_TIMEOUT
+        while True:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(lease.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("结果库正由其他实例保存，请稍后重试") from exc
+                time.sleep(min(.05, remaining))
+        # 不显式删除或替换旁文件；关闭当前句柄即可释放两平台的原生锁。
+        yield
 
 
 @dataclass(frozen=True)
@@ -137,7 +177,7 @@ def _preset(data: object) -> RunPreset:
 
 
 class RunLibrary:
-    """由单个后台队列拥有的结果库；写盘成功才提交内存快照。
+    """每实例由单个后台队列拥有；跨实例写入在锁内合并，落盘成功才提交内存。
 
     ``path=None`` 用于独立页面和测试的内存库。损坏或未来版本文件不会被
     静默覆盖；加载失败后拒绝写入，保留原文件供恢复。容量淘汰仅移除索引。
@@ -167,13 +207,19 @@ class RunLibrary:
 
     def load(self) -> None:
         """读取有大小上限的已知版本文件；失败时保留磁盘与当前内存。"""
+        snapshot = self._read_snapshot()
+        if snapshot is not None:
+            self._records, self._presets = snapshot
+
+    def _read_snapshot(self) -> tuple[tuple[RunRecord, ...], tuple[RunPreset, ...]] | None:
+        """校验磁盘快照但不发布内存；写入事务可在原子替换成功后一起提交。"""
         if self.path is None:
-            return
+            return None
         try:
             with self.path.open("rb") as source:
                 raw = source.read(MAX_FILE_BYTES + 1)
         except FileNotFoundError:
-            return
+            return None
         except OSError:
             self._read_only = True
             raise
@@ -198,40 +244,70 @@ class RunLibrary:
         except (ValueError, TypeError, UnicodeError, RecursionError):
             self._read_only = True
             raise
-        self._records = tuple(sorted(records, key=lambda r: r.finished_at, reverse=True))[
+        records = tuple(sorted(records, key=lambda r: r.finished_at, reverse=True))[
             : self.capacity
         ]
-        self._presets = presets
+        return records, presets
+
+    def _update(
+        self,
+        mutation: Callable[
+            [tuple[RunRecord, ...], tuple[RunPreset, ...]],
+            tuple[tuple[RunRecord, ...], tuple[RunPreset, ...]],
+        ],
+    ) -> None:
+        """持锁重新读取再应用单次操作；旧快照不能恢复已删除方案或覆盖别人的新增。"""
+        if self._read_only:
+            raise ValueError("结果库无法读取，原文件已保留；请检查结果库文件后重新启动")
+        if self.path is None:
+            self._commit(*mutation(self._records, self._presets))
+            return
+        with _write_lock(self.path):
+            records, presets = self._read_snapshot() or ((), ())
+            self._commit(*mutation(records, presets))
 
     def record_run(self, record: RunRecord) -> None:
         """按运行标识幂等更新，只保留最近记录，不触碰产物文件。"""
         validated = _record(asdict(record))
-        rows = [r for r in self._records if r.run_id != validated.run_id]
-        rows.append(validated)
-        records = tuple(sorted(rows, key=lambda r: r.finished_at, reverse=True))[: self.capacity]
-        self._commit(records, self._presets)
+
+        def apply(records, presets):
+            rows = [r for r in records if r.run_id != validated.run_id]
+            rows.append(validated)
+            records = tuple(sorted(rows, key=lambda r: r.finished_at, reverse=True))[
+                : self.capacity
+            ]
+            return records, presets
+
+        self._update(apply)
 
     def save_preset(self, name: str, kind: str, parameters: dict) -> None:
         """同类型同名方案原位保存；新名称另存，超过容量时拒绝新增。"""
         name = _text(name, limit=80, required=True).strip()
-        previous = next((p for p in self._presets if (p.kind, p.name) == (kind, name)), None)
-        if previous is None and len(self._presets) >= 50:
-            raise ValueError("已达到 50 个方案，请更新已有方案或删除不再使用的方案")
         preset = _preset(
             dict(
-                preset_id=previous.preset_id if previous else uuid.uuid4().hex,
+                preset_id=uuid.uuid4().hex,
                 name=name,
                 kind=kind,
                 parameters=parameters,
                 updated_at=time.time(),
             )
         )
-        rows = tuple(p for p in self._presets if p.preset_id != preset.preset_id)
-        self._commit(self._records, (*rows, preset))
+
+        def apply(records, presets):
+            previous = next((p for p in presets if (p.kind, p.name) == (kind, name)), None)
+            if previous is None and len(presets) >= 50:
+                raise ValueError("已达到 50 个方案，请更新已有方案或删除不再使用的方案")
+            updated = replace(preset, preset_id=previous.preset_id) if previous else preset
+            rows = tuple(p for p in presets if p.preset_id != updated.preset_id)
+            return records, (*rows, updated)
+
+        self._update(apply)
 
     def delete_preset(self, preset_id: str) -> None:
         """仅删除指定方案，不改变设置、历史记录或测试文件。"""
-        self._commit(self._records, tuple(p for p in self._presets if p.preset_id != preset_id))
+        self._update(lambda records, presets: (
+            records, tuple(p for p in presets if p.preset_id != preset_id),
+        ))
 
     def _commit(self, records: tuple[RunRecord, ...], presets: tuple[RunPreset, ...]) -> None:
         if self._read_only:

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-10
+last_verified: 2026-10-15
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -19,8 +19,11 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | 应用翻译资源 | `resources/i18n/*.qm` 经静态 `translations_rc` 注册 | GUI 启动安装应用翻译器，缺失词条回退源文案 | Qt 资源系统、`QTranslator`、界面显示文案 | 翻译器由 QApplication 持有并保留到事件循环退出；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
+| 应用管理用户快照 | 每轮列表 worker 读取的当前 Android 用户及同用户列表结果 | 用户编号与成功列表同代接收；后续 worker 显式携带该编号，详情和权限队列保留同一归属 | 固定设备页面的内存状态；不写配置、不向用户展示设备用户标识 | 刷新开始撤销写入资格，成功快照恢复；用户变化隔离旧选择、缓存和详情，准入规则见 [应用管理流程](BUSINESS_FLOW.md#3-应用管理与安装批次) |
+| 应用权限列表 | 单包 dumpsys 的活动包及可确认的共享 UID 块 | `services/app_permissions.py` 按小节和快照用户解析，统一校验权限标识 | 详情页声明、请求和运行时权限列表；提交时保留原始权限名 | 随详情查询代次更新；未知用户或冲突状态不推断授权 |
 | 应用列表元数据 | 设备端 `app_process` 临时 helper 的 PackageManager；明确不支持时有限 dumpsys 兼容 | `services/app_metadata.py` 校验有界 Base64/UTF-8 JSON；每批最多 30 包；向 GUI 仅交付名称、版本、安装日期和缓存身份摘要 | 应用管理页面的文字缓存与本轮成功集合；不持久化 | 可见文字先于图标；刷新可暂时显示旧文字，但只有本轮成功响应才能标记已验证；用户、版本、更新时间、路径与资源配置参与缓存身份 |
 | 应用图标 | 同一临时 DEX helper 读取原生 Drawable | service 校验有界 PNG 字节及同次渲染的元数据身份；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；刷新隔离旧代次，元数据验证身份相同才复用图标；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |
+| 文件列表选择与当前项 | 当前目录表格的原始文件名、当前列和多选集合 | 成功交付目录列表后分批重建、排序并按名称恢复；完整构建后才提交快照 | File Explorer 页面的 Qt 选择模型与上一份完整快照；不持久化 | 归当前目录所有；刷新、导航及失败处理见 [文件管理流程](BUSINESS_FLOW.md#6-文件浏览与传输) |
 | 截图/录屏 | 设备 screencap/screenrecord | 截图二进制流写同目录临时文件，完整 PNG 解码后原子发布；录屏先拉取到目标同目录临时文件再原子发布，失败保留每设备一份原批次身份供重试（最多 64 份）；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 截图文件持续存在直到用户单张或全部删除，删除失败项保留；设备端录屏只在保存成功后删除，下载失败不删除；重试身份只存在于内存、不跨重启；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
 | MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 确认进程、reader 和清理义务全部释放后才清理；停止未确认时保留临时目录 |
@@ -137,7 +140,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
-| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；参数顶层拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 四个身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
+| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；参数顶层拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 四个身份键 | `services/run_library.py`、`gui/run_library.py` | 实例内后台串行；跨进程锁内读取最新快照并应用单次操作；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；跨实例协调边界见下文；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` 与 `clients/` 归属记录 | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native；归属记录保存本次进程身份与未释放远端义务 | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor`、`core.owned_process` | 每次运行独立临时目录；模式和客户端记录通过同目录临时文件原子发布 | 进程、reader、模式线程与清理义务确认释放后清理；停止未确认保留目录，详见 [进程归属](ARCHITECTURE.md#运行时并发模型)；配置包含设备/包/路径，模式不进入用户设置 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | CSV 等文件独立写入；XLSX 完整关闭后原子发布，失败保留原报告 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
@@ -154,6 +157,13 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 容量淘汰只删除结果索引；方案达到 50 个时拒绝新增，仍可更新同类型同名方案或显式删除旧方案。
 加载失败、格式损坏或不支持的版本会使本次库实例进入只读保护；须处理原文件并重启后再保存，
 不会自动清空重建。写入失败保留原磁盘文件与已发布的内存快照。
+
+多个新版实例共享固定的 `.test_runs.json.lock` 旁文件，后台最多等待 2 秒取得 OS 文件锁。
+持锁期间重新读取并校验磁盘快照，再按运行 ID 或方案名称应用本次操作，最后原子替换；
+方案删除只作用于目标 ID，旧实例快照不能恢复已经删除的方案。锁文件保留，句柄关闭或进程
+退出由 OS 释放锁；超时不写入、不发布新快照。JSON 仍为版本 1，不迁移格式或删除原始产物。
+此协调只适用于使用同一锁协议的实例，不能与仍在写入的旧版本混用；页面不实时订阅其他实例，
+在本实例下一次读取或成功保存时接收合并后的快照。
 
 主窗口的普通操作由 `ActionResults` 保留当次请求；Monkey 和性能结果由 `RunLibrary` 持久化。
 `TaskHistoryStore` 仅供未注入 `RunLibrary` 的任务中心兼容分支使用；主窗口虽然仍构造并传入该

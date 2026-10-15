@@ -90,7 +90,7 @@ class FileExplorerView:
         if viewable:
             add_menu_action(
                 menu, tr("View"),
-                callback=lambda: self._view_file(name, ext in self._frame.IMAGE_EXTS),
+                callback=lambda: self._frame._view_file(name, ext in self._frame.IMAGE_EXTS),
             )
         menu.exec(
             self._frame.table.mapToGlobal(

@@ -59,6 +59,7 @@ def page(qt_application, monkeypatch):
 
     monkeypatch.setattr("gui.dialogs.app_manager.AppManagerWorker", worker_factory)
     window = AppManagerPage(device_ip="demo-device")
+    window._accept_android_user(0)
     monkeypatch.setattr(window, "_schedule_visible_detail_load", lambda *a, **kw: None)
     window._active = True
     window._activated_once = True

@@ -152,3 +152,29 @@ def test_large_helper_verified_mode_preserves_push_and_precise_cleanup(transport
     assert calls[0][0][3] == "push"
     assert "Main --icons-metadata" in calls[1][0][-1]
     assert calls[2][0][-1] == f"rm -f -- {calls[0][0][-1]}"
+
+
+@pytest.mark.parametrize("returned_user", [0, 10])
+def test_bound_user_is_checked_even_without_cached_fingerprint(transport, returned_user):
+    _helper, calls, outputs = transport
+    outputs[0] = CommandResult(True, verified_line(user=returned_user) + app_icons._CLEANED)
+    events = []
+    app_icons.load_app_icons(
+        "synthetic-device", ["com.example.app"], lambda: False,
+        lambda *event: events.append(event), expected_user_id=10,
+    )
+    assert bool(events[0][1]) is (returned_user == 10)
+    if returned_user != 10:
+        assert "用户" in events[0][2] and "刷新" in events[0][2]
+    assert "--icons-metadata" in shlex.split(calls[0][0][-1])[0]
+
+
+@pytest.mark.parametrize("invalid_user", [True, -1, "10", 2**31])
+def test_invalid_expected_user_never_deploys_helper(transport, invalid_user):
+    _helper, calls, _outputs = transport
+    events = []
+    app_icons.load_app_icons(
+        "synthetic-device", ["com.example.app"], lambda: False,
+        lambda *event: events.append(event), expected_user_id=invalid_user,
+    )
+    assert not calls and events and not events[0][1] and events[0][2]

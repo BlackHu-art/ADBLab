@@ -10,6 +10,12 @@ from models.adb_testing import ADBTesting
 from models.app_manager_worker import AppManagerWorker
 
 
+@pytest.fixture(autouse=True)
+def known_android_user(monkeypatch):
+    # 这里隔离已确认的设备用户，保留原失败和清理路径的命令断言。
+    monkeypatch.setattr(AppManagerWorker, "_read_current_user", lambda self: 0)
+
+
 def _run_monkey_with_failed_focus_probes(tmp_path, command_result):
     model = ADBTesting()
     active = set()
@@ -94,7 +100,7 @@ def test_monkey_focus_probe_failures_fail_closed_and_stop_process(
     ],
 )
 def test_app_manager_simple_command_failure_never_reports_success(method_name, args):
-    worker = AppManagerWorker("device-1", "unused")
+    worker = AppManagerWorker("device-1", "unused", user_id=0)
     logs = []
     completed = []
     worker.log_message.connect(logs.append)
@@ -131,12 +137,12 @@ def test_app_manager_pre_aborted_worker_does_not_run_dangerous_command():
 
 
 def test_app_manager_backup_pull_failure_does_not_create_success_zip(tmp_path):
-    worker = AppManagerWorker("device-1", "unused")
+    worker = AppManagerWorker("device-1", "unused", user_id=0)
     logs = []
     worker.log_message.connect(logs.append)
 
     def adb_result(*args, **_kwargs):
-        if args[:2] == ("shell", "pm path com.example.app"):
+        if args[:2] == ("shell", "pm path --user 0 com.example.app"):
             return CommandResult(
                 success=True,
                 output=(
@@ -157,12 +163,12 @@ def test_app_manager_backup_pull_failure_does_not_create_success_zip(tmp_path):
 
 
 def test_app_manager_backup_all_pulls_success_creates_zip_and_completion(tmp_path):
-    worker = AppManagerWorker("device-1", "unused")
+    worker = AppManagerWorker("device-1", "unused", user_id=0)
     completed = []
     worker.operation_done.connect(completed.append)
 
     def adb_result(*args, **_kwargs):
-        if args[:2] == ("shell", "pm path com.example.app"):
+        if args[:2] == ("shell", "pm path --user 0 com.example.app"):
             return CommandResult(
                 success=True,
                 output=(
@@ -192,7 +198,7 @@ def test_app_manager_restore_partial_failure_does_not_emit_completion(tmp_path):
     _write_backup(first)
     _write_backup(second)
 
-    worker = AppManagerWorker("device-1", "unused")
+    worker = AppManagerWorker("device-1", "unused", user_id=0)
     logs = []
     completed = []
     worker.log_message.connect(logs.append)
@@ -215,7 +221,7 @@ def test_app_manager_restore_all_success_emits_completion_once(tmp_path):
     backup = tmp_path / "backup_app.zip"
     _write_backup(backup)
 
-    worker = AppManagerWorker("device-1", "unused")
+    worker = AppManagerWorker("device-1", "unused", user_id=0)
     completed = []
     worker.operation_done.connect(completed.append)
     worker._adb = Mock(return_value=CommandResult(success=True, output="Success"))

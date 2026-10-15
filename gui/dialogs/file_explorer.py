@@ -43,7 +43,6 @@ from gui.dialogs.file_explorer_transfers import FileTransferCoordinator
 from gui.dialogs.file_explorer_view import FileExplorerView
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
-    QThreadGroupShutdownTask,
     alive_callback,
     is_qobject_alive,
     safe_disconnect,
@@ -961,11 +960,17 @@ class FileExplorerPage(QWidget):
 
     # ── 预览查看控制器委托 wrapper ──────────────────────────────────────
 
+    def _directory_action(self, action, *args):
+        """目录入口统一拒绝半成品；已冻结路径的传输和预览回调不经过此准入。"""
+        if not self._can_use_directory_snapshot():
+            return None
+        return action(*args)
+
     def _view_or_pull(self, name: str):
-        return self._view_controller._view_or_pull(name)
+        return self._directory_action(self._view_controller._view_or_pull, name)
 
     def _view_file(self, name: str, is_image: bool = False):
-        return self._view_controller._view_file(name, is_image)
+        return self._directory_action(self._view_controller._view_file, name, is_image)
 
     def _view_image(self, name: str, full_path: str):
         return self._view_controller._view_image(name, full_path)
@@ -1008,16 +1013,16 @@ class FileExplorerPage(QWidget):
         return self._ops_controller._on_save_result(output, error, name)
 
     def _pull_file(self, name: str):
-        return self._ops_controller._pull_file(name)
+        return self._directory_action(self._ops_controller._pull_file, name)
 
     def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
         return self._ops_controller._finish_root_pull(o, e, name, dev_tmp, save_path)
 
     def _pull_selected(self):
-        return self._ops_controller._pull_selected()
+        return self._directory_action(self._ops_controller._pull_selected)
 
     def _push_file(self):
-        return self._ops_controller._push_file()
+        return self._directory_action(self._ops_controller._push_file)
 
     def _on_transfer_done(self, o, e, msg):
         controller = getattr(self, "_ops_controller", None)
@@ -1032,36 +1037,39 @@ class FileExplorerPage(QWidget):
         return controller._on_file_op_done(output, error, success_msg)
 
     def _mkdir(self):
-        return self._ops_controller._mkdir()
+        return self._directory_action(self._ops_controller._mkdir)
 
     def _touch(self):
-        return self._ops_controller._touch()
+        return self._directory_action(self._ops_controller._touch)
 
     def _rename_item(self, name: str):
-        return self._ops_controller._rename_item(name)
+        return self._directory_action(self._ops_controller._rename_item, name)
 
     def _delete_item(self, name: str):
-        return self._ops_controller._delete_item(name)
+        return self._directory_action(self._ops_controller._delete_item, name)
 
     def _request_delete(self, names: str | list[str]):
-        return self._ops_controller._request_delete(names)
+        return self._directory_action(self._ops_controller._request_delete, names)
 
     def _delete_selected(self):
-        return self._ops_controller._delete_selected()
+        return self._directory_action(self._ops_controller._delete_selected)
 
     def _copy_items(self, copy_mode: bool):
+        # 复制缓存不要求设备在线，但不能把未提交快照中的行拼接到旧目录路径。
+        if self._list_controller.populating:
+            return
         return self._ops_controller._copy_items(copy_mode)
 
     def _paste_items(self):
-        return self._ops_controller._paste_items()
+        return self._directory_action(self._ops_controller._paste_items)
 
     def _show_chmod(self, name: str, is_dir: bool):
-        return self._ops_controller._show_chmod(name, is_dir)
+        return self._directory_action(self._ops_controller._show_chmod, name, is_dir)
 
     # ── 右键菜单 ────────────────────────────────────────────────────────
 
     def _context_menu(self, pos):
-        if not self._can_operate():
+        if not self._can_use_directory_snapshot():
             return
         idx = self.table.indexAt(pos)
         if not idx.isValid():
@@ -1099,7 +1107,7 @@ class FileExplorerPage(QWidget):
         menu.exec(self.table.mapToGlobal(pos))
 
     def _install_apk(self, name: str):
-        if not self._can_operate():
+        if not self._can_use_directory_snapshot():
             return
         full = self._dpath(self.current_path, name)
         cmd = self._root(explorer_service.install_apk_command(full))
@@ -1118,7 +1126,7 @@ class FileExplorerPage(QWidget):
         w.start()
 
     def _exec_script(self, name: str):
-        if not self._can_operate():
+        if not self._can_use_directory_snapshot():
             return
         full = self._dpath(self.current_path, name)
         cmd = explorer_service.script_command(full, self.root_cb.isChecked())
@@ -1139,7 +1147,7 @@ class FileExplorerPage(QWidget):
         self._show_output_preview(name, output, error=bool(error))
 
     def _show_props(self, name: str, is_dir: bool):
-        if not self._can_operate():
+        if not self._can_use_directory_snapshot():
             return
         full = self._dpath(self.current_path, name)
         if is_dir:
@@ -1223,6 +1231,7 @@ class FileExplorerPage(QWidget):
         if self._disposing or self._disposed:
             return
         self._active = True
+        self._list_controller.resume_population()
         requested_path = ""
         # 程序传入的路径保留真实身份；仅路径输入框提交时清理用户键入的外层空白。
         if isinstance(payload, dict):
@@ -1247,6 +1256,7 @@ class FileExplorerPage(QWidget):
         """离开页面时保留路径、预览和后台任务，供返回后继续使用。"""
 
         self._active = False
+        self._list_controller.pause_population()
 
     def _can_operate(self) -> bool:
         """固定会话只允许对当前已选且在线的原设备发起新操作。"""
@@ -1254,6 +1264,10 @@ class FileExplorerPage(QWidget):
             self.device_ip and self._device_selected and self._device_connected
             and not self._closing and not self._disposing
         )
+
+    def _can_use_directory_snapshot(self) -> bool:
+        """文件命令还要求当前目录快照已完整提交，防止半列表与旧路径组合。"""
+        return self._can_operate() and not self._list_controller.populating
 
     def _refresh_status_badge(self) -> None:
         """连接、选择和主题更新共用同一状态展示，在线不等于已获操作资格。"""
@@ -1275,6 +1289,8 @@ class FileExplorerPage(QWidget):
             self._list_controller.cancel_link_requests()
             self._view_controller.invalidate_cache()
         self._device_selected = selected
+        if not selected:
+            self._list_controller.cancel_refresh()
         self._refresh_status_badge()
         self._sync_directory_controls()
         if not self._device_selected:
@@ -1295,16 +1311,8 @@ class FileExplorerPage(QWidget):
         self._device_connected = connected
         self.setProperty("deviceConnected", connected)
         self._refresh_status_badge()
-        if not connected and self._active_refresh is not None:
-            self._active_refresh = None
-            self._pending_navigation = None
-            worker = self._active_refresh_worker
-            if worker is not None and QThreadGroupShutdownTask._running(worker):
-                try:
-                    worker.abort()
-                except RuntimeError:
-                    pass
-            self._set_directory_loading(False)
+        if not connected:
+            self._list_controller.cancel_refresh()
         self._sync_directory_controls()
         if not connected:
             self._ops_controller.cancel_save()
@@ -1328,6 +1336,7 @@ class FileExplorerPage(QWidget):
         self._disposing = True
         self._closing = True
         self._list_controller.cancel_link_requests()
+        self._list_controller.cancel_refresh(restore=False)
         self._active = False
         self._sync_directory_controls()
         self._active_refresh = None

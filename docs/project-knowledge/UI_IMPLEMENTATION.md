@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-14
+last_verified: 2026-10-15
 related: [ARCHITECTURE.md, MODULE_MAP.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md, ../guides/OPERATION_RESULTS.md, ../guides/TESTING_GUIDE.md]
 ---
 
@@ -67,6 +67,9 @@ flowchart TD
 - [window_effects](../../gui/window_effects.py) 管 Windows 窗口材质；
   [material](../../gui/styles/material.py) 根据实际宿主同步控件材质，覆盖延迟创建和重挂。
   设置中启用云母不等于每个平台、每个窗口都已启用原生云母。
+- 主导航保持关闭额外 Acrylic 截图模糊，MENU 使用当前主题的可读实色底板；云母不可用时
+  按宿主实际材质状态回退。`test_navigation_rendering.py` 覆盖深浅主题往返、菜单文字与背景
+  实际绘制、Mica 回退及禁止重复模糊，离屏像素检查不能代替原生 DWM 验收。
 - 投屏侧栏和更多面板通过
   [RemoteToolbarMaterial](../../gui/widgets/remote_toolbar_material.py) 独立申请 DWM 背景，
   跟随主宿主实际云母开关及深浅主题；原生调用成功后才让 Qt 表面透出材质。

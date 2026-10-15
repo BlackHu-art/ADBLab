@@ -48,7 +48,7 @@ def fast_backend(monkeypatch):
             return ExecutionResult(LISTING.encode())
         return ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
 
-    def native(_cmd, timeout, _cancelled):
+    def native(_cmd, timeout, _cancelled, *, command_scope=None):
         clock[0] += timeout
         return ExecutionResult(kind="timeout")
 
@@ -411,15 +411,22 @@ def test_remote_rotation_cancelled_between_writes_stops_remaining_settings(
 
     def capture(command, args, **kwargs):
         calls.append((command, args, kwargs["serial"]))
-        if len(calls) == cancel_after:
+        if args == ["wm size"]:
+            return ExecutionResult(stdout=b"Physical size: 1080x2400\n")
+        write_count = len(calls) - 1
+        if write_count == cancel_after:
             stop.set()
-        return ExecutionResult(returncode=1 if len(calls) == 2 else 0)
+        return ExecutionResult(returncode=1 if write_count == 2 else 0)
 
     monkeypatch.setattr(runtime_module, "capture", capture)
     result = service.perform_action(SERIAL, "rotate_landscape", cancelled=stop.is_set)
     assert result.success is False
     assert result.error == "Cancelled"
-    assert len(calls) == cancel_after
+    assert calls[0] == ("shell", ["wm size"], SERIAL)
+    assert calls[1:] == [
+        ("shell", ["settings put system accelerometer_rotation 0"], SERIAL),
+        ("shell", ["settings put system user_rotation 1"], SERIAL),
+    ][:cancel_after]
 
 
 @pytest.mark.parametrize("action", ["keyevent", "swipe_up"])

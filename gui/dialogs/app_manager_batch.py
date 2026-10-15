@@ -50,29 +50,30 @@ class AppManagerBatch:
         pkg = pkg_item.text()
         atype = atype_item.text()
         menu = self._frame._create_context_menu()
-        add_menu_action(menu, tr("应用详情"), callback=lambda: self._frame._show_details_for(pkg))
+        bind = self._frame._user_bound_action
+        add_menu_action(menu, tr("应用详情"), callback=bind("_show_details_for", pkg))
         menu.addSeparator()
-        add_menu_action(menu, tr("启动应用"), callback=lambda: self._frame._launch(pkg))
+        add_menu_action(menu, tr("启动应用"), callback=bind("_launch", pkg))
         add_menu_action(
-            menu, tr("强制停止"), callback=lambda: self._frame._modify_one("force_stop", pkg)
+            menu, tr("强制停止"), callback=bind("_modify_one", "force_stop", pkg)
         )
         add_menu_action(
-            menu, tr("清除数据"), callback=lambda: self._frame._modify_one("clear", pkg)
+            menu, tr("清除数据"), callback=bind("_modify_one", "clear", pkg)
         )
         menu.addSeparator()
         add_menu_action(
-            menu, tr("卸载"), callback=lambda: self._frame._modify_one("uninstall", pkg)
+            menu, tr("卸载"), callback=bind("_modify_one", "uninstall", pkg)
         )
         if atype in ("System", "Vendor"):
             add_menu_action(
-                menu, tr("停用"), callback=lambda: self._frame._modify_one("disable", pkg)
+                menu, tr("停用"), callback=bind("_modify_one", "disable", pkg)
             )
             add_menu_action(
-                menu, tr("启用"), callback=lambda: self._frame._modify_one("enable", pkg)
+                menu, tr("启用"), callback=bind("_modify_one", "enable", pkg)
             )
         menu.addSeparator()
-        add_menu_action(menu, tr("备份"), callback=lambda: self._frame._backup_one(pkg))
-        if self._frame._batch_workers or not self._frame._can_operate():
+        add_menu_action(menu, tr("备份"), callback=bind("_backup_one", pkg))
+        if self._frame._batch_workers or not self._frame._can_modify_apps():
             for action in menu.actions():
                 if not action.isSeparator():
                     action.setEnabled(False)
@@ -87,6 +88,9 @@ class AppManagerBatch:
                 tr("请在顶部设备栏勾选当前在线设备后执行应用操作。")
             )
             return True
+        if not self._frame._can_modify_apps():
+            self._frame.status_bar.setText(tr("无法加载应用，请检查设备后重试。"))
+            return True
         if not self._frame._batch_workers:
             return False
         self._frame.status_bar.setText(tr("正在执行批量操作，请等待完成。"))
@@ -98,7 +102,8 @@ class AppManagerBatch:
         if self._batch_action_blocked():
             return
         worker = _app_manager.AppManagerWorker(
-            self._frame.device_ip, "launch_app", package_name=pkg
+            self._frame.device_ip, "launch_app", package_name=pkg,
+            user_id=self._frame._android_user_id,
         )
         self._submit_batch([worker], "launch", refresh=False)
 
@@ -111,7 +116,9 @@ class AppManagerBatch:
         kwargs = {"package_name": pkg}
         if operation == "modify_app":
             kwargs["action"] = action
-        worker = _app_manager.AppManagerWorker(self._frame.device_ip, operation, **kwargs)
+        worker = _app_manager.AppManagerWorker(
+            self._frame.device_ip, operation, user_id=self._frame._android_user_id, **kwargs,
+        )
         self._submit_batch([worker], action, refresh=action != "force_stop")
 
     @staticmethod
@@ -124,13 +131,18 @@ class AppManagerBatch:
 
         if self._batch_action_blocked():
             return
+        user_id = self._frame._android_user_id
         sd = QFileDialog.getExistingDirectory(
             self._frame, tr("选择备份目录"), self._frame._global_save_dir()
         )
-        if not sd or self._batch_action_blocked():
+        if (
+            not sd or self._batch_action_blocked()
+            or user_id != self._frame._android_user_id
+        ):
             return
         w = _app_manager.AppManagerWorker(
-            self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
+            self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd,
+            user_id=user_id,
         )
         self._submit_batch([w], "backup", refresh=False)
 
@@ -160,7 +172,8 @@ class AppManagerBatch:
             return
         workers = [
             _app_manager.AppManagerWorker(
-                self._frame.device_ip, "modify_app", action=action, package_name=pkg
+                self._frame.device_ip, "modify_app", action=action, package_name=pkg,
+                user_id=self._frame._android_user_id,
             )
             for pkg in pkgs
         ]
@@ -170,6 +183,7 @@ class AppManagerBatch:
         """一个固定设备会话只运行一个业务 worker；待启动项不占线程或进程。"""
         frame = self._frame
         frame._batch_pending = list(workers)
+        frame._batch_user_id = frame._android_user_id
         frame._batch_workers.update(workers)
         frame._batch_total = len(workers)
         frame._batch_action = action
@@ -206,7 +220,7 @@ class AppManagerBatch:
     def _start_next_worker(self) -> None:
         """仅在上一 worker 完成且原设备仍可操作时消耗下一项。"""
         frame = self._frame
-        if not frame._can_operate():
+        if not frame._can_modify_apps() or frame._batch_user_id != frame._android_user_id:
             self.cancel_pending()
             return
         pending = getattr(frame, "_batch_pending", [])
@@ -261,6 +275,7 @@ class AppManagerBatch:
 
         if self._batch_action_blocked():
             return
+        user_id = self._frame._android_user_id
         pkgs = self._frame._get_selected_pkgs()
         if not pkgs:
             FluentMessageBox.warning(
@@ -272,11 +287,15 @@ class AppManagerBatch:
         sd = QFileDialog.getExistingDirectory(
             self._frame, tr("备份目录"), self._frame._global_save_dir()
         )
-        if not sd or self._batch_action_blocked():
+        if (
+            not sd or self._batch_action_blocked()
+            or user_id != self._frame._android_user_id
+        ):
             return
         workers = [
             _app_manager.AppManagerWorker(
-                self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
+                self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd,
+                user_id=user_id,
             )
             for pkg in pkgs
         ]
@@ -287,12 +306,19 @@ class AppManagerBatch:
 
         if self._batch_action_blocked():
             return
+        user_id = self._frame._android_user_id
         files, _ = QFileDialog.getOpenFileNames(
             self._frame, tr("选择备份 ZIP 文件"), "", tr("ZIP 文件 (*.zip)")
         )
-        if not files or self._batch_action_blocked():
+        if (
+            not files or self._batch_action_blocked()
+            or user_id != self._frame._android_user_id
+        ):
             return
-        w = _app_manager.AppManagerWorker(self._frame.device_ip, "restore_apps", file_paths=files)
+        w = _app_manager.AppManagerWorker(
+            self._frame.device_ip, "restore_apps", file_paths=files,
+            user_id=user_id,
+        )
         self._submit_batch([w], "restore", refresh=True)
 
     def _show_details(self):

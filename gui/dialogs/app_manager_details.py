@@ -76,6 +76,10 @@ class AppDetailsPage(QWidget):
     def __init__(self, parent=None, device_ip: str = "", package_name: str = ""):
         super().__init__(parent)
         self.device_ip = device_ip
+        self._android_user_id: int | None = None
+        self._android_user_ready = False
+        self._user_context_ready = True
+        self._pending_android_user_id: int | None = None
         self._device_connected = bool(device_ip)
         self._device_selected = bool(device_ip)
         self.package_name = package_name
@@ -93,7 +97,7 @@ class AppDetailsPage(QWidget):
         self._close_after_dispose = False
         self._shutdown_registered = False
         self._permission_pending: deque[str] = deque()
-        self._permission_batch: tuple[int, str, str] | None = None
+        self._permission_batch: tuple[int, str, int, str] | None = None
         self._permission_worker = None
         self._permission_cancelled = False
         self.load_state = "idle"
@@ -291,6 +295,37 @@ class AppDetailsPage(QWidget):
             and not self._closing
         )
 
+    def set_android_user(self, user_id: int | None, *, ready: bool = True) -> None:
+        """同步列表的用户快照；切换用户撤销旧详情和权限队列，刷新中仅保留展示。"""
+        changed = user_id != self._android_user_id
+        cancelled_load = not changed and not ready and self.load_state == "loading"
+        if changed or not ready:
+            self._cancel_current_generation()
+        if changed:
+            self._loaded_package = ""
+            self.detail_text.clear()
+            self.declared_list.clear()
+            self.requested_list.clear()
+            self.runtime_list.clear()
+            self.load_state = "idle"
+        self._android_user_id = user_id
+        self._android_user_ready = bool(ready and user_id is not None)
+        self._user_context_ready = ready
+        if cancelled_load:
+            # 旧代次结束回调已失效，主动恢复重试入口并撤销未完成快照的缓存标记。
+            self._loaded_package = ""
+            self._set_load_state("error", tr("无法加载应用详情。"))
+        else:
+            self._sync_operation_controls()
+
+    def _can_modify_permissions(self) -> bool:
+        """权限写入要求详情成功且归属明确，旧缓存或未完成快照不能授权。"""
+        return bool(
+            self._can_operate() and self._android_user_ready and self._user_context_ready
+            and self._android_user_id is not None and self.load_state == "ready"
+            and self._loaded_package == self.package_name
+        )
+
     def set_device_selected(self, selected: bool) -> None:
         """取消选择只封闭新命令，保留已显示的详情和现有任务归属。"""
         self._device_selected = bool(selected and self.device_ip)
@@ -300,10 +335,10 @@ class AppDetailsPage(QWidget):
         self._sync_operation_controls()
 
     def _sync_operation_controls(self) -> None:
-        allowed = self._can_operate() and self._permission_batch is None
+        allowed = self._can_modify_permissions() and self._permission_batch is None
         self.grant_btn.setEnabled(allowed)
         self.revoke_btn.setEnabled(allowed)
-        self.retry_btn.setEnabled(allowed)
+        self.retry_btn.setEnabled(self._can_operate() and self._permission_batch is None)
 
     def retry_load(self) -> None:
         if self._dispose_requested or not self.package_name or self._permission_batch is not None:
@@ -325,6 +360,8 @@ class AppDetailsPage(QWidget):
             return False
         self._pending_reload = False
         self._load_generation += 1
+        self._android_user_ready = False
+        self._pending_android_user_id = None
         generation = self._load_generation
         self._pending_load_parts = {"details", "permissions"}
         self._last_load_error = ""
@@ -363,6 +400,11 @@ class AppDetailsPage(QWidget):
         self._pending_load_parts.discard(part)
         callback(*args)
         if not self._pending_load_parts and self.load_state != "error":
+            if self._pending_android_user_id is None:
+                self._set_load_state("error", tr("无法加载应用详情。"))
+                return
+            self._android_user_id = self._pending_android_user_id
+            self._android_user_ready = True
             self._loaded_package = self.package_name
             self._set_load_state("ready", tr('已加载 {value0}').format(value0=self.package_name))
 
@@ -402,6 +444,7 @@ class AppDetailsPage(QWidget):
         self.load_error_label.setText(message or tr("无法加载应用详情。"))
         self.load_error_label.setVisible(is_error)
         self.retry_btn.setVisible(is_error)
+        self._sync_operation_controls()
         self.load_state_changed.emit(state, message)
 
     def _od(self, d):
@@ -437,7 +480,7 @@ class AppDetailsPage(QWidget):
     def _mp(self, action):
         if self._permission_batch is not None:
             return
-        if not self._can_operate():
+        if not self._can_modify_permissions():
             self.log_message.emit(
                 tr("请在顶部设备栏勾选当前在线设备后修改权限。")
             )
@@ -463,7 +506,10 @@ class AppDetailsPage(QWidget):
             )
             return
         self._permission_pending = deque(sel)
-        self._permission_batch = (self._load_generation, self.package_name, action)
+        assert self._android_user_id is not None
+        self._permission_batch = (
+            self._load_generation, self.package_name, self._android_user_id, action,
+        )
         self._permission_cancelled = False
         self._sync_operation_controls()
         self._start_next_permission()
@@ -480,10 +526,11 @@ class AppDetailsPage(QWidget):
         batch = self._permission_batch
         if batch is None or self._permission_worker is not None:
             return
-        generation, package, action = batch
+        generation, package, user_id, action = batch
         current = (
-            not self._permission_cancelled and self._can_operate()
+            not self._permission_cancelled and self._can_modify_permissions()
             and generation == self._load_generation and package == self.package_name
+            and user_id == self._android_user_id
         )
         if not current:
             self._permission_pending.clear()
@@ -493,6 +540,7 @@ class AppDetailsPage(QWidget):
                 "modify_permission",
                 _generation=generation,
                 package_name=package,
+                user_id=user_id,
                 permission=permission,
                 action=action,
             )
@@ -506,6 +554,8 @@ class AppDetailsPage(QWidget):
     def _rw(self, op, *, _generation=None, _finished_part=None, **kw):
         if not self._can_operate():
             return None
+        if op == "modify_permission" and not self._can_modify_permissions():
+            return None
         generation = self._load_generation if _generation is None else int(_generation)
         signal_handlers = {}
         for signal_name in (
@@ -516,8 +566,19 @@ class AppDetailsPage(QWidget):
             handler = kw.pop(signal_name, None)
             if handler is not None:
                 signal_handlers[signal_name] = handler
+        kw.setdefault("user_id", self._android_user_id)
         w = AppManagerWorker(self.device_ip, op, **kw)
         w.setParent(self)
+        if op == "app_snapshot":
+            def receive_user(user_id):
+                if (
+                    generation == self._load_generation and not self._closing
+                    and type(user_id) is int and user_id >= 0
+                    and (kw["user_id"] is None or user_id == kw["user_id"])
+                ):
+                    self._pending_android_user_id = user_id
+
+            w.user_context_loaded.connect(receive_user, Qt.ConnectionType.QueuedConnection)
         for signal_name, handler in signal_handlers.items():
             def guarded_handler(*args, _handler=handler, _generation=generation):
                 if _generation == self._load_generation and not self._closing:

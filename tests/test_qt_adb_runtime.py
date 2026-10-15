@@ -3,6 +3,7 @@
 import socket
 import subprocess
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -179,7 +180,8 @@ def test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches(
         adapter.recheck()
 
         assert observed == [str(tool)]
-        assert adb_resolver.resolve_adb_path() == str(tool)
+        # 在 Windows 宿主模拟 macOS 候选时，解析器可保留斜杠，路径身份仍应精确一致。
+        assert Path(adb_resolver.resolve_adb_path()) == tool
         assert execution.resolve_adb_program() == str(tool)
     finally:
         adapter.close()

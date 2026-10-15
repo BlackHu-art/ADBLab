@@ -374,9 +374,10 @@ def test_native_capture_reports_unconfirmed_cleanup_as_transport_failure(monkeyp
 
     class UnconfirmedProcess:
         killed = False
+        returncode = None
 
         def poll(self):
-            return None
+            return self.returncode
 
         def kill(self):
             self.killed = True
@@ -393,10 +394,15 @@ def test_native_capture_reports_unconfirmed_cleanup_as_transport_failure(monkeyp
         return process
 
     monkeypatch.setattr(adb_runtime, "popen_native", spawn)
-    result = adb_runtime.native_capture(["test-client"], 1, cancellation.is_set)
-    assert result.kind == "transport"
-    assert result.stderr == b"ADB process failed"
-    assert process.killed
+    try:
+        result = adb_runtime.native_capture(["test-client"], 1, cancellation.is_set)
+        assert result.kind == "transport"
+        assert result.stderr == b"ADB process failed"
+        assert process.killed
+        assert adb_runtime.native_cleanup_count() == 1
+    finally:
+        process.returncode = -9
+        assert adb_runtime.wait_for_native_cleanup(0)
 
 
 @pytest.mark.parametrize("isolated", [False, True])

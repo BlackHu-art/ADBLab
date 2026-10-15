@@ -723,8 +723,10 @@ def test_app_manager_worker_feedback_reaches_page_before_worker_cleanup(
 
     page = AppManagerPage(device_ip="synthetic-app-device", parent=result_frame)
     worker = AppManagerWorker(
-        "synthetic-app-device", "modify_app", action="enable", package_name="com.example.app",
+        "synthetic-app-device", "modify_app", user_id=0,
+        action="enable", package_name="com.example.app",
     )
+    monkeypatch.setattr(worker, "_read_current_user", lambda: 0)
     monkeypatch.setattr(worker, "_adb", Mock(return_value=Mock(
         success=succeeded, error="Permission denied" if not succeeded else "", stdout="",
     )))

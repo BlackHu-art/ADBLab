@@ -1102,6 +1102,8 @@ def test_remote_control_service_rotation_clears_dimension_cache():
     service.remember_dimensions("device-1", ["720", "1280"])
 
     service.rotate_portrait("device-1")
+    adb.get_dimensions.assert_called_once_with(device_id="device-1")
+    adb.get_dimensions.reset_mock()
     assert service.get_dimensions("device-1") == (1080, 2400)
 
     adb.get_dimensions.assert_called_once_with(device_id="device-1")
@@ -1109,6 +1111,7 @@ def test_remote_control_service_rotation_clears_dimension_cache():
 
 def test_remote_control_service_rotation_falls_back_to_legacy_setting():
     adb = Mock()
+    adb.get_dimensions.return_value = ["1080", "2400"]
     adb.shell.side_effect = [
         CommandResult(success=True),
         CommandResult(success=False, error="unknown setting"),

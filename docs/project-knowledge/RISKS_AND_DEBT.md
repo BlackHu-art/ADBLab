@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-14
+last_verified: 2026-10-15
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 ---
@@ -40,7 +40,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 以下以 [当前 UI 实现](UI_IMPLEMENTATION.md) 为参照。**已确认**表示代码路径或隔离探针已有证据；
 **待测量**表示存在可量化的重复工作，但还没有证实它造成实机卡顿；**产品决策**不等同于实现错误。
 已闭环的 UI-01（文件页字体）、UI-02（表格强调色焦点）、UI-03（表单错误反馈）、UI-04（设置页
-纯高度变化的重复重排）移出活动清单；当前机制与回归入口见 [UI 实现](UI_IMPLEMENTATION.md)。
+纯高度变化的重复重排）、UI-08（导航材质测试契约）移出活动清单；当前机制与回归入口见
+[UI 实现](UI_IMPLEMENTATION.md)。
 设置页仍在宽度或文案、字体、主题变化时重排，保留内容可读性。以下仅保留待优化项。
 
 | 编号 / 优先级 | 差异与证据 | 最小优化方向及验收入口 | 状态 |
@@ -48,7 +49,6 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 | UI-05 / 后续 | 文件大目录仍一次提交全部 UI 行。[FileExplorerList._on_ls_result](../../gui/dialogs/file_explorer_list.py) 已暂停重绘与排序，但仍在 GUI 线程一次循环构造全部行，最后再排序和过滤；尚无当前硬件下的大目录响应耗时结论 | 用合成 1k/10k 条目录测量快照到可交互耗时，再决定是否分批或调整模型；不直接进行大规模重构。保持 request_id、路径归属、排序、最新过滤词与选择语义。关联 [排序](../../tests/test_file_explorer_ordering.py)、[搜索](../../tests/test_file_explorer_search.py)、[文件视图](../../tests/test_file_explorer_visual.py) | 规模影响待测量 |
 | UI-06 / 可选 | 局部动效没有统一减少动画偏好。设备选择和连接区有调用级动画参数，设备详情、滚轮和 [FrameAnimation](../../gui/widgets/frame_animation.py) 未共同消费系统/应用级减少动画决策。这不是已有设置失效，也不表示当前高刷时钟无效 | 先决定是否提供偏好，再统一决策入口；不能仅把时长归零而遗漏终帧、焦点、布局门禁和二维码显示确认。后续覆盖 [时钟](../../tests/test_frame_animation.py)、[滚轮](../../tests/test_settings_scroll.py)、三类设备展开测试 | 产品决策，待确认 |
 | UI-07 / 可选 | 表格列宽与排序分组规则尚未统一。文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序 | 先决定哪些表格需要手动调整以及目录置顶规则，不能仅为外观一致替换现有排序和宽度策略；按对应表格测试验证大字号、长文本、过滤与排序后选择 | 产品决策，待确认 |
-| UI-08 / 后续 | 导航亚克力旧测试与当前策略不一致。[MainFrame](../../gui/main_frame.py) 已关闭导航重复 Acrylic 模糊，[导航绘制测试](../../tests/test_navigation_rendering.py) 的 `test_navigation_menu_uses_real_acrylic_blur` 仍要求抓取模糊图像；2026-10-14 在本轮修改前的 `HEAD` 主窗口实现中同样复现深浅主题、云母开关共 4 项失败 | 按现行导航材质策略重新确认覆盖目标，保留菜单背景和云母回退验证；不能为通过旧断言重新启用额外模糊或直接删除有效主题覆盖。本轮只修导航字体，未改材质策略和该测试 | 已确认，待对齐测试契约 |
 
 离屏 Qt 回归使用隔离设置和合成内容；字体、焦点与错误状态的验证不替代 Windows 云母、真实
 屏幕绘制和打包后的视觉验收。

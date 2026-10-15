@@ -112,10 +112,12 @@ def _decode_png(encoded: str) -> bytes:
 
 def _parse_output(
     output: str, packages: Sequence[str], expected_fingerprints: Mapping[str, str] | None = None,
+    expected_user_id: int | None = None,
 ) -> dict[str, tuple[bytes, str]]:
     """只接受本批包名的一次结果；协议损坏不会退化为任意设备输出展示。"""
     failure = {package: (b"", "设备图标响应无效") for package in packages}
-    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if expected_fingerprints else _MAX_OUTPUT_BYTES
+    verified = bool(expected_fingerprints) or expected_user_id is not None
+    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if verified else _MAX_OUTPUT_BYTES
     if len(output) > limit or not output.isascii():
         return failure
     results: dict[str, tuple[bytes, str]] = {}
@@ -140,18 +142,21 @@ def _parse_output(
                          f"[{diagnostic[1]}/{diagnostic[2]}]")
             results[package] = (b"", error)
         else:
-            if expected_fingerprints:
+            if verified:
                 if kind != "ICON_META" or len(parts) != 4:
                     return failure
             elif kind != "ICON" or len(parts) != 3:
                 return failure
             try:
-                if expected_fingerprints:
+                if verified:
                     # 元数据服务复用本模块传输，延迟导入避免模块初始化循环。
                     from services.app_metadata import _decode_record
 
                     metadata = _decode_record(package, parts[2])
-                    expected = expected_fingerprints.get(package)
+                    if expected_user_id is not None and metadata.user_id != expected_user_id:
+                        results[package] = (b"", _ERRORS["USER_CHANGED"])
+                        continue
+                    expected = (expected_fingerprints or {}).get(package)
                     if expected and metadata.fingerprint != expected:
                         results[package] = (b"", _ERRORS["IDENTITY_CHANGED"])
                         continue
@@ -169,6 +174,7 @@ def load_app_icons(
     emit: Callable[[str, bytes, str], None],
     *,
     expected_fingerprints: Mapping[str, str] | None = None,
+    expected_user_id: int | None = None,
 ) -> None:
     """在 worker 中读取最多 12 个图标，逐包回报结果；取消不再投递，但仍清理远端文件。
 
@@ -180,6 +186,14 @@ def load_app_icons(
     if not requested or cancelled():
         return
     results: dict[str, tuple[bytes, str]] = {}
+    if expected_user_id is not None and (
+        type(expected_user_id) is not int or not 0 <= expected_user_id < 2**31
+    ):
+        for package in requested:
+            if cancelled():
+                return
+            emit(package, b"", "应用用户身份无效，请刷新应用列表")
+        return
     safe = []
     for package in requested:
         try:
@@ -210,7 +224,9 @@ def load_app_icons(
             results[package] = (b"", "应用缓存身份无效，请刷新应用列表")
             safe.remove(package)
     if safe and not cancelled():
-        results.update(_load_batch(device_id, safe, cancelled, fingerprints or None))
+        results.update(_load_batch(
+            device_id, safe, cancelled, fingerprints or None, expected_user_id,
+        ))
     for package in requested:
         if cancelled():
             return
@@ -221,10 +237,12 @@ def load_app_icons(
 def _load_batch(
     device_id: str, packages: list[str], cancelled: Callable[[], bool],
     expected_fingerprints: Mapping[str, str] | None = None,
+    expected_user_id: int | None = None,
 ) -> dict[str, tuple[bytes, str]]:
-    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if expected_fingerprints else _MAX_OUTPUT_BYTES
+    verified = bool(expected_fingerprints) or expected_user_id is not None
+    limit = _MAX_ICON_METADATA_OUTPUT_BYTES if verified else _MAX_OUTPUT_BYTES
     result = run_app_helper(device_id, packages, cancelled, output_limit=limit,
-                            icon_metadata=bool(expected_fingerprints))
+                            icon_metadata=verified)
     if result.error:
         errors = {
             "MISSING": "应用图标组件缺失",
@@ -233,7 +251,7 @@ def _load_batch(
         }
         error = errors.get(result.error, "应用图标读取失败")
         return {package: (b"", error) for package in packages}
-    return _parse_output(result.output, packages, expected_fingerprints)
+    return _parse_output(result.output, packages, expected_fingerprints, expected_user_id)
 
 
 @dataclass(frozen=True)

@@ -300,7 +300,7 @@ def test_runtime_result_never_replayed(execution, monkeypatch, kind):
     raw = ExecutionResult(returncode=7, kind=kind)
     execution.runtime.try_run.return_value = raw
     native = Mock(side_effect=AssertionError("unexpected replay"))
-    monkeypatch.setattr(adb_execution, "native_capture", native)
+    monkeypatch.setattr(execution.runtime, "run_native", native)
     assert execution.run(["fake-adb", "shell", "cmd"], 10) is raw
     native.assert_not_called()
 
@@ -315,7 +315,7 @@ def test_native_selection_uses_remaining_deadline(execution, monkeypatch):
 
     execution.runtime.try_run.side_effect = select
     native = Mock(return_value=ExecutionResult(b"native"))
-    monkeypatch.setattr(adb_execution, "native_capture", native)
+    monkeypatch.setattr(execution.runtime, "run_native", native)
     assert execution.run(["fake-adb", "shell", "cmd"], 1).stdout == b"native"
     assert native.call_args.args[1] == pytest.approx(0.6)
 
@@ -362,7 +362,7 @@ def test_close_waits_for_native_request(execution, monkeypatch):
             time.sleep(0.01)
         return ExecutionResult(kind="cancelled")
 
-    monkeypatch.setattr(adb_execution, "native_capture", native)
+    monkeypatch.setattr(execution.runtime, "run_native", native)
     worker = threading.Thread(target=lambda: execution.run(["adb"], 10))
     worker.start()
     assert entered.wait(1)
@@ -371,13 +371,88 @@ def test_close_waits_for_native_request(execution, monkeypatch):
     assert not worker.is_alive()
 
 
+class PendingNativeProcess:
+    """模拟取消后仍无法确认退出的客户端，不启动外部进程。"""
+
+    def __init__(self):
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout):
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("synthetic-client", timeout)
+        return self.returncode
+
+    def communicate(self, timeout=None):
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("synthetic-client", timeout)
+        return b"", b""
+
+
+@pytest.fixture
+def native_sessions(monkeypatch):
+    from core import adb_runtime as runtime_module
+
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE", "native")
+    monkeypatch.delenv("MOBILEPERF_ADB_MODE_FILE", raising=False)
+    processes = {}
+    cancellations = {}
+    sessions = []
+
+    def spawn(command, **_kwargs):
+        serial = command[2]
+        cancellations[serial].set()
+        return processes[serial]
+
+    monkeypatch.setattr(runtime_module, "popen_native", spawn)
+
+    def create(serial):
+        processes[serial] = PendingNativeProcess()
+        cancellations[serial] = threading.Event()
+        instance = MobilePerfAdbExecutor(lambda: "synthetic-client", serial, threading.Event())
+        sessions.append(instance)
+        result = instance.run(
+            ["synthetic-client", "-s", serial, "shell", "getprop"], 1,
+            cancellations[serial].is_set,
+        )
+        assert result.kind == "transport"
+        return instance, processes[serial]
+
+    yield create
+    for process in processes.values():
+        process.returncode = -9
+    for instance in sessions:
+        assert instance.close(0.1)
+    assert runtime_module.wait_for_native_cleanup(0.1)
+
+
+def test_close_keeps_failed_native_cleanup_until_process_is_released(native_sessions):
+    execution, process = native_sessions("session-one")
+    assert execution.close(0.01) is False
+    process.returncode = -9
+    assert execution.close(0.1) is True
+
+
+def test_native_cleanup_waits_only_for_own_mobileperf_session(native_sessions):
+    first, first_process = native_sessions("session-one")
+    second, _second_process = native_sessions("session-two")
+    first_process.returncode = -9
+    assert first.close(0.1) is True
+    assert second.close(0.01) is False
+
+
 def test_forced_native_skips_environment_probe(monkeypatch):
     monkeypatch.setenv("MOBILEPERF_ADB_MODE", "native")
     runtime = Mock()
     runtime.try_run.return_value = None
     monkeypatch.setattr(adb_execution, "AdbRuntime", Mock(return_value=runtime))
     native = Mock(return_value=ExecutionResult(b"native"))
-    monkeypatch.setattr(adb_execution, "native_capture", native)
+    monkeypatch.setattr(runtime, "run_native", native)
     execution = MobilePerfAdbExecutor(lambda: "adb", "device-test", threading.Event())
     try:
         execution.start()
@@ -415,7 +490,7 @@ def live_execution(monkeypatch, tmp_path):
         calls.append("fast")
         return ExecutionResult(b"fast")
 
-    def native(cmd, _timeout, _cancelled):
+    def native(cmd, _timeout, _cancelled, **_kwargs):
         if "devices" in cmd:
             return listing
         if cmd[-1] == runtime_module.AdbRuntime.PROBE_COMMAND:
@@ -425,7 +500,6 @@ def live_execution(monkeypatch, tmp_path):
 
     monkeypatch.setattr(runtime_module, "capture", capture)
     monkeypatch.setattr(runtime_module, "native_capture", native)
-    monkeypatch.setattr(adb_execution, "native_capture", native)
     instance = MobilePerfAdbExecutor(lambda: "fake-adb", "device-test", threading.Event())
     yield instance, mode_path, calls
     assert instance.close()

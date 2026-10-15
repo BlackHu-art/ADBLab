@@ -10,6 +10,7 @@ pytestmark = pytest.mark.ui
 
 
 class PermissionWorker(QObject):
+    user_context_loaded = Signal(int)
     app_details_loaded = Signal(dict)
     permissions_loaded = Signal(list, list, list)
     operation_done = Signal(str)
@@ -55,6 +56,9 @@ def permission_page(qt_application, monkeypatch):
     monkeypatch.setattr("gui.dialogs.app_manager_details.AppManagerWorker", create_worker)
     monkeypatch.setattr("gui.dialogs.app_manager_details.report_feedback", lambda *a, **kw: None)
     page = AppDetailsPage(device_ip="permission-test", package_name="com.example.app")
+    page.set_android_user(0)
+    page._loaded_package = page.package_name
+    page._set_load_state("ready", "loaded snapshot")
     page._op([], ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"], [
         ("android.permission.CAMERA", False),
     ])
@@ -80,7 +84,7 @@ def test_permissions_are_deduplicated_serial_and_refresh_once(
     assert len(workers) == 1
     assert workers[0].kwargs == {
         "package_name": "com.example.app", "permission": "android.permission.CAMERA",
-        "action": "grant",
+        "action": "grant", "user_id": 0,
     }
     assert not page.grant_btn.isEnabled() and not page.revoke_btn.isEnabled()
     assert not page.retry_btn.isEnabled()

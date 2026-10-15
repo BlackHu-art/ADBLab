@@ -7,6 +7,12 @@ from core.exec import CommandResult
 from models.app_manager_worker import AppManagerWorker
 
 
+@pytest.fixture(autouse=True)
+def known_android_user(monkeypatch):
+    # 这里验证安装/取消阶段，用户查询本身由 worker 用户回归覆盖。
+    monkeypatch.setattr(AppManagerWorker, "_read_current_user", lambda self: 0)
+
+
 @pytest.mark.parametrize(
     ("archive_name", "members", "expected_modes"),
     [
@@ -24,7 +30,7 @@ def test_restore_chooses_split_mode_only_from_exact_apk_basename(
     with zipfile.ZipFile(archive, "w") as zf:
         for member in members:
             zf.writestr(member, b"fake apk")
-    worker = AppManagerWorker("mock-device", "restore_apps")
+    worker = AppManagerWorker("mock-device", "restore_apps", user_id=0)
     modes, completed = [], []
     worker.operation_done.connect(completed.append)
 
@@ -45,7 +51,7 @@ def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_ph
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("one.apk", b"apk")
         zf.writestr("two.apk", b"apk")
-    worker = AppManagerWorker("mock-device", "restore_apps")
+    worker = AppManagerWorker("mock-device", "restore_apps", user_id=0)
     done, feedback, calls = [], [], []
     worker.operation_done.connect(done.append)
     worker.operation_feedback.connect(lambda level, message: feedback.append((level, message)))
@@ -75,7 +81,7 @@ def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_ph
 
 
 def test_backup_cancellation_does_not_start_remaining_pulls(tmp_path):
-    worker = AppManagerWorker("mock-device", "backup_app")
+    worker = AppManagerWorker("mock-device", "backup_app", user_id=0)
     calls = []
 
     def adb(*args, **kwargs):
@@ -96,7 +102,7 @@ def test_backup_cancellation_does_not_start_remaining_pulls(tmp_path):
 def test_backup_last_pull_cancellation_preserves_old_zip_and_emits_no_success(tmp_path):
     from pathlib import Path
 
-    worker = AppManagerWorker("mock-device", "backup_app")
+    worker = AppManagerWorker("mock-device", "backup_app", user_id=0)
     old = tmp_path / "backup_org.example.app.zip"
     old.write_bytes(b"previous backup")
     done, feedback = [], []
@@ -125,7 +131,7 @@ def test_backup_cancel_during_compression_preserves_old_zip(tmp_path):
     from pathlib import Path
     from shutil import make_archive
 
-    worker = AppManagerWorker("mock-device", "backup_app")
+    worker = AppManagerWorker("mock-device", "backup_app", user_id=0)
     previous = tmp_path / "backup_org.example.app.zip"
     previous.write_bytes(b"previous backup")
     done, feedback = [], []

@@ -1,9 +1,11 @@
 """提供文件浏览器页的导航、列表解析与渲染控制器。"""
 
 import os
+from collections.abc import Generator
+from time import perf_counter
 from typing import cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import QTableWidgetItem, QWidget
 from qfluentwidgets import TableItemDelegate
@@ -92,6 +94,77 @@ class FileExplorerList:
     def __init__(self, frame):
         self._frame = frame
         self._link_requests: dict[tuple[int, str, bool], ADBWorker] = {}
+        self._work: Generator[None, None, None] | None = None
+        self._work_timer: QTimer | None = None
+        self._paused = False
+        self._uncommitted = False
+        self._committed_listing = explorer_service.DirectoryListing((), {})
+        self._saved_selection: tuple[set[str], tuple[str, int] | None] = (set(), None)
+        self._filter_text = ""
+        self._filter_revision = 0
+
+    @property
+    def populating(self) -> bool:
+        """未提交或正在恢复的快照不得作为文件命令的目标。"""
+        return self._uncommitted
+
+    def pause_population(self) -> None:
+        """离开页面只暂停 GUI 构建，保留后台读取与原请求身份。"""
+        self._paused = True
+        if self._work_timer is not None:
+            self._work_timer.stop()
+
+    def resume_population(self) -> None:
+        """返回页面后继续未完成的构建或筛选，不重复读取设备。"""
+        self._paused = False
+        self._schedule_work()
+
+    def _stop_work(self) -> None:
+        if self._work_timer is not None:
+            self._work_timer.stop()
+        if self._work is not None:
+            self._work.close()
+            self._work = None
+
+    def _schedule_work(self) -> None:
+        if self._work is None or self._paused or getattr(self._frame, "_closing", False):
+            return
+        if self._work_timer is None:
+            self._work_timer = QTimer(self._frame)
+            self._work_timer.setSingleShot(True)
+            self._work_timer.timeout.connect(self._continue_work)
+        self._work_timer.start(0)
+
+    def _continue_work(self) -> None:
+        if self._paused or self._work is None or getattr(self._frame, "_closing", False):
+            return
+        try:
+            next(self._work)
+        except StopIteration:
+            self._work = None
+        self._schedule_work()
+
+    def cancel_refresh(self, *, restore: bool = True) -> None:
+        """撤销请求与后续 GUI 批次；失去操作资格后仅恢复已提交的缓存。"""
+        self._stop_work()
+        self._frame._active_refresh = None
+        self._frame._pending_navigation = None
+        worker = getattr(self._frame, "_active_refresh_worker", None)
+        if worker is not None and QThreadGroupShutdownTask._running(worker):
+            try:
+                worker.abort()
+            except RuntimeError:
+                pass
+        if restore and self._uncommitted:
+            self._start_population(
+                self._committed_listing, self._frame.current_path, None, restoring=True,
+            )
+        elif restore:
+            self._set_loading(False)
+            self._work = self._filter_rows()
+            self._continue_work()
+        else:
+            self._frame.table.setUpdatesEnabled(True)
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
@@ -158,6 +231,8 @@ class FileExplorerList:
         requested_path = str(requested_path or self._frame.current_path)
         if not requested_path:
             return
+        # 替换请求可以中断半成品；直到新结果或旧快照恢复完成都不开放命令准入。
+        self._stop_work()
         self.cancel_link_requests()
         if navigation_action == "refresh":
             self._frame._view_controller.invalidate_cache()
@@ -225,58 +300,123 @@ class FileExplorerList:
             if request_id is not None:
                 self._frame._active_refresh = None
                 self._frame._pending_navigation = None
-            self._set_loading(False)
+            if self._uncommitted:
+                self._start_population(
+                    self._committed_listing, self._frame.current_path, None, restoring=True,
+                )
+            else:
+                self._set_loading(False)
+                # 刷新可能中断了空查询的分批取消隐藏，失败后仍需完成缓存筛选。
+                self._filter(self._frame.search_field.text())
             self._frame.path_field.setText(self._frame.current_path)
             self._frame.status_bar.setText(
                 tr("Unable to open {value0}").format(value0=requested_path)
             )
             self._frame.status_bar.setToolTip(str(output or tr("Directory loading failed")))
             return
-        if request_id is not None:
-            pending = getattr(self._frame, "_pending_navigation", None)
-            if pending is not None and pending[0] == request_id:
-                self._commit_navigation(pending[1], requested_path)
-                self._frame._pending_navigation = None
-        self._frame.table.setUpdatesEnabled(False)
-        self._frame.table.setSortingEnabled(False)
-        try:
-            if isinstance(output, explorer_service.DirectoryListing):
-                rows, symlink_targets = output.entries, output.symlink_targets
-            else:
-                # 旧调用方的展示适配保留；真实设备刷新只连接上面的严格快照入口。
-                rows, symlink_targets = explorer_service.parse_ls_output(output)
-            self._frame.symlink_targets = symlink_targets
-            parent_offset = 1 if requested_path != "/" else 0
-            self._frame.table.setRowCount(len(rows) + parent_offset)
+        if not isinstance(output, explorer_service.DirectoryListing):
+            # 旧调用方的展示适配保留；真实设备刷新只连接上面的严格快照入口。
+            rows, targets = explorer_service.parse_ls_output(output)
+            output = explorer_service.DirectoryListing(tuple(rows), targets)
+        self._start_population(output, requested_path, request_id)
 
-            if parent_offset:
-                self._set_file_row(0, "..", "Folder", "-", "-")
-
-            for index, entry in enumerate(rows, parent_offset):
-                self._set_file_row(
-                    index, entry.name, entry.file_type, entry.size_text, entry.modified,
-                    size_bytes=entry.size,
-                )
-                # 显示文本会取整；原始列表元数据随对应行保存，不作为精细版本凭据。
-                self._frame.table.item(index, self._frame.NAME_COL).setData(
-                    Qt.ItemDataRole.UserRole, entry,
-                )
-        finally:
-            self._frame.table.setSortingEnabled(True)
-            # 列表重建和排序会复用行位置，必须按等待期间最新的搜索词重算隐藏状态。
-            self._filter(self._frame.search_field.text())
-            self._frame.table.setUpdatesEnabled(True)
-            self._set_loading(False)
-
-        folders = sum(1 for entry in rows if entry.is_dir)
-        files = len(rows) - folders
-        if request_id is not None:
-            self._frame._active_refresh = None
-        self._frame.status_bar.setText(
-            tr("{value0}  |  {value1} folders, {value2} files").format(
-                value0=requested_path, value1=folders, value2=files
+    def _start_population(self, listing, path, request_id, *, restoring=False) -> None:
+        self._stop_work()
+        table = self._frame.table
+        if not self._uncommitted:
+            names = {
+                self._file_name_at(index.row()) for index in table.selectionModel().selectedRows()
+            }
+            current = None if table.currentItem() is None else (
+                self._file_name_at(table.currentRow()), table.currentColumn(),
             )
+            self._saved_selection = (names, current)
+        self._uncommitted = True
+        self._set_loading(True)
+        self._filter_text = self._frame.search_field.text().strip().lower()
+        self._work = self._populate(listing, path, request_id, restoring=restoring)
+        self._continue_work()
+
+    def _populate(self, listing, path, request_id, *, restoring) -> Generator[None, None, None]:
+        """每批最多创建 64 行或占用约 6ms；最终 Qt 排序仍是一次原生调用。"""
+        table = self._frame.table
+        rows = listing.entries
+        large = len(rows) > 128
+        table.setUpdatesEnabled(False)
+        table.setSortingEnabled(False)
+        # 重用行位置不能继承旧选择；快照未提交时也不公开链接元数据。
+        table.selectionModel().clear()
+        table.clearContents()
+        parent_offset = int(path != "/")
+        table.setRowCount(len(rows) + parent_offset)
+        if parent_offset:
+            self._set_file_row(0, "..", "Folder", "-", "-")
+        started = perf_counter()
+        folders = 0
+        for index, entry in enumerate(rows, parent_offset):
+            self._set_file_row(
+                index, entry.name, entry.file_type, entry.size_text, entry.modified,
+                size_bytes=entry.size,
+            )
+            table.item(index, self._frame.NAME_COL).setData(Qt.ItemDataRole.UserRole, entry)
+            folders += entry.is_dir
+            if large and (
+                (index - parent_offset + 1) % 64 == 0 or perf_counter() - started >= .006
+            ):
+                yield
+                started = perf_counter()
+        table.setSortingEnabled(True)
+        # 隐藏状态属于行位置，必须在最终排序后重算；筛选变化会重新开始这一分批扫描。
+        yield from self._filter_rows()
+        filtered_revision = self._filter_revision
+        names, current = (
+            self._saved_selection if path == self._frame.current_path else (set(), None)
         )
+        yield from self._restore_selection(names, current)
+        # 恢复选择也可能让出事件循环，提交前再确认搜索词未被用户更新。
+        if filtered_revision != self._filter_revision:
+            yield from self._filter_rows()
+        if not restoring:
+            pending = getattr(self._frame, "_pending_navigation", None)
+            if request_id is not None and pending is not None and pending[0] == request_id:
+                self._commit_navigation(pending[1], path)
+                self._frame._pending_navigation = None
+            self._committed_listing = listing
+            if request_id is not None:
+                self._frame._active_refresh = None
+            self._frame.status_bar.setText(
+                tr("{value0}  |  {value1} folders, {value2} files").format(
+                    value0=path, value1=folders, value2=len(rows) - folders,
+                )
+            )
+        self._frame.symlink_targets = listing.symlink_targets
+        self._uncommitted = False
+        table.setUpdatesEnabled(True)
+        self._set_loading(False)
+
+    def _restore_selection(
+        self, selected_names: set[str], current_cell: tuple[str, int] | None,
+    ) -> Generator[None, None, None]:
+        """排序完成后按原始文件名恢复行选择；已消失项及跨目录的当前项保持为空。"""
+        table = self._frame.table
+        model = table.model()
+        selection = QItemSelection()
+        current_index = QModelIndex()
+        started = perf_counter()
+        for row in range(table.rowCount() if selected_names or current_cell is not None else 0):
+            name = self._file_name_at(row)
+            if name in selected_names:
+                selection.select(model.index(row, 0), model.index(row, table.columnCount() - 1))
+            if current_cell is not None and name == current_cell[0]:
+                current_index = model.index(row, current_cell[1])
+            if table.rowCount() > 128 and (row % 64 == 63 or perf_counter() - started >= .006):
+                yield
+                started = perf_counter()
+        selection_model = table.selectionModel()
+        # 当前单元格可以不属于多选集合，直接使用 Qt 选择模型避免控件隐式选中当前行。
+        selection_model.setCurrentIndex(current_index, QItemSelectionModel.SelectionFlag.NoUpdate)
+        selection_model.select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        table.updateSelectedRows()
 
     def _commit_navigation(self, action: str, target: str) -> None:
         """仅在目录读取成功后原子提交路径和前进/后退历史。"""
@@ -391,7 +531,7 @@ class FileExplorerList:
     # ── 双击操作 ────────────────────────────────────────────────────────
 
     def _on_double_click(self, row, col):
-        if not self._frame._can_operate():
+        if not self._frame._can_use_directory_snapshot():
             return
         name = self._file_name_at(row)
         ftype = self._file_type_at(row)
@@ -475,13 +615,36 @@ class FileExplorerList:
     # ── 排序与筛选 ──────────────────────────────────────────────────────
 
     def _filter(self, text):
-        t = text.strip().lower()
-        for r in range(self._frame.table.rowCount()):
-            item = self._frame.table.item(r, self._frame.NAME_COL)
-            if item and item.text() != "..":
-                self._frame.table.setRowHidden(r, t not in item.text().lower())
+        self._filter_text = text.strip().lower()
+        self._filter_revision += 1
+        if self._uncommitted or getattr(self._frame, "_closing", False):
+            return
+        self._stop_work()
+        self._work = self._filter_rows()
+        self._continue_work()
+
+    def _filter_rows(self) -> Generator[None, None, None]:
+        table = self._frame.table
+        while True:
+            revision = self._filter_revision
+            text = self._filter_text
+            started = perf_counter()
+            for row in range(table.rowCount()):
+                name = self._file_name_at(row)
+                hidden = name != ".." and text not in name.lower()
+                if table.isRowHidden(row) != hidden:
+                    table.setRowHidden(row, hidden)
+                if table.rowCount() > 128 and (row % 64 == 63 or perf_counter() - started >= .006):
+                    yield
+                    started = perf_counter()
+                    if revision != self._filter_revision:
+                        break
+            if revision == self._filter_revision:
+                return
 
     def _header_clicked(self, col):
+        if self._uncommitted:
+            return
         if col == self._frame._sort_col:
             self._frame._sort_order = (
                 Qt.SortOrder.DescendingOrder
@@ -492,3 +655,4 @@ class FileExplorerList:
             self._frame._sort_col = col
             self._frame._sort_order = Qt.SortOrder.AscendingOrder
         self._frame.table.sortByColumn(col, self._frame._sort_order)
+        self._filter(self._frame.search_field.text())

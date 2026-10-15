@@ -231,7 +231,7 @@ class AppManagerIcons(QObject):
         }
         worker = AppManagerWorker(
             self.page.device_ip, "load_icon_batch", packages=packages,
-            expected_fingerprints=expected,
+            expected_fingerprints=expected, user_id=self.page._android_user_id,
         )
         worker.setProperty("iconEpoch", self._epoch)
         self._worker = worker

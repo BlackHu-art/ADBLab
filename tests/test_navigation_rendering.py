@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import FluentStyleSheet, FluentWindow, NavigationDisplayMode
@@ -34,39 +34,77 @@ def _navigation_background_pixel(frame, panel_point=None):
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
 @pytest.mark.parametrize("mica", [False, True])
-def test_navigation_menu_uses_real_acrylic_blur(
+def test_navigation_menu_keeps_readable_theme_surface_without_duplicate_acrylic(
     qt_application, monkeypatch, theme_probe_frame, theme_name, mica,
 ):
-    """只替换屏幕取图；真实依赖、模糊及覆盖绘制共同保证菜单不会退回实色。"""
-    from qfluentwidgets.components.widgets.acrylic_label import AcrylicBrush
+    """覆盖菜单沿用主题实色面；云母和主题切换都不能重开截图模糊。"""
+    # 仅替换原生 DWM 边界，让离屏及不支持 Mica 的平台也能检查两种 Qt 材质状态。
+    def set_native_mica(window, enabled):
+        window._isMicaEnabled = enabled
+        window.setBackgroundColor(window._normalBackgroundColor())
 
-    source = QImage(32, 32, QImage.Format.Format_RGB32)
-    source.fill(QColor("black"))
-    painter = QPainter(source)
-    painter.fillRect(16, 0, 16, 32, QColor("white"))
-    painter.end()
+    monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", set_native_mica)
     monkeypatch.setattr(
-        AcrylicBrush, "grabImage",
-        lambda brush, _rect: brush.setImage(QPixmap.fromImage(source)),
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
     )
     frame = theme_probe_frame(theme_name, mica, width=900)
     panel = frame.navigationInterface.panel
-    assert panel.acrylicBrush.isAvailable(), "运行依赖必须包含 Acrylic 图像处理能力"
+    acrylic_calls = []
+    monkeypatch.setattr(
+        panel.acrylicBrush, "grabImage", lambda *_args: acrylic_calls.append("grab"),
+    )
+    monkeypatch.setattr(panel.acrylicBrush, "paint", lambda *_args: acrylic_calls.append("paint"))
+    opposite = "Dark" if theme_name == "Light" else "Light"
 
+    for current_theme in (theme_name, opposite, theme_name):
+        BaseStyles.switch_theme(current_theme)
+        frame._expand_navigation_panel(use_animation=False)
+        qt_application.processEvents()
+
+        assert frame.isMicaEffectEnabled() is mica
+        assert panel.displayMode == NavigationDisplayMode.MENU
+        assert not panel.isAcrylicEnabled()
+        _assert_navigation_menu_readable(frame, current_theme)
+        assert acrylic_calls == []
+        panel.collapse()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT
+            and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+        )
+
+    # 系统拒绝请求时按实际关闭状态回退，不能因为设置仍为 True 而留下透明菜单。
+    frame.setMicaEffectEnabled(False)
+    monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", lambda _window, _enabled: None)
+    frame.setMicaEffectEnabled(True)
     frame._expand_navigation_panel(use_animation=False)
     qt_application.processEvents()
+    assert not frame.isMicaEffectEnabled()
+    assert not panel.isAcrylicEnabled()
+    assert frame.navigationInterface.autoFillBackground()
+    _assert_navigation_menu_readable(frame, theme_name)
+    assert acrylic_calls == []
 
-    assert panel.displayMode == NavigationDisplayMode.MENU
-    blurred = panel.acrylicBrush.image.toImage()
-    assert not blurred.isNull()
-    assert blurred.size() == source.size()
-    assert 0 < blurred.pixelColor(15, 16).red() < 255
-    assert 0 < blurred.pixelColor(16, 16).red() < 255
-    first_background = _navigation_background_pixel(frame, QPoint(2, 20))
 
-    source.fill(QColor("#315879"))
-    panel.acrylicBrush.setImage(QPixmap.fromImage(source))
-    assert _navigation_background_pixel(frame, QPoint(2, 20)) != first_background
+def _assert_navigation_menu_readable(frame, theme_name):
+    """验证实际合成底色和真实文字像素，避免只检查 Acrylic 开关却漏掉空白菜单。"""
+    expected = QColor("#f3f3f3" if theme_name == "Light" else "#202020")
+    assert _navigation_background_pixel(frame, QPoint(2, 20)) == expected
+    panel = frame.navigationInterface.panel
+    item = panel.items["settingsPage"].widget
+    visual = getattr(item, "itemWidget", item)
+    assert visual.isVisibleTo(frame)
+    assert not visual.isCompacted
+    image = visual.grab().toImage()
+    scale = image.devicePixelRatio()
+    # 排除左侧图标、外缘和滚动条，只计算文字区域的高对比像素。
+    text_pixels = sum(
+        image.pixelColor(x, y).alpha() == 255
+        and abs(image.pixelColor(x, y).lightness() - expected.lightness()) >= 128
+        for y in range(round(5 * scale), image.height() - round(5 * scale))
+        for x in range(round(44 * scale), image.width() - round(12 * scale))
+    )
+    assert text_pixels >= 20, (theme_name, text_pixels)
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])

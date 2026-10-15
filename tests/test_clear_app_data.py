@@ -89,8 +89,11 @@ def test_clear_model_keeps_output_if_execution_boundary_supplies_it():
 
 
 @pytest.mark.parametrize("output,error", [("", DENIED), (DENIED, ""), ("Failed\n", DENIED)])
-def test_clear_worker_reports_actionable_denial_but_logs_complete_diagnostic(output, error):
-    worker = AppManagerWorker("clear-demo", "clear_app", package_name="com.example.app")
+def test_clear_worker_reports_actionable_denial_but_logs_complete_diagnostic(
+    output, error, monkeypatch,
+):
+    worker = AppManagerWorker("clear-demo", "clear_app", user_id=0, package_name="com.example.app")
+    monkeypatch.setattr(worker, "_read_current_user", lambda: 0)
     logs, feedback, completed = [], [], []
     worker.log_message.connect(logs.append)
     worker.operation_feedback.connect(lambda level, text: feedback.append((level, text)))
@@ -100,7 +103,8 @@ def test_clear_worker_reports_actionable_denial_but_logs_complete_diagnostic(out
     )) as execute:
         worker.run()
     execute.assert_called_once_with(
-        ["adb", "-s", "clear-demo", "shell", "pm", "clear", "com.example.app"], timeout=30,
+        ["adb", "-s", "clear-demo", "shell", "pm", "clear", "--user", "0", "com.example.app"],
+        timeout=30,
     )
     assert completed == []
     assert feedback == [("error", HINT)]

@@ -188,7 +188,7 @@ def pending_discovery(monkeypatch):
                 state.captures.append(kwargs)
             return ExecutionResult(b"List of devices attached\n")
 
-        def native(cmd, timeout, cancelled):
+        def native(cmd, timeout, cancelled, *, command_scope=None):
             state.native.append(cmd)
             assert cmd == [ADB, "start-server"]
             state.entered.set()
@@ -635,7 +635,7 @@ def test_retry_rechecks_budget_and_state_after_notification(backend, monkeypatch
 def test_invalid_native_benchmark_keeps_verified_fast_backend(backend, monkeypatch, failure):
     runtime, clock, native, _ = backend
 
-    def failed(cmd, _timeout, _cancelled):
+    def failed(cmd, _timeout, _cancelled, *, command_scope=None):
         native.append(cmd)
         clock[0] += 0.001
         return failure
@@ -660,7 +660,7 @@ def test_cold_sample_is_confirmed_before_selecting_native(backend, monkeypatch, 
         clock[0] += 0.9 if command == cold_command and calls[command] == 1 else 0.005
         return ExecutionResult(LISTING) if command == "devices" else PROBE
 
-    def native(cmd, _timeout, _cancelled):
+    def native(cmd, _timeout, _cancelled, *, command_scope=None):
         clock[0] += 0.2
         return PROBE if "shell" in cmd else ExecutionResult(LISTING)
 
@@ -673,7 +673,7 @@ def test_cold_sample_is_confirmed_before_selecting_native(backend, monkeypatch, 
 def test_manual_fast_switch_overrides_speed_preference_immediately(backend, monkeypatch):
     runtime, clock, _, calls = backend
 
-    def native(cmd, _timeout, _cancelled):
+    def native(cmd, _timeout, _cancelled, *, command_scope=None):
         clock[0] += 0.001
         return PROBE if "shell" in cmd else ExecutionResult(LISTING)
 
@@ -707,10 +707,10 @@ def test_manual_choice_during_benchmark_survives_detection_completion(backend, m
     entered, release = threading.Event(), threading.Event()
     original = module.native_capture
 
-    def native(*args):
+    def native(*args, **kwargs):
         entered.set()
         assert release.wait(2)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(module, "native_capture", native)
     try:
@@ -785,7 +785,7 @@ def test_failed_warm_sample_does_not_commit_cold_native_preference(backend, monk
             return ExecutionResult(kind=kind)
         return ExecutionResult(LISTING) if command == "devices" else PROBE
 
-    def native(cmd, _timeout, _cancelled):
+    def native(cmd, _timeout, _cancelled, *, command_scope=None):
         clock[0] += 0.2
         return PROBE if "shell" in cmd else ExecutionResult(LISTING)
 
@@ -822,7 +822,7 @@ def test_late_warm_listing_does_not_replace_a_newer_device_snapshot(backend, mon
         clock[0] += 0.005
         return PROBE
 
-    def native(cmd, _timeout, _cancelled):
+    def native(cmd, _timeout, _cancelled, *, command_scope=None):
         clock[0] += 0.2
         return PROBE if "shell" in cmd else ExecutionResult(LISTING)
 
@@ -865,7 +865,7 @@ def backend(monkeypatch):
     native_calls = []
     socket_calls = []
 
-    def native(cmd, timeout, cancelled):
+    def native(cmd, timeout, cancelled, *, command_scope=None):
         native_calls.append(cmd)
         clock[0] += timeout
         return ExecutionResult(kind="timeout")
@@ -934,7 +934,7 @@ def host_transport(backend, monkeypatch):
 
     original_native = module.native_capture
 
-    def native_capture(cmd, timeout, cancelled):
+    def native_capture(cmd, timeout, cancelled, *, command_scope=None):
         if "start-server" in cmd:
             native.append(cmd)
             server.bootstrap_budgets.append(timeout)
@@ -943,7 +943,7 @@ def host_transport(backend, monkeypatch):
                 return ExecutionResult(kind="timeout")
             server.listening = True
             return ExecutionResult()
-        return original_native(cmd, timeout, cancelled)
+        return original_native(cmd, timeout, cancelled, command_scope=command_scope)
 
     monkeypatch.setattr(adb_transport, "time", module.time)
     monkeypatch.setattr(adb_transport.socket, "create_connection", connect)
@@ -1003,7 +1003,7 @@ def test_new_device_capability_preempts_old_native_benchmark(backend, monkeypatc
         if snapshot.fast_shell_devices == 2:
             published.set()
 
-    def native(cmd, timeout, cancelled):
+    def native(cmd, timeout, cancelled, *, command_scope=None):
         nonlocal blocked_once
         native_calls.append(cmd)
         kind = "host" if "devices" in cmd else "shell"
@@ -1535,12 +1535,12 @@ def test_old_native_benchmark_cannot_restore_failed_backend(backend, monkeypatch
     original_capture = module.capture
     entered, release = threading.Event(), threading.Event()
 
-    def native(cmd, timeout, cancelled):
+    def native(cmd, timeout, cancelled, *, command_scope=None):
         target = "shell" if "shell" in cmd else "devices"
         if target == command:
             entered.set()
             assert release.wait(2)
-        return original_native(cmd, timeout, cancelled)
+        return original_native(cmd, timeout, cancelled, command_scope=command_scope)
 
     def capture(target, args, **kwargs):
         if (target == "devices" and not args) or (target == "shell" and args == ["echo ok"]):
@@ -1583,7 +1583,7 @@ def test_native_preference_survives_health_checks_and_recovery(backend, monkeypa
     diagnostics = []
     runtime._diagnostic = diagnostics.append
 
-    def fast_native(cmd, timeout, cancelled):
+    def fast_native(cmd, timeout, cancelled, *, command_scope=None):
         native.append(cmd)
         clock[0] += 0.001
         return PROBE if "shell" in cmd else ExecutionResult(LISTING)

@@ -24,6 +24,14 @@ from models.adb_testing import ADBTesting
 from models.base.focus_detector import detect_current_package, extract_package_name
 
 
+@pytest.fixture(autouse=True)
+def current_android_user(monkeypatch):
+    # 本文件隔离用户查询，保留原业务命令的取消、次数与失败断言；真实用户准入另有回归。
+    from models.app_manager_worker import AppManagerWorker
+
+    monkeypatch.setattr(AppManagerWorker, "_read_current_user", lambda self: 0)
+
+
 def test_app_snapshot_emits_details_and_permissions_from_one_query():
     from models.app_manager_worker import AppManagerWorker
 
@@ -32,9 +40,11 @@ def test_app_snapshot_emits_details_and_permissions_from_one_query():
     worker.app_details_loaded.connect(details.append)
     worker.permissions_loaded.connect(lambda *parts: permissions.append(parts))
     output = (
-        "versionCode=7\nversionName=1.2\n"
-        "requested permissions:\n  android.permission.CAMERA\n"
-        "\nruntime permissions:\n  android.permission.CAMERA: granted=true\n"
+        "Packages:\n  Package [com.example.app] (123abc):\n"
+        "    versionCode=7\n    versionName=1.2\n"
+        "    requested permissions:\n      android.permission.CAMERA\n"
+        "    User 0: installed=true\n      runtime permissions:\n"
+        "        android.permission.CAMERA: granted=true\n"
     )
     with patch(
         "models.app_manager_worker.CommandRunner.run",
@@ -210,6 +220,8 @@ def _app_manager_for_unit_tests():
     dialog._view_mode = False
     dialog._syncing_selection = False
     dialog._closing = False
+    dialog._android_user_id = 0
+    dialog._android_user_ready = True
     dialog.device_ip = "device-1"
     dialog.status_bar = Mock()
     dialog.log = Mock()
@@ -221,6 +233,8 @@ def _app_manager_for_unit_tests():
     dialog._detail_filter_timer = Mock(spec_set=["stop", "start", "isActive"])
     dialog._detail_filter_timer.isActive.return_value = False
     dialog._filter = Mock()
+    dialog.search_input = Mock(text=Mock(return_value=""))
+    dialog.type_filter = Mock(currentData=Mock(return_value="All"))
     dialog._form_controller = Mock(spec_set=["_update_view_geometry"])
     dialog._icons_controller = Mock(spec_set=[
         "reset", "decorate", "schedule", "retain_packages", "validate_metadata", "busy",
@@ -238,6 +252,7 @@ def _app_manager_for_unit_tests():
     dialog.icon_list.clear = Mock()
     dialog.icon_list.addTopLevelItem = Mock()
     dialog._sync_selection_views = Mock()
+    dialog._update_selection_ui = Mock()
     dialog._gen_icon = AppManagerPage._gen_icon
     dialog._on_detail = lambda *args: AppManagerPage._on_detail(dialog, *args)
     dialog._on_metadata = lambda data: AppManagerPage._on_metadata(dialog, data)
@@ -305,6 +320,7 @@ def test_app_manager_load_visible_details_starts_small_worker_batch():
         "device-1",
         "load_metadata_batch",
         packages=["com.example.one", "com.example.two"],
+        user_id=0,
     )
     assert dialog._pending_detail_packages == {"com.example.one", "com.example.two"}
     assert dialog._detail_worker_running is True
@@ -382,6 +398,7 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
         "device-1",
         "load_metadata_batch",
         packages=["com.example.two"],
+        user_id=0,
     )
     assert dialog._pending_detail_packages == {"com.example.two"}
 
@@ -851,14 +868,16 @@ def test_app_manager_read_queries_cancel_in_flight_without_publishing_results(op
 def test_app_manager_write_commands_keep_existing_completion_contract():
     from models.app_manager_worker import AppManagerWorker
 
-    worker = AppManagerWorker("device-1", "clear_app", package_name="com.example.one")
+    worker = AppManagerWorker("device-1", "clear_app", user_id=0,
+                              package_name="com.example.one")
     with patch(
         "models.app_manager_worker.CommandRunner.run",
         return_value=CommandResult(success=True, output="Success"),
     ) as execute:
         worker.run()
     execute.assert_called_once_with(
-        ["adb", "-s", "device-1", "shell", "pm", "clear", "com.example.one"], timeout=30
+        ["adb", "-s", "device-1", "shell", "pm", "clear", "--user", "0", "com.example.one"],
+        timeout=30,
     )
 
 

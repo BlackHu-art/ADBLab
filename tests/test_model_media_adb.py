@@ -1067,7 +1067,8 @@ def test_transfer_worker_pre_aborted_does_not_start_process(tmp_path):
 
 
 def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
-    from PySide6.QtWidgets import QLineEdit, QTableWidget
+    from PySide6.QtWidgets import QLineEdit
+    from qfluentwidgets import TableWidget
 
     _app = QApplication.instance() or QApplication([])
     dialog = SimpleNamespace()
@@ -1076,7 +1077,9 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     dialog.NAME_COL = FileExplorerPage.NAME_COL
     dialog.SIZE_COL = FileExplorerPage.SIZE_COL
     dialog.MODIFIED_COL = FileExplorerPage.MODIFIED_COL
-    dialog.table = Mock(wraps=QTableWidget(0, 4))
+    table = TableWidget()
+    table.setColumnCount(4)
+    dialog.table = Mock(wraps=table)
     dialog.search_field = QLineEdit()
     dialog.search_field.setText("readme")
     dialog.status_bar = Mock()

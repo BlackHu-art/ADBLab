@@ -12,6 +12,7 @@ pytestmark = pytest.mark.ui
 
 
 class MetadataWorker(QObject):
+    user_context_loaded = Signal(int)
     apps_loaded = Signal(list)
     app_metadata_loaded = Signal(dict)
     app_detail_batch = Signal(str, str, str, str)
@@ -22,6 +23,7 @@ class MetadataWorker(QObject):
     def __init__(self, device, operation, **kwargs):
         super().__init__()
         self.operation = operation
+        self.user_id = kwargs.get("user_id")
         self.packages = kwargs.get("packages", [])
         self.expected_fingerprints = kwargs.get("expected_fingerprints")
         self.running = False
@@ -52,6 +54,7 @@ def metadata_page(qt_application, monkeypatch):
 
     monkeypatch.setattr("gui.dialogs.app_manager.AppManagerWorker", create)
     page = AppManagerPage(device_ip="test-device")
+    page._accept_android_user(0)
     page._active = True
     page._activated_once = True
     page.resize(860, 620)
@@ -92,6 +95,8 @@ def refresh(page, workers, snapshot):
     page._load_apps()
     worker = workers[-1]
     assert worker.operation == "load_apps"
+    worker.user_id = 0
+    worker.user_context_loaded.emit(0)
     worker.apps_loaded.emit(snapshot)
     worker.finish()
 

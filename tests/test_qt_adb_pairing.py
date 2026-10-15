@@ -3,9 +3,11 @@
 import threading
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent, Qt, QThread, QTimer
 from PySide6.QtTest import QSignalSpy
+from shiboken6 import isValid
 
-from adblab.presentation.qt_adb_pairing import QtAdbPairing
+from adblab.presentation.qt_adb_pairing import QtAdbPairing, _PairingResources
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from services.adb_pairing import (
     PairingContext,
@@ -330,13 +332,29 @@ def test_application_completion_does_not_release_owner_still_using_worker(
     assert coordinator.start_code("192.0.2.1:37123", "001234")
     wait_until(qt_application, service.entered.is_set)
     worker = coordinator._worker
+    finalizing, release = threading.Event(), threading.Event()
+    worker.finished.connect(
+        lambda: (finalizing.set(), release.wait(5)), Qt.ConnectionType.DirectConnection,
+    )
     coordinator.cancel()
-    wait_until(qt_application, lambda: not worker.isRunning())
+    try:
+        wait_until(qt_application, finalizing.is_set)
+        assert not worker.isRunning()
+        assert not worker.wait(0)
+        coordinator._application_stopped((), ())
+        assert coordinator.busy
+        assert coordinator._stop_inflight
+    finally:
+        release.set()
+    # 替身没有执行真实 owner 等待；完成信号必须等原生 join 后才能模拟交付。
+    wait_until(qt_application, lambda: worker.wait(0))
     coordinator._application_stopped((), ())
     assert coordinator.busy
     assert coordinator._stop_inflight
+    assert supervisor.supervisor.active_count == 1
     coordinator._owner_stopped(coordinator._owner_id, ())
     assert not coordinator.busy
+    assert supervisor.supervisor.active_count == 0
 
 
 def test_application_waiter_retains_worker_until_application_completed(
@@ -393,3 +411,92 @@ def test_application_waiter_retains_worker_until_application_completed(
         wait_release.set()
     wait_until(qt_application, lambda: not coordinator.busy)
     assert supervisor.supervisor.active_count == 0
+
+
+@pytest.mark.parametrize("check", ["wait", "is_running"])
+def test_resources_retain_thread_until_native_join_completes(qt_application, check):
+    entered = threading.Event()
+    release = threading.Event()
+    worker = QThread()
+    worker.run = lambda: None
+    worker.finished.connect(
+        lambda: (entered.set(), release.wait(5)), Qt.ConnectionType.DirectConnection,
+    )
+    resources = _PairingResources(worker, Scope())
+    worker.start()
+    try:
+        assert entered.wait(1)
+        assert not worker.isRunning()
+        assert not worker.wait(0)
+        if check == "wait":
+            assert resources.wait(0) is False
+        else:
+            assert resources.is_running() is True
+    finally:
+        release.set()
+        assert worker.wait(1000)
+    assert resources.wait(0) is True
+    assert resources.is_running() is False
+
+
+@pytest.mark.parametrize("completion", ["success", "failure", "cancel", "shutdown"])
+def test_finalizing_thread_keeps_registration_and_admission_until_join(
+    pairing, qt_application, completion,
+):
+    coordinator, services, _scopes, supervisor = pairing
+    service_release = threading.Event()
+    finalizing = threading.Event()
+    join_release = threading.Event()
+
+    class FinishingService:
+        def run(self, request, context, cancel_event, command_scope, on_progress, on_qr):
+            assert service_release.wait(5)
+            connected = completion != "failure"
+            return PairingOutcome(
+                request.request_id, context.context_revision, connected, connected,
+                "" if connected else "command_failed", "Connected" if connected else "Failed",
+                device_id="test-transport" if connected else "",
+            )
+
+    services.append(FinishingService())
+    connected = QSignalSpy(coordinator.connected)
+    idle = QSignalSpy(coordinator.idle)
+    states = []
+    coordinator.progress.connect(lambda value: states.append(value.state))
+    assert coordinator.start_qr()
+    worker = coordinator._worker
+    worker.finished.connect(
+        lambda: (finalizing.set(), join_release.wait(5)), Qt.ConnectionType.DirectConnection,
+    )
+    try:
+        service_release.set()
+        assert finalizing.wait(1)
+        assert not worker.isRunning()
+        assert not worker.wait(0)
+        if completion == "cancel":
+            coordinator.cancel()
+        elif completion == "shutdown":
+            supervisor.begin_application_shutdown()
+            coordinator.prepare_shutdown()
+            assert supervisor.stop_all_async(deadline=1)
+        heartbeat = []
+        QTimer.singleShot(0, lambda: heartbeat.append(True))
+        wait_until(qt_application, lambda: bool(heartbeat))
+        assert coordinator.busy
+        assert supervisor.supervisor.active_count == 1
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert isValid(worker)
+        assert not coordinator.start_qr()
+        assert connected.count() == 0
+        assert idle.count() == 0
+        assert "Connected" not in states
+    finally:
+        service_release.set()
+        join_release.set()
+    wait_until(qt_application, lambda: not coordinator.busy)
+    assert supervisor.supervisor.active_count == 0
+    assert idle.count() == 1
+    assert connected.count() == (1 if completion == "success" else 0)
+    assert coordinator.state == {
+        "success": "Connected", "failure": "Failed", "cancel": "Idle", "shutdown": "Idle",
+    }[completion]

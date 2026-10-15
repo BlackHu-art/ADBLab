@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-14
+last_verified: 2026-10-15
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -178,10 +178,15 @@ flowchart LR
   显式允许快速执行、无输入且携带冻结环境的两种 mDNS 查询，边界见 [ADB 自动适配](../guides/ADB_FAST.md)。
   默认调用保持原路由。`NativeCommandScope` 在 spawn 前登记资源义务，只拥有本次客户端；停止请求
   不阻塞调用线程，后台等待覆盖启动竞态与未确认退出的句柄。输入只在首次 communicate 发送，
-  轮询、超时与取消不会重放。
+  轮询、超时与取消不会重放。未传作用域的 `native_capture` 为每条命令建立独立归属，交还时仍
+  未释放的客户端转交应用级清理集合；`CommandRunner.active_count()` 和 `wait_for_idle()` 纳入
+  这些残留，只有确认退出才报告空闲。显式作用域仍由原 owner 监督，不被全局等待接管。
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
   `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
   未安装运行实例的工具仍走原生。能力、回退范围和设置入口见 [ADB 自动适配](../guides/ADB_FAST.md)。
+  探测引导、原生基准和 MobilePerf 同步回退通过 `AdbRuntime.run_native()` 登记实例作用域；
+  登记到启动之间及失败清理后的资源均纳入该实例关闭屏障，不等待其他实例的客户端。
+  `prepare_shutdown()` 停止已有请求但允许后续必要清理；`close()` 封闭准入并再次停止这些清理请求。
 - `ADBBridge` 对已验证设备使用可取消直连输入，原生兼容路径为每台设备维护持久输入 shell；
   持久 shell 成功写入不代表设备执行已确认，写入失败不重放。客户端变化与重检先永久封闭旧
   会话准入，再由受监督的 Remote 队列释放；缺失路径和子进程冻结契约见
@@ -194,9 +199,11 @@ flowchart LR
   [任务中心](BUSINESS_FLOW.md#9-任务中心)。
 - 无线配对由 `services/adb_pairing.py` 执行不依赖 Qt 的单轮协议，`QtAdbPairing` 拥有一个 QThread、
   固定客户端/环境快照、请求编号和环境代次。进度只交付固定状态，二维码以 PNG 在内存传递；
-  GUI 确认图像显示后才开始扫码预算。配对结果到达、线程结束和客户端退出分别确认，全部
+  GUI 确认图像显示后才开始扫码预算。配对结果到达、线程实际 join 和客户端退出分别确认，全部
   资源归零后才开放下一轮；owner 清理和应用整体关闭共享 TaskSupervisor 屏障。客户端更换、
   重检或重启提交前撤销在途回调与续连资格，普通设备发现和执行模式变化不作废配对。
+  `finished` 信号或 `isRunning() == False` 不替代 `QThread.wait()` 成功；尚未 join 时保留资源，
+  由后台继续等待，不能提前销毁线程或开放下一轮。
 - `adblab/application/monkey_batch.py::MonkeyBatchCoordinator` 集中保存 Monkey 业务批次、参数
   快照、运行终态与停止确认，校验代次并只交付一次归档。Controller 保留参数校验、模型调用和
   信号投递；模型继续拥有取消条件、进程与资源锁，业务协调器不启动或等待外部进程。
@@ -222,7 +229,7 @@ flowchart LR
 | Controller ThreadPoolExecutor | 设备信息等后台查询；概览批次拥有最多三槽子查询池并等待其退出，Controller.shutdown() 收口；代次与并发额度见 [设备数据流](DATA_FLOW.md) |
 | Remote executor / warmup / readers | 停止输入准入，先终止持久输入进程解除管道背压，再等待执行器及预热生产者；启动中及终止失败的会话仍计入残留资源 |
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，自然退出按进程身份解除跟踪，reader 退出时关闭自有流；helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
-| RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
+| RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；结果库在后台有界等待跨进程锁并应用单次变更，协调范围见 [结果库数据流](DATA_FLOW.md#测试结果与方案)；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
 | PerformanceResultLoader / 结果读取 QThread | 按运行快照后台发现附件并单次解析 CSV；新图表代次不覆盖旧运行归档，线程退出、实际 join 和 GUI 归档交付均确认后才释放页面义务 |
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成；本机进程结束与远端清理义务分别确认 |
 

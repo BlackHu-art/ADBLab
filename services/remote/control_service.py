@@ -196,14 +196,14 @@ class RemoteControlService:
     def rotate_portrait(
         self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
     ):
-        """可取消地设置竖屏，不撤销已经完成的设置。"""
-        return self._set_rotation(device_id, 0, cancelled=cancelled)
+        """按设备有效基础尺寸设置竖屏，不撤销已经完成的设置。"""
+        return self._set_orientation(device_id, portrait=True, cancelled=cancelled)
 
     def rotate_landscape(
         self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
     ):
-        """可取消地设置横屏，不撤销已经完成的设置。"""
-        return self._set_rotation(device_id, 1, cancelled=cancelled)
+        """按设备有效基础尺寸设置横屏，不撤销已经完成的设置。"""
+        return self._set_orientation(device_id, portrait=False, cancelled=cancelled)
 
     def reset_rotation(
         self, device_id: str, *, cancelled: Callable[[], bool] | None = None,
@@ -211,6 +211,29 @@ class RemoteControlService:
         """清除尺寸缓存并可取消地恢复自动旋转。"""
         self.clear_dimensions(device_id)
         return self._shell("settings put system accelerometer_rotation 1", device_id, cancelled)
+
+    def _set_orientation(
+        self, device_id: str, *, portrait: bool, cancelled: Callable[[], bool] | None = None,
+    ):
+        """查询失败或方向不明确时拒绝写设置；基础尺寸不受当前旋转角度影响。"""
+        if cancelled is not None and cancelled():
+            return False
+        # 绕过启动预检缓存：wm size 的有效覆盖尺寸可能已被其他工具修改。
+        dimensions = (
+            self.adb.get_dimensions(device_id=device_id)
+            if cancelled is None
+            else self.adb.get_dimensions(device_id=device_id, cancelled=cancelled)
+        )
+        if cancelled is not None and cancelled():
+            return False
+        parsed = parse_dimensions(dimensions)
+        if parsed is None:
+            return False
+        width, height = parsed
+        if width <= 0 or height <= 0 or width == height:
+            return False
+        rotation = int((height > width) != portrait)
+        return self._set_rotation(device_id, rotation, cancelled=cancelled)
 
     def _set_rotation(
         self, device_id: str, rotation: int, *, cancelled: Callable[[], bool] | None = None,

@@ -16,6 +16,7 @@ from core.exec import CommandRunner
 from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from services.app_icons import load_app_icons
 from services.app_metadata import load_app_metadata
+from services.app_permissions import is_permission_name, parse_package_permissions
 from utils.archive import safe_extract_zip
 
 _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
@@ -59,6 +60,7 @@ class AppManagerWorker(QThread):
     """
 
     log_message = Signal(str)
+    user_context_loaded = Signal(int)
     apps_loaded = Signal(list)
     app_details_loaded = Signal(dict)
     app_detail_batch = Signal(str, str, str, str)
@@ -69,10 +71,11 @@ class AppManagerWorker(QThread):
     operation_done = Signal(str)
     operation_feedback = Signal(str, str)
 
-    def __init__(self, device_ip: str, operation: str, **kwargs):
+    def __init__(self, device_ip: str, operation: str, *, user_id: int | None = None, **kwargs):
         super().__init__()
         self.device_ip = device_ip
         self.operation = operation
+        self.user_id = user_id
         self.kwargs = kwargs
         self._aborted = threading.Event()
         self.operation_done.connect(self._report_success)
@@ -126,7 +129,47 @@ class AppManagerWorker(QThread):
         }
         f = ops.get(self.operation)
         if f:
+            writes = {"modify_app", "modify_permission", "launch_app", "clear_app",
+                      "backup_app", "restore_apps"}
+            if (self.user_id is not None or self.operation in writes) and (
+                type(self.user_id) is not int or not 0 <= self.user_id < 2**31
+            ):
+                self._report_failure("尚未确认应用所属用户，请刷新应用列表后重试。")
+                return
+            # helper 在响应中携带用户身份；批量文字兼容查询仅读取包级元数据。
+            # 其余查询和写入先核对快照用户，写命令仍显式指定，避免检查后的切换重定向目标。
+            if self.operation not in {
+                "load_metadata_batch", "load_icon_batch", "load_detail_batch",
+            }:
+                if not self._bind_current_user():
+                    return
             f()
+
+    def _read_current_user(self) -> int | None:
+        """可取消地读取具体用户编号；失败或未知输出绝不猜测系统用户 0。"""
+        result = self._adb(
+            "shell", "am", "get-current-user",
+            timeout=query_timeout(self.device_ip, 5), cancellable=True,
+        )
+        text = result.stdout.strip()
+        if self._cancelled() or not result.success or not re.fullmatch(r"[0-9]{1,10}", text):
+            return None
+        user_id = int(text)
+        return user_id if user_id < 2**31 else None
+
+    def _bind_current_user(self) -> bool:
+        """首次读取固定用户；已绑定任务在用户变化时拒绝继续，不自动改绑。"""
+        current = self._read_current_user()
+        if self._cancelled():
+            return False
+        if current is None:
+            self._report_failure("无法确认设备当前用户，请检查设备并刷新应用列表。")
+            return False
+        if self.user_id is not None and current != self.user_id:
+            self._report_failure("设备用户已切换，请刷新应用列表后重试。")
+            return False
+        self.user_id = current
+        return True
 
     def _adb(self, *args, timeout: float = 30, cancellable: bool = False):
         """仅显式只读调用传递取消，避免写操作或必要清理被一并中断。"""
@@ -146,14 +189,16 @@ class AppManagerWorker(QThread):
     def _load_apps(self):
         self.log_message.emit("Fetching installed apps...")
         try:
-            r = self._adb("shell", "pm", "list", "packages", "-f", cancellable=True)
+            r = self._adb("shell", "pm", "list", "packages", "-f", "--user",
+                          str(self.user_id), cancellable=True)
             if self._cancelled():
                 return
             if not r.success:
                 error = str(getattr(r, "error", "") or "").strip()
                 self._report_failure(f"Failed to list apps: {error or 'adb command failed'}")
                 return
-            dr = self._adb("shell", "pm", "list", "packages", "-d", cancellable=True)
+            dr = self._adb("shell", "pm", "list", "packages", "-d", "--user",
+                           str(self.user_id), cancellable=True)
             if self._cancelled():
                 return
             if not dr.success:
@@ -184,6 +229,7 @@ class AppManagerWorker(QThread):
                 apps.append((name, pkg, st, atype))
             self.log_message.emit(f"Loaded {len(apps)} apps.")
             if not self._cancelled():
+                self.user_context_loaded.emit(self.user_id)
                 self.apps_loaded.emit(apps)
         except Exception as e:
             self._report_failure(f"Error: {e}")
@@ -193,6 +239,8 @@ class AppManagerWorker(QThread):
         options = {}
         if "expected_fingerprints" in self.kwargs:
             options["expected_fingerprints"] = self.kwargs["expected_fingerprints"]
+        if self.user_id is not None:
+            options["expected_user_id"] = self.user_id
         load_app_icons(
             self.device_ip, self.kwargs.get("packages", []), self._cancelled,
             self.app_icon_loaded.emit, **options,
@@ -217,6 +265,9 @@ class AppManagerWorker(QThread):
         for item in result.records.values():
             if self._cancelled():
                 return
+            if self.user_id is not None and item.user_id != self.user_id:
+                self._report_failure("设备用户已切换，请刷新应用列表后重试。")
+                continue
             self.app_metadata_loaded.emit({
                 "package": item.package,
                 "label": item.label,
@@ -333,6 +384,7 @@ class AppManagerWorker(QThread):
         if not r.success or not self._has_package_detail(r.stdout):
             self._report_failure(f"Failed to read app {part}; retry after checking the device")
             return None
+        self.user_context_loaded.emit(self.user_id)
         return r.stdout
 
     def _emit_app_details(self, pkg, out: str) -> None:
@@ -365,21 +417,9 @@ class AppManagerWorker(QThread):
             self._emit_permissions(out)
 
     def _emit_permissions(self, out: str) -> None:
-        def ps(h, t):
-            m = re.search(h + r":\n((?:.+?\n)+?)(?:\n\S|\Z)", t, re.MULTILINE)
-            return (
-                [line.strip() for line in m.group(1).strip().splitlines() if line.strip()]
-                if m
-                else []
-            )
-
-        declared = [p.split(":")[0] for p in ps(r"declared permissions", out)]
-        requested = ps(r"requested permissions", out)
-        runtime = []
-        for line in ps(r"runtime permissions", out):
-            m = re.match(r"(.+?): granted=(true|false)", line)
-            if m:
-                runtime.append((m.group(1).strip(), m.group(2) == "true"))
+        if self.user_id is None:
+            return
+        declared, requested, runtime = parse_package_permissions(out, self.user_id)
         if not self._cancelled():
             self.permissions_loaded.emit(declared, requested, runtime)
 
@@ -388,10 +428,10 @@ class AppManagerWorker(QThread):
             self._report_failure(f"Invalid package: {pkg}")
             return
         cmds = {
-            "disable": ["shell", "pm", "disable-user", "--user", "0", pkg],
-            "enable": ["shell", "pm", "enable", pkg],
-            "uninstall": ["uninstall", "--user", "0", pkg],
-            "force_stop": ["shell", "am", "force-stop", pkg],
+            "disable": ["shell", "pm", "disable-user", "--user", str(self.user_id), pkg],
+            "enable": ["shell", "pm", "enable", "--user", str(self.user_id), pkg],
+            "uninstall": ["uninstall", "--user", str(self.user_id), pkg],
+            "force_stop": ["shell", "am", "force-stop", "--user", str(self.user_id), pkg],
         }
         cmd = cmds.get(action)
         if not cmd:
@@ -408,16 +448,19 @@ class AppManagerWorker(QThread):
         if not _safe_pkg(pkg):
             self._report_failure(f"Invalid package: {pkg}")
             return
+        # am 可能以退出码 0 把启动失败写到 stderr；仅在此命令合流，避免误报成功。
+        # 包名和用户已限定为安全 token，重定向由 Android shell 处理，不经过宿主 shell。
         result = self._adb(
             "shell",
-            "monkey",
+            "am", "start", "--user", str(self.user_id),
+            "-a", "android.intent.action.MAIN",
             "-p",
             pkg,
             "-c",
             "android.intent.category.LAUNCHER",
-            "1",
+            "-f", "0x10200000", "2>&1",
         )
-        if not result.success:
+        if not result.success or re.search(r"(?im)^Error(?:\s|:)", result.output):
             self._report_failure(
                 f"Failed to launch {pkg}: {self._command_error(result, 'launch command failed')}"
             )
@@ -429,7 +472,7 @@ class AppManagerWorker(QThread):
         if not _safe_pkg(pkg):
             self._report_failure(f"Invalid package: {pkg}")
             return
-        r = self._adb("shell", "pm", "clear", pkg)
+        r = self._adb("shell", "pm", "clear", "--user", str(self.user_id), pkg)
         if not r.success:
             if clear_data_error_code(r.output, r.error):
                 # 用户提示不承诺能绕过系统策略；日志保留已有诊断供任务详情追溯。
@@ -453,7 +496,11 @@ class AppManagerWorker(QThread):
         if action not in {"grant", "revoke"}:
             self._report_failure(f"Invalid permission action: {action}")
             return
-        r = self._adb("shell", "pm", action, pkg, shlex.quote(perm))
+        if not is_permission_name(perm):
+            self._report_failure("权限标识无效，请刷新应用详情后重试。")
+            return
+        # 自定义权限允许 $ 等字符；保留名称原值，由 Android shell 的引用保护字面参数。
+        r = self._adb("shell", "pm", action, "--user", str(self.user_id), pkg, shlex.quote(perm))
         if not r.success:
             self._report_failure(
                 f"Failed to {action} permission {perm}: "
@@ -468,7 +515,7 @@ class AppManagerWorker(QThread):
             self._report_failure(f"Invalid package: {pkg}")
             return
         self.backup_progress.emit(pkg, "Fetching APK paths")
-        r = self._adb("shell", f"pm path {pkg}")
+        r = self._adb("shell", f"pm path --user {self.user_id} {pkg}")
         if not r.success:
             self._report_failure(
                 f"Backup failed for {pkg}: {self._command_error(r, 'failed to fetch APK paths')}"
@@ -582,7 +629,10 @@ class AppManagerWorker(QThread):
                     if cancelled():
                         return
                     if is_split:
-                        install_result = self._adb("install-multiple", "-r", *apks, timeout=120)
+                        if not self._bind_current_user():
+                            return
+                        install_result = self._adb("install-multiple", "--user", str(self.user_id),
+                                                   "-r", *apks, timeout=120)
                         if not install_result.success:
                             raise RuntimeError(
                                 self._command_error(install_result, "install-multiple failed")
@@ -592,7 +642,10 @@ class AppManagerWorker(QThread):
                         for a in apks:
                             if cancelled():
                                 return
-                            install_result = self._adb("install", "-r", a, timeout=120)
+                            if not self._bind_current_user():
+                                return
+                            install_result = self._adb("install", "--user", str(self.user_id),
+                                                       "-r", a, timeout=120)
                             if not install_result.success:
                                 raise RuntimeError(
                                     self._command_error(install_result, "install failed")

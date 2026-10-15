@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from core.adb_runtime import AdbRuntime, RuntimeSnapshot, native_capture
+from core.adb_runtime import AdbRuntime, RuntimeSnapshot
 from core.adb_transport import CancelCheck, ExecutionResult
 from mobileperf.common.log import logger
 
@@ -118,7 +118,7 @@ class MobilePerfAdbExecutor:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return ExecutionResult(kind="timeout")
-            return native_capture(cmd, remaining, check)
+            return self.runtime.run_native(cmd, remaining, check)
         finally:
             with self._condition:
                 self._active -= 1

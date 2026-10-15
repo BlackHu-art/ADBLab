@@ -154,6 +154,7 @@ def test_app_population_merges_refreshes_until_gui_delivery_finishes(qt_applicat
     try:
         page.activate()
         first_request = page._active_load_request
+        workers[0].user_context_loaded.emit(0)
         workers[0].apps_loaded.emit(_apps(1600))
         workers[0].finish()
         qt_application.processEvents()
@@ -165,6 +166,7 @@ def test_app_population_merges_refreshes_until_gui_delivery_finishes(qt_applicat
         _wait(qt_application, lambda: len(workers) == 2)
         assert page.model.rowCount() == 1600
         assert workers[1].operation == "load_apps"
+        workers[1].user_context_loaded.emit(0)
         workers[1].apps_loaded.emit(_apps(1, "new.app"))
         workers[1].finish()
         _wait(qt_application, lambda: not page._load_in_progress)

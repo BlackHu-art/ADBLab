@@ -166,6 +166,8 @@ class AppManagerViews:
         request_id = self._frame._load_request_id
         self._frame._active_load_request = request_id
         self._frame._load_in_progress = True
+        self._frame._android_user_ready = False
+        self._frame.details_page.set_android_user(self._frame._android_user_id, ready=False)
         self._frame._load_result_received = False
         self._frame._last_load_error = ""
         self._cancel_detail_worker()
@@ -184,10 +186,22 @@ class AppManagerViews:
             Qt.ConnectionType.QueuedConnection,
         )
         dialog_ref = weakref.ref(self._frame)
+        pending_user = None
+
+        def receive_user(user_id):
+            nonlocal pending_user
+            if type(user_id) is int and user_id >= 0:
+                pending_user = user_id
+
+        w.user_context_loaded.connect(receive_user, Qt.ConnectionType.QueuedConnection)
 
         def populate_current(apps):
             dialog = dialog_ref()
-            if dialog is not None and is_qobject_alive(dialog):
+            if (
+                dialog is not None and is_qobject_alive(dialog) and not dialog._closing
+                and request_id == dialog._active_load_request and pending_user is not None
+            ):
+                dialog._accept_android_user(pending_user)
                 dialog._populate(apps, request_id=request_id)
 
         w.apps_loaded.connect(populate_current, Qt.ConnectionType.QueuedConnection)
@@ -539,7 +553,8 @@ class AppManagerViews:
             )
         )
         w = _app_manager.AppManagerWorker(
-            self._frame.device_ip, "load_metadata_batch", packages=packages
+            self._frame.device_ip, "load_metadata_batch", packages=packages,
+            user_id=self._frame._android_user_id,
         )
         self._frame._detail_worker = w
         setattr(w, "_app_detail_cancelled", False)
@@ -593,24 +608,25 @@ class AppManagerViews:
         if not pkg:
             return
         menu = self._frame._create_context_menu()
-        add_menu_action(menu, tr("应用详情"), callback=lambda: self._frame._show_details_for(pkg))
+        bind = self._frame._user_bound_action
+        add_menu_action(menu, tr("应用详情"), callback=bind("_show_details_for", pkg))
         menu.addSeparator()
-        add_menu_action(menu, tr("启动应用"), callback=lambda: self._frame._launch(pkg))
+        add_menu_action(menu, tr("启动应用"), callback=bind("_launch", pkg))
         add_menu_action(
-            menu, tr("强制停止"), callback=lambda: self._frame._modify_one("force_stop", pkg)
+            menu, tr("强制停止"), callback=bind("_modify_one", "force_stop", pkg)
         )
         add_menu_action(
-            menu, tr("清除数据"), callback=lambda: self._frame._modify_one("clear", pkg)
+            menu, tr("清除数据"), callback=bind("_modify_one", "clear", pkg)
         )
         menu.addSeparator()
         add_menu_action(
-            menu, tr("卸载"), callback=lambda: self._frame._modify_one("uninstall", pkg)
+            menu, tr("卸载"), callback=bind("_modify_one", "uninstall", pkg)
         )
-        add_menu_action(menu, tr("停用"), callback=lambda: self._frame._modify_one("disable", pkg))
-        add_menu_action(menu, tr("启用"), callback=lambda: self._frame._modify_one("enable", pkg))
+        add_menu_action(menu, tr("停用"), callback=bind("_modify_one", "disable", pkg))
+        add_menu_action(menu, tr("启用"), callback=bind("_modify_one", "enable", pkg))
         menu.addSeparator()
-        add_menu_action(menu, tr("备份"), callback=lambda: self._frame._backup_one(pkg))
-        if self._frame._batch_workers or not self._frame._can_operate():
+        add_menu_action(menu, tr("备份"), callback=bind("_backup_one", pkg))
+        if self._frame._batch_workers or not self._frame._can_modify_apps():
             for action in menu.actions():
                 if not action.isSeparator():
                     action.setEnabled(False)
@@ -753,13 +769,14 @@ class AppManagerViews:
         batch_running = bool(self._frame._batch_workers)
         load_running = bool(getattr(self._frame, "_load_in_progress", False)) or self.populating
         device_connected = self._frame._can_operate()
+        user_ready = self._frame._can_modify_apps()
         self._frame.selection_label.setText(tr('已选 {value0} 项').format(value0=count))
         for action in self._frame._command_bar.actions():
             requires_device = bool(action.property("requiresDevice"))
             requires_selection = bool(action.property("requiresSelection"))
             action.setEnabled(
                 not batch_running
-                and (device_connected or not requires_device)
+                and (user_ready or not requires_device)
                 and (count > 0 or not requires_selection)
             )
         self._frame.refresh_btn.setEnabled(

@@ -106,6 +106,8 @@ class AppManagerPage(QWidget):
     def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent)
         self.device_ip = device_ip
+        self._android_user_id: int | None = None
+        self._android_user_ready = False
         self._device_connected = bool(device_ip)
         self._device_selected = bool(device_ip)
         self.selected_packages = set()
@@ -262,6 +264,43 @@ class AppManagerPage(QWidget):
             and not self._closing
         )
 
+    def _can_modify_apps(self) -> bool:
+        """写入必须来自已完成的用户快照；刷新失败后旧内容仅供查看。"""
+        return bool(
+            self._can_operate() and self._android_user_ready
+            and self._android_user_id is not None and not self._load_in_progress
+            and not self._views_controller.populating
+        )
+
+    def _accept_android_user(self, user_id: int) -> None:
+        """仅成功列表接收用户身份；不同用户不能共享选择、文字和图标缓存。"""
+        if user_id != self._android_user_id:
+            self._batch_controller.cancel_pending()
+            self.selected_packages.clear()
+            self._detail_cache.clear()
+            self._icons_controller.reset()
+            if self._android_user_id is not None or self.details_page._android_user_id not in (
+                None, user_id,
+            ):
+                self.close_details()
+        self._android_user_id = user_id
+        self._android_user_ready = True
+        self.details_page.set_android_user(user_id, ready=not self._load_in_progress)
+
+    def _user_bound_action(self, method: str, *args):
+        """菜单保留打开时的用户和快照代次，嵌套事件循环不能把旧行操作改发给新用户。"""
+        user_id = self._android_user_id
+        request_id = self._active_load_request
+
+        def invoke():
+            if (
+                user_id == self._android_user_id and request_id == self._active_load_request
+                and self._can_modify_apps()
+            ):
+                getattr(self, method)(*args)
+
+        return invoke
+
     def set_device_selected(self, selected: bool) -> None:
         """更新会话操作资格；缓存可保留，已提交 worker 继续使用原设备。"""
         self._device_selected = bool(selected and self.device_ip)
@@ -283,7 +322,10 @@ class AppManagerPage(QWidget):
         """在当前管理页内打开指定包详情，不创建顶层窗口。"""
 
         package_name = str(package_name or "").strip()
-        if not package_name or self._batch_action_blocked() or self._dispose_requested:
+        if (
+            not package_name or not self._can_operate() or self._batch_workers
+            or self._dispose_requested
+        ):
             return None
         self._details_open = True
         self.details_page.activate(package_name)
@@ -419,6 +461,10 @@ class AppManagerPage(QWidget):
         if self._views_controller.defer_load_finished(request_id):
             return
         self._load_in_progress = False
+        if not self._closing and self._load_result_received:
+            self.details_page.set_android_user(self._android_user_id)
+            if self._details_open:
+                self.details_page.activate(self.details_page.package_name)
         if not self._closing and not self._load_result_received:
             message = self._last_load_error or (
                 tr("无法加载应用，请检查设备后重试。")

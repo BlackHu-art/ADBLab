@@ -107,6 +107,7 @@ def _patch_font_size(monkeypatch, current_size):
 def test_app_manager_command_overflow_keeps_actions_and_device_admission(qt_application):
     """展开后的更多菜单仍随设备准入更新，同一个 Action 不得继续提交旧目标。"""
     page = AppManagerPage(device_ip="device-1")
+    page._accept_android_user(0)
     try:
         page.prepare_for_workspace()
         page.set_device_selected(True)
@@ -406,6 +407,7 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
     _app = QApplication.instance() or QApplication([])
     with patch.object(AppManagerPage, "_load_apps"):
         dialog = AppManagerPage(device_ip="device-1")
+    dialog._accept_android_user(0)
 
     try:
         dialog._populate(
@@ -480,6 +482,8 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     dialog._device_selected = True
     dialog._device_connected = True
     dialog._can_operate = lambda: AppManagerPage._can_operate(dialog)
+    dialog._android_user_id = 0
+    dialog._can_modify_apps = dialog._can_operate
     dialog.log = Mock()
     dialog.status_bar = Mock()
     dialog._track_worker = Mock()
@@ -504,12 +508,14 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
             "modify_app",
             action="disable",
             package_name="com.example.one",
+            user_id=0,
         ),
         call(
             "device-1",
             "modify_app",
             action="disable",
             package_name="com.example.two",
+            user_id=0,
         ),
     ]
     assert dialog._load_apps.call_count == 0
@@ -644,6 +650,7 @@ def test_app_manager_successful_refresh_preserves_only_valid_selection():
 def test_app_manager_master_detail_contract_switches_split_and_stack_modes():
     app = QApplication.instance() or QApplication([])
     page = AppManagerPage(device_ip="device-1")
+    page._accept_android_user(0)
     try:
         page.resize(1400, 700)
         page.show()
@@ -673,6 +680,7 @@ def test_app_manager_master_detail_contract_switches_split_and_stack_modes():
 def test_app_manager_reports_workspace_content_minimum_for_visible_master_detail_mode():
     app = QApplication.instance() or QApplication([])
     page = AppManagerPage(device_ip="device-1")
+    page._accept_android_user(0)
     try:
         page.resize(623, 300)
         page.show()
@@ -818,10 +826,14 @@ def test_app_details_real_worker_loads_both_parts_and_refreshes_permissions():
     app = QApplication.instance() or QApplication([])
     page = AppDetailsPage(device_ip="device-1", package_name="com.example.app")
     outputs = [
-        "versionCode=7\nversionName=1.2\nruntime permissions:\n"
-        "  android.permission.CAMERA: granted=true\n",
-        "versionCode=7\nruntime permissions:\n"
-        "  android.permission.CAMERA: granted=false\n",
+        "0",
+        "Packages:\n  Package [com.example.app] (abc):\n"
+        "    versionCode=7\n    versionName=1.2\n    User 0: installed=true\n"
+        "      runtime permissions:\n        android.permission.CAMERA: granted=true\n",
+        "0",
+        "Packages:\n  Package [com.example.app] (abc):\n"
+        "    versionCode=7\n    User 0: installed=true\n"
+        "      runtime permissions:\n        android.permission.CAMERA: granted=false\n",
     ]
     with patch(
         "models.app_manager_worker.CommandRunner.run",
@@ -837,14 +849,14 @@ def test_app_details_real_worker_loads_both_parts_and_refreshes_permissions():
             assert "1.2 (code 7)" in page.detail_text.toPlainText()
             assert page.runtime_list.count() == 1
             first_label = page.runtime_list.item(0).text()
-            assert command.call_count == 1
+            assert command.call_count == 2
             page._rp()
             deadline = monotonic() + 3
             while page._workers and monotonic() < deadline:
                 app.processEvents()
                 QTest.qWait(1)
             assert not page._workers
-            assert command.call_count == 2
+            assert command.call_count == 4
             assert page.runtime_list.item(0).data(Qt.ItemDataRole.UserRole) == (
                 "android.permission.CAMERA"
             )

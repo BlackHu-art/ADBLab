@@ -18,7 +18,13 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
-from core.adb_runtime import AdbRuntime, local_server_environment, native_capture
+from core.adb_runtime import (
+    AdbRuntime,
+    local_server_environment,
+    native_capture,
+    native_cleanup_count,
+    wait_for_native_cleanup,
+)
 from core.adb_transport import (
     AdbClientTimeout,
     ExecutionResult,
@@ -278,16 +284,28 @@ class CommandRunner:
 
     @staticmethod
     def active_count() -> int:
-        """返回当前仍在执行的同步命令数量。"""
+        """返回仍在执行的命令及无显式 owner、尚未确认退出的客户端数量。"""
 
         with _active_lock:
-            return _active_commands
+            return _active_commands + native_cleanup_count()
 
     @staticmethod
     def wait_for_idle(timeout: float) -> bool:
-        """在后台关闭线程等待短命令退出；超时仍保留活动计数供监督器报告残留。"""
-        with _active_lock:
-            return _active_lock.wait_for(lambda: _active_commands == 0, max(0.0, timeout))
+        """后台等待命令交还资源并重试残留清理；共享总预算，失败仍保留监督义务。"""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            with _active_lock:
+                if not _active_lock.wait_for(
+                    lambda: _active_commands == 0, max(0.0, deadline - time.monotonic()),
+                ):
+                    return False
+            if not wait_for_native_cleanup(max(0.0, deadline - time.monotonic())):
+                return False
+            with _active_lock:
+                if _active_commands == 0 and native_cleanup_count() == 0:
+                    return True
+            if time.monotonic() >= deadline:
+                return False
 
     @staticmethod
     def run(

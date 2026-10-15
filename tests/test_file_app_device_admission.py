@@ -42,6 +42,7 @@ def _host_page(page_class):
                            requested_path=page.current_path)
         page._show_text_preview("note.txt", "cached content", page.current_path + "/note.txt")
     else:
+        page._accept_android_user(0)
         page._populate([("Demo", "com.example.demo", "Enabled", "User")],
                        request_id=page._active_load_request)
         page._on_load_worker_finished(page._active_load_request)

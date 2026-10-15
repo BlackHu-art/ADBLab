@@ -25,13 +25,14 @@ _ERRORS = {"NOT_FOUND", "CONTEXT_UNAVAILABLE", "READ_FAILED", "TOO_LARGE", "USER
 
 @dataclass(frozen=True)
 class AppMetadata:
-    """单包展示数据；缓存身份为摘要，不向 GUI 暴露设备用户和安装路径。"""
+    """单包展示数据及校验用用户；安装路径仅参与摘要，不交付界面。"""
 
     package: str
     label: str
     version: str
     installed: str
     fingerprint: str
+    user_id: int
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,8 @@ def _decode_record(package: str, encoded: str) -> AppMetadata:
     for key in ("user", "updated"):
         if type(fields[key]) is not int or not 0 <= fields[key] <= 2**63 - 1:
             raise ValueError("元数据数值无效")
+    if fields["user"] > 2**31 - 1:
+        raise ValueError("Android 用户编号无效")
     for key in _FIELDS - {"user", "updated"}:
         if not isinstance(fields[key], str) or len(fields[key]) > 8192:
             raise ValueError("元数据文本无效")
@@ -72,7 +75,7 @@ def _decode_record(package: str, encoded: str) -> AppMetadata:
     fingerprint = hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode()).hexdigest()
     name = fields["version_name"]
     return AppMetadata(package, fields["label"] or package.rsplit(".", 1)[-1].capitalize(),
-                       f"{name} ({code})" if name else "", installed, fingerprint)
+                       f"{name} ({code})" if name else "", installed, fingerprint, fields["user"])
 
 
 def _parse_output(output: str, packages: Sequence[str]) -> MetadataBatch:

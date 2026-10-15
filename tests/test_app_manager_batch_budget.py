@@ -12,6 +12,8 @@ class Frame:
         self._closing = False
         self.allowed = True
         self._can_operate = lambda: self.allowed and not self._closing
+        self._android_user_id = 0
+        self._can_modify_apps = self._can_operate
         self._get_selected_pkgs = lambda: [f"org.example.app{i}" for i in range(100)]
         self._track_worker = Mock()
         self._prune_worker = Mock()
