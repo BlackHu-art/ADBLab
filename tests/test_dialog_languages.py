@@ -269,6 +269,11 @@ def test_permission_submission_uses_raw_names_after_translation(
     )
     page = AppDetailsPage(device_ip="demo-device")
     page.package_name = "com.example.demo"
+    page._android_user_id = 0
+    page._android_user_ready = True
+    page._user_context_ready = True
+    page._loaded_package = page.package_name
+    page._set_load_state("ready", "")
     monkeypatch.setattr(page, "_can_operate", lambda: True)
 
     def submitted_permissions() -> list:

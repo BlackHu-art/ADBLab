@@ -127,7 +127,11 @@ class SettingsWheelScroll(QObject):
 
     def _scroll_notches(self, notches: int) -> bool:
         page_step = self._bar.pageStep()
-        offset = -notches * self._bar.singleStep() * QApplication.wheelScrollLines()
+        lines = QApplication.wheelScrollLines()
+        # -1 表示平台没有提供行数（Windows“一次滚一屏”等）；负值直接相乘
+        # 会翻转滚轮方向。此时按一页滚动，仍限制在单页预算内。
+        step = self._bar.singleStep() * lines if lines > 0 else page_step
+        offset = -notches * step
         offset = max(-page_step, min(page_step, offset))
         if offset == 0:
             self.cancel()

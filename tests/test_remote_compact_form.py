@@ -26,6 +26,9 @@ def compact_remote(qt_application, monkeypatch, isolated_app_settings):
         "remote", 780, 12, qt_application, monkeypatch,
     )
     remote._settings = isolated_app_settings
+    # 构建阶段用固定 12 号字体量取几何；恢复真实角色解析后，测试才能验证
+    # 运行时 12→22 字号切换确实重新应用到复合控件。
+    monkeypatch.delattr(BaseStyles, "font_for_role", raising=False)
     try:
         yield remote, scroll, content
     finally:

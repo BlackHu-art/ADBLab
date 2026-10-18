@@ -11,6 +11,8 @@ from PySide6.QtCore import QEvent, QObject, QTimer, Signal
 
 from gui.startup_task import StartupTask
 
+MAIN_PAINT_TIMEOUT_MS = 1500
+
 if TYPE_CHECKING:
     from core.startup_diagnostics import StartupDiagnostics
     from gui.main_frame import MainFrame
@@ -42,6 +44,12 @@ class StartupController(QObject):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._advance)
+        self._handoff_timer = QTimer(self)
+        self._handoff_timer.setSingleShot(True)
+        self._handoff_timer.timeout.connect(self._finalize_handoff)
+        self._paint_timeout = QTimer(self)
+        self._paint_timeout.setSingleShot(True)
+        self._paint_timeout.timeout.connect(self._on_paint_timeout)
         self._started = False
         self._advancing = False
         self._stopping = False
@@ -102,6 +110,7 @@ class StartupController(QObject):
                     self._waiting_for_paint = True
                     self._window.installEventFilter(self)
                     self._window.show()
+                    self._paint_timeout.start(MAIN_PAINT_TIMEOUT_MS)
                 return
             if isinstance(step, StartupTask):
                 if self._stopping:
@@ -164,11 +173,30 @@ class StartupController(QObject):
     def _handoff(self) -> None:
         if self._stopping or self._done or self._window is None:
             return
+        if self._handoff_timer.isActive():
+            return
         if not self._window.isVisible():
             self.cancel()
             return
-        self._window.removeEventFilter(self)
+        self._paint_timeout.stop()
         self._splash.set_progress(100, animate=False)
+        # 让完成态至少被真实绘制一次，避免 100% 与关闭发生在同一帧。
+        self._handoff_timer.start(80)
+
+    def _on_paint_timeout(self) -> None:
+        """主窗未在预算内绘制时仍完成交接，避免启动窗永久停留。"""
+        if self._stopping or self._done or not self._waiting_for_paint:
+            return
+        self._waiting_for_paint = False
+        if self.diagnostics is not None:
+            self.diagnostics.record("paint-timeout")
+        logging.getLogger(__name__).warning("GUI startup main window paint timed out")
+        self._handoff()
+
+    def _finalize_handoff(self) -> None:
+        if self._stopping or self._done or self._window is None:
+            return
+        self._window.removeEventFilter(self)
         self._splash.finish()
         self._done = True
         if self.diagnostics is not None:
@@ -196,8 +224,11 @@ class StartupController(QObject):
             )
         self._stopping = True
         self._timer.stop()
+        self._handoff_timer.stop()
+        self._paint_timeout.stop()
         self._waiting_for_paint = False
-        self._splash.finish()
+        # 取消期间保留启动窗，直到后台任务真正退出并发出 cancelled；
+        # 不能先关闭唯一可见窗口，让应用在不可取消 I/O 中后台静默等待。
         if not self._advancing:
             self._abort()
 
@@ -228,6 +259,7 @@ class StartupController(QObject):
     def _aborted(self) -> None:
         if self._done:
             return
+        self._splash.finish()
         self._done = True
         if self.error is not None:
             self.failed.emit(self.error)

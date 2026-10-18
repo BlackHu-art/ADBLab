@@ -313,8 +313,9 @@ class CloseController:
                 if callable(archive):
                     try:
                         archive()
-                    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+                    except Exception as exc:
                         # 单页归档失败仍要收尾其他生产者，最终状态必须保留失败事实。
+                        # 页面归档不属于核心资源清理，任何异常都不能中断关闭收尾链。
                         self._frame._shutdown_archive_failed = True
                         self._frame.log_service.log(
                             "ERROR", f"Test result archive failed: {type(exc).__name__}"
@@ -336,7 +337,7 @@ class CloseController:
         if callable(archive_monkey):
             try:
                 archive_monkey(resources_stopped=not self._frame._shutdown_residual and not failed)
-            except (OSError, ValueError, TypeError, RuntimeError) as exc:
+            except Exception as exc:
                 self._frame._shutdown_archive_failed = True
                 self._frame.log_service.log(
                     "ERROR", f"Monkey result archive failed: {type(exc).__name__}"
@@ -373,20 +374,31 @@ class CloseController:
         )
         self._frame._shutdown_handles.append(finalizer)
         finalizer_task_id = f"{self._frame._shutdown_owner_id}-finalizer"
-        self._frame.task_supervisor.supervisor.register(
-            finalizer_task_id,
-            owner_id=self._frame._shutdown_owner_id,
-            kind="shutdown_finalizer",
-            request_stop=finalizer.request_stop,
-            wait=finalizer.wait,
-            is_running=finalizer.is_running,
-            error_type=finalizer.get_error_type,
-        )
         remaining = max(0.0, self._frame._shutdown_deadline_at - time.monotonic())
-        self._frame.task_supervisor.stop_finalizer_async(
-            finalizer_task_id,
-            deadline=remaining,
-        )
+        try:
+            self._frame.task_supervisor.supervisor.register(
+                finalizer_task_id,
+                owner_id=self._frame._shutdown_owner_id,
+                kind="shutdown_finalizer",
+                request_stop=finalizer.request_stop,
+                wait=finalizer.wait,
+                is_running=finalizer.is_running,
+                error_type=finalizer.get_error_type,
+            )
+            self._frame.task_supervisor.stop_finalizer_async(
+                finalizer_task_id,
+                deadline=remaining,
+            )
+        except Exception as exc:
+            # 监督器登记/调度失败也必须启动一次收尾并释放关闭事件，不能让窗口
+            # 永远停在“正在关闭”且 _close_ready 永不置位。
+            self._frame.log_service.log(
+                "ERROR",
+                f"Shutdown finalizer scheduling failed: {type(exc).__name__}",
+            )
+            finalizer.request_stop()
+            finalizer.wait(remaining)
+            self._on_application_finalized(None, ())
 
     def _flush_shutdown_state(self):
         """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""

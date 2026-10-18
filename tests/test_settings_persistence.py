@@ -476,7 +476,7 @@ def test_malformed_saved_monkey_settings_are_safe_for_panel_loading(
 ):
     from gui.panels.app_panel import AppPanel
 
-    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
     isolated_settings.write_text(
         json.dumps({"schema_version": schema_version, "monkey_params": monkey_params}),
         encoding="utf-8",
@@ -504,7 +504,7 @@ def test_malformed_saved_monkey_settings_are_safe_for_panel_loading(
 def test_invalid_saved_log_limit_is_safe_for_log_consumer(isolated_settings, invalid_count):
     from gui.dialogs.performance_launcher_log import PerformanceLauncherLog
 
-    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
     isolated_settings.write_text(
         json.dumps({"schema_version": 3, "log_max_lines": invalid_count}), encoding="utf-8"
     )

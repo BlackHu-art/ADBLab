@@ -1,3 +1,5 @@
+"""pytest 全局隔离、Qt 离屏字体与资源生命周期夹具。"""
+
 import os
 import sys
 from builtins import ExceptionGroup
@@ -6,6 +8,12 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.environ["QT_QPA_PLATFORM"] == "offscreen" and sys.platform == "win32":
+    # Qt 离屏插件默认在 PySide6/lib/fonts 找字体；Windows 上回退到系统字体，
+    # 否则中文/像素基线用例会因无字形而出现假失败。
+    _windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    if _windows_fonts.is_dir():
+        os.environ.setdefault("QT_QPA_FONTDIR", str(_windows_fonts))
 
 _APPLICATION_REFERENCES = []
 

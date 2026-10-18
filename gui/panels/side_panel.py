@@ -427,6 +427,7 @@ class SidePanel(QWidget):
     def register_shutdown_tasks(self, supervisor, *, owner_id: str) -> tuple[str, ...]:
         """将已加载标签页的异步关闭任务注册到统一监督器。"""
         registered = []
+        failures = []
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)
@@ -434,8 +435,14 @@ class SidePanel(QWidget):
             if not callable(register):
                 continue
             task_id = f"{owner_id}-panel-{index}"
-            if register(supervisor, owner_id=owner_id, task_id=task_id):
-                registered.append(task_id)
+            try:
+                if register(supervisor, owner_id=owner_id, task_id=task_id):
+                    registered.append(task_id)
+            except Exception as exc:
+                # 单个页签登记失败不能跳过后续页签，否则其资源完全脱离关闭屏障。
+                failures.append(f"{attr}:{type(exc).__name__}")
+        if failures:
+            raise RuntimeError(f"panel shutdown registration failed: {', '.join(failures)}")
         return tuple(registered)
 
     # ── 主题 ─────────────────────────────────────────────────────────────

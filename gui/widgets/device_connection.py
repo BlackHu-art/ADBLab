@@ -615,7 +615,7 @@ class DeviceConnectionPanel(QWidget):
             self.transition_changed.emit(False)
         if self._expanded and not self._shutting_down and self._qr_request is not None:
             request_id = self._qr_request
-            QTimer.singleShot(0, lambda: self._ack_qr(request_id))
+            QTimer.singleShot(0, self, lambda: self._ack_qr(request_id))
 
     def _label(self, text, parent, layout, *, strong=False):
         label = (StrongBodyLabel if strong else BodyLabel)(tr(text), parent)
@@ -1043,7 +1043,7 @@ class DeviceConnectionPanel(QWidget):
         )
         self._update_controls()
         if state == "PairedOnly":
-            QTimer.singleShot(0, self._reveal_continuation)
+            QTimer.singleShot(0, self, self._reveal_continuation)
 
     def _reveal_continuation(self):
         """结果展开时让续连字段进入视口，不抢走用户当前键盘焦点。"""
@@ -1170,7 +1170,7 @@ class DeviceConnectionPanel(QWidget):
         self._qr_image, self._qr_modules, self._qr_request = image, modules, request_id
         self._qr_acknowledged = False
         self._render_qr()
-        QTimer.singleShot(0, lambda: self._ack_qr(request_id))
+        QTimer.singleShot(0, self, lambda: self._ack_qr(request_id))
 
     def _qr_can_ack(self, request_id):
         window = self.window()
@@ -1200,7 +1200,7 @@ class DeviceConnectionPanel(QWidget):
             bar.setValue(
                 bar.value() + offset - max(0, (viewport.height() - self.qr_label.height()) // 2)
             )
-        QTimer.singleShot(0, lambda: self._confirm_qr_visible(request_id, attempts))
+        QTimer.singleShot(0, self, lambda: self._confirm_qr_visible(request_id, attempts))
 
     def _confirm_qr_visible(self, request_id, attempts):
         """可见意图、请求身份与像素可见范围必须同时成立，收起后的回调无效。"""
@@ -1227,7 +1227,7 @@ class DeviceConnectionPanel(QWidget):
             self._qr_acknowledged = True
             self.coordinator.acknowledge_qr(request_id)
         elif attempts < 30:
-            QTimer.singleShot(10, lambda: self._ack_qr(request_id, attempts + 1))
+            QTimer.singleShot(10, self, lambda: self._ack_qr(request_id, attempts + 1))
 
     def _render_qr(self):
         if self._qr_image.isNull():
@@ -1297,7 +1297,7 @@ class DeviceConnectionPanel(QWidget):
     def _schedule_reflow(self):
         if not self._reflow_pending:
             self._reflow_pending = True
-            QTimer.singleShot(0, self._reflow)
+            QTimer.singleShot(0, self, self._reflow)
 
     def _status_text_size(self, text, width, height):
         metrics = self.status_label.fontMetrics()

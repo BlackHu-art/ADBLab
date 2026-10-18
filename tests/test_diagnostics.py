@@ -9,9 +9,23 @@ from unittest.mock import patch
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from core.diagnostics import DiagnosticJournal
+from core.diagnostics import DiagnosticJournal, redact_diagnostic
 from gui.run_library import _LibraryQueue
 from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
+
+
+def test_redaction_covers_json_credentials_and_unc_paths():
+    text = (
+        '{"token": "abc123", "Authorization": "Bearer xyz"}\n'
+        r"\\server\share\Users\alice\private.txt"
+    )
+    redacted = redact_diagnostic(text)
+
+    assert "abc123" not in redacted
+    assert "Bearer xyz" not in redacted
+    assert "alice" not in redacted
+    assert "<redacted>" in redacted
+    assert "<path>" in redacted
 
 
 def test_diagnostic_journal_is_bounded_and_excludes_normal_output():

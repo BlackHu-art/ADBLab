@@ -23,6 +23,7 @@ class _Library(QObject):
         RunRecord("demo-run", "performance", "com.example.demo", 1, 2, "succeeded",
                   {"frequency_seconds": 5}, message="Synthetic completion"),
     )
+    records_view = records
     presets = ()
 
 

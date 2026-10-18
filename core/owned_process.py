@@ -32,6 +32,17 @@ def _alive(identity) -> bool:
         return False
 
 
+def _record_client_gone(record: dict) -> bool:
+    """helper 已退出且直接客户端身份不存在时，即使 done 记录写失败也可确认归零。"""
+    if record.get("phase") == "done":
+        return True
+    client = record.get("client")
+    if client is None:
+        # helper 在登记客户端前退出；其 finally 已回收可能创建的子进程。
+        return True
+    return not _alive(client)
+
+
 def _write_record(directory: Path, record: dict) -> None:
     """原子发布登记；Windows 短暂读句柄会拒绝替换，只对此共享冲突有界重试。"""
     temporary = directory / "record.tmp"
@@ -86,9 +97,7 @@ class OwnedClientProcess(subprocess.Popen):
             return code
         try:
             record = json.loads((self._directory / "record.json").read_text(encoding="utf-8"))
-            if record.get("phase") != "done" or (
-                "client" in record and _alive(record["client"])
-            ):
+            if not _record_client_gone(record):
                 return None
             self._confirmed_exit = True
             # 先原子移出活动集合，再清理文件；worker 在 unlink 间退出不会留下
@@ -165,7 +174,7 @@ class OwnedWorkerProcess:
                     self._remote_failure_seen = True
                     continue
                 record = json.loads((directory / "record.json").read_text(encoding="utf-8"))
-                if record.get("phase") != "done" or "helper" not in record:
+                if "helper" not in record or not _record_client_gone(record):
                     return None
                 if any(_alive(record[key]) for key in ("helper", "client") if key in record):
                     return None

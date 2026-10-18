@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import weakref
 from collections.abc import Iterable
 from functools import partial
@@ -22,6 +23,7 @@ from gui.widgets.responsive_primitives import (
 )
 
 _FingerprintBatch = tuple[tuple[int, object], ...]
+_LOGGER = logging.getLogger(__name__)
 
 
 class ResponsiveCoordinator:
@@ -307,7 +309,11 @@ class ResponsiveCoordinator:
             try:
                 context = target.responsive_context()
                 plan = target.responsive_plan(context)
-            except RuntimeError:
+            except Exception as error:
+                # 自定义 target 的契约错误不能把协调器留在 settling 状态。
+                _LOGGER.warning(
+                    "响应式 target 计算失败，已注销（%s）", type(error).__name__,
+                )
                 self.unregister(target)
                 continue
             candidates.append((target, context, plan))
@@ -475,7 +481,10 @@ class ResponsiveCoordinator:
             for target, plan in candidates:
                 try:
                     target.apply_responsive_plan(plan)
-                except RuntimeError:
+                except Exception as error:
+                    _LOGGER.warning(
+                        "响应式 target 应用失败，已注销（%s）", type(error).__name__,
+                    )
                     self.unregister(target)
         finally:
             self._in_apply = False

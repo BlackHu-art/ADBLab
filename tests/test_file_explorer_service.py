@@ -1,3 +1,5 @@
+"""验证文件浏览器命令构造和权限模式辅助函数。"""
+
 import ntpath
 from types import SimpleNamespace
 
@@ -62,6 +64,10 @@ def test_chmod_mode_helpers_normalize_and_build_mode():
     }
 
     assert explorer_service.mode_from_permissions(states) == "754"
+    assert explorer_service.parse_mode("4755") == "4755"
+    assert explorer_service.parse_mode("1777") == "1777"
+    assert explorer_service.parse_mode("755") == "755"
+    assert explorer_service.parse_mode("999") is None
 
 
 def test_file_explorer_command_builders_keep_current_shell_contract():

@@ -309,6 +309,7 @@ def test_application_close_preparation_stops_update_request(checker):
     frame = SimpleNamespace(
         _app_update=instance, _initial_refresh_timer=QTimer(), _scan_refresh_timer=QTimer(),
         _scan_thread=None, left_panel=SimpleNamespace(),
+        findChildren=lambda *_args: [],
     )
     instance.check()
     before = len(updates)

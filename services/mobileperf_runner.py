@@ -404,6 +404,7 @@ class MobilePerfRunner:
                 raise CancelledError
             config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
             self._config_dir = config_dir
+            proc = None
             try:
                 self._config_path = config.write_config(config_dir.name)
                 self._stop_path = os.path.join(config_dir.name, "mobileperf.stop")
@@ -452,10 +453,19 @@ class MobilePerfRunner:
                 if isinstance(proc, OwnedWorkerProcess):
                     proc.hold_cleanup_owner(config_dir)
             except Exception:
-                config_dir.cleanup()
-                self._config_dir = None
-                self._config_path = ""
-                self._stop_path = ""
+                # 进程一旦创建就属于 ProcessRunner 跟踪；不能只删配置目录，
+                # 否则 collector 成为无 owner 的孤儿。先停止并确认，再清理配置。
+                stopped = True
+                if proc is not None:
+                    try:
+                        stopped = self._process_runner.stop(process_key, timeout=2) is not None
+                    except Exception:
+                        stopped = False
+                if stopped:
+                    config_dir.cleanup()
+                    self._config_dir = None
+                    self._config_path = ""
+                    self._stop_path = ""
                 raise
             context = _MobilePerfRunContext(
                 generation=generation,

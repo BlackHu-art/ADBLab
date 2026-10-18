@@ -203,7 +203,7 @@ def test_isolated_ui_state_releases_already_closed_windows(isolated_ui_state_pro
 
 
 def test_isolated_ui_state_reports_shutdown_failure_and_still_releases_windows(qt_application):
-    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}})
+    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}}, None)
     next(isolation)
     failure = RuntimeError("shutdown failed while the Qt window is still alive")
 
@@ -226,7 +226,7 @@ def test_isolated_ui_state_reports_shutdown_failure_and_still_releases_windows(q
 
 
 def test_isolated_ui_state_accepts_window_deleted_by_its_shutdown(qt_application):
-    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}})
+    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}}, None)
     next(isolation)
 
     class SelfDeletingWindow(QWidget):

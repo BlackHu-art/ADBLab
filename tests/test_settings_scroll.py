@@ -45,6 +45,18 @@ def test_single_notch_interpolates_and_keeps_qt_step(qt_application, make_page):
     assert values[-1] == values[0] + step
 
 
+def test_platform_wheel_scroll_lines_negative_keeps_direction(
+    qt_application, make_page, monkeypatch,
+):
+    monkeypatch.setattr(
+        QApplication, "wheelScrollLines", staticmethod(lambda: -1),
+    )
+    page = make_page()
+    bar, animation = _begin(qt_application, page)
+    animation.setCurrentTime(animation.duration())
+    assert bar.value() == min(bar.maximum(), 180 + bar.pageStep())
+
+
 def test_reverse_starts_at_visible_position_without_following_old_target(
     qt_application, make_page,
 ):

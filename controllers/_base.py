@@ -203,6 +203,41 @@ class _ADBControllerBase:
             )
             return request is None or request == getattr(self, "_latest_discovery_request", None)
 
+
+    def _complete_action_envelope(
+        self, job, result: ActionEnvelope, method_name: str,
+    ) -> None:
+        """完成单个 ActionEnvelope；异常由调用方保证至少交付失败终态。"""
+        payload, _metadata = split_operation_metadata(result.payload)
+        payload, _perf = split_perf(payload)
+        with self.action_results.scope(job.request_id, job):
+            terminal = self._handle_async_response(method_name, result.payload)
+        if isinstance(terminal, dict):
+            if terminal.get("stale"):
+                payload = terminal
+        elif _metadata is not None:
+            snapshot = getattr(terminal, "snapshot", terminal)
+            if snapshot is None:
+                snapshot = self.operation_manager.get(
+                    _metadata.operation_id, expected_generation=_metadata.generation_token,
+                )
+            unit = next((
+                item for item in (snapshot.unit_results if snapshot is not None else ())
+                if item.unit_id == _metadata.unit_id
+            ), None)
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            payload.update(
+                _validated_unit=True,
+                success=unit is not None and unit.state is OperationState.SUCCEEDED,
+                cancelled=(unit is not None and unit.state is OperationState.CANCELLED)
+                or bool(payload.get("cancelled")),
+            )
+            if not payload["success"]:
+                payload["error"] = (
+                    unit.message if unit else "操作结果未通过身份校验或任务已结束"
+                )
+        self.action_results.complete(job, payload)
+
     def _handle_async_response(self, method_name: str, result):
         """分派 model 线程经 Qt 队列回到 GUI 线程的 command_finished 结果。
 
@@ -215,35 +250,25 @@ class _ADBControllerBase:
             job = result.job
             if not self.action_results.accepts(job):
                 return
-            payload, _metadata = split_operation_metadata(result.payload)
-            payload, _perf = split_perf(payload)
-            with self.action_results.scope(job.request_id, job):
-                terminal = self._handle_async_response(method_name, result.payload)
-            if isinstance(terminal, dict):
-                if terminal.get("stale"):
-                    payload = terminal
-            elif _metadata is not None:
-                snapshot = getattr(terminal, "snapshot", terminal)
-                if snapshot is None:
-                    snapshot = self.operation_manager.get(
-                        _metadata.operation_id, expected_generation=_metadata.generation_token,
-                    )
-                unit = next((
-                    item for item in (snapshot.unit_results if snapshot is not None else ())
-                    if item.unit_id == _metadata.unit_id
-                ), None)
-                payload = dict(payload) if isinstance(payload, dict) else {}
-                payload.update(
-                    _validated_unit=True,
-                    success=unit is not None and unit.state is OperationState.SUCCEEDED,
-                    cancelled=(unit is not None and unit.state is OperationState.CANCELLED)
-                    or bool(payload.get("cancelled")),
+            try:
+                self._complete_action_envelope(job, result, method_name)
+            except Exception as exc:
+                # 分派/释放/所有权异常不能把请求留在 running；否则同 spec 的
+                # 后续操作会被永久拒绝，且 running 请求不参与淘汰。
+                self.log_service.log(
+                    "ERROR",
+                    f"[action-result] envelope dispatch failed: {type(exc).__name__}",
                 )
-                if not payload["success"]:
-                    payload["error"] = (
-                        unit.message if unit else "操作结果未通过身份校验或任务已结束"
+                try:
+                    self.action_results.complete(
+                        job, {"success": False, "error": "操作结果分派失败"},
                     )
-            self.action_results.complete(job, payload)
+                except Exception as complete_error:
+                    self.log_service.log(
+                        "ERROR",
+                        "[action-result] terminal fallback failed: "
+                        f"{type(complete_error).__name__}",
+                    )
             return
         result, operation_metadata = split_operation_metadata(result)
         result, perf = split_perf(result)

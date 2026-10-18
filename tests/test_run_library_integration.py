@@ -119,7 +119,7 @@ def test_settings_failure_reaches_finalizer_and_is_saved_after_log_freeze(
 
 
 def test_archive_failure_does_not_block_other_archives_or_settings(monkeypatch):
-    failed_archive = Mock(side_effect=PermissionError("private-output-path"))
+    failed_archive = Mock(side_effect=KeyError("private-output-path"))
     next_archive = Mock()
     page_host = SimpleNamespace(
         registry=SimpleNamespace(

@@ -237,6 +237,10 @@ class _ActiveTaskRow(QWidget):
         """提交取消后立即锁定按钮，避免重复请求；终态由下一次快照刷新。"""
         self._cancel.setEnabled(False)
 
+    def restore_cancel(self) -> None:
+        """取消未被受理时恢复按钮，允许用户重新尝试。"""
+        self._cancel.setEnabled(True)
+
     def update_snapshot(self, snapshot: OperationSnapshot) -> None:
         """原位更新变化字段，避免轮询销毁正在按下或聚焦的取消按钮。"""
         previous = self._snapshot
@@ -536,12 +540,22 @@ class TaskCenterPage(QWidget):
         """取消双路径：先登记协作式取消意图，再调用注入的资源停止入口。"""
 
         row = self._active_rows.get(task_id)
-        if row is not None:
-            row.mark_cancelling()
+        accepted = False
         if self._operation_manager is not None:
-            self._operation_manager.request_cancel(task_id)
+            accepted = bool(self._operation_manager.request_cancel(task_id))
+            snapshot = self._operation_manager.get(task_id)
+            accepted = accepted or bool(snapshot and snapshot.cancel_requested)
         if self._stop_hook is not None:
-            self._stop_hook(task_id)
+            try:
+                self._stop_hook(task_id)
+                accepted = True
+            except Exception:
+                accepted = False
+        if row is not None:
+            if accepted:
+                row.mark_cancelling()
+            else:
+                row.restore_cancel()
 
     def record_history(self, entry: TaskHistoryEntry) -> None:
         """写入一条终态记录并立即刷新（供组合根订阅终态事件时调用）。"""

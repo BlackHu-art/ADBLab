@@ -1,5 +1,7 @@
 """验证用户操作结果脱离日志后的身份、终态与完整正文。"""
 
+from unittest.mock import Mock
+
 import pytest
 
 from adblab.application.action_results import (
@@ -9,6 +11,30 @@ from adblab.application.action_results import (
     capture_action_job,
     report_action_message,
 )
+
+
+def test_envelope_dispatch_failure_still_completes_running_request():
+    from controllers._base import _ADBControllerBase
+
+    events = []
+    store = ActionResults(events.append)
+    jobs = []
+    store.run(
+        ActionSpec("query", "system.shell", "查询"), (),
+        lambda: jobs.append(capture_action_job("query_async")),
+    )
+    controller = object.__new__(_ADBControllerBase)
+    controller.action_results = store
+    controller.log_service = Mock()
+    controller._shutting_down = False
+    controller._complete_action_envelope = Mock(side_effect=RuntimeError("boom"))
+
+    controller._handle_async_response(
+        "query_async", ActionEnvelope({"success": True}, jobs[0]),
+    )
+
+    assert events[-1].state == "failed"
+    assert "分派失败" in events[-1].items[0].detail
 
 
 def test_device_labels_are_frozen_and_duplicate_targets_keep_aligned_names():

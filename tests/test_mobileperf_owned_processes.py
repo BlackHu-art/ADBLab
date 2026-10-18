@@ -159,6 +159,24 @@ def test_helper_cleanup_denied_keeps_unfinished_registration(tmp_path, monkeypat
     assert json.loads((tmp_path / "record.json").read_text())["phase"] == "running"
 
 
+def test_parent_confirms_helper_exit_when_done_record_write_failed(
+    tmp_path, monkeypatch,
+):
+    from core import owned_process
+
+    worker_dir = tmp_path / "worker"
+    slot = worker_dir / "client"
+    slot.mkdir(parents=True)
+    (slot / "record.json").write_text(
+        '{"phase":"running","helper":[888,100.0],"client":[999,100.0]}', encoding="utf-8",
+    )
+    monkeypatch.setattr(owned_process, "_alive", lambda _identity: False)
+    worker = owned_process.OwnedWorkerProcess(SimpleNamespace(poll=lambda: 0), str(worker_dir))
+
+    assert worker.poll() == 0
+    assert worker.resources_released() is True
+
+
 @pytest.mark.parametrize("interrupt_at", ["record.json", "record.tmp", "cancel", "rmdir"])
 def test_finished_registration_is_retired_before_interruptible_cleanup(
     tmp_path, monkeypatch, interrupt_at,

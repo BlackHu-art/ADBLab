@@ -20,13 +20,14 @@ def _redact_with_sorted(text: str, sorted_values: tuple[str, ...]) -> str:
     # 带引号的值可含空格或转义引号；认证方案和凭据必须一并遮蔽。
     quoted = r'''(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$))'''
     text = re.sub(
-        r"(?i)\b(authorization)\s*[:=][ \t]*[^\r\n]*",
-        r"\1=<redacted>",
+        r'''(?i)(["']?)(authorization)\1\s*[:=][ \t]*[^\r\n]*''',
+        r"\2=<redacted>",
         text,
     )
     text = re.sub(
-        rf"(?i)\b(password|passwd|token|secret|serial)\s*[:=]\s*(?:{quoted}|[^\s,;]+)",
-        r"\1=<redacted>",
+        rf'''(?i)(["']?)(password|passwd|token|secret|serial)\1\s*[:=]\s*'''
+        rf"(?:{quoted}|[^\s,;]+)",
+        r"\2=<redacted>",
         text,
     )
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "<address>", text)
@@ -38,6 +39,8 @@ def _redact_with_sorted(text: str, sorted_values: tuple[str, ...]) -> str:
         "<path>",
         text,
     )
+    # UNC 共享路径同样属于本机/内网绝对位置，整段遮蔽到空白。
+    text = re.sub(r"\\\\[^\s\"']+", "<path>", text)
     return text[:2048]
 
 

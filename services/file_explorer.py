@@ -380,7 +380,8 @@ def parse_mode(raw_mode: str) -> str | None:
     mode = (raw_mode or "").strip()
     if not _VALID_MODE.fullmatch(mode):
         return None
-    return mode[-3:]
+    # 保留可能存在的 setuid/setgid/sticky 高位，调用方只编辑后三位。
+    return mode
 
 
 def mode_from_permissions(states: dict[tuple[str, str], bool]) -> str:

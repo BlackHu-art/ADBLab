@@ -512,20 +512,19 @@ class LiveLogcatPage(QWidget):
     def closeEvent(self, event):
         """先隐藏并清理后台资源，完成后再释放页面会话。"""
         export_worker = getattr(self._stream_controller, "_export_worker", None)
-        if export_worker is not None and export_worker.isRunning():
-            # 导出线程仍持有文件句柄；页面必须等它 finished 后再销毁。
-            self._close_pending = True
-            self._closing = True
-            self.hide()
-            event.ignore()
-            return
+        export_pending = export_worker is not None and export_worker.isRunning()
         if self._close_ready:
+            if export_pending:
+                event.ignore()
+                return
             self._debug_lifecycle("close_accepted")
             event.accept()
             super().closeEvent(event)
             self._emit_dispose_ready()
             return
         if self._close_pending:
+            if export_pending:
+                self.hide()
             self._debug_lifecycle("close_ignored", reason="cleanup_pending")
             event.ignore()
             return
@@ -535,9 +534,15 @@ class LiveLogcatPage(QWidget):
                 self._pkg_worker is not None and self._pkg_worker.isRunning()
             ),
             worker_active=bool(self.worker is not None and self.worker.is_active()),
+            export_pending=export_pending,
         )
         self._close_pending = True
         self._closing = True
+        if export_pending:
+            # 页面先隐藏，但仍要走下方停止 worker/supervisor 的完整状态机；
+            # 仅等待导出线程结束而不停日志流会留下隐藏的泄漏页面。
+            self.hide()
+            event.ignore()
         should_stop_owner = False
         self._stream_controller._cancel_render()
         self._worker_release_timer.stop()
@@ -578,6 +583,10 @@ class LiveLogcatPage(QWidget):
             if owner_stop_started is False:
                 self._application_cleanup_fallback = True
                 self._debug_lifecycle("waiting_for_application_stop")
+            return
+        if export_pending:
+            # 导出线程结束后由 _on_export_finished 再调用 _try_finalize_close。
+            event.ignore()
             return
         self._close_ready = True
         self._debug_lifecycle("close_accepted", reason="no_active_resource")

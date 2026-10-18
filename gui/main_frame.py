@@ -2062,7 +2062,20 @@ class MainFrame(FluentWindow):
                     self._device_metadata.get(device, {})
                 )
             if bar is not None:
-                names = {device: _device_name(device, records[device]) for device in devices}
+                def projected_name(device: str) -> str:
+                    record = records[device]
+                    if any(
+                        _metadata_text(record.get(key))
+                        for key in ("name", "alias", "Brand", "Model")
+                    ):
+                        return _device_name(device, record)
+                    # 没有新元数据时沿用顶部栏已有名称，避免把用户可见标签
+                    # 回退成“Android USB设备”；有元数据时以新快照为准。
+                    return bar.device_label(device) or _device_name(device, record)
+
+                names = {device: projected_name(device) for device in devices}
+                for device, name in names.items():
+                    records[device]["name"] = name
                 if bar.set_device_labels(names):
                     # 电量等指标不改变显示名称，不应反复重建选择器和会话标签。
                     labels = bar.device_labels()
@@ -2849,6 +2862,8 @@ class MainFrame(FluentWindow):
     def _on_operation_completed(self, operation: str, success: bool, message: str) -> None:
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""
 
+        if getattr(self, "_closing", False):
+            return
         if operation == "refresh":
             self._pending_scanned_devices = None
             timer = getattr(self, "_scan_refresh_timer", None)
@@ -2962,6 +2977,8 @@ class MainFrame(FluentWindow):
 
     def _on_devices_updated(self, devices: list[str]):
         """仅在设备列表变化后刷新设备界面。"""
+        if getattr(self, "_closing", False):
+            return
         self._device_metadata = {
             device: info for device, info in self._device_metadata.items() if device in devices
         }

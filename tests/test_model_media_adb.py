@@ -1,3 +1,5 @@
+"""验证媒体/ADB 模型边界与安全解压。"""
+
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
 import os
@@ -548,6 +550,28 @@ def test_capture_bugreport_reports_command_failure(tmp_path):
         "success": False,
         "message": "Bugreport failed: bugreport crashed",
     }
+
+
+def test_safe_extract_zip_rejects_member_and_size_limits(tmp_path, monkeypatch):
+    from utils import archive
+
+    zip_path = tmp_path / "large.zip"
+    target = tmp_path / "target"
+    target.mkdir()
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("one.txt", "1")
+        zf.writestr("two.txt", "2")
+
+    monkeypatch.setattr(archive, "MAX_ARCHIVE_MEMBERS", 1)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        with pytest.raises(ValueError, match="too many members"):
+            archive.safe_extract_zip(zf, target)
+
+    monkeypatch.setattr(archive, "MAX_ARCHIVE_MEMBERS", 100)
+    monkeypatch.setattr(archive, "MAX_ARCHIVE_BYTES", 1)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        with pytest.raises(ValueError, match="size is too large"):
+            archive.safe_extract_zip(zf, target)
 
 
 def test_safe_extract_zip_rejects_paths_outside_target(tmp_path):

@@ -578,14 +578,17 @@ class FileExplorerOps:
         close_btn.clicked.connect(dlg.reject)
 
         def to_mode():
-            return explorer_service.mode_from_permissions(
+            mode = explorer_service.mode_from_permissions(
                 {key: cb.isChecked() for key, cb in cbs.items()}
             )
+            # 原模式含 setuid/setgid/sticky 时保留高位；编辑器只允许改 rwx 三组。
+            prefix = orig[0][:-3] if len(orig[0]) == 4 else ""
+            return prefix + mode
 
         def set_from_mode(m):
             try:
                 for i, col in enumerate(["owner", "group", "other"]):
-                    v = int(m[i])
+                    v = int(m[-3 + i])
                     cbs[(col, "r")].setChecked(bool(v & 4))
                     cbs[(col, "w")].setChecked(bool(v & 2))
                     cbs[(col, "x")].setChecked(bool(v & 1))

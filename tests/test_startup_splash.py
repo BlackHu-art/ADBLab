@@ -27,25 +27,42 @@ from utils.resource_path import resource_path
 
 
 def _original_frame(dpr=1.0, source=None):
-    frame = QImage(round(240 * dpr), round(240 * dpr), QImage.Format.Format_ARGB32_Premultiplied)
+    from gui.widgets.startup_splash import (
+        SPLASH_ICON_SIZE,
+        SPLASH_MARGIN,
+        SPLASH_SIZE,
+    )
+
+    frame = QImage(
+        round(SPLASH_SIZE * dpr), round(SPLASH_SIZE * dpr),
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
     frame.setDevicePixelRatio(dpr)
     frame.fill(Qt.GlobalColor.transparent)
     if source is None:
         source = QImage(resource_path("resources/app-icon.png"))
     source = source.scaled(
-        round(192 * dpr), round(192 * dpr),
+        round(SPLASH_ICON_SIZE * dpr), round(SPLASH_ICON_SIZE * dpr),
         Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
     )
     source.setDevicePixelRatio(dpr)
     painter = QPainter(frame)
-    painter.drawImage(QPoint(24, 24), source)
+    painter.drawImage(QPoint(SPLASH_MARGIN, SPLASH_MARGIN), source)
     painter.end()
     return frame
 
 
 def _pixel(image, x, y):
+    from gui.widgets.startup_splash import (
+        LIQUID_SCALE,
+        SPLASH_MARGIN,
+    )
+
     dpr = image.devicePixelRatio()
-    return image.pixelColor(round((24 + x * .75) * dpr), round((24 + y * .75) * dpr))
+    return image.pixelColor(
+        round((SPLASH_MARGIN + x * LIQUID_SCALE) * dpr),
+        round((SPLASH_MARGIN + y * LIQUID_SCALE) * dpr),
+    )
 
 
 def _wait_until(predicate, timeout=1500):
@@ -90,7 +107,9 @@ def test_liquid_progress_preserves_original_art_and_alpha(splash):
     assert _pixel(frames[1], 70, 200) == _pixel(original, 70, 200)
     assert _pixel(frames[1], 185, 200) != _pixel(original, 185, 200)
     assert frames[2] == original
-    assert splash.size() == QSize(240, 240)
+    from gui.widgets.startup_splash import SPLASH_SIZE
+
+    assert splash.size() == QSize(SPLASH_SIZE, SPLASH_SIZE)
     assert splash.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     assert not splash.testAttribute(Qt.WidgetAttribute.WA_QuitOnClose)
     assert splash.windowFlags() & Qt.WindowType.FramelessWindowHint
@@ -223,6 +242,78 @@ def test_blocking_startup_stages_paint_intermediate_progress_without_extra_wait(
     assert not widget.isVisible()
     window.close()
     startup.deleteLater()
+
+
+def test_paint_timeout_hands_off_without_waiting_for_paint(qt_application):
+    from gui.startup import StartupController
+    from gui.widgets.startup_splash import StartupSplash
+
+    class Window(QWidget):
+        startup_aborted = Signal()
+
+        def abort_startup(self):
+            self.hide()
+            self.startup_aborted.emit()
+
+    splash = StartupSplash()
+    splash.show()
+    window = Window()
+    window.resize(240, 160)
+    window.show()
+    qt_application.processEvents()
+    startup = StartupController(splash)
+    ready = []
+    try:
+        startup.set_window(window)
+        startup.ready.connect(lambda value: ready.append(value))
+        startup._waiting_for_paint = True
+        startup._on_paint_timeout()
+
+        assert ready == []
+        QTest.qWait(120)
+        assert ready == [window]
+        assert not splash.isVisible()
+    finally:
+        startup.deleteLater()
+        window.close()
+        splash.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_handoff_holds_completed_frame_before_finishing(qt_application):
+    from gui.startup import StartupController
+    from gui.widgets.startup_splash import StartupSplash
+
+    class Window(QWidget):
+        startup_aborted = Signal()
+
+        def abort_startup(self):
+            self.hide()
+            self.startup_aborted.emit()
+
+    splash = StartupSplash()
+    splash.show()
+    window = Window()
+    window.resize(240, 160)
+    window.show()
+    qt_application.processEvents()
+    startup = StartupController(splash)
+    ready = []
+    try:
+        startup.set_window(window)
+        startup.ready.connect(lambda value: ready.append(value))
+        startup._handoff()
+
+        assert splash.isVisible()
+        assert ready == []
+        QTest.qWait(120)
+        assert not splash.isVisible()
+        assert ready == [window]
+    finally:
+        startup.deleteLater()
+        window.close()
+        splash.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.mark.parametrize("termination", ["finish", "close"])
@@ -372,8 +463,10 @@ widget.finish()
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["logical"] == [240, 240]
-    assert payload["physical"] == [round(240 * float(scale))] * 2
+    from gui.widgets.startup_splash import SPLASH_SIZE
+
+    assert payload["logical"] == [SPLASH_SIZE, SPLASH_SIZE]
+    assert payload["physical"] == [round(SPLASH_SIZE * float(scale))] * 2
     assert payload["dpr"] == float(scale)
     assert payload["alpha"] == 0
     assert payload["forbidden"] == []

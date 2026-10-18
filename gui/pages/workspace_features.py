@@ -1283,7 +1283,11 @@ class WorkspaceFeatureHost(QWidget):
             and definition.defer_payload_while_disposing
             and payload is not None
         ):
-            self._deferred_payloads.setdefault(key, []).append(payload)
+            # 关闭慢时结果仍按到达顺序保留，但必须有界，避免无界累积。
+            pending = self._deferred_payloads.setdefault(key, [])
+            pending.append(payload)
+            if len(pending) > 50:
+                del pending[:-50]
 
     def _on_session_removed(self, key: FeatureSessionKey, page: QWidget) -> None:
         if self.stack.indexOf(page) >= 0:

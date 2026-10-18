@@ -1,10 +1,11 @@
 """Logcat 大批绘制让出事件循环，并保持过滤、保留及阅读语义。"""
 
+import threading
 from collections import deque
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThread, QTimer
 from PySide6.QtGui import QTextCursor
 
 from gui.dialogs.live_logcat import LiveLogcatPage, LogcatBatch, LogcatWorker
@@ -152,6 +153,41 @@ def test_export_during_partial_render_saves_complete_filtered_snapshot(
         lambda: page._stream_controller._export_worker is None and destination.exists(),
     )
     assert destination.read_text(encoding="utf-8").splitlines() == errors
+
+
+def test_close_during_export_still_stops_logcat_cleanup(page, qt_application):
+    class BlockingExport(QThread):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def run(self):
+            self.started.set()
+            self.release.wait(2)
+
+    worker = BlockingExport()
+    page._stream_controller._export_worker = worker
+    page._stream_controller._export_in_progress = True
+    worker.finished.connect(page._stream_controller._on_export_finished)
+    try:
+        worker.start()
+        assert worker.started.wait(1)
+        page.close()
+        qt_application.processEvents()
+        assert page.isHidden()
+        assert not page._close_ready
+
+        worker.release.set()
+        assert worker.wait(2000)
+        wait_until(qt_application, lambda: page._close_ready)
+    finally:
+        try:
+            worker.release.set()
+            worker.wait(2000)
+        except RuntimeError:
+            # finished 槽已 deleteLater，C++ 包装对象可能已释放。
+            pass
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

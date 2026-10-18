@@ -80,8 +80,11 @@ def _device_name(device_id: str, metadata: Mapping[str, object]) -> str:
 
 
 def _overview_device_name(device_id: str, metadata: Mapping[str, object]) -> str:
-    """概览独立展示品牌，标题仍沿用有效别名和安全回退，不改任务归属名称。"""
-    return _device_name(device_id, {**metadata, "Brand": ""})
+    """概览独立展示品牌，标题优先用型号，避免把品牌重复拼进卡片标题。"""
+    model = _metadata_text(metadata.get("Model"))
+    if model:
+        return model
+    return _device_name(device_id, metadata)
 
 
 class _DeviceIdentifier(CaptionLabel):

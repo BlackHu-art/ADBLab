@@ -384,8 +384,10 @@ class AppSettings:
                     instance._seen_version = CURRENT_SCHEMA_VERSION
                     instance._future_extra = {}
                     instance._deferred_save_pending = False
-                    cls._instance = instance
+                    # 先完成磁盘加载再发布单例；否则并发首次调用可能读到默认值，
+                    # 或先把 update() 写入内存又被随后的 _load() 覆盖。
                     instance._load(defer_migration_save=defer_migration_save)
+                    cls._instance = instance
         return cls._instance
 
     def __init__(self, *, defer_migration_save: bool = False) -> None:

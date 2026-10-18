@@ -23,6 +23,13 @@ from PySide6.QtWidgets import QWidget
 
 from utils.resource_path import resource_path
 
+# 启动窗保持原图 10% 留白：180px 窗口、18px 留白、144px 图标，液体遮罩
+# 仍使用原图的 256 单位坐标，绘制时统一缩放到 144。
+SPLASH_SIZE = 180
+SPLASH_MARGIN = 18
+SPLASH_ICON_SIZE = SPLASH_SIZE - SPLASH_MARGIN * 2
+LIQUID_SCALE = SPLASH_ICON_SIZE / 256
+
 
 class StartupSplash(QWidget):
     """启动协调器拥有本窗口；首帧通知排队投递，完成与用户取消互不混淆。"""
@@ -43,7 +50,7 @@ class StartupSplash(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(240, 240)
+        self.setFixedSize(SPLASH_SIZE, SPLASH_SIZE)
         self._source = QImage(resource_path("resources/app-icon.png"))
         if self._source.isNull():
             # QImage 默认读取 ICO 的首档 16px；显式请求大档，避免回退后图标模糊。
@@ -169,7 +176,7 @@ class StartupSplash(QWidget):
         dpr = self.devicePixelRatioF()
         if dpr != self._cached_dpr:
             image = self._source.scaled(
-                round(192 * dpr), round(192 * dpr),
+                round(SPLASH_ICON_SIZE * dpr), round(SPLASH_ICON_SIZE * dpr),
                 Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
             )
             image.setDevicePixelRatio(dpr)
@@ -178,28 +185,50 @@ class StartupSplash(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.drawPixmap(QPointF(24, 24), self._icon)
+        painter.drawPixmap(QPointF(SPLASH_MARGIN, SPLASH_MARGIN), self._icon)
         if self._progress < 100:
-            painter.translate(24, 24)
-            painter.scale(.75, .75)
+            painter.translate(SPLASH_MARGIN, SPLASH_MARGIN)
+            painter.scale(LIQUID_SCALE, LIQUID_SCALE)
             painter.setClipPath(self._liquid)
             # 保留原像素 alpha，透明边缘不能因反复叠色变成不透明描边。
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
             boundary = 31 + 194 * self._progress / 100
-            if self._progress <= 0:
-                painter.fillRect(0, 166, 256, 66, QColor(6, 60, 146, 158))
-            else:
-                edge = QLinearGradient(boundary - .5, 0, boundary + 1, 0)
-                edge.setColorAt(0, QColor(6, 60, 146, 0))
-                edge.setColorAt(1, QColor(6, 60, 146, 158))
-                painter.fillRect(0, 166, 256, 66, edge)
+            wave_phase = self._activity_phase * math.tau
+            liquid_path = QPainterPath()
+            liquid_path.moveTo(boundary, 232)
+            for y in range(232, 165, -4):
+                x = boundary + 2.6 * math.sin((y - 166) / 14.0 + wave_phase)
+                liquid_path.lineTo(x, y)
+            liquid_path.lineTo(256, 166)
+            liquid_path.lineTo(256, 232)
+            liquid_path.closeSubpath()
+            edge = QLinearGradient(boundary - 2, 0, boundary + 2, 0)
+            edge.setColorAt(0, QColor(6, 60, 146, 0))
+            edge.setColorAt(1, QColor(6, 60, 146, 158))
+            painter.fillPath(liquid_path, edge)
+
+            # 液面边缘加一条低对比高光，弱化纯色块边界；仍使用 SourceAtop
+            # 保留原图 alpha，透明轮廓不会因叠加变厚。
+            paint_edge = QPainterPath()
+            paint_edge.moveTo(boundary, 232)
+            for y in range(232, 165, -4):
+                x = boundary + 2.6 * math.sin((y - 166) / 14.0 + wave_phase)
+                paint_edge.lineTo(x, y)
+            painter.setPen(QColor(105, 175, 245, 72))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(paint_edge)
+            painter.setBrush(QColor(6, 60, 146, 158))
+
             if self._animation.isActive() and self._target < 100:
                 center = 128 + 92 * math.sin(self._activity_phase * math.tau)
                 activity = QLinearGradient(center - 32, 0, center + 32, 0)
                 activity.setColorAt(0, QColor(255, 255, 255, 0))
                 activity.setColorAt(.5, QColor(255, 255, 255, 46))
                 activity.setColorAt(1, QColor(255, 255, 255, 0))
+                painter.save()
+                painter.setClipPath(liquid_path, Qt.ClipOperation.IntersectClip)
                 painter.fillRect(0, 166, 256, 66, activity)
+                painter.restore()
         painter.end()
         if self.isVisible() and not self._closed and not self._first_frame_pending:
             self._first_frame_pending = True
