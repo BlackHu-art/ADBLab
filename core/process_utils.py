@@ -47,7 +47,8 @@ def process_executable(pid: int) -> str:
     """返回进程可执行文件绝对路径；进程不存在或不可读时返回空字符串。"""
 
     try:
-        return psutil.Process(pid).exe() or ""
+        executable = psutil.Process(pid).exe()
+        return executable if isinstance(executable, str) else ""
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
         return ""
 

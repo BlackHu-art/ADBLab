@@ -2456,7 +2456,7 @@ class MainFrame(FluentWindow):
             return
         for widget in (page, *page.findChildren(QWidget)):
             refresh_fluent_widget_style(widget)
-        page._accent_applied_revision = revision
+        setattr(page, "_accent_applied_revision", revision)
 
     def _on_accent_color_changed(self, _color: str) -> None:
         """强调色变化后刷新主窗口及当前可见页面，隐藏页延迟到显示时补刷。"""
@@ -2469,7 +2469,7 @@ class MainFrame(FluentWindow):
                 continue
             for widget in (page, *page.findChildren(QWidget)):
                 refresh_fluent_widget_style(widget)
-            page._accent_applied_revision = self._accent_revision
+            setattr(page, "_accent_applied_revision", self._accent_revision)
         self.left_panel._on_theme_changed(BaseStyles.current_theme())
         for name in (
             "_home_page",

@@ -606,7 +606,10 @@ class AppManagerPage(QWidget):
         # 立即路径必须经过页面 _filter，保留搜索按钮/清空等页面级契约；
         # 连续追加输入由视图控制器的单发计时器合并到尾沿。
         views = getattr(self, "_views_controller", None) or AppManagerViews(self)
-        text = self.search_input.text()
+        search_input = getattr(self, "search_input", None)
+        if search_input is None:
+            return
+        text = search_input.text()
         if not views._filter_timer.isActive() or not text.startswith(views._last_filter_text):
             views._filter_timer.stop()
             self._filter()

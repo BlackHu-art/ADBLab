@@ -37,8 +37,9 @@ class ScrcpyEncoderScope(NativeCommandScope):
         for candidate in psutil.process_iter(["exe"]):
             if time.monotonic() >= deadline:
                 raise OSError("编码器查询的资源归属确认超时。")
-            executable = candidate.info["exe"]
-            if executable is None or _executable_key(executable) != self._adb:
+            info = getattr(candidate, "info", {})
+            executable = info.get("exe") if isinstance(info, dict) else None
+            if not isinstance(executable, str) or _executable_key(executable) != self._adb:
                 continue
             try:
                 if candidate.environ().get(ENCODER_SCOPE_ENV) != self.token:

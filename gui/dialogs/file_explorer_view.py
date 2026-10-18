@@ -372,7 +372,7 @@ class FileExplorerView:
     def _show_text_viewer(
         self,
         name: str,
-        content: bytes | str,
+        content: bytes | str | explorer_service.TextPreview,
         error: bool,
         full_path: str,
         *,
@@ -385,7 +385,7 @@ class FileExplorerView:
         if error:
             self._frame._show_preview_error(name, str(content))
             return
-        if hasattr(content, "text") and hasattr(content, "editable"):
+        if isinstance(content, explorer_service.TextPreview):
             source = content
         else:
             raw = content.encode("utf-8") if isinstance(content, str) else content

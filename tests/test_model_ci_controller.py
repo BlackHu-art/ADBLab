@@ -655,6 +655,11 @@ def test_controller_shutdown_stops_model_processes_and_executor():
     controller.testing_model = Mock()
     controller.advanced_model = Mock()
     controller.executor = Mock()
+    # 未绑定方法调用 Mock 实例时，未显式设置的同名属性会被 Mock 吞掉；
+    # 显式绑定真实静态方法，确保 shutdown 真正执行待测动作表。
+    controller._attempt_actions_preserving_first = (
+        _ADBControllerBase._attempt_actions_preserving_first
+    )
 
     with patch("controllers._base.ProcessRunner.stop_all_tracked") as stop_all_tracked:
         _ADBControllerBase.shutdown(controller)

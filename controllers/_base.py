@@ -3,6 +3,7 @@
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from adblab.application.action_results import (
@@ -157,7 +158,9 @@ class _ADBControllerBase:
         )
 
     @staticmethod
-    def _attempt_actions_preserving_first(*actions) -> None:
+    def _attempt_actions_preserving_first(
+        *actions: tuple[str, Callable[[], object]],
+    ) -> None:
         """依次尝试所有动作，并在最后传播第一个异常。"""
 
         first_error = None
@@ -568,7 +571,9 @@ class _ADBControllerBase:
         跳过其他模型，最后统一抛出；返回不代表所有外部资源已确认退出。
         """
         self._shutting_down = True
-        actions = [("action results close", self.action_results.close)]
+        actions: list[tuple[str, Callable[[], object]]] = [
+            ("action results close", self.action_results.close),
+        ]
         for model in (
             self.device_model,
             self.app_model,

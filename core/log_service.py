@@ -37,13 +37,22 @@ class LogService(QObject):
     _stop_requested = Signal()
     _shutdown_requested = Signal()
     _instance: Optional["LogService"] = None
+    _initialized: bool
+    _buffer: list[tuple[str, str, str]]
+    _buffer_lock: QMutex
+    _max_buffer: int
+    _dropped_count: int
+    _pending_dropped_count: int
+    _state: str
+    _timer: QTimer
+    diagnostics: DiagnosticJournal
     _lock = QMutex()
     _console_lock = threading.Lock()
     _STATE_ACCEPTING = "accepting"
     _STATE_STOPPING = "stopping"
     _STATE_STOPPED = "stopped"
 
-    def __new__(cls):
+    def __new__(cls) -> "LogService":
         cls._lock.lock()
         try:
             if cls._instance is None:
@@ -59,6 +68,7 @@ class LogService(QObject):
                 instance._state = cls._STATE_ACCEPTING
                 instance.diagnostics = DiagnosticJournal()
                 cls._instance = instance
+            assert cls._instance is not None
             return cls._instance
         finally:
             cls._lock.unlock()
