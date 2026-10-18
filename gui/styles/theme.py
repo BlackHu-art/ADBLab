@@ -31,6 +31,8 @@ THEMES = {
     "Light": {
         "WINDOW_BG": "#F0F4F9",
         "PANEL_BG": "#FBFBFB",
+        # 原生 FluentWindow 内容层在浅色窗口底色上的实际颜色。
+        "CONTENT_BG": "#F7F9FC",
         "INPUT_BG": "#FFFFFF",
         "INPUT_BG_HOVER": "#F7F7F7",
         "BUTTON_BG": "#FFFFFF",
@@ -68,6 +70,8 @@ THEMES = {
     "Dark": {
         "WINDOW_BG": "#202020",
         "PANEL_BG": "#2B2B2B",
+        # 与浅色内容层对称的深色内容层；云母开启时再叠加白色低透明层。
+        "CONTENT_BG": "#272727",
         "INPUT_BG": "#323232",
         "INPUT_BG_HOVER": "#383838",
         "BUTTON_BG": "#333333",

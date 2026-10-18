@@ -77,9 +77,22 @@ def test_action_card_font_change_preserves_identity_focus_and_activation(
     assert card.hasFocus()
     assert view.findChildren(type(card)) == [card]
     focus_pixel = card.grab().toImage().pixelColor(3, card.height() // 2)
-    assert focus_pixel.name().lower() == BaseStyles.color("BORDER_FOCUS").lower()
+    assert focus_pixel.name().lower() != BaseStyles.color("BORDER_FOCUS").lower()
     QTest.keyClick(card, Qt.Key.Key_Return)
     callback.assert_called_once_with()
+
+
+def test_action_card_mouse_focus_does_not_draw_keyboard_outline(qt_application):
+    view = ActionCardView("常用工具")
+    card = view.add_card(FluentIcon.FOLDER, "文件管理", "浏览设备文件并传输内容", Mock())
+    view.resize(420, 500)
+    view.show()
+    card.setFocus(Qt.FocusReason.MouseFocusReason)
+    qt_application.processEvents()
+
+    assert card.hasFocus()
+    pixel = card.grab().toImage().pixelColor(3, card.height() // 2)
+    assert pixel.name().lower() != BaseStyles.color("BORDER_FOCUS").lower()
 
 
 @pytest.mark.parametrize("scroll", [False, True])

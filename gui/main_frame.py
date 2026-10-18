@@ -2515,16 +2515,30 @@ class MainFrame(FluentWindow):
             home.set_top_left_radius(corner_radius)
         light = BaseStyles.color_for("Light", "WINDOW_BG")
         dark = BaseStyles.color_for("Dark", "WINDOW_BG")
+        content_light = BaseStyles.color_for("Light", "CONTENT_BG")
+        content_dark = BaseStyles.color_for("Dark", "CONTENT_BG")
         content_surface = getattr(self, "_content_surface", None)
         if content_surface is not None:
-            light_style = (
-                "background-color: rgba(255, 255, 255, 0.5); "
-                "border: 1px solid rgba(0, 0, 0, 0.068);"
-            )
-            dark_style = (
-                "background-color: rgba(255, 255, 255, 0.0314); "
-                "border: 1px solid rgba(0, 0, 0, 0.18);"
-            )
+            # 云母模式让 DWM 壁纸参与合成；实色模式使用与原生命中内容层一致
+            # 的不透明 token，避免浅色主题在关闭云母时仍透出一层灰色。
+            if mica:
+                light_style = (
+                    "background-color: rgba(255, 255, 255, 0.5); "
+                    "border: 1px solid rgba(0, 0, 0, 0.068);"
+                )
+                dark_style = (
+                    "background-color: rgba(255, 255, 255, 0.0314); "
+                    "border: 1px solid rgba(0, 0, 0, 0.18);"
+                )
+            else:
+                light_style = (
+                    f"background-color: {content_light}; "
+                    "border: 1px solid rgba(0, 0, 0, 0.068);"
+                )
+                dark_style = (
+                    f"background-color: {content_dark}; "
+                    "border: 1px solid rgba(0, 0, 0, 0.18);"
+                )
             setCustomStyleSheet(
                 content_surface,
                 f"QWidget#workspaceSurface {{ {light_style} border-right: none; "
@@ -2567,6 +2581,9 @@ class MainFrame(FluentWindow):
         if radius <= 0:
             surface.clearMask()
             return
+        # QRegion 是二值裁剪，QWidget 没有路径级 clip；移除 mask 会让滚动
+        # 内容直接盖住左上圆角。圆角背景/边框仍由 QSS 抗锯齿绘制，mask 只
+        # 负责裁掉圆角外的子树；这里的 1px 台阶是当前视口裁剪的硬约束。
         corner = QRegion(QRect(0, 0, radius, radius))
         circle = QRegion(QRect(0, 0, radius * 2, radius * 2), QRegion.RegionType.Ellipse)
         surface.setMask(QRegion(surface.rect()).subtracted(corner.subtracted(circle)))

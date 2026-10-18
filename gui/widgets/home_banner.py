@@ -73,7 +73,12 @@ class HomeBanner(QWidget):
         dark = BaseStyles.resolved_theme() == "Dark"
         wash = QLinearGradient(0, 0, 0, height)
         # 沿用 Gallery 的透明渐变底色，原图自身的颜色不随强调色重绘。
-        top_color = QColor(0, 0, 0) if dark else QColor(207, 216, 228)
+        # 与主窗口共享内容表面 token；固定偏蓝灰的 0xCFD8E4 会让白色主题
+        # 的横幅顶部和半透明卡片整体发灰。
+        top_color = (
+            QColor(0, 0, 0) if dark
+            else QColor(BaseStyles.color_for("Light", "CONTENT_BG"))
+        )
         clear_color = QColor(top_color)
         clear_color.setAlpha(0)
         wash.setColorAt(0, top_color)

@@ -359,6 +359,10 @@ class AppManagerPage(QWidget):
     def prepare_for_workspace(self) -> None:
         """嵌入工作区时隐藏重复标题，将设备状态保留在本页工具栏。"""
         self.set_device_selected(False)
+        # 嵌入 Workspace 后页面必须透出共享内容层；旧顶层窗口的实色底板会在
+        # 白色主题 + 云母下形成一块偏灰的独立面板。
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("QWidget#appManagerPage { background: transparent; }")
         self._form_controller.prepare_for_workspace()
 
     def workspace_content_minimum_size(self) -> QSize:

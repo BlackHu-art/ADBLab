@@ -15,7 +15,6 @@ from PySide6.QtGui import (
     QFontDatabase,
     QPainter,
     QPalette,
-    QPen,
     QRegion,
 )
 from PySide6.QtWidgets import (
@@ -222,24 +221,6 @@ class ActionCard(CardWidget):
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 92)
-
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if self.hasFocus():
-            # CardWidget 自行绘制边框，QSS 的 :focus 不会覆盖它；显式呈现键盘位置。
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor(BaseStyles.color("BORDER_FOCUS")), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(self.rect().adjusted(3, 3, -3, -3), 4, 4)
-
-    def focusInEvent(self, event) -> None:
-        super().focusInEvent(event)
-        self.update()
-
-    def focusOutEvent(self, event) -> None:
-        super().focusOutEvent(event)
-        self.update()
 
     def mouseReleaseEvent(self, event) -> None:
         super().mouseReleaseEvent(event)
@@ -512,6 +493,7 @@ class WorkspaceSectionPage(QWidget):
         body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         body.setFrameShape(SmoothScrollArea.Shape.NoFrame)
         body.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        body.viewport().setAutoFillBackground(False)
 
         wrapper = QWidget(body)
         wrapper.setObjectName(f"{route_key}View")
@@ -855,6 +837,8 @@ class HomePage(ScrollArea):
             viewport.clearMask()
             return
         # 只裁掉左上角圆弧之外的区域，其他三角及贴边滚动条仍占用完整视口。
+        # QWidget 只能二值裁剪；不能为抗锯齿直接去掉 mask，否则滚动内容会在
+        # 左上角覆盖云母背景。
         corner = QRegion(QRect(0, 0, radius, radius))
         circle = QRegion(QRect(0, 0, radius * 2, radius * 2), QRegion.RegionType.Ellipse)
         viewport.setMask(QRegion(viewport.rect()).subtracted(corner.subtracted(circle)))
