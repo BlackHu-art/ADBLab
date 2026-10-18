@@ -5231,6 +5231,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>測試記錄或方案未能保存，請檢查使用者資料目錄的寫入權限及記錄檔案；原檔案已保留。</translation>
         </message>
         <message>
+            <source>测试记录或方案读取失败，请检查用户数据目录和记录文件；原文件未被修改。</source>
+            <translation>測試記錄或方案讀取失敗，請檢查使用者資料目錄及記錄檔案；原檔案未被修改。</translation>
+        </message>
+        <message>
             <source>种子值</source>
             <translation>種子值</translation>
         </message>

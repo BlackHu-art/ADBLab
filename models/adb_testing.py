@@ -430,6 +430,11 @@ class ADBTesting(ADBModelCore):
         callback=None,
         batch_id: str = "",
     ) -> dict:
+        """在已登记批次内运行 Monkey，独占本批次的 logcat 读取与 Monkey 进程。
+
+        用户停止、批次替换或模型关闭时停止本机进程并等待 lease 收口；终态先写入归档快照，
+        失败或取消仍保留已生成的 monkey/logcat 日志文件。
+        """
         def log(msg):
             if not callback:
                 return
@@ -786,6 +791,11 @@ class ADBTesting(ADBModelCore):
 
     @async_command
     def kill_monkey_async(self, device_ip: str, index: int, batch_id: str = "") -> dict:
+        """幂等停止当前设备的 Monkey 批次：先登记取消，再停止远端 lease 与本机进程。
+
+        批次不存在或无在途进程时返回 already_stopped；停止未确认时 success=False 并保留
+        资源，交给关闭阶段的清理继续处理。
+        """
         try:
             with self._process_lifecycle_lock:
                 with self._abort_condition:
@@ -1042,9 +1052,18 @@ class ADBTesting(ADBModelCore):
     def pull_anr_files_async(
         self, device_ip: str, sanitized_name: str, save_dir: str, index: int
     ) -> dict:
-        os.makedirs(save_dir, exist_ok=True)
-        # 调用者提供展示前缀；目录身份由原子创建决定，不复用历史拉取结果。
-        device_anr_dir = tempfile.mkdtemp(prefix=f"{sanitized_name}_", dir=save_dir)
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            # 调用者提供展示前缀；目录身份由原子创建决定，不复用历史拉取结果。
+            device_anr_dir = tempfile.mkdtemp(prefix=f"{sanitized_name}_", dir=save_dir)
+        except OSError:
+            # 异步边界必须保留 message；控制器按它发布失败原因，不能落到通用错误字典。
+            return {
+                "device_ip": device_ip,
+                "success": False,
+                "index": index,
+                "message": "Failed to prepare the ANR output directory.",
+            }
         r = self._run(
             ["adb", "-s", device_ip, "pull", "/data/anr", device_anr_dir],
             timeout=30,

@@ -144,6 +144,11 @@ class ScrcpyService:
         self, exe: str, *, deadline: float | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> str:
+        """返回并缓存该可执行文件的 scrcpy 版本（进程内）。
+
+        取消/超时不写缓存；探测失败或版本格式不匹配统一抛 ScrcpyToolError，调用方不得
+        静默改用另一份工具。
+        """
         cached = self._version_cache.get(exe)
         if cached:
             return cached
@@ -166,6 +171,10 @@ class ScrcpyService:
         self, adb: str, device: str, *, deadline: float | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> str:
+        """尽力查询设备自然分辨率供尺寸提示；失败或格式未知返回空串。
+
+        取消与超时仍向上传播；空串只表示无法确认尺寸，不能当作设备已连接。
+        """
         try:
             result = self.run_command(
                 [adb, "-s", device, "shell", "wm size"],

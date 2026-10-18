@@ -555,7 +555,9 @@ class RemotePanelForm(QObject):
         frame._mirror_device_label.setParent(summary)
         frame._mirror_connection_label.setParent(summary)
         frame.btn_start = TransparentPushButton(get_fluent_icon("monitor-play.svg"), tr("选择设备"))
+        frame.btn_start.setProperty("iconName", "monitor-play.svg")
         frame.btn_stop = TransparentPushButton(get_fluent_icon("stop-circle.svg"), tr("停止全部"))
+        frame.btn_stop.setProperty("iconName", "stop-circle.svg")
         frame.btn_stop.setEnabled(False)
         frame._mirror_hint = apply_label_role(
             RemoteSessionHint(tr("镜像将在独立窗口打开"), tuple(tr(text) for text in (
@@ -593,6 +595,9 @@ class RemotePanelForm(QObject):
         frame.btn_mirror_diagnostics = TransparentPushButton(
             get_fluent_icon("info.svg"), tr("查看原因"),
         )
+        frame.btn_mirror_diagnostics.setProperty("iconName", "info.svg")
+        frame.btn_mirror_diagnostics.setToolTip(tr("查看原因"))
+        frame.btn_mirror_diagnostics.setAccessibleName(tr("查看原因"))
         frame.btn_mirror_diagnostics.clicked.connect(self._toggle_mirror_diagnostics)
         frame.btn_mirror_diagnostics.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed,

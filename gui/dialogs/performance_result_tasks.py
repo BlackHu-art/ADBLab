@@ -74,6 +74,10 @@ class PerformanceResultLoader(QObject):
 
     def submit(self, query, *, active=None, exit_code=None, had_config=True, cancelled_run=False,
                present_result=True):
+        """接管一次结果发现：首个 worker 立即启动，其余排队。
+
+        代次在提交时冻结；取消只跳过图表解析，既有运行的结果归档仍须交付。
+        """
         worker = PerformanceResultWorker(
             query, self.generation, active, exit_code, had_config, cancelled_run, self,
             present_result=present_result,

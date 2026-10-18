@@ -514,3 +514,25 @@ def test_app_manager_large_font_selection_keeps_rows_at_fit_boundary(
         for control in page._top_controls
     } == {0}
     assert submitted_workers == []
+
+
+@pytest.mark.ui
+def test_file_properties_use_root_wrapper(qt_application):
+    from types import SimpleNamespace
+
+    page = FileExplorerPage.__new__(FileExplorerPage)
+    page.current_path = "/sdcard"
+    page._can_operate = lambda: True
+    page._list_controller = SimpleNamespace(populating=False)
+    page._dpath = lambda *parts: "/".join(parts)
+    page._root = Mock(side_effect=lambda command: f"ROOT({command})")
+    worker = SimpleNamespace(start=Mock(), result_ready=Mock())
+    page._run_adb = Mock(return_value=worker)
+    page._connect_worker_ui = Mock()
+
+    page._show_props("note.txt", False)
+
+    command = page._run_adb.call_args.args[1]
+    assert command.startswith("ROOT(")
+    assert "note.txt" in command
+    worker.start.assert_called_once()

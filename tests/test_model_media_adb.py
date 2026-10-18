@@ -1965,3 +1965,20 @@ def test_recording_owned_pool_shutdown_waits_for_running_and_queued_tasks():
             if waiter.ident is not None:
                 waiter.join(2)
             assert model._record_pool.waitForDone(2000)
+
+
+def test_logcat_write_failure_keeps_device_identity(monkeypatch):
+    model = ADBAdvanced.__new__(ADBAdvanced)
+    model._run_readonly = lambda *_args, **_kwargs: {"success": True, "output": "line"}
+    monkeypatch.setattr(
+        "models.adb_advanced.atomic_write_text", Mock(side_effect=OSError("disk full")),
+    )
+
+    result = ADBAdvanced.logcat_filtered_async.__wrapped__(
+        model, "device-1", "log.txt",
+    )
+
+    assert result["success"] is False
+    assert result["device_ip"] == "device-1"
+    assert result["log_path"] == "log.txt"
+    assert "disk full" in result["error"]

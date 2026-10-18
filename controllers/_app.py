@@ -194,22 +194,29 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
     def _process_pull_anr_result(self, result: dict):
         device_ip = result.get("device_ip", "unknown")
         idx = result.get("index", "?")
+        # 提交失败与目录准备失败只带 error；按 message 回退，避免遮蔽真实原因。
+        message = result.get("message") or result.get("error") or "Unknown error"
         if result.get("success"):
             self._emit_operation(
                 "pull_anr",
                 True,
-                f"✅ {idx}. Pulled ANR files from {device_ip}:\n{result['message']}",
+                f"✅ {idx}. Pulled ANR files from {device_ip}:\n{message}",
             )
         else:
             self._emit_operation(
                 "pull_anr",
                 False,
-                f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{result['message']}",
+                f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{message}",
             )
 
     # 设备日志获取与清理
 
     def retrieve_device_logs(self, devices: list):
+        """逐台读取设备 logcat 并原子写入当前保存目录，每台独立收口。
+
+        文件名由产物类型、时间戳、设备短摘要和一次性 nonce 派生；一台失败不撤销其他
+        设备已写出的文件。
+        """
         if not self._require_devices(devices, "retrieve_device_logs"):
             return
         save_dir = self._get_screenshot_dir()

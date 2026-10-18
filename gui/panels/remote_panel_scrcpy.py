@@ -529,6 +529,8 @@ class RemotePanelScrcpy:
             if threads is None:
                 threads = []
                 frame._scrcpy_threads = threads
+            # 只保留仍存活的线程；否则重复启停会无界累积已结束的 Thread 对象。
+            threads[:] = [thread for thread in threads if thread.is_alive()]
             try:
                 thread = threading.Thread(
                     target=target, args=(argument, *extra_arguments), daemon=True,

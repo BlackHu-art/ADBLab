@@ -108,6 +108,10 @@ class ADBNetworkMixin:
 
     @async_command
     def pair_device_async(self, ip_address: str, port: str, pairing_code: str) -> dict:
+        """执行一次 adb pair；端口先按 TCP 端口校验，配对码作为独立 argv 传递。
+
+        固定 15 秒预算且不响应模型关闭；调用方不得把配对码写入日志或用户可见错误详情。
+        """
         if not ip_address.strip():
             return {"success": False, "ip": ip_address, "error": "IP address cannot be empty"}
         try:

@@ -61,6 +61,21 @@ def test_authorization_digest_delimiters_cannot_expose_quoted_credentials(value)
     assert "SYNTHETIC_SECRET" not in redact_diagnostic(value)
 
 
+def test_urls_are_not_mistaken_for_absolute_paths():
+    for text in (
+        "update check failed for https://api.github.com/repos/x/y",
+        "GET http://example.com/a/b?c=d failed",
+    ):
+        assert redact_diagnostic(text) == text
+
+
+def test_windows_and_posix_paths_are_still_redacted():
+    assert redact_diagnostic(r"opened C:\Users\me\file.txt") == "opened <path>"
+    assert redact_diagnostic("see /data/local/tmp/app.log for details") == (
+        "see <path> for details"
+    )
+
+
 @pytest.mark.ui
 def test_slow_shell_log_does_not_expose_credentials(request, monkeypatch):
     from core import exec as execution

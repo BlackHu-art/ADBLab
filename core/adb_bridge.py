@@ -184,7 +184,11 @@ class ADBBridge:
         self, command: str, device_id: str | None = None,
         *, cancelled: Callable[[], bool] | None = None,
     ) -> CommandResult:
-        """执行有界 Shell 命令，按调用方取消信号收口并返回标准化结果。"""
+        """执行设备 Shell 命令并返回标准化结果；command 作为单个远端 shell 文本解释。
+
+        动态值必须由调用方先用 shlex.quote/normalize_* 校验；这里不拆分、不重试，
+        失败只在本地归类。取消只收口本次调用，不撤销已在设备执行的操作。
+        """
         path = self.path
         if not path:
             return CommandResult(

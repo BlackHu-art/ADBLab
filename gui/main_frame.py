@@ -156,6 +156,10 @@ class _ScanThread(QThread):
         self.discovery_token: Callable[[], tuple[int, int] | None] = lambda: None
 
     def stop(self):
+        """只设置协作停止标志，不等待线程退出。
+
+        调用方必须通过 finished/wait 或关闭监督器确认资源结束。
+        """
         self._stop_flag = True
 
     def invalidate_snapshot(self) -> None:
@@ -171,6 +175,8 @@ class _ScanThread(QThread):
         last_token = None
         last_state = "scanning"
         while not self._stop_flag:
+            # 回调抛错时 except 仍需要对比上一轮代次；不能依赖本轮 try 内首次赋值。
+            token = last_token
             runtime = adb_runtime()
             if runtime is not None:
                 # 恢复检查独立于原生扫描成功和普通命令忙碌状态，避免慢客户端拖住恢复。

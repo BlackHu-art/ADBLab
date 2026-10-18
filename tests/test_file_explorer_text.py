@@ -661,6 +661,30 @@ def test_text_save_rejects_unrepresentable_target_without_touching_similar_file(
     assert all(not path.exists() for path in captures)
 
 
+def test_text_save_cleanup_failure_keeps_success_result(monkeypatch):
+    from models import file_explorer_worker as workers
+
+    worker = workers.TextSaveWorker("synthetic-device", "/target.txt", b"edited", False)
+    results = []
+    calls = []
+    worker.result_ready.connect(lambda *args: results.append(args))
+    monkeypatch.setattr(worker, "_resolve_target", lambda: "/target.txt")
+
+    def shell(_command, *, root=False, cleanup=False):
+        calls.append(cleanup)
+        return CommandResult(success=not cleanup)
+
+    monkeypatch.setattr(worker, "_shell", shell)
+    monkeypatch.setattr(
+        workers.CommandRunner, "run", lambda *args, **kwargs: CommandResult(success=True),
+    )
+
+    worker.run()
+
+    assert results == [("OK", False)]
+    assert calls.count(True) == 1
+
+
 @pytest.mark.parametrize("use_root", [False, True])
 def test_text_save_preserves_unicode_and_trailing_spaces_in_link_target(
     tmp_path, text_save_device, use_root,

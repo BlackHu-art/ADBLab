@@ -25,6 +25,9 @@ class ADBController(
 ):
     """通过 Qt 信号与界面通信的完整 ADB 控制器。
 
+    组合根在 GUI 线程创建本对象，并拥有全部 model、信号与 OperationManager；异步结果经
+    command_finished 回到该线程。shutdown 是终态的阻塞操作，只允许关闭阶段的后台任务调用。
+
     实例化方式：
 
         controller = ADBController(log_service)

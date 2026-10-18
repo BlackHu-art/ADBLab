@@ -760,6 +760,40 @@ def test_pairing_tasks_are_registered_before_ui_and_coordinator_shutdown(qt_appl
 
 
 @pytest.mark.ui
+@pytest.mark.ui
+def test_panel_registration_failure_still_schedules_stop_and_reports(qt_application):
+    events = []
+
+    class FailingPanel(FakeLeftPanel):
+        def register_shutdown_tasks(self, supervisor, *, owner_id):
+            events.append("register_panel")
+            raise ValueError("private device details")
+
+        def shutdown(self):
+            events.append("shutdown_panel")
+            self.shutdown_calls += 1
+
+    frame = _frame(lambda: None, left_panel=FailingPanel())
+    settings = Mock()
+    settings._save_timer = None
+    _bind_settings_finalizer(frame, settings)
+
+    frame.closeEvent(CloseEvent())
+    _drive_until(qt_application, lambda: frame._close_ready, frame=frame)
+
+    assert frame._close_ready
+    assert events == ["register_panel", "shutdown_panel"]
+    frame.adb_controller.shutdown.assert_called_once()
+    failures = [
+        item for item in frame._shutdown_results if item.disposition == StopDisposition.FAILED
+    ]
+    assert any(item.task_id.endswith("-panel_registration") for item in failures)
+    assert any(item.error_type == "ValueError" for item in failures)
+    errors = [str(call) for call in frame.log_service.log.call_args_list if call.args[0] == "ERROR"]
+    assert errors
+    assert all("private device details" not in message for message in errors)
+
+
 @pytest.mark.parametrize("stage", ["registration", "dispose"])
 def test_feature_shutdown_failure_is_reported_and_other_hosts_still_stop(stage):
     app = QApplication.instance() or QApplication([])

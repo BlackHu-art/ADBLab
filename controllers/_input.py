@@ -132,6 +132,11 @@ class ADBInputMixin(_ADBControllerBase):
         self._emit_operation("system_service", success, message)
 
     def run_shell_command(self, devices: list, command: str):
+        """把用户文本作为单条设备 shell 命令执行。
+
+        属于显式危险操作；model 走 native 路径且不二次拆分或转义。超时、取消和关闭由
+        CommandRunner 收口，失败不得自动重放。
+        """
         if not self._require_devices(devices, "shell_command"):
             return
         if not command.strip():

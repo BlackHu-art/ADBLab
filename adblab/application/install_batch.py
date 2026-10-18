@@ -91,6 +91,11 @@ class InstallBatchUseCase:
         operation_id: str | None = None,
         owner_token: object | None = None,
     ) -> InstallBatchStart:
+        """登记安装批次并逐个提交执行单元；返回的 terminal 可能已包含同步终态。
+
+        owner_token 必须与后续 cancel_owned/complete 使用同一对象身份；提交回调内的取消
+        延迟到交接完成，调用方不得在 start 返回前自行发布终态。
+        """
         if not isinstance(kind, str) or not kind.strip():
             raise ValueError("kind must be a non-empty string")
         request_items = tuple(requests)
@@ -444,6 +449,11 @@ class InstallBatchUseCase:
         *,
         owner_token: object,
     ) -> tuple[bool, InstallBatchOutcome | None]:
+        """请求取消指定安装批次；owner_token 不匹配时返回 (False, None)。
+
+        仍有单元处于提交交接中时返回 (True, None)，终态延迟到交接完成；否则返回
+        (True, outcome)。取消完成后晚到的单元结果不能再改写终态。
+        """
         with self._lock:
             units = self._owned_units_locked(operation_id, owner_token)
             if units is None:

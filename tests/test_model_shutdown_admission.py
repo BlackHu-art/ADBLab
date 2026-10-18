@@ -305,6 +305,47 @@ def test_controller_reports_cleanup_failure_only_after_waiting_for_every_model(f
     )
 
 
+def test_model_shutdown_failure_does_not_skip_other_cleanup():
+    events = []
+
+    def failing_shutdown():
+        events.append(("cleanup", "testing"))
+        raise RuntimeError("input shell close failed")
+
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.action_results = ActionResults(lambda _result: None)
+    controller.device_model = SimpleNamespace(
+        begin_shutdown=lambda: events.append(("fence", "device")),
+        wait_for_commands=lambda: events.append(("wait", "device")),
+    )
+    controller.app_model = SimpleNamespace(
+        begin_shutdown=lambda: events.append(("fence", "app")),
+        wait_for_commands=lambda: events.append(("wait", "app")),
+    )
+    controller.testing_model = SimpleNamespace(
+        begin_shutdown=lambda: events.append(("fence", "testing")),
+        shutdown=failing_shutdown,
+        wait_for_commands=lambda: events.append(("wait", "testing")),
+    )
+    controller.advanced_model = SimpleNamespace(
+        begin_shutdown=lambda: events.append(("fence", "advanced")),
+        shutdown=lambda: events.append(("cleanup", "advanced")),
+        wait_for_commands=lambda: events.append(("wait", "advanced")),
+    )
+    controller.log_service = Mock()
+    controller.executor = Mock()
+    with patch("controllers._base.ProcessRunner.stop_all_tracked") as stop_all:
+        with pytest.raises(RuntimeError, match="input shell close failed"):
+            controller.shutdown()
+
+    assert stop_all.called
+    controller.executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
+    assert ("cleanup", "advanced") in events
+    assert events[-4:] == [
+        ("wait", "device"), ("wait", "app"), ("wait", "testing"), ("wait", "advanced"),
+    ]
+
+
 def test_controller_shutdown_cancels_screen_record_already_queued_before_fence():
     advanced = ADBAdvanced()
     pool = _QueuedPool()

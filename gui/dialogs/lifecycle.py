@@ -88,6 +88,10 @@ def is_qobject_alive(obj: Any) -> bool:
 
 
 def safe_disconnect(signal: Any, handler: Callable | None = None) -> None:
+    """幂等断开信号；接收者已销毁、从未连接或已断开时静默返回。
+
+    清理路径可能在 Qt 对象析构后重复调用，不得因此抛出异常。
+    """
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -166,6 +170,10 @@ class QThreadGroupShutdownTask:
                 continue
 
     def wait(self, timeout: float) -> bool:
+        """在同一个总预算内依次等待组内线程 join。
+
+        返回 False 表示仍有线程存活，调用方必须保留 residual，不能当作资源已释放。
+        """
         final_end = time.monotonic() + max(0.0, float(timeout))
         for thread in self.threads:
             if self._running(thread):

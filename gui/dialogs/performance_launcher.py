@@ -197,7 +197,7 @@ class PerformancePage(QWidget):
         self.package_edit.textEdited.connect(self._on_package_edited)
         from gui.dialogs.performance_result_tasks import PerformanceResultLoader
         self._result_loader = PerformanceResultLoader(self)
-        # P3 图表视图：注入到双视图栈，运行结束后由 _mark_runner_finished 加载指标。
+        # 图表视图注入双视图栈，运行结束后由 _mark_runner_finished 加载指标。
         from gui.widgets.perf_chart_view import PerfChartView
 
         self.chart_view = PerfChartView(self)
@@ -539,7 +539,15 @@ class PerformancePage(QWidget):
             Qt.ConnectionType.QueuedConnection,
         )
         self._package_worker = worker
-        worker.start()
+        try:
+            worker.start()
+        except RuntimeError:
+            # 线程启动失败不会发 finished；在此撤销引用并恢复按钮，允许用户重试。
+            self._package_worker = None
+            self.package_feedback.setText(tr("未能读取当前应用，请手动输入包名或重试。"))
+            self.package_feedback.show()
+            self._sync_device_actions()
+            worker.deleteLater()
 
     def _on_current_package(self, package_name: str):
         if self._configuration_locked or not self._can_operate_device():
@@ -592,6 +600,10 @@ class PerformancePage(QWidget):
             return False
 
     def build_config(self) -> MobilePerfRunConfig:
+        """从表单冻结一次运行配置；保存路径会追加当前设备标记。
+
+        配置跨模块流入 runner 与参数归档，启动后不得继续依赖可变控件值。
+        """
         return MobilePerfRunConfig(
             device_id=self.device_ip.strip(),
             package=self.package_edit.text().strip(),

@@ -24,6 +24,10 @@ class ADBApp(ADBModelCore):
     """封装应用安装、卸载、清理、重启、列表和查询等生命周期操作。"""
 
     def get_current_package(self, device_ip: str) -> dict:
+        """同步探测设备当前前台包，内部可能执行最长约 15 秒的 ADB 查询。
+
+        只允许在 worker 或 @async_command 入口调用，GUI 线程不得直接调用。
+        """
         return detect_current_package(device_ip, cancelled=self.is_shutting_down)
 
     @async_command
@@ -135,6 +139,10 @@ class ADBApp(ADBModelCore):
         idx: int,
         operation: str = "install",
     ) -> dict:
+        """在单台设备执行一次 adb install -r，由安装批次串行复用。
+
+        固定 120 秒预算且不响应取消；超时只表示结果未知，调用方不得自动重放本次安装。
+        """
         return self._run(
             ["adb", "-s", device_ip, "install", "-r", apk_path],
             timeout=120,

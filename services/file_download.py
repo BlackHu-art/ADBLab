@@ -81,7 +81,11 @@ class SafeFileDownload:
             stream.truncate(size - len(marker))
 
     def download(self, remote: str, destination: str) -> None:
-        """destination 为精确目标路径，既有目录直接合并，不额外附加设备 basename。"""
+        """阻塞下载到精确目标；既有目录合并，同名文件会被原子替换。
+
+        destination 不附加设备 basename；取消或失败不发布半成品。必须在后台线程调用，
+        目录批量下载入口不会再次确认同名覆盖。
+        """
         if not remote.startswith("/") or any(char in remote for char in "\0\r\n"):
             raise ValueError("设备路径无效，请刷新文件列表。")
         # 符号链接后的 .. 由设备文件系统解析；宿主词法归一化会下载另一个对象。

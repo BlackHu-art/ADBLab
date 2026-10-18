@@ -99,7 +99,11 @@ class RemoteControlService:
     def send_keyevent(
         self, device_id: str, key_name: str, *, cancelled: Callable[[], bool] | None = None,
     ):
-        """发送逻辑按键；设置入口显式打开系统设置，避免 ROM 将设置键用于其他动作。"""
+        """发送逻辑按键；设置入口显式打开系统设置，避免 ROM 将设置键用于其他动作。
+
+        SETTINGS 在命令成功但输出含 Intent 错误时返回 False，其余按键返回 ADB 结果对象；
+        未知且非十进制 keycode 返回 None。调用方必须同时兼容布尔与结果对象。
+        """
         if key_name == "SETTINGS":
             # 与系统 Intent 入口保持相同失败语义：am 可能输出错误但返回零退出码。
             result = self._shell("am start -a android.settings.SETTINGS 2>&1", device_id, cancelled)

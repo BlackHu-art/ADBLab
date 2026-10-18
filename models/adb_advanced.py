@@ -483,6 +483,11 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         return self._adb_bridge
 
     def close_input_sessions(self, device_ip: str | None = None):
+        """关闭该模型持有的持久 input shell；device_ip 为空时关闭全部会话。
+
+        ADBBridge 会在全部关闭后重抛首个错误；调用方只能确认已尝试关闭，不能据此把
+        会话记为已退出。
+        """
         if self._adb_bridge is not None:
             self._adb_bridge.close_input_sessions(device_ip)
 
@@ -539,6 +544,10 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         regex: str = "",
         max_lines: str = "",
     ) -> dict:
+        """导出一次有界 logcat 快照；成功后以临时文件加 os.replace 原子写入 log_path。
+
+        过滤、优先级和行数限制作为 adb logcat 的独立参数传递；失败不发布部分文件。
+        """
         cmd = ["adb", "-s", device_ip, "logcat", "-d", "-b", buffer]
         if tag_filter:
             cmd.extend(["-s", tag_filter])
@@ -550,7 +559,16 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             cmd.extend(["-m", max_lines])
         r = self._run_readonly(cmd, timeout=30, device_ip=device_ip)
         if r["success"]:
-            atomic_write_text(log_path, r["output"])
+            try:
+                atomic_write_text(log_path, r["output"])
+            except OSError as exc:
+                # 保留设备与目标身份，界面不能因本地写失败显示空设备。
+                return {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "log_path": log_path,
+                    "error": f"FileError: {exc}",
+                }
             return {
                 "success": True,
                 "device_ip": device_ip,

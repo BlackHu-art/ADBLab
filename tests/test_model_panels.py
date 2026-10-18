@@ -999,3 +999,20 @@ def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
         ] == []
     finally:
         panel.close()
+
+
+def test_partial_monkey_finish_trims_active_devices_before_batch_end():
+    panel = AppPanel.__new__(AppPanel)
+    panel._monkey_closed = False
+    panel._monkey_batch_id = "batch"
+    panel._monkey_pending_devices = {"device-1", "device-2"}
+    panel._monkey_pending_count = 2
+    panel._monkey_active_devices = ("device-1", "device-2")
+    panel._monkey_stopping = False
+    panel._set_monkey_running = Mock()
+
+    panel.on_monkey_target_finished("batch", "device-1")
+
+    assert panel._monkey_active_devices == ("device-2",)
+    assert panel._monkey_pending_count == 1
+    panel._set_monkey_running.assert_not_called()

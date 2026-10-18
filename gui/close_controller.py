@@ -47,30 +47,48 @@ class CloseController:
         self._frame.setWindowTitle(tr("ADBLab - Closing..."))
         self._frame.setEnabled(False)
         self._frame.task_supervisor.begin_application_shutdown()
-        self._frame._register_application_shutdown_tasks()
-        self._frame._prepare_ui_for_shutdown()
+        # 关闭状态已不可逆；注册或 UI 准备失败仍必须提交停止，否则窗口会停在禁用态。
+        try:
+            self._frame._register_application_shutdown_tasks()
+        except Exception as exc:
+            self._record_shutdown_failure("task_registration", exc)
+        try:
+            self._frame._prepare_ui_for_shutdown()
+        except Exception as exc:
+            self._record_shutdown_failure("ui_preparation", exc)
         remaining = max(0.0, self._frame._shutdown_deadline_at - time.monotonic())
         reserve = min(
             max(0.0, float(self._frame.SHUTDOWN_FINALIZER_RESERVE_SECONDS)),
             remaining * 0.25,
         )
-        self._frame.task_supervisor.stop_all_async(deadline=max(0.0, remaining - reserve))
+        try:
+            self._frame.task_supervisor.stop_all_async(deadline=max(0.0, remaining - reserve))
+        except Exception as exc:
+            # 调度失败是编程错误；仍推进收尾，避免窗口永久禁用且无法再次关闭。
+            self._record_shutdown_failure("stop_scheduling", exc)
+            self._frame._on_application_stopped((), ())
 
     def _register_application_shutdown_tasks(self):
         """按扫描、面板、内嵌会话和 Controller 顺序注册关闭资源。"""
         supervisor = self._frame.task_supervisor.supervisor
         pairing = getattr(self._frame, "_adb_pairing", None)
         if pairing is not None:
-            pairing.register_shutdown_tasks(supervisor)
+            self._attempt_shutdown_registration(
+                "pairing_registration",
+                lambda: pairing.register_shutdown_tasks(supervisor),
+            )
         environment = getattr(self._frame, "_adb_environment", None)
         if environment is not None:
-            supervisor.register(
-                f"{self._frame._shutdown_owner_id}-adb-environment",
-                owner_id=self._frame._shutdown_owner_id,
-                kind="adb_environment",
-                request_stop=environment.prepare_shutdown,
-                wait=environment.runtime.wait,
-                is_running=environment.runtime.is_running,
+            self._attempt_shutdown_registration(
+                "adb_environment_registration",
+                lambda: supervisor.register(
+                    f"{self._frame._shutdown_owner_id}-adb-environment",
+                    owner_id=self._frame._shutdown_owner_id,
+                    kind="adb_environment",
+                    request_stop=environment.prepare_shutdown,
+                    wait=environment.runtime.wait,
+                    is_running=environment.runtime.is_running,
+                ),
             )
         thread = self._frame._scan_thread
         if thread is not None:
@@ -82,20 +100,26 @@ class CloseController:
                     return False
 
             if scan_running():
-                supervisor.register(
-                    f"{self._frame._shutdown_owner_id}-scan",
-                    owner_id=self._frame._shutdown_owner_id,
-                    kind="device_scan",
-                    request_stop=thread.stop,
-                    wait=lambda timeout: thread.wait(max(0, int(timeout * 1000))),
-                    is_running=scan_running,
+                self._attempt_shutdown_registration(
+                    "device_scan_registration",
+                    lambda: supervisor.register(
+                        f"{self._frame._shutdown_owner_id}-scan",
+                        owner_id=self._frame._shutdown_owner_id,
+                        kind="device_scan",
+                        request_stop=thread.stop,
+                        wait=lambda timeout: thread.wait(max(0, int(timeout * 1000))),
+                        is_running=scan_running,
+                    ),
                 )
 
         register_panel_tasks = getattr(self._frame.left_panel, "register_shutdown_tasks", None)
         if callable(register_panel_tasks):
-            register_panel_tasks(
-                supervisor,
-                owner_id=self._frame._shutdown_owner_id,
+            self._attempt_shutdown_registration(
+                "panel_registration",
+                lambda: register_panel_tasks(
+                    supervisor,
+                    owner_id=self._frame._shutdown_owner_id,
+                ),
             )
 
         feature_hosts = getattr(self._frame, "_workspace_feature_hosts", {})
@@ -134,24 +158,46 @@ class CloseController:
                 and ProcessRunner.tracked_active_count() == 0
             )
 
-        supervisor.register(
-            f"{self._frame._shutdown_owner_id}-controller",
-            owner_id=self._frame._shutdown_owner_id,
-            kind="controller_shutdown",
-            request_stop=controller_shutdown.request_stop,
-            wait=wait_for_controller,
-            is_running=controller_running,
-            force_stop=ProcessRunner.force_all_tracked,
-            error_type=controller_shutdown.get_error_type,
-        )
+        try:
+            supervisor.register(
+                f"{self._frame._shutdown_owner_id}-controller",
+                owner_id=self._frame._shutdown_owner_id,
+                kind="controller_shutdown",
+                request_stop=controller_shutdown.request_stop,
+                wait=wait_for_controller,
+                is_running=controller_running,
+                force_stop=ProcessRunner.force_all_tracked,
+                error_type=controller_shutdown.get_error_type,
+            )
+        except Exception as exc:
+            # 注册失败仍启动 Controller 停止线程；不能把清理义务留在异常路径上。
+            self._record_shutdown_failure("controller_registration", exc)
+            controller_shutdown.request_stop()
 
-    def _record_feature_shutdown_failure(self, stage: str, index: int, error: Exception) -> None:
-        """保留 GUI 阶段的失败事实，后续资源退出不能将它改报为成功。"""
+    def _attempt_shutdown_registration(self, stage: str, callback) -> None:
+        """隔离单个注册分组的异常；失败只记录，不阻断其他资源的停止编排。"""
+
+        try:
+            callback()
+        except Exception as exc:
+            self._record_shutdown_failure(stage, exc)
+
+    def _record_shutdown_failure(
+        self,
+        stage: str,
+        error: Exception,
+        *,
+        task_suffix: str = "",
+    ) -> None:
+        """保留 GUI 阶段的失败事实，后续资源退出不能将它改报为成功。
+
+        只记录异常类型，不写异常正文，避免设备标识或本机路径进入界面与诊断。
+        """
         failures = getattr(self._frame, "_shutdown_preparation_failures", ())
         self._frame._shutdown_preparation_failures = (
             *failures,
             TaskStopResult(
-                task_id=f"{self._frame._shutdown_owner_id}-feature-{index}-{stage}",
+                task_id=f"{self._frame._shutdown_owner_id}-{task_suffix or stage}",
                 owner_id=self._frame._shutdown_owner_id,
                 disposition=StopDisposition.FAILED,
                 error_type=type(error).__name__,
@@ -159,8 +205,16 @@ class CloseController:
         )
         self._frame.log_service.log(
             "ERROR",
-            f"Feature shutdown {stage} failed: {type(error).__name__}",
+            f"Application shutdown {stage} failed: {type(error).__name__}",
             flush_immediately=True,
+        )
+
+    def _record_feature_shutdown_failure(self, stage: str, index: int, error: Exception) -> None:
+        """保留单个内嵌会话的注册或释放失败，任务标识沿用原功能索引。"""
+        self._record_shutdown_failure(
+            f"feature_{stage}",
+            error,
+            task_suffix=f"feature-{index}-{stage}",
         )
 
     def _prepare_ui_for_shutdown(self):
@@ -174,6 +228,11 @@ class CloseController:
         device_hub = getattr(self._frame, "_device_hub", None)
         if device_hub is not None:
             device_hub.prepare_shutdown()
+        tasks_page = getattr(self._frame, "_tasks_page", None)
+        shutdown_tasks = getattr(tasks_page, "shutdown", None)
+        if callable(shutdown_tasks):
+            # 关闭期间窗口仍可见，hideEvent 不会触发；这里显式停止任务中心轮询。
+            shutdown_tasks()
         settings = getattr(self._frame, "_settings_page", None)
         prepare_settings = getattr(settings, "prepare_shutdown", None)
         if callable(prepare_settings):

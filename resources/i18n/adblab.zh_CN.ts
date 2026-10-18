@@ -5231,6 +5231,10 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>测试记录或方案未能保存，请检查用户数据目录的可写权限和记录文件；原文件已保留。</translation>
         </message>
         <message>
+            <source>测试记录或方案读取失败，请检查用户数据目录和记录文件；原文件未被修改。</source>
+            <translation>测试记录或方案读取失败，请检查用户数据目录和记录文件；原文件未被修改。</translation>
+        </message>
+        <message>
             <source>种子值</source>
             <translation>种子值</translation>
         </message>

@@ -31,7 +31,13 @@ def _redact_with_sorted(text: str, sorted_values: tuple[str, ...]) -> str:
     )
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "<address>", text)
     text = re.sub(r"(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b", "<address>", text)
-    text = re.sub(r"[A-Za-z]:[\\/][^\r\n]*|(?<!\w)/(?:[^\s/]+/)+[^\s]*", "<path>", text)
+    # 盘符与 POSIX 路径都必须带左边界；否则 https:// 中的 "s:/" 会被当成路径，
+    # 把 URL 及其后的诊断正文整段替换掉。URL 的 "//" 由前导字符排除。
+    text = re.sub(
+        r"(?<![\w+.-])[A-Za-z]:[\\/][^\r\n]*|(?<![:\w/])/(?:[^\s/]+/)+[^\s]*",
+        "<path>",
+        text,
+    )
     return text[:2048]
 
 

@@ -1285,6 +1285,10 @@ class AppPanel(BasePanel):
             return
         pending_devices.discard(device)
         self._monkey_pending_count = len(pending_devices)
+        # 已完成设备不再计入运行数量或停止目标；批次未结束时也要逐台收敛。
+        self._monkey_active_devices = tuple(
+            item for item in getattr(self, "_monkey_active_devices", ()) if item != device
+        )
         if pending_devices:
             return
         self._monkey_pending_count = 0

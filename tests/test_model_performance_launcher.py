@@ -664,3 +664,25 @@ def test_performance_page_runner_finished_restores_buttons_once():
         dialog._runner.freeze_result_query.assert_called_once()
     finally:
         dialog.close()
+
+
+def test_performance_package_query_start_failure_is_recoverable(qt_application):
+    page = PerformancePage(device_ip="device-1")
+    try:
+        with patch(
+            "gui.dialogs.performance_launcher.CurrentPackageWorker.start",
+            side_effect=RuntimeError("thread pool exhausted"),
+        ):
+            page.fetch_current_package()
+        assert page._package_worker is None
+        assert page.get_package_btn.isEnabled()
+
+        with patch(
+            "gui.dialogs.performance_launcher.CurrentPackageWorker.start",
+        ) as start:
+            page.fetch_current_package()
+            start.assert_called_once()
+            assert page._package_worker is not None
+            page._on_package_worker_finished(page._package_worker)
+    finally:
+        page.close()

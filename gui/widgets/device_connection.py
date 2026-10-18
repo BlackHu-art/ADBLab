@@ -920,6 +920,10 @@ class DeviceConnectionPanel(QWidget):
         self._update_controls()
 
     def cancel_current(self):
+        """异步取消当前配对/连接并清空二维码与配对码。
+
+        资源收尾由协调器空闲状态完成，UI 不等待线程或进程，不能把返回当作已释放。
+        """
         if (
             not self._expanded or self._shutting_down or self._has_pending()
             or not self.cancel_button.isEnabled()

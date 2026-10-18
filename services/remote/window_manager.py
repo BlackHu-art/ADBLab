@@ -16,7 +16,10 @@ class RemoteWindowManager:
         self.poll_interval_seconds = poll_interval_seconds
 
     def focus(self, title: str, timeout_seconds: float = 2.5) -> bool:
-        """在 Windows 上轮询标题并尝试聚焦，其他平台安全返回 False。"""
+        """同步轮询并聚焦标题完全匹配的外部窗口，最长阻塞 timeout_seconds。
+
+        必须在后台任务调用；非 Windows、标题为空或超时返回 False。
+        """
         if not title or sys.platform != "win32":
             return False
         deadline = time.monotonic() + timeout_seconds

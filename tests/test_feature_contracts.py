@@ -54,6 +54,9 @@ def test_async_disposal_without_signal_retains_closing_barrier(qt_application):
             registry.request_dispose(key)
         assert registry.get(key) is page
         assert registry.is_disposing(key)
+        # 重复请求不能绕过完成信号校验，否则页面会永久停在关闭屏障。
+        with pytest.raises(RuntimeError, match="dispose_ready"):
+            registry.request_dispose(key)
         with pytest.raises(RuntimeError, match="disposing"):
             registry.get_or_create(key, lambda _: QWidget())
         with pytest.raises(RuntimeError, match="disposing"):

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 # ── L1 原始色板（与主题无关的基色，供图表/严重度等跨主题语义使用）─────────
 
 RAW_PALETTE = {
-    # 图表系列色带（QtCharts/P0 起供 MobilePerf 图表与任务中心徽标使用）
+    # 图表系列色带（供 MobilePerf 图表与任务中心徽标共用）
     "CHART_SERIES": [
         "#0078d4",
         "#e07a5f",

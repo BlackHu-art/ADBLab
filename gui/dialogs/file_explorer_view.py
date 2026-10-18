@@ -290,6 +290,9 @@ class FileExplorerView:
                 f"rm -f -- {explorer_service.shell_quote(request.remote_path)}", True,
             ), timeout=10, _cleanup=True, _device_ip=request.identity[0],
         )
+        if worker is None:
+            self._frame._transfers.release_cleanup(request.cleanup_token)
+            return
         result: list = []
         worker.result_ready.connect(
             lambda *values: result.extend(values), Qt.ConnectionType.QueuedConnection,
@@ -301,7 +304,12 @@ class FileExplorerView:
             self._frame._transfers.release_cleanup(request.cleanup_token)
 
         worker.finished.connect(cleaned, Qt.ConnectionType.QueuedConnection)
-        worker.start()
+        try:
+            worker.start()
+        except Exception:
+            # 启动失败不会产生 finished；必须在此归还清理义务，避免关闭屏障永久等待。
+            LogService().log("WARNING", "图片预览远端清理任务启动失败，未确认删除临时文件。")
+            self._frame._transfers.release_cleanup(request.cleanup_token)
 
     def cancel_preview(self) -> None:
         """只请求取消当前预览，资源由终态回调收口，不等待或中止普通传输。"""

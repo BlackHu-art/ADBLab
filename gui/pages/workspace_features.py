@@ -641,6 +641,10 @@ class WorkspaceFeatureHost(QWidget):
             self._sync_device_combo()
 
     def open_route(self, route: WorkspaceRoute) -> bool:
+        """按 section 路由并规范化别名；页面未激活时只记录 queued route。
+
+        一次性 payload 保留到 activate_route 消费，调用方不能据此认为页面已创建。
+        """
         if route.section != self.section_key:
             return False
         route = WorkspaceRoute(
@@ -905,6 +909,10 @@ class WorkspaceFeatureHost(QWidget):
         )
 
     def shutdown(self) -> None:
+        """封闭新路由并逐页请求释放；返回不代表异步资源已退出。
+
+        完成由各页 dispose_ready 与关闭监督器确认，调用方不得提前销毁宿主。
+        """
         self._shutting_down = True
         self._pending_route = None
         self._deferred_payloads.clear()

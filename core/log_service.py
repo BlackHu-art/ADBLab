@@ -23,7 +23,11 @@ class LogLevel:
 
 
 class LogService(QObject):
-    """在线程间缓冲用户日志，并按级别将开发诊断输出到控制台。"""
+    """在线程间缓冲用户日志，并按级别将开发诊断输出到控制台。
+
+    进程内单例；首次构造必须发生在 GUI 线程，QTimer、flush 与诊断写入都绑定该线程
+    的事件循环。后台线程只能调用 log() 与 request_shutdown()，shutdown() 仅限属主线程。
+    """
 
     log_received = Signal(str, str)  # 兼容信号：参数为日志级别、消息。
     logs_received = Signal(list)  # 批次信号：元素为 (时间戳, 级别, 消息) 三元组。
@@ -43,25 +47,34 @@ class LogService(QObject):
         cls._lock.lock()
         try:
             if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
+                instance = super().__new__(cls)
+                # log() 可能在 __init__ 完成前由另一个线程调用；先建立它依赖的缓冲、
+                # 诊断和状态，再发布单例，避免后台线程看到半初始化对象。
+                instance._initialized = False
+                instance._buffer = []
+                instance._buffer_lock = QMutex()
+                instance._max_buffer = 5000
+                instance._dropped_count = 0
+                instance._pending_dropped_count = 0
+                instance._state = cls._STATE_ACCEPTING
+                instance.diagnostics = DiagnosticJournal()
+                cls._instance = instance
             return cls._instance
         finally:
             cls._lock.unlock()
 
     def __init__(self):
         """初始化进程内唯一的日志服务。"""
-        if not getattr(self, "_initialized", False):
+        cls = type(self)
+        cls._lock.lock()
+        try:
+            if getattr(self, "_initialized", False):
+                return
             super().__init__()
-            self._initialized = True
-            self._buffer: list[tuple[str, str, str]] = []
-            self._buffer_lock = QMutex()
-            self._max_buffer = 5000
-            self._dropped_count = 0
-            self._pending_dropped_count = 0
-            self._state = self._STATE_ACCEPTING
-            self.diagnostics = DiagnosticJournal()
             self._setup_logging()
+            self._initialized = True
+        finally:
+            cls._lock.unlock()
 
     def _setup_logging(self) -> None:
         """配置日志缓冲刷新定时器与关闭信号。"""

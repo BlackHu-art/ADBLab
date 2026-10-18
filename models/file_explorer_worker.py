@@ -267,7 +267,7 @@ class TextSaveWorker(ADBWorker):
                     root=root, cleanup=True,
                 )
                 if not result.success:
-                    error = error or "Text save temporary cleanup failed"
+                    # 正文已经发布，清理失败只影响设备端临时目录，不能改写保存结果。
                     LogService().log("WARNING", "文本保存临时文件清理失败，请检查设备连接。")
             if not self._aborted.is_set():
                 self.result_ready.emit(error or "OK", bool(error))

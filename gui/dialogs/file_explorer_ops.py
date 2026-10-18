@@ -193,7 +193,12 @@ class FileExplorerOps:
             worker, worker.result_ready,
             lambda output, failed: self._on_transfer_done(output, True, "") if failed else None,
         )
-        worker.start()
+        try:
+            worker.start()
+        except Exception:
+            # 没有 finished 就收不到 cleaned；启动失败时立即归还中转清理义务。
+            LogService().log("WARNING", "Root 下载清理任务启动失败，未确认删除中转文件。")
+            self._frame._transfers.release_cleanup(token)
 
     def _queue_single_pull(self, name, remote, destination, device, cleanup=None):
         """普通下载与中转下载共用 FIFO，清理回调不依赖界面存活守卫。"""
@@ -595,7 +600,9 @@ class FileExplorerOps:
                 bool(orig[0]) and not applying[0] and self._frame._can_operate()
             )
 
-        w = self._frame._run_adb("shell", explorer_service.stat_mode_command(full))
+        w = self._frame._run_adb(
+            "shell", self._frame._root(explorer_service.stat_mode_command(full)),
+        )
         if w is None:
             return
 

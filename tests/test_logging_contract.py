@@ -42,6 +42,36 @@ def create_log_service() -> Iterator[Callable[[], LogService]]:
         LogService._instance = previous_instance
 
 
+def test_log_from_worker_during_first_init_uses_published_buffers(
+    create_log_service: Callable[[], LogService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors: list[BaseException] = []
+    original = LogService._setup_logging
+
+    def concurrent_setup(self) -> None:
+        ready = threading.Event()
+
+        def worker() -> None:
+            ready.wait()
+            try:
+                self.log(LogLevel.INFO, "初始化期间的后台日志")
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        ready.set()
+        thread.join(2)
+        original(self)
+
+    monkeypatch.setattr(LogService, "_setup_logging", concurrent_setup)
+    service = create_log_service()
+
+    assert not errors
+    assert service._initialized is True
+
+
 def test_debug_only_writes_to_source_stdout(
     create_log_service: Callable[[], LogService],
     monkeypatch: pytest.MonkeyPatch,

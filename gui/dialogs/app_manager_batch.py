@@ -22,6 +22,7 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action, apply_label_role, configure_button, use_smooth_scroll
 from gui.styles.typography import FontRole
+from utils.atomic_text import atomic_write_text
 
 
 class AppManagerBatch:
@@ -412,8 +413,7 @@ class AppManagerBatch:
         )
         if fp:
             try:
-                with open(fp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
+                atomic_write_text(fp, json.dumps(data, indent=4, ensure_ascii=False))
             except (OSError, TypeError, ValueError) as exc:
                 self._frame._report_preset_error("save", exc)
                 return

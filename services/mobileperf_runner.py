@@ -248,6 +248,10 @@ class MobilePerfRunConfig:
         return parser
 
     def write_config(self, directory: str | os.PathLike[str]) -> str:
+        """把本次运行配置写入调用方给定的目录并返回路径。
+
+        文件含设备、包名和本机保存路径，只属于单次运行；目录的创建与清理由调用方负责。
+        """
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, "mobileperf_run.conf")
         parser = self.to_config_parser()
@@ -366,7 +370,11 @@ class MobilePerfRunner:
         on_finished: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> str:
-        """同步准备并启动；取消在准备边界阻止创建进程，已进入创建的进程由调用方收口。"""
+        """同步准备并启动；取消在准备边界阻止创建进程，已进入创建的进程由调用方收口。
+
+        on_log/on_finished 可能由管道 reader 或模式线程调用，异常会被隔离，但回调不得
+        阻塞，也不得直接操作 Qt 控件；启动返回只代表进程已提交，结束由 on_finished 确认。
+        """
         if cancelled is not None and cancelled():
             raise CancelledError
         config = deepcopy(config)

@@ -360,6 +360,11 @@ class OperationManager:
         expected_kind: str | None = None,
         expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
+        """记录一个扇出单元的终态并返回最新快照；操作已结束或身份不符时返回 None。
+
+        同一单元重复上报相同结果幂等返回当前快照；不同结果抛 ConflictingOperationResultError，
+        未知单元抛 ValueError。
+        """
         with self._lock:
             entry = self._matching_entry_locked(
                 operation_id,

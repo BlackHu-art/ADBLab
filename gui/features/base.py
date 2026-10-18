@@ -136,6 +136,7 @@ class FeatureSessionRegistry(QObject):
         *,
         current_is_inactive: bool = False,
     ) -> None:
+        """通知当前页停止瞬态工作并清空当前键；会话和后台资源仍由 registry 保留。"""
         key = self._current_key
         self._current_key = None
         if key is None:
@@ -147,10 +148,18 @@ class FeatureSessionRegistry(QObject):
         self.current_changed.emit(key, None)
 
     def request_dispose(self, key: FeatureSessionKey, reason: str = "user") -> bool:
+        """请求释放会话：同步释放返回 True；异步释放返回 False 并保留关闭屏障。
+
+        异步页必须提供可连接的 dispose_ready，缺少完成信号属于契约错误；返回 False 时
+        会话继续占用键，旧代次不得重激活。
+        """
         page = self._sessions.get(key)
         if page is None:
             return True
         if key in self._disposing:
+            # 重复请求仍须校验完成通知；不能因已处于关闭屏障就绕过契约错误。
+            if key not in self._dispose_callbacks:
+                raise RuntimeError("asynchronous feature disposal requires dispose_ready")
             return False
         callback = optional_callback(page, "request_dispose")
         ready = True if callback is None else bool(callback(reason))
@@ -189,6 +198,10 @@ class FeatureSessionRegistry(QObject):
         owner_id: str,
         task_prefix: str,
     ) -> tuple[str, ...]:
+        """为全部会话注册关闭任务；单页失败不回滚已登记任务，汇总后抛错。
+
+        调用方须继续停止其他会话并保留失败事实。
+        """
         task_ids: list[str] = []
         failures: list[tuple[FeatureSessionKey, str]] = []
         for index, (key, page) in enumerate(tuple(self._sessions.items())):

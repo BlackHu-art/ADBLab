@@ -29,6 +29,8 @@ def _remote():
     panel._log = Mock()
     panel._update_action_states = Mock()
     panel._emit_remote_queue_status = Mock()
+    # 未选择设备时启动按钮是“选择设备”入口；替身必须能接收该信号。
+    panel.device_selection_requested = Mock()
     return panel
 
 
@@ -47,6 +49,7 @@ def test_remote_viewed_device_cannot_accept_commands_without_selection(action):
             with patch("gui.panels.remote_panel.ScrcpyLaunchWorker") as worker:
                 panel._start_scrcpy()
                 worker.assert_not_called()
+                panel.device_selection_requested.emit.assert_called_once()
     panel._remote_executor.submit.assert_not_called()
 
 
@@ -137,7 +140,9 @@ def test_main_window_updates_hidden_remote_admission_on_global_selection_changes
         with patch.object(remote._remote_executor, "submit", side_effect=run_input) as submit:
             window.left_panel._devices_tab.set_selected_devices([])
             remote._send_keyevent("HOME")
-            assert not remote.btn_start.isEnabled()
+            # 取消选择后按钮转为“选择设备”入口，但仍不发送设备命令。
+            assert remote.btn_start.isEnabled()
+            assert remote.btn_start.text() == tr("选择设备")
             submit.assert_not_called()
             remote._remote_control.send_keyevent.assert_not_called()
             window.left_panel._devices_tab.set_selected_devices(["demo-b"])
@@ -177,7 +182,8 @@ def test_remote_deselection_keeps_existing_session_stop_available(qt_application
         page._set_session_state(page._SESSION_RUNNING)
         page.set_device_selected(False)
         assert page.btn_stop.isEnabled()
-        assert not page.btn_start.isEnabled()
+        assert page.btn_start.isEnabled()
+        assert page.btn_start.text() == tr("选择设备")
         assert all(not button.isEnabled() for button in page._remote_control_buttons)
         page._launch_worker = Mock()
         page._launch_worker.isRunning.return_value = True

@@ -5231,6 +5231,10 @@ Android device management, app tools and diagnostics</translation>
             <translation>The test record or preset could not be saved. Check write access to the user data folder and the record file. The original file has been preserved.</translation>
         </message>
         <message>
+            <source>测试记录或方案读取失败，请检查用户数据目录和记录文件；原文件未被修改。</source>
+            <translation>The test record or preset could not be read. Check the user data folder and the record file. The original file has not been modified.</translation>
+        </message>
+        <message>
             <source>种子值</source>
             <translation>Seed value</translation>
         </message>

@@ -1,6 +1,7 @@
 """通过多种 Android 系统输出尽力识别设备当前前台应用。"""
 
 import re
+import shlex
 from collections.abc import Callable
 from time import monotonic
 from typing import Protocol
@@ -67,7 +68,8 @@ def detect_current_package(
             "shell",
             "sh",
             "-c",
-            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+            # adb shell 只按空格拼接 argv；整段管道必须先 quote 才作为 sh -c 的单个参数。
+            shlex.quote("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"),
         ],
         ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "top"],
     ]

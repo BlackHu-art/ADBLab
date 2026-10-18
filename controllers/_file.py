@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
-from datetime import datetime
 
 from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
@@ -77,10 +77,17 @@ class ADBFileMixin(_ADBControllerBase):
         except (OSError, RuntimeError, ValueError) as exc:
             self._emit_operation("file_pull", False, f"Failed to prepare pull directory: {exc}")
             return
-        for ip in devices:
-            filename = (
-                os.path.basename(remote_path) or f"pulled_{datetime.now().strftime('%H%M%S')}"
-            )
+        targets = list(dict.fromkeys(devices))
+        for ip in targets:
+            filename = os.path.basename(remote_path.rstrip("/"))
+            if filename in {"", ".", ".."}:
+                # basename 为 .. 时 os.path.join 会把目标指到保存目录父级。
+                self._emit_operation("file_pull", False, f"Invalid remote file path on {ip}")
+                continue
+            if len(targets) > 1:
+                # 多设备同名文件不能互相覆盖；设备短摘要只用于区分本次目标。
+                tag = hashlib.sha256(ip.encode("utf-8")).hexdigest()[:8]
+                filename = f"{tag}_{filename}"
             local_path = os.path.join(save_dir, filename)
             self.advanced_model.pull_file_async(ip, remote_path, local_path)
 
@@ -96,6 +103,10 @@ class ADBFileMixin(_ADBControllerBase):
     # 端口正向与反向映射
 
     def forward_port(self, devices: list, local_port: str, remote_port: str):
+        """提交单台设备的正向端口映射；本机端口由所有设备共享，因此只接受一台目标。
+
+        端口在提交前经 normalize_tcp_port 校验，失败不进入设备命令。
+        """
         if not self._require_devices(devices, "forward_port"):
             return
         devices = list(dict.fromkeys(devices))

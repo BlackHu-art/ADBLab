@@ -705,7 +705,11 @@ class ProcessRunner:
         )
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
-        """停止指定 key 的子进程，返回 exit code 或 None。"""
+        """停止并等待指定 key 的子进程；返回 exit code，None 表示未登记或退出未确认。
+
+        超时或资源未释放时保留跟踪记录，调用方须用活动列表和 release_finished 区分，
+        不能把 None 当作已停止。
+        """
 
         with self._lock:
             proc = self._procs.get(key)

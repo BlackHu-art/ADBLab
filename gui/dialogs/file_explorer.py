@@ -1151,7 +1151,9 @@ class FileExplorerPage(QWidget):
             return
         full = self._dpath(self.current_path, name)
         if is_dir:
-            w = self._run_adb("shell", explorer_service.folder_size_command(full))
+            w = self._run_adb(
+                "shell", self._root(explorer_service.folder_size_command(full)),
+            )
             if w is None:
                 return
             self._connect_worker_ui(
@@ -1167,7 +1169,7 @@ class FileExplorerPage(QWidget):
             )
             w.start()
         else:
-            w = self._run_adb("shell", explorer_service.ls_command(full))
+            w = self._run_adb("shell", self._root(explorer_service.ls_command(full)))
             if w is None:
                 return
             self._connect_worker_ui(

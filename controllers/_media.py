@@ -108,6 +108,11 @@ class ADBMediaMixin(_ADBControllerBase):
     # 截图
 
     def take_screenshot(self, devices: list) -> str | None:
+        """为每台去重目标分配单元身份和唯一本地路径，并启动截图批次。
+
+        成功产物先登记 artifact 再记录单元终态；取消或晚到结果不得发布截图，只有同一
+        generation 的结果能完成该批次。返回 operation_id，目录准备失败时返回 None。
+        """
         valid = tuple(dict.fromkeys(device for device in devices if device))
         if not valid:
             self._emit_operation("screenshot", False, "⚠️ No devices selected")
@@ -377,6 +382,7 @@ class ADBMediaMixin(_ADBControllerBase):
         return super()._fail_operation_protocol(snapshot, message)
 
     def cancel_screenshot(self, operation_id: str) -> bool:
+        """取消仍在途的截图单元并发布终态；操作已结束或身份不符时返回 False。"""
         snapshot = self.operation_manager.get(
             operation_id,
             expected_kind="screenshot",
@@ -453,6 +459,11 @@ class ADBMediaMixin(_ADBControllerBase):
     # 屏幕录制
 
     def start_screen_record(self, devices: list, duration: int = 30, batch_id: str = ""):
+        """校验时长和批次标识后按设备提交录屏，逐台登记独立会话。
+
+        提交成功只表示本机进程已登记，设备端完成和文件保存由后台拉取确认。重复目标、
+        参数非法或提交异常必须为对应设备发布 record_target_finished，不能留下半批锁。
+        """
         devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "screen_record"):
             return
@@ -596,6 +607,10 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def stop_screen_record(self, devices: list, batch_id: str = ""):
+        """幂等登记停止请求并绑定原批次；已失败待重试的保存直接重试拉取。
+
+        批次不匹配或没有活动会话的目标被跳过；停止提交失败会撤销屏障以允许重试。
+        """
         if getattr(self, "_shutting_down", False):
             return
         devices = list(dict.fromkeys(device for device in devices if device))
@@ -926,11 +941,16 @@ class ADBMediaMixin(_ADBControllerBase):
             self._emit_operation("kill_process", False, "PID 仅属于单台设备，请只选择一台设备")
             return
         text = str(pid).strip()
-        if not text.isdigit() or not 1 <= int(text) <= 2_147_483_647:
+        # isdigit 接受上标等 Unicode 数字，但 int() 会抛 ValueError；先限 ASCII 再转换。
+        if not text.isascii() or not text.isdigit():
+            self._emit_operation("kill_process", False, "PID must be a positive integer")
+            return
+        pid_value = int(text)
+        if not 1 <= pid_value <= 2_147_483_647:
             self._emit_operation("kill_process", False, "PID must be a positive integer")
             return
         for ip in devices:
-            self.advanced_model.kill_process_async(ip, text)
+            self.advanced_model.kill_process_async(ip, str(pid_value))
 
     def _process_kill_process_result(self, result: dict):
         ip = result.get("device_ip", "")

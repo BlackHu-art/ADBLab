@@ -1,5 +1,6 @@
 import threading
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -29,6 +30,54 @@ def test_cancel_before_run_never_launches(monkeypatch):
     worker.request_stop()
     worker.run()
     assert not worker.is_active()
+
+
+def test_preview_cleanup_releases_token_when_start_fails(qt_application, monkeypatch):
+    from gui.dialogs import file_explorer_view as view
+
+    worker = Mock()
+    worker.start.side_effect = RuntimeError("pool exhausted")
+    frame = SimpleNamespace(
+        _run_adb=Mock(return_value=worker),
+        _transfers=SimpleNamespace(release_cleanup=Mock()),
+        _closing=False,
+    )
+    controller = view.FileExplorerView.__new__(view.FileExplorerView)
+    controller._frame = frame
+    controller._request = None
+    request = SimpleNamespace(
+        finished=False,
+        temporary_path="",
+        remote_path="/sdcard/photo.jpg",
+        cleanup_token="token",
+        identity=("device-1",),
+    )
+    monkeypatch.setattr(view, "LogService", lambda: SimpleNamespace(log=Mock()))
+
+    controller._finish_request(request)
+
+    frame._transfers.release_cleanup.assert_called_once_with("token")
+
+
+def test_root_pull_cleanup_releases_token_when_start_fails(qt_application, monkeypatch):
+    from gui.dialogs import file_explorer_ops as ops
+
+    worker = Mock()
+    worker.start.side_effect = RuntimeError("pool exhausted")
+    frame = SimpleNamespace(
+        _run_adb=Mock(return_value=worker),
+        _transfers=SimpleNamespace(release_cleanup=Mock()),
+        _connect_worker_ui=Mock(),
+        _closing=False,
+    )
+    fake = SimpleNamespace(_frame=frame)
+    monkeypatch.setattr(ops, "LogService", lambda: SimpleNamespace(log=Mock()))
+
+    ops.FileExplorerOps._cleanup_owned_pull(
+        fake, "/data/local/tmp/x", "device-1", "token",
+    )
+
+    frame._transfers.release_cleanup.assert_called_once_with("token")
 
 
 def test_force_stop_keeps_residual_until_actual_process_exit(monkeypatch):

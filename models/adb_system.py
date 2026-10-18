@@ -199,6 +199,10 @@ class ADBSystemMixin:
 
     @async_command
     def kill_process_async(self, device_ip: str, pid: str) -> dict:
+        """向设备发送 kill 信号；pid 作为设备 shell 的单参数引用。
+
+        调用方必须保证 pid 是正整数 PID；成功只表示信号已发送，不确认目标进程已退出。
+        """
         return self._run(
             ["adb", "-s", device_ip, "shell", "kill", shlex.quote(str(pid))],
             device_ip=device_ip,

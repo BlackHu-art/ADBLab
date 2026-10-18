@@ -18,6 +18,8 @@ from gui.i18n import tr
 from services.run_library import RunLibrary, RunPreset, RunRecord
 from utils.user_data import user_data_root
 
+_WRITE_METHODS = frozenset({"record_run", "save_preset", "delete_preset", "write_diagnostics"})
+
 
 class _LibraryQueue:
     """队列空闲即退出线程；关闭只等待已提交的有界本地写入。"""
@@ -96,7 +98,7 @@ class _LibraryQueue:
             except (OSError, ValueError, TypeError, RecursionError, OverflowError) as exc:
                 # 文件路径和底层异常留在边界内，用户只看到可操作且不泄露设备信息的提示。
                 self._report(f"{method}:{type(exc).__name__}")
-                if method not in ("open_artifact", "export_text"):
+                if method in _WRITE_METHODS:
                     self._write_error = True
             else:
                 if method not in ("open_artifact", "export_text", "write_diagnostics"):
@@ -164,6 +166,8 @@ class RunLibraryController(QObject):
             self.error.emit(tr("结果导出失败，请检查目标目录权限和可用空间。"))
         elif _error_type.startswith("write_diagnostics:"):
             self.error.emit(tr("应用诊断记录未能保存，请检查用户数据目录权限。"))
+        elif _error_type.startswith("load:"):
+            self.error.emit(tr("测试记录或方案读取失败，请检查用户数据目录和记录文件；原文件未被修改。"))
         else:
             self.error.emit(
                 tr("测试记录或方案未能保存，请检查用户数据目录的可写权限和记录文件；原文件已保留。")
@@ -190,9 +194,11 @@ class RunLibraryController(QObject):
         )
 
     def record_run(self, record: RunRecord) -> None:
+        """排队写入测试记录；返回前不保证落盘，成功快照经 changed 信号发布。"""
         self._queue.submit("record_run", record)
 
     def save_preset(self, name: str, kind: str, parameters: dict) -> None:
+        """排队保存参数方案；队列关闭后的提交会被拒绝，调用方不能假定已落盘。"""
         self._queue.submit("save_preset", name, kind, parameters)
 
     def delete_preset(self, preset_id: str) -> None:

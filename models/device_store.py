@@ -233,7 +233,8 @@ class DeviceStore:
                 os.fsync(f.fileno())
             cls._check_cancelled(cancel_event)
             os.replace(tmp_path, cls._file_path)
-        except Exception:
+        except BaseException:
+            # 取消迁移抛出的 CancelledError 继承 BaseException；不清理会留下 .tmp 文件。
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise

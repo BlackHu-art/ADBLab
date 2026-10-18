@@ -132,12 +132,11 @@ def _tc(key: str) -> str:
 
 
 def _sync_qfluentwidgets_theme() -> None:
-    """把当前主题与强调色同步给 qfluentwidgets（UI 重做迁移桥接）。
+    """把当前主题与强调色同步给 qfluentwidgets 全局主题。
 
-    qfluentwidgets 组件在 Phase 2/3 才逐步接入，本函数先把 ADBLab 的明暗主题与
-    ``BUTTON_ACCENT`` 强调色映射到其全局 ``setTheme``/``setThemeColor``，使后续接入的
-    组件自动跟随主题切换。采用局部导入，避免所有仅读样式或跑测试的代码在 import 期
-    加载整个 qfluentwidgets 包。
+    明暗主题与 ``BUTTON_ACCENT`` 强调色映射到 ``setTheme``/``setThemeColor``，让已接入的
+    Fluent 组件跟随切换。采用局部导入，避免只读样式或跑测试的代码在 import 期加载
+    整个 qfluentwidgets 包。
     """
     from PySide6.QtGui import QGuiApplication
     from qfluentwidgets import Theme, setTheme, setThemeColor

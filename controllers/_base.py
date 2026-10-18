@@ -204,6 +204,11 @@ class _ADBControllerBase:
             return request is None or request == getattr(self, "_latest_discovery_request", None)
 
     def _handle_async_response(self, method_name: str, result):
+        """分派 model 线程经 Qt 队列回到 GUI 线程的 command_finished 结果。
+
+        ActionEnvelope 先按请求身份拒收旧任务，带 OperationMetadata 的载荷再按 operation
+        与 generation 校验；过期设备列表只按取消收尾，不发布拓扑。
+        """
         if getattr(self, "_shutting_down", False):
             return
         if isinstance(result, ActionEnvelope):
@@ -532,9 +537,13 @@ class _ADBControllerBase:
         return default_dir
 
     def shutdown(self):
-        """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""
+        """应用关闭时统一收口资源；阻塞到 executor 与各 model 命令排空并核验进程归属。
+
+        必须在关闭阶段的后台任务线程执行，不能从 GUI 线程调用。单个模型的清理失败不会
+        跳过其他模型，最后统一抛出；返回不代表所有外部资源已确认退出。
+        """
         self._shutting_down = True
-        self.action_results.close()
+        actions = [("action results close", self.action_results.close)]
         for model in (
             self.device_model,
             self.app_model,
@@ -543,25 +552,28 @@ class _ADBControllerBase:
         ):
             begin_shutdown = getattr(model, "begin_shutdown", None)
             if callable(begin_shutdown):
-                begin_shutdown()
-        self.log_service.log("DEBUG", "controller shutdown started")
+                actions.append((f"{type(model).__name__} begin_shutdown", begin_shutdown))
         for model in (self.testing_model, self.advanced_model):
             shutdown = getattr(model, "shutdown", None)
             if callable(shutdown):
-                shutdown()
-        ProcessRunner.stop_all_tracked()
-        self.executor.shutdown(wait=True, cancel_futures=True)
+                actions.append((f"{type(model).__name__} shutdown", shutdown))
+        actions.append(("process runner stop", ProcessRunner.stop_all_tracked))
+        actions.append((
+            "controller executor shutdown",
+            lambda: self.executor.shutdown(wait=True, cancel_futures=True),
+        ))
         for model in (
             self.device_model, self.app_model, self.testing_model, self.advanced_model,
         ):
             wait = getattr(model, "wait_for_commands", None)
             if callable(wait):
-                wait()
+                actions.append((f"{type(model).__name__} wait_for_commands", wait))
         # 等所有模型排空后再核验进程归属，失败不能跳过其它模型的等待与清理。
-        cleanup_checks = []
         for model in (self.device_model, self.testing_model):
             assert_cleanup_complete = getattr(model, "assert_cleanup_complete", None)
             if callable(assert_cleanup_complete):
-                cleanup_checks.append(("model cleanup verification", assert_cleanup_complete))
-        self._attempt_actions_preserving_first(*cleanup_checks)
+                actions.append(("model cleanup verification", assert_cleanup_complete))
+        self.log_service.log("DEBUG", "controller shutdown started")
+        # 单一模型的关闭或等待失败不能中断后续进程与模型收口，最后统一抛出首个异常。
+        self._attempt_actions_preserving_first(*actions)
         self.log_service.log("DEBUG", "controller shutdown completed")

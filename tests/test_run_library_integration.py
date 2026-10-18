@@ -160,3 +160,30 @@ def test_archive_failure_does_not_block_other_archives_or_settings(monkeypatch):
         close._flush_shutdown_state()
     frame.run_library.shutdown.assert_called_once()
     settings._save_atomic.assert_called_once()
+
+def test_load_failure_is_read_error_and_does_not_fail_close():
+    from gui.run_library import _LibraryQueue
+
+    class BrokenLibrary:
+        def load(self):
+            raise OSError("unreadable")
+
+    reports = []
+    queue = _LibraryQueue(
+        BrokenLibrary(), lambda *_args: None, reports.append, lambda *_args: None,
+    )
+    assert queue.submit("load")
+    assert queue.close(3)
+    assert reports == ["load:OSError"]
+
+
+def test_load_error_message_describes_read_failure(qt_application, tmp_path):
+    controller = RunLibraryController(RunLibrary(tmp_path / "missing.json"))
+    messages = []
+    controller.error.connect(messages.append)
+    try:
+        controller._report_error("load:PermissionError")
+        assert messages
+        assert "读取失败" in messages[0]
+    finally:
+        assert controller.shutdown(3)

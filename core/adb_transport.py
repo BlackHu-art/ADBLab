@@ -277,8 +277,13 @@ def execute(
             return 0
         if command == "devices":
             connection.request("host:devices-l" if args else "host:devices")
-            stdout.write(b"List of devices attached\n" + connection.read_string() + b"\n")
-            stdout.flush()
+            # 读取超时属于连接故障，不能被下面的本地输出错误包装成 "output"。
+            payload = connection.read_string()
+            try:
+                stdout.write(b"List of devices attached\n" + payload + b"\n")
+                stdout.flush()
+            except OSError as exc:
+                raise OutputError("Unable to write ADB output.") from exc
             return 0
         connection.request("host:transport:" + serial if serial else "host:transport-any")
         # 与原生 adb shell 一样用空格拼接参数；调用方负责远端 shell 的 quote 边界。

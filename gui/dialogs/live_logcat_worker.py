@@ -136,6 +136,10 @@ class LogcatWorker(QThread):
         self.request_stop()
 
     def is_active(self) -> bool:
+        """线程、收尾事件或受跟踪进程任一未结束即为活动。
+
+        只有三者全部归零后才能释放 worker；线程结束不等于 logcat 进程已退出。
+        """
         try:
             thread_running = self.isRunning()
         except RuntimeError:
@@ -159,6 +163,7 @@ class LogcatWorker(QThread):
             self._finished_event.wait(min(remaining, 0.05))
 
     def acknowledge_batch(self) -> None:
+        """GUI 消费或丢弃批次后归还配额；漏调会持续触发背压并丢弃后续日志。"""
         with self._batch_lock:
             self._inflight_batches = max(0, self._inflight_batches - 1)
 

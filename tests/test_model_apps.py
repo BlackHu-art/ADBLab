@@ -251,6 +251,11 @@ def _app_manager_for_unit_tests():
     dialog.icon_list = Mock()
     dialog.icon_list.clear = Mock()
     dialog.icon_list.addTopLevelItem = Mock()
+    dialog.icon_list.topLevelItemCount.return_value = 0
+    dialog.search_input = Mock()
+    dialog.search_input.text.return_value = ""
+    dialog.type_filter = Mock()
+    dialog.type_filter.currentData.return_value = "All"
     dialog._sync_selection_views = Mock()
     dialog._update_selection_ui = Mock()
     dialog._gen_icon = AppManagerPage._gen_icon
@@ -424,6 +429,97 @@ def test_extract_package_name_ignores_log_prefix_and_returns_real_package():
     assert extract_package_name(output) == "com.example.app"
 
 
+def test_kill_process_rejects_unicode_digit_pid_without_raising():
+    from types import SimpleNamespace
+
+    from controllers._media import ADBMediaMixin
+
+    events = []
+    model = Mock()
+    fake = SimpleNamespace(
+        _require_devices=lambda *_args: True,
+        _emit_operation=lambda _kind, ok, _message: events.append(ok),
+        advanced_model=model,
+    )
+
+    ADBMediaMixin.kill_process(fake, ["device-1"], "²")
+
+    model.kill_process_async.assert_not_called()
+    assert events == [False]
+
+
+def test_file_pull_rejects_parent_directory_target(tmp_path):
+    from types import SimpleNamespace
+
+    from controllers._file import ADBFileMixin
+
+    pull = Mock()
+    events = []
+    fake = SimpleNamespace(
+        _require_devices=lambda _devices, _operation: True,
+        _get_screenshot_dir=lambda: str(tmp_path),
+        advanced_model=SimpleNamespace(pull_file_async=pull),
+        _emit_operation=lambda _kind, ok, message: events.append((ok, message)),
+    )
+
+    ADBFileMixin.file_pull(fake, ["device-1"], "/sdcard/..")
+
+    pull.assert_not_called()
+    assert events and events[0][0] is False
+
+
+def test_file_pull_uses_distinct_names_for_multiple_devices(tmp_path):
+    from types import SimpleNamespace
+
+    from controllers._file import ADBFileMixin
+
+    pull = Mock()
+    fake = SimpleNamespace(
+        _require_devices=lambda _devices, _operation: True,
+        _get_screenshot_dir=lambda: str(tmp_path),
+        advanced_model=SimpleNamespace(pull_file_async=pull),
+        _emit_operation=lambda *_args: None,
+    )
+
+    ADBFileMixin.file_pull(fake, ["device-1", "device-2"], "/sdcard/a.txt")
+
+    paths = [call.args[2] for call in pull.call_args_list]
+    assert len(paths) == 2
+    assert len(set(paths)) == 2
+    assert all(path.startswith(str(tmp_path)) for path in paths)
+
+
+def test_pull_anr_failure_without_message_reports_real_error():
+    from types import SimpleNamespace
+
+    from controllers._app import ADBAppMixin
+
+    events = []
+    fake = SimpleNamespace(
+        _emit_operation=lambda _kind, ok, message: events.append((ok, message)),
+    )
+    ADBAppMixin._process_pull_anr_result(fake, {"success": False, "error": "disk full"})
+
+    assert events and events[0][0] is False
+    assert "disk full" in events[0][1]
+
+
+def test_pull_anr_directory_failure_keeps_message(monkeypatch, tmp_path):
+    from models.adb_testing import ADBTesting
+
+    model = ADBTesting.__new__(ADBTesting)
+    monkeypatch.setattr(
+        "models.adb_testing.os.makedirs", Mock(side_effect=OSError("denied")),
+    )
+    result = ADBTesting.pull_anr_files_async.__wrapped__(
+        model, "device-1", "name", str(tmp_path), 1,
+    )
+
+    assert result["success"] is False
+    assert result["message"]
+    assert result["index"] == 1
+
+
 def test_extract_package_name_prefers_focus_line_over_other_packages():
     output = (
         "ACTIVITY com.android.launcher3/.Launcher\n"
@@ -476,6 +572,27 @@ def test_detect_current_package_uses_lightweight_activity_stack_first():
             "list",
         ],
         timeout=5,
+    )
+
+
+def test_detect_current_package_quotes_shell_pipeline_for_device():
+    import shlex
+
+    runner = Mock()
+    runner.run.side_effect = [
+        CommandResult(success=False, error="unavailable"),
+        CommandResult(
+            success=True,
+            output="mCurrentFocus=Window{1 u0 com.example.app/com.example.app.MainActivity}",
+        ),
+    ]
+
+    result = detect_current_package("device-1", runner=runner, timeout=6)
+
+    assert result["success"] is True
+    shell_command = runner.run.call_args_list[1].args[0]
+    assert shell_command[-1] == shlex.quote(
+        "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"
     )
 
 

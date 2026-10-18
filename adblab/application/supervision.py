@@ -73,6 +73,7 @@ class ThreadedShutdownTask:
         self.error_type = ""
 
     def request_stop(self) -> None:
+        """启动一次性关闭线程；重复调用只保留首次请求，不等待关闭函数返回。"""
         with self._lock:
             if self._started:
                 return
@@ -80,9 +81,11 @@ class ThreadedShutdownTask:
         Thread(target=self._run, name=self._name, daemon=True).start()
 
     def wait(self, timeout: float) -> bool:
+        """有界等待关闭线程结束；返回 False 只表示超时，不代表关闭函数成功。"""
         return self._finished.wait(max(0.0, float(timeout)))
 
     def is_running(self) -> bool:
+        """返回关闭线程是否仍未结束，供监督器报告残留资源。"""
         return not self._finished.is_set()
 
     def get_error_type(self) -> str:

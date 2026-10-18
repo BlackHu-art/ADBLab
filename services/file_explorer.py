@@ -478,6 +478,10 @@ def rename_command(src: str, dst: str) -> str:
 
 
 def delete_command(path: str) -> str:
+    """构造递归删除命令；path 必须由目录列表校验后拼出，不能来自原始输入。
+
+    shell_quote 只防止 shell 重解释，不证明删除目标正确；"/"、".." 等边界由调用方排除。
+    """
     return f"rm -rf {shell_quote(path)}"
 
 
@@ -490,6 +494,10 @@ def stat_mode_command(path: str) -> str:
 
 
 def chmod_command(mode: str, path: str) -> str:
+    """构造权限修改命令；mode 必须是 parse_mode 或权限复选框产生的 3-4 位八进制值。
+
+    这里不给 mode 加引号，调用方不得把任意文本拼入；路径逐参数 quote。
+    """
     return f"chmod {mode} {shell_quote(path)}"
 
 
@@ -498,6 +506,10 @@ def install_apk_command(path: str) -> str:
 
 
 def script_command(path: str, use_root: bool) -> str:
+    """构造设备脚本执行命令；属于显式危险操作，路径必须先经目录列表校验。
+
+    Root 打开时先补执行位再运行，不能把用户输入直接当命令文本。
+    """
     if use_root:
         return f"chmod +x {shell_quote(path)} && sh {shell_quote(path)}"
     return f"sh {shell_quote(path)}"
