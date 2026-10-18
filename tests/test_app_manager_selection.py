@@ -677,6 +677,33 @@ def test_app_manager_master_detail_contract_switches_split_and_stack_modes():
         app.processEvents()
 
 
+def test_app_manager_resize_preserves_user_splitter_sizes():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    page._accept_android_user(0)
+    try:
+        page.resize(1400, 700)
+        page.show()
+        app.processEvents()
+        with patch.object(page.details_page, "_load_data", return_value=True):
+            page.open_details("com.example.app")
+        app.processEvents()
+        page._master_detail_splitter.setSizes([800, 300])
+        app.processEvents()
+        before = page._master_detail_splitter.sizes()
+
+        page.resize(1600, 700)
+        app.processEvents()
+
+        after = page._master_detail_splitter.sizes()
+        assert len(after) == len(before) == 2
+        # QSplitter 会按新总宽度等比缩放；关键是保留用户比例而不是跳回 3:2。
+        assert abs(after[0] / sum(after) - before[0] / sum(before)) <= 0.01
+    finally:
+        page.close()
+        app.processEvents()
+
+
 def test_app_manager_reports_workspace_content_minimum_for_visible_master_detail_mode():
     app = QApplication.instance() or QApplication([])
     page = AppManagerPage(device_ip="device-1")

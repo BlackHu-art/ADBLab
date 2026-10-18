@@ -5,8 +5,9 @@ from PySide6.QtCore import QAbstractAnimation, QEvent, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
-from qfluentwidgets import CommandBar, ProgressRing, RoundMenu, TableWidget
+from qfluentwidgets import CommandBar, InfoLevel, ProgressRing, RoundMenu, TableWidget
 
+from gui.dialogs.live_logcat_stream import LogcatExportWorker
 from gui.features.logcat import LiveLogcatPage
 from gui.styles import BaseStyles, FontRole
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
@@ -118,6 +119,38 @@ def test_logcat_main_window_embedded_mode_has_one_heading(qt_application):
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
+
+
+def test_logcat_export_worker_writes_file_and_reports_success(
+    qt_application, tmp_path,
+):
+    target = tmp_path / "logcat.txt"
+    worker = LogcatExportWorker("first\nsecond", str(target))
+    spy = QSignalSpy(worker.completed)
+    worker.start()
+    assert worker.wait(5000)
+    qt_application.processEvents()
+
+    assert target.read_text(encoding="utf-8") == "first\nsecond"
+    assert spy.count() == 1
+    assert spy.at(0)[0] is True
+
+
+def test_theme_refresh_does_not_rewrite_offline_badge(qt_application):
+    page = LiveLogcatPage(device_ip="demo-a")
+    try:
+        page._device_connected = False
+        page._device_selected = True
+        page._sync_device_actions()
+        before = (page.status_badge.text(), page.status_badge.level)
+        assert before == ("设备离线", InfoLevel.ERROR)
+
+        page._apply_theme()
+
+        assert (page.status_badge.text(), page.status_badge.level) == before
+    finally:
+        page.close()
+        qt_application.processEvents()
 
 
 @pytest.mark.parametrize("font_size", [12, 22])

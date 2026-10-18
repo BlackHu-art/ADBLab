@@ -124,6 +124,7 @@ class TextReadWorker(ADBWorker):
     """正文通过无 PTY 的原始字节通道读取，本地文件仅由后台任务拥有。"""
 
     result_ready = Signal(object, bool)
+    decoded_ready = Signal(object)
 
     def __init__(self, device_ip: str, path: str, use_root: bool, byte_limit: int):
         self._completion_marker = f"ADBLAB_TEXT_END_{uuid.uuid4().hex}".encode("ascii")
@@ -135,6 +136,7 @@ class TextReadWorker(ADBWorker):
         # 与目录和下载一致使用原始执行通道，不能在接收后改写换行来猜测原文。
         super().__init__(device_ip, ["exec-out", command])
         self.byte_limit = byte_limit
+        self.decoded_available = False
 
     def run(self):
         """在成功、失败与取消路径都关闭并删除原始字节暂存文件。"""
@@ -156,6 +158,17 @@ class TextReadWorker(ADBWorker):
                     if not raw.endswith(self._completion_marker):
                         raise OSError("Unable to read complete text preview")
                     raw = raw[:-len(self._completion_marker)]
+                    try:
+                        decoded = explorer_service.decode_text_preview(
+                            raw, self.byte_limit,
+                        )
+                    except (UnicodeError, ValueError):
+                        decoded = None
+                    if decoded is not None:
+                        # 先交付解码结果，兼容视图在 result_ready 中检查
+                        # decoded_available 的旧测试/手动 worker 路径。
+                        self.decoded_available = True
+                        self.decoded_ready.emit(decoded)
                     self.result_ready.emit(raw, False)
                 else:
                     self.result_ready.emit(result.error, True)

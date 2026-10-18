@@ -219,6 +219,7 @@ def test_cancel_button_triggers_dual_path():
     ]
     assert len(cancel_buttons) == 1
     cancel_buttons[0].click()
+    assert not cancel_buttons[0].isEnabled()
 
     snapshot = manager.get(operation.operation_id)
     assert snapshot is not None

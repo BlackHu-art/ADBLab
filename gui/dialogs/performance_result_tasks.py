@@ -64,7 +64,9 @@ class PerformanceResultLoader(QObject):
         self._workers = []
         self._lock = threading.RLock()
         self._timer = QTimer(self)
-        self._timer.setInterval(25)
+        # 结果解析通常持续数百毫秒；10Hz 只用于跨越“线程结束/归档槽交付”
+        # 两个屏障，空闲时停止，避免 40Hz 持续唤醒 GUI。
+        self._timer.setInterval(100)
         self._timer.timeout.connect(self._poll)
 
     def invalidate(self):

@@ -21,6 +21,31 @@ from gui.styles.fonts import FontMixin
 from tests.ui_geometry_helpers import assert_scroll_target_reachable, wait_until
 
 
+def test_app_manager_search_coalesces_rapid_typing(qt_application):
+    page = AppManagerPage(device_ip="search-demo")
+    page.resize(800, 600)
+    page.show()
+    qt_application.processEvents()
+    calls = []
+    original = page._views_controller._filter
+
+    def counted():
+        calls.append(1)
+        return original()
+
+    page._views_controller._filter = counted
+    try:
+        page.search_input.setText("A")
+        page.search_input.setText("Ap")
+        page.search_input.setText("App")
+        assert len(calls) == 1
+        QTest.qWait(220)
+        assert len(calls) == 2
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
 @pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
 @pytest.mark.parametrize("column,values,ascending", [
     (4, ["Mystery", "Disabled", "Enabled", "Awaiting"],

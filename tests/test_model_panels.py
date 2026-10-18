@@ -593,8 +593,14 @@ def test_side_panel_theme_refresh_updates_button_icons():
     panel._devices_tab = Mock()
     panel._devices_tab._apply_device_list_style = Mock()
     panel._apps_tab = Mock()
-    button = QPushButton("Refresh")
+    host = QWidget()
+    button = QPushButton("Refresh", host)
     button.setProperty("iconName", "arrows-clockwise.svg")
+    host.show()
+    button.show()
+    _app.processEvents()
+    panel._theme_icon_generation = 0
+    panel._apply_theme_icon = lambda item, name: SidePanel._apply_theme_icon(panel, item, name)
     panel.findChildren = Mock(return_value=[button])
     panel._visual_roots = lambda: [panel]
     panel.setStyleSheet = Mock()
@@ -1016,3 +1022,88 @@ def test_partial_monkey_finish_trims_active_devices_before_batch_end():
     assert panel._monkey_active_devices == ("device-2",)
     assert panel._monkey_pending_count == 1
     panel._set_monkey_running.assert_not_called()
+
+
+def test_theme_change_defers_hidden_button_icons(qt_application):
+    host = QWidget()
+    host._theme_icon_generation = 0
+    host._THEME_ICON_BATCH_SIZE = 16
+    host._apply_theme_icon = lambda button, name: SidePanel._apply_theme_icon(host, button, name)
+    host._refresh_theme_icons = lambda items, token: SidePanel._refresh_theme_icons(
+        host, items, token,
+    )
+    host._visual_roots = lambda: [host]
+    host.apply_device_theme = Mock()
+    host._apps_tab = None
+    button = QPushButton(host)
+    button.setProperty("iconName", "arrows-clockwise.svg")
+
+    with patch(
+        "gui.panels.side_panel.get_fluent_icon", return_value=FluentIcon.SYNC,
+    ) as themed_icon:
+        SidePanel._on_theme_changed(host, "Dark")
+        assert themed_icon.call_count == 0
+        QTest.qWait(20)
+        themed_icon.assert_called_once_with("arrows-clockwise.svg")
+
+
+def test_theme_icon_batch_stops_when_generation_advances(qt_application):
+    host = QWidget()
+    host._theme_icon_generation = 3
+    host._THEME_ICON_BATCH_SIZE = 2
+    calls: list[str] = []
+    host._apply_theme_icon = lambda _button, name: calls.append(name)
+    buttons = []
+    for index in range(5):
+        button = QPushButton(host)
+        button.setProperty("iconName", f"icon-{index}.svg")
+        buttons.append(button)
+    host._refresh_theme_icons = lambda items, token: SidePanel._refresh_theme_icons(
+        host, items, token,
+    )
+
+    SidePanel._refresh_theme_icons(host, tuple(buttons), 3)
+    assert calls == ["icon-0.svg", "icon-1.svg"]
+    host._theme_icon_generation = 4
+    QTest.qWait(20)
+    assert calls == ["icon-0.svg", "icon-1.svg"]
+
+
+def test_theme_icon_refresh_stops_after_panel_shutdown(qt_application):
+    host = QWidget()
+    host._theme_icon_generation = 5
+    host._theme_icons_stopped = True
+    host._THEME_ICON_BATCH_SIZE = 16
+    calls: list[str] = []
+    host._apply_theme_icon = lambda _button, name: calls.append(name)
+    button = QPushButton(host)
+    button.setProperty("iconName", "icon.svg")
+
+    SidePanel._refresh_theme_icons(host, (button,), 5)
+    assert calls == []
+
+
+def test_theme_icon_refresh_batches_buttons_and_honors_generation(qt_application):
+    host = QWidget()
+    host._theme_icon_generation = 3
+    host._THEME_ICON_BATCH_SIZE = 2
+    calls: list[str] = []
+    host._apply_theme_icon = lambda _button, name: calls.append(name)
+    host._refresh_theme_icons = lambda items, token: SidePanel._refresh_theme_icons(
+        host, items, token,
+    )
+    buttons = []
+    for index in range(5):
+        button = QPushButton(host)
+        button.setProperty("iconName", f"icon-{index}.svg")
+        buttons.append(button)
+
+    SidePanel._refresh_theme_icons(host, tuple(buttons), 3)
+    assert calls == ["icon-0.svg", "icon-1.svg"]
+
+    QTest.qWait(20)
+    assert calls == [f"icon-{index}.svg" for index in range(5)]
+
+    calls.clear()
+    SidePanel._refresh_theme_icons(host, tuple(buttons), 2)
+    assert calls == []

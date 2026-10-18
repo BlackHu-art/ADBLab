@@ -746,7 +746,15 @@ class FileExplorerPage(QWidget):
             self._refresh_status_badge()
         # Fluent 委托和默认行高不跟随应用字号，显式同步且不重建列表或重置列宽。
         self.table.setFont(ui_font)
-        self.table.horizontalHeader().setFont(ui_font)
+        header = self.table.horizontalHeader()
+        header.setFont(ui_font)
+        # 类型列只显示图标，但表头文字会随字号变宽；只增不减，保留用户手动加宽。
+        type_width = max(
+            self.table.iconSize().width() + 16,
+            header.fontMetrics().horizontalAdvance(tr("Type")) + 8,
+        )
+        if self.table.columnWidth(self.TYPE_COL) < type_width:
+            self.table.setColumnWidth(self.TYPE_COL, type_width)
         self.table.verticalHeader().setDefaultSectionSize(
             max(38, self.table.fontMetrics().height() + 16)
         )
@@ -1293,6 +1301,11 @@ class FileExplorerPage(QWidget):
         self._device_selected = selected
         if not selected:
             self._list_controller.cancel_refresh()
+        elif self._active and not self._loaded_once and self._can_operate():
+            # 页面先在未选设备状态打开时不会加载；随后勾选该设备应直接进入目录，
+            # 不能要求用户再点一次刷新。
+            self._loaded_once = True
+            self._refresh()
         self._refresh_status_badge()
         self._sync_directory_controls()
         if not self._device_selected:

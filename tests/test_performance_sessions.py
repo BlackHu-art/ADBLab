@@ -73,6 +73,26 @@ def _choose(host, qt_application, row):
     return host.stack.currentWidget()
 
 
+def test_refresh_reuses_unchanged_session_cells(host, qt_application):
+    host.set_device_context(["demo-a", "demo-b"], ["demo-a", "demo-b"])
+    host.open_feature("performance", payload={"package_name": "com.example.pending"})
+    qt_application.processEvents()
+    sessions = host.performance_sessions
+    assert sessions.isVisible()
+    item = sessions.table.item(0, 0)
+    assert item is not None
+    calls = []
+    original = item.setText
+
+    def counted(text):
+        calls.append(text)
+        return original(text)
+
+    item.setText = counted
+    sessions.refresh()
+    assert calls == []
+
+
 def test_multiple_selection_lists_idle_devices_without_creating_or_starting_sessions(
     host, qt_application,
 ):

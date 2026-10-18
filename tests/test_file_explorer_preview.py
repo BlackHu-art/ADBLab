@@ -11,11 +11,40 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QSize, Qt, QThread, qInstallMessageHandler
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtTest import QTest
 
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
 from services import file_explorer as service
 
 pytestmark = pytest.mark.ui
+
+
+def test_preview_resize_fit_is_debounced(qt_application):
+    preview = FileExplorerImagePreview()
+    preview.resize(400, 300)
+    preview.show()
+    qt_application.processEvents()
+    source = QPixmap(1200, 1200)
+    source.fill(Qt.GlobalColor.red)
+    calls = []
+    original = preview._fit_image_to_viewport
+
+    def counted(pixmap):
+        calls.append(pixmap.size())
+        return original(pixmap)
+
+    preview._fit_image_to_viewport = counted
+    preview.set_image_source(source, "demo.png")
+    QTest.qWait(10)
+    calls.clear()
+
+    preview.resize(390, 300)
+    preview.resize(380, 300)
+    QTest.qWait(30)
+    assert calls == []
+    QTest.qWait(80)
+    assert len(calls) == 1
+    preview.close()
 
 
 def test_preview_uses_full_android_path_for_colon_filename(qt_application, monkeypatch):

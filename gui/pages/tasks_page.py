@@ -233,6 +233,10 @@ class _ActiveTaskRow(QWidget):
         self._row_layout.addWidget(summary, 1)
         self._row_layout.addWidget(self._controls)
 
+    def mark_cancelling(self) -> None:
+        """提交取消后立即锁定按钮，避免重复请求；终态由下一次快照刷新。"""
+        self._cancel.setEnabled(False)
+
     def update_snapshot(self, snapshot: OperationSnapshot) -> None:
         """原位更新变化字段，避免轮询销毁正在按下或聚焦的取消按钮。"""
         previous = self._snapshot
@@ -368,6 +372,14 @@ class TaskCenterPage(QWidget):
         self.action_empty_label.hide()
         self.action_results.present(result)
         self._refresh_action_status()
+        if result.state != "running":
+            # 完成态正文可能高于最小窗口；等布局落定后把正文滚入可视区。
+            QTimer.singleShot(30, self, self._reveal_action_output)
+
+    def _reveal_action_output(self) -> None:
+        output = getattr(self.action_results, "output", None)
+        if output is not None and output.isVisibleTo(self):
+            self._scroll.ensureWidgetVisible(output, 0, 12)
 
     def _refresh_action_status(self) -> None:
         running = self.action_results.running_results()
@@ -523,6 +535,9 @@ class TaskCenterPage(QWidget):
     def _cancel(self, task_id: str) -> None:
         """取消双路径：先登记协作式取消意图，再调用注入的资源停止入口。"""
 
+        row = self._active_rows.get(task_id)
+        if row is not None:
+            row.mark_cancelling()
         if self._operation_manager is not None:
             self._operation_manager.request_cancel(task_id)
         if self._stop_hook is not None:
@@ -568,6 +583,11 @@ class TaskCenterPage(QWidget):
         self.running_actions_button.refresh_text()
         for row in self._active_rows.values():
             row.refresh_layout()
+        output = getattr(getattr(self, "action_results", None), "output", None)
+        if output is not None:
+            # 最小窗口 + 最大字号时正文不能继续挤占滚动页；保持既有 160px
+            # 下限，正文超出时在 PlainTextEdit 内部滚动。
+            output.setMaximumHeight(160)
         self.updateGeometry()
 
     def _sync_theme_state(self) -> None:

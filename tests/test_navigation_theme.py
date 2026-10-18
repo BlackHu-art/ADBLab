@@ -108,6 +108,69 @@ def test_system_theme_sync_is_silent_and_toggle_uses_resolved_theme(
     assert widget.switch.isChecked() == (target == "Dark")
 
 
+def test_theme_switch_skips_redundant_accent_and_same_mode(
+    qt_application, monkeypatch,
+):
+    from qfluentwidgets import Theme
+
+    calls = []
+    state = {"actual": "Light"}
+
+    def fake_set_theme(theme, save=False, lazy=False):
+        calls.append(("theme", theme, lazy))
+        state["actual"] = "Dark" if theme == Theme.DARK else "Light"
+
+    monkeypatch.setattr("qfluentwidgets.setTheme", fake_set_theme)
+    monkeypatch.setattr(
+        "qfluentwidgets.setThemeColor",
+        lambda color, save=False, lazy=False: calls.append(("color", color)),
+    )
+    monkeypatch.setattr(theme_module, "_resolve_qfluentwidgets_theme", lambda: state["actual"])
+    monkeypatch.setattr(theme_module, "_qfw_accent_applied", None)
+    monkeypatch.setattr(theme_module, "_theme_mode", "Light")
+    monkeypatch.setattr(theme_module, "_current_theme", "Light")
+
+    BaseStyles.switch_theme("Dark")
+    assert calls[0] == ("theme", Theme.DARK, False)
+    assert calls[1][0] == "color"
+
+    calls.clear()
+    BaseStyles.switch_theme("Light")
+    assert calls == [("theme", Theme.LIGHT, False)]
+
+    calls.clear()
+    BaseStyles.switch_theme("Light")
+    assert calls == []
+
+    calls.clear()
+    BaseStyles.set_accent_color(BaseStyles.accent_color())
+    assert calls == []
+
+
+def test_switch_theme_repairs_stale_qfluentwidgets_state(qt_application, monkeypatch):
+    from qfluentwidgets import Theme
+
+    calls = []
+    state = {"actual": "Dark"}
+    monkeypatch.setattr(
+        "qfluentwidgets.setTheme",
+        lambda theme, save=False, lazy=False: (
+            calls.append(theme),
+            state.__setitem__("actual", "Dark" if theme == Theme.DARK else "Light"),
+        ),
+    )
+    monkeypatch.setattr(theme_module, "_resolve_qfluentwidgets_theme", lambda: state["actual"])
+    monkeypatch.setattr(theme_module, "_desired_qfluentwidgets_theme", lambda mode=None: "Light")
+    monkeypatch.setattr(theme_module, "_qfw_accent_applied", BaseStyles.accent_color())
+    monkeypatch.setattr(theme_module, "_theme_mode", "System")
+    monkeypatch.setattr(theme_module, "_current_theme", "Light")
+
+    BaseStyles.switch_theme("System")
+
+    assert calls == [Theme.LIGHT]
+    assert BaseStyles.resolved_theme() == "Light"
+
+
 @pytest.mark.parametrize("key", [Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter])
 def test_expanded_theme_switch_uses_native_checkable_control(qt_application, key):
     BaseStyles.switch_theme("Light")

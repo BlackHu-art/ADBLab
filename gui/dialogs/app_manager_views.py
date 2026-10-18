@@ -5,7 +5,7 @@ from collections.abc import Generator, Iterator
 from functools import lru_cache
 from time import perf_counter
 
-from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
+from PySide6.QtCore import QModelIndex, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem
 from PySide6.QtWidgets import QTreeView, QTreeWidgetItem
 
@@ -82,6 +82,11 @@ class AppManagerViews:
 
     def __init__(self, frame):
         self._frame = frame
+        self._filter_timer = QTimer(frame if isinstance(frame, QObject) else None)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(180)
+        self._filter_timer.timeout.connect(self._flush_filter)
+        self._last_filter_text = ""
         self._population: Generator[None, None, None] | None = None
         self._population_timer: QTimer | None = None
         self._population_paused = False
@@ -637,9 +642,13 @@ class AppManagerViews:
         if pkg:
             self._frame._show_details_for(pkg)
 
+    def _flush_filter(self):
+        self._filter()
+
     def _filter(self):
         self._frame._detail_filter_timer.stop()
-        text = self._frame.search_input.text().strip().lower()
+        self._last_filter_text = self._frame.search_input.text()
+        text = self._last_filter_text.strip().lower()
         ft = self._frame.type_filter.currentData()
         self._frame.proxy.set_filters(text, ft)
         # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。

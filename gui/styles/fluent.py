@@ -117,7 +117,11 @@ def font_qss(font: QFont) -> str:
 
 def _font(role: FontRole | str, *, bold: bool = False) -> QFont:
     resolved = FontRole(role)
-    font = FontMixin.font_for_role(resolved)
+    # 通过 BaseStyles 取字体，确保运行时字号/字体覆盖与主题配置一致；
+    # 直接调用 FontMixin 会绕过派生类的配置入口。
+    from gui.styles import BaseStyles
+
+    font = BaseStyles.font_for_role(resolved)
     if bold:
         font.setBold(True)
     return font

@@ -1286,7 +1286,8 @@ class DeviceConnectionPanel(QWidget):
         if remaining == 0:
             self._show_expired_qr()
             self._update_controls()
-        self._schedule_reflow()
+            # 只有过期态切换二维码内容时才需要重排；每秒倒计时只更新文本。
+            self._schedule_reflow()
 
     def _cycle_page(self, step):
         self.request_page(

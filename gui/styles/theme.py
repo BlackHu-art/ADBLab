@@ -108,6 +108,8 @@ THEMES = {
 _current_theme: str = "Light"
 _theme_mode: str = "System"
 _accent_color: str = "#0F6CBD"
+# 记录已经同步给 qfluentwidgets 的强调色；主题切换不必重复触发全量 QSS 重建。
+_qfw_accent_applied: str | None = None
 
 
 class ThemeSignal(QObject):
@@ -131,30 +133,40 @@ def _tc(key: str) -> str:
     return THEMES[_current_theme].get(key, THEMES["Light"].get(key, "#000000"))
 
 
-def _sync_qfluentwidgets_theme() -> None:
+def _desired_qfluentwidgets_theme(mode: str | None = None) -> str:
+    """解析指定模式（默认当前模式）对应的目标明暗主题，不修改全局状态。"""
+
+    selected = _theme_mode if mode is None else mode
+    if selected != "System":
+        return "Dark" if selected == "Dark" else "Light"
+    from PySide6.QtGui import QGuiApplication
+
+    style_hints = (
+        QGuiApplication.styleHints()
+        if QGuiApplication.instance() is not None
+        else None
+    )
+    scheme = style_hints.colorScheme() if style_hints is not None else None
+    return "Dark" if scheme == Qt.ColorScheme.Dark else "Light"
+
+
+def _sync_qfluentwidgets_theme(desired: str | None = None) -> None:
     """把当前主题与强调色同步给 qfluentwidgets 全局主题。
 
-    明暗主题与 ``BUTTON_ACCENT`` 强调色映射到 ``setTheme``/``setThemeColor``，让已接入的
-    Fluent 组件跟随切换。采用局部导入，避免只读样式或跑测试的代码在 import 期加载
+    主题切换只调用一次 ``setTheme``；强调色只在真正变化时调用 ``setThemeColor``，否则
+    会再触发一次同样昂贵的全量 QSS 重建。隐藏控件仍立即重算样式，保证首次显示和
+    图标缓存不沿用旧主题。采用局部导入，避免只读样式或跑测试的代码在 import 期加载
     整个 qfluentwidgets 包。
     """
-    from PySide6.QtGui import QGuiApplication
+    global _qfw_accent_applied
     from qfluentwidgets import Theme, setTheme, setThemeColor
 
-    if _theme_mode == "System":
-        style_hints = (
-            QGuiApplication.styleHints()
-            if QGuiApplication.instance() is not None
-            else None
-        )
-        scheme = style_hints.colorScheme() if style_hints is not None else None
-        qfw_theme = (
-            Theme.DARK if scheme == Qt.ColorScheme.Dark else Theme.LIGHT
-        )
-    else:
-        qfw_theme = {"Dark": Theme.DARK, "Light": Theme.LIGHT}[_theme_mode]
+    resolved = desired or _desired_qfluentwidgets_theme()
+    qfw_theme = Theme.DARK if resolved == "Dark" else Theme.LIGHT
     setTheme(qfw_theme)
-    setThemeColor(_accent_color)
+    if _accent_color != _qfw_accent_applied:
+        setThemeColor(_accent_color)
+        _qfw_accent_applied = _accent_color
 
 
 def _resolve_qfluentwidgets_theme() -> str:
@@ -163,6 +175,19 @@ def _resolve_qfluentwidgets_theme() -> str:
     from qfluentwidgets import isDarkTheme
 
     return "Dark" if isDarkTheme() else "Light"
+
+
+def normalise_accent_color(value: object) -> str:
+    """校验并规范化 #RRGGBB；非法值回退到默认强调色。"""
+
+    text = str(value).strip().upper()
+    if len(text) != 7 or not text.startswith("#"):
+        return "#0F6CBD"
+    try:
+        int(text[1:], 16)
+    except ValueError:
+        return "#0F6CBD"
+    return text
 
 
 def _application_palette():
@@ -236,8 +261,23 @@ class ThemeMixin:
         global _current_theme, _theme_mode
         aliases = {"Auto": "System", "System": "System", "Light": "Light", "Dark": "Dark"}
         mode = aliases.get(str(name), "System")
+        previous_mode = _theme_mode
+        desired = _desired_qfluentwidgets_theme(mode)
+        actual = _resolve_qfluentwidgets_theme()
+        if _current_theme != actual:
+            # qconfig 是进程级全局；缓存落后时先以实际 qfw 状态为准，避免永久短路。
+            _current_theme = actual
+        if desired == actual and _qfw_accent_applied == _accent_color:
+            _theme_mode = mode
+            # 前一个页面/窗口可能改过应用调色板；即使 qfw 已是目标主题，也要
+            # 恢复共享调色板，否则后来创建的无背景页面会退回 Qt 默认灰色。
+            _sync_application_palette()
+            if mode != previous_mode:
+                # 仅标签变化（System 实际 Light -> 显式 Light）不重排视觉，但仍持久化模式。
+                _theme_signal.changed.emit(mode)
+            return
         _theme_mode = mode
-        _sync_qfluentwidgets_theme()
+        _sync_qfluentwidgets_theme(desired)
         _current_theme = _resolve_qfluentwidgets_theme()
         _sync_application_palette()
         _theme_signal.changed.emit(mode)
@@ -256,20 +296,17 @@ class ThemeMixin:
     def set_accent_color(cls, color: str) -> str:
         """校验并应用 Fluent 强调色，返回最终使用的十六进制颜色。"""
 
-        global _accent_color
+        global _accent_color, _qfw_accent_applied
         previous = _accent_color
-        value = str(color).strip().upper()
-        if len(value) != 7 or not value.startswith("#"):
-            value = "#0F6CBD"
-        try:
-            int(value[1:], 16)
-        except ValueError:
-            value = "#0F6CBD"
+        value = normalise_accent_color(color)
+        if value == previous and _qfw_accent_applied == value:
+            return value
         _accent_color = value
-        from qfluentwidgets import setThemeColor
+        if value != _qfw_accent_applied:
+            from qfluentwidgets import setThemeColor
 
-        setThemeColor(value)
-        _sync_application_palette()
+            setThemeColor(value)
+            _qfw_accent_applied = value
         if value != previous:
             _theme_signal.accent_changed.emit(value)
         return value

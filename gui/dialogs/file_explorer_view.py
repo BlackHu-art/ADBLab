@@ -117,15 +117,30 @@ class FileExplorerView:
             ))
             self._frame._connect_worker_ui(
                 w,
-                w.result_ready,
-                lambda o, e: self._show_text_viewer(
+                w.decoded_ready,
+                lambda decoded: self._show_text_viewer(
                     name,
-                    o,
-                    e,
+                    decoded,
+                    False,
                     full,
                     request_id=request_id,
                 ) if generation == self._cache_generation else None,
             )
+            def show_legacy_result(output, error):
+                if generation != self._cache_generation:
+                    return
+                if error:
+                    self._show_text_viewer(
+                        name, output, True, full, request_id=request_id,
+                    )
+                elif not getattr(w, "decoded_available", False):
+                    # 手动构造/旧 worker 未提供 decoded_ready 时保留字节解码兜底；
+                    # 真实 worker 已解码时避免重复处理同一份正文。
+                    self._show_text_viewer(
+                        name, output, False, full, request_id=request_id,
+                    )
+
+            self._frame._connect_worker_ui(w, w.result_ready, show_legacy_result)
             self._frame._transfers.enqueue(w, preview=True)
 
     def _view_image(self, name: str, full_path: str):
@@ -370,8 +385,11 @@ class FileExplorerView:
         if error:
             self._frame._show_preview_error(name, str(content))
             return
-        raw = content.encode("utf-8") if isinstance(content, str) else content
-        source = explorer_service.decode_text_preview(raw, MAX_TEXT_VIEW_BYTES)
+        if hasattr(content, "text") and hasattr(content, "editable"):
+            source = content
+        else:
+            raw = content.encode("utf-8") if isinstance(content, str) else content
+            source = explorer_service.decode_text_preview(raw, MAX_TEXT_VIEW_BYTES)
         self._frame._show_text_preview(
             name,
             source.text,

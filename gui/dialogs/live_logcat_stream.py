@@ -9,7 +9,7 @@ from collections import deque
 from datetime import datetime
 from math import ceil
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QFileDialog, QPlainTextEdit
 
@@ -25,6 +25,36 @@ from gui.dialogs.live_logcat_worker import (
 )
 from gui.i18n import tr
 from utils.adb_values import normalize_android_package
+
+
+class LogcatExportWorker(QThread):
+    """在后台把已冻结的可见日志写入目标文件，GUI 线程只收完成结果。"""
+
+    completed = Signal(bool, str)
+
+    def __init__(self, text: str, path: str, parent=None):
+        super().__init__(parent)
+        self._text = text
+        self._path = path
+
+    def run(self):
+        directory = os.path.dirname(os.path.abspath(self._path))
+        tmp_path = ""
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix=".logcat_", suffix=".tmp", dir=directory)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(self._text)
+            os.replace(tmp_path, self._path)
+        except Exception as exc:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            message = str(exc) if isinstance(exc, OSError) else type(exc).__name__
+            self.completed.emit(False, message)
+            return
+        self.completed.emit(True, "")
 
 
 class LiveLogcatStream:
@@ -44,6 +74,9 @@ class LiveLogcatStream:
         self._render_paused = False
         self._rebuild_reading = None
         self._rebuild_remaining = 0
+        self._export_worker: LogcatExportWorker | None = None
+        self._export_in_progress = False
+        self._export_path = ""
 
     @property
     def _frame(self):
@@ -166,7 +199,9 @@ class LiveLogcatStream:
                 self._frame._rendered_visible_entries or self._frame._pending_visible_entries
             )
         self._frame.clear_action.setEnabled(bool(self._frame.entries) or has_visible_content)
-        self._frame.export_action.setEnabled(has_visible_content)
+        self._frame.export_action.setEnabled(
+            has_visible_content and not self._export_in_progress
+        )
         self._refresh_empty_hint()
         self._refresh_reading_status()
 
@@ -522,36 +557,60 @@ class LiveLogcatStream:
             os.path.join(save_dir, name),
             tr("文本文件 (*.txt);;所有文件 (*)"),
         )
-        if fp:
-            try:
-                # 文档可能只完成部分绘制；逻辑可见队列包含完整筛选结果，且排除已淘汰记录。
-                text = "\n".join(
-                    entry[0] for entries in (
-                        self._frame._rendered_visible_entries, self._frame._pending_visible_entries,
-                    ) for entry in entries
-                )
-                # 先写临时文件再原子替换，避免中途失败留下半截日志文件。
-                directory = os.path.dirname(os.path.abspath(fp))
-                fd, tmp_path = tempfile.mkstemp(prefix=".logcat_", suffix=".tmp", dir=directory)
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(text)
-                    os.replace(tmp_path, fp)
-                except BaseException:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-                    raise
-                self._frame.status_bar.setText(
-                    tr('日志已导出：{value0}').format(value0=os.path.basename(fp)), tr("已导出"),
-                )
-            except OSError as e:
-                FluentMessageBox.critical(
-                    self._frame,
-                    tr("日志导出失败"),
-                    str(e),
-                )
+        if not fp or self._export_in_progress:
+            return
+        # 文档可能只完成部分绘制；逻辑可见队列包含完整筛选结果，且排除已淘汰记录。
+        text = "\n".join(
+            entry[0] for entries in (
+                self._frame._rendered_visible_entries, self._frame._pending_visible_entries,
+            ) for entry in entries
+        )
+        worker = LogcatExportWorker(text, fp, self._frame)
+        worker.completed.connect(self._on_export_completed)
+        worker.finished.connect(self._on_export_finished)
+        self._export_worker = worker
+        self._export_path = fp
+        self._export_in_progress = True
+        self._update_content_actions()
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            self._export_in_progress = False
+            self._export_worker = None
+            worker.deleteLater()
+            self._update_content_actions()
+            FluentMessageBox.critical(self._frame, tr("日志导出失败"), str(exc))
+
+    def _on_export_completed(self, success: bool, message: str) -> None:
+        try:
+            frame = self._frame
+        except RuntimeError:
+            return
+        if success:
+            frame.status_bar.setText(
+                tr('日志已导出：{value0}').format(
+                    value0=os.path.basename(self._export_path),
+                ),
+                tr("已导出"),
+            )
+            return
+        FluentMessageBox.critical(frame, tr("日志导出失败"), message)
+
+    def _on_export_finished(self) -> None:
+        worker, self._export_worker = self._export_worker, None
+        self._export_in_progress = False
+        if worker is not None:
+            worker.deleteLater()
+        try:
+            self._update_content_actions()
+        except RuntimeError:
+            pass
+        try:
+            frame = self._frame
+        except RuntimeError:
+            return
+        if getattr(frame, "_closing", False) and getattr(frame, "_close_pending", False):
+            frame._try_finalize_close("logcat_export_finished")
 
     # ── 信号槽 ──────────────────────────────────────────────────────────
 

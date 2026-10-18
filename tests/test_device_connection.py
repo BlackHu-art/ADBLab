@@ -1,5 +1,7 @@
 """连接窗口的按需启动、资源屏障、秘密生命周期和键盘行为。"""
 
+import time
+
 import pytest
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QImage
@@ -523,6 +525,22 @@ def test_manual_and_continuation_submit_by_return_without_hidden_form(dialog, qt
     QTest.keyClick(window.connection_address, Qt.Key.Key_Return)
     assert pairing.calls[-1] == ("continue", "192.0.2.1:42222")
     assert sum(call[0] == "code" for call in pairing.calls) == 1
+
+
+def test_qr_countdown_updates_text_without_reflowing_every_second(dialog, monkeypatch):
+    window, pairing = dialog
+    window.request_page("qr")
+    reflows = []
+    monkeypatch.setattr(window, "_schedule_reflow", lambda: reflows.append(1))
+
+    window._scan_deadline = time.monotonic() + 65
+    window._tick()
+    assert window.countdown_label.text() == "1:05"
+    assert reflows == []
+
+    window._scan_deadline = time.monotonic() - 1
+    window._tick()
+    assert reflows  # 过期态允许由二维码内容切换触发一次重排
 
 
 def test_shutdown_stops_visuals_and_does_not_create_an_owner_stop(dialog):

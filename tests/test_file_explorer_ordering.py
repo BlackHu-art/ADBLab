@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 
 from gui.dialogs.file_explorer import FileExplorerPage
+from gui.dialogs.file_explorer_list import FileTypeItem
 from models.file_explorer_worker import ADBWorker, DirectoryListWorker, TransferWorker
 from services.file_explorer import DirectoryListing, FileEntry
 
@@ -223,6 +224,11 @@ def test_size_sort_uses_bytes_and_keeps_parent_and_directory_first(qt_applicatio
         ]
     finally:
         page.close()
+
+
+def test_type_sort_uses_raw_type_not_localized_display():
+    assert FileTypeItem("文件", "File") < FileTypeItem("文件夹", "Folder")
+    assert FileTypeItem("文件夹", "Folder") < FileTypeItem("链接", "Link")
 
 
 @pytest.mark.parametrize("kind", ["directory", "file", "missing", "error"])

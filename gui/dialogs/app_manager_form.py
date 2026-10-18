@@ -196,7 +196,7 @@ class AppManagerForm:
         self._frame.search_input.setPlaceholderText(tr("搜索应用名称或包名"))
         self._frame._search_label.setBuddy(self._frame.search_input)
         self._frame.search_input.setAccessibleName(tr("搜索应用"))
-        self._frame.search_input.textChanged.connect(self._frame._filter)
+        self._frame.search_input.textChanged.connect(self._frame._schedule_filter)
         self._frame.search_input.searchSignal.connect(self._frame._filter)
         self._frame.search_input.returnPressed.connect(self._frame.search_input.search)
         self._frame._type_label = apply_label_role(BodyLabel(tr("类型")), FontRole.UI)

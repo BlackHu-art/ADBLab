@@ -20,7 +20,6 @@ from qfluentwidgets import (
     ComboBox,
     FluentIcon,
     InfoBadge,
-    InfoLevel,
     LineEdit,
     PlainTextEdit,
     ProgressRing,
@@ -436,15 +435,9 @@ class LiveLogcatForm:
         if hasattr(self._frame, "header_card"):
             self._frame.dialog_title.setFont(BS.font_for_role(FontRole.TITLE))
             self._frame.dialog_subtitle.setFont(BS.font_for_role(FontRole.UI))
+            # 徽标文案/级别由 _sync_device_actions 唯一维护；主题回调只改字体，
+            # 避免离线状态在切主题后被改写成另一套措辞和级别。
             self._frame.status_badge.setFont(BS.font_for_role(FontRole.UI))
-            has_device = bool(
-                self._frame.device_ip
-                and getattr(self._frame, "_device_connected", True)
-            )
-            self._frame.status_badge.setText(tr("设备已连接") if has_device else tr("未连接设备"))
-            self._frame.status_badge.setLevel(
-                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-            )
         ui_font = BS.font_for_role(FontRole.UI)
         mono_font = BS.font_for_role(FontRole.MONO)
         log_font = BS.font_for_role(FontRole.LOG)
@@ -473,7 +466,6 @@ class LiveLogcatForm:
         )
         # 状态信息直接使用 qfluentwidgets CaptionLabel，并同步语义字体。
         self._apply_action_button_styles()
-        self._reflow_filters()
         self._frame.level_combo.setMinimumWidth(120)
         self._frame.level_combo.setMinimumWidth(
             max(120, self._frame.level_combo.sizeHint().width())
@@ -510,7 +502,7 @@ class LiveLogcatForm:
         apply_focus_indicator(button, selector="QPushButton", keyboard_only=True)
 
     def resizeEvent(self, event):
-        self._reflow_filters()
+        # 只保留定时器尾沿；同步再跑一次会让每次拖动都重排两遍筛选栏。
         self._frame._filter_reflow_timer.start(0)
 
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:

@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
 from qfluentwidgets import FluentIcon, FluentWindow
@@ -81,6 +82,71 @@ def settings_page(monkeypatch, qt_application):
     page = SettingsPage(frame)
     yield page, values, writes, frame
     page.close()
+
+
+def test_visible_resize_defers_and_coalesces_settings_reflow(
+    qt_application, settings_page, monkeypatch,
+):
+    page, _values, _writes, _frame = settings_page
+    page.resize(1000, 640)
+    page.show()
+    qt_application.processEvents()
+
+    calls = []
+    monkeypatch.setattr(
+        page, "_reflow_settings", lambda *, force=True: calls.append(force),
+    )
+    page.resize(900, 640)
+    qt_application.processEvents()
+    assert calls == [True]
+    page.resize(880, 640)
+    qt_application.processEvents()
+    assert calls == [True]
+    QTest.qWait(90)
+    assert calls == [True, False]
+
+
+def test_accent_color_changes_are_coalesced_and_flushed_on_shutdown(
+    qt_application, settings_page, monkeypatch,
+):
+    page, _values, writes, _frame = settings_page
+    applied: list[str] = []
+    monkeypatch.setattr(
+        BaseStyles,
+        "set_accent_color",
+        classmethod(lambda _cls, color: applied.append(color) or color),
+    )
+
+    page._set_accent_color(QColor("#112233"))
+    page._set_accent_color(QColor("#445566"))
+    assert applied == []
+
+    QTest.qWait(160)
+    assert applied == ["#445566"]
+    assert writes[-1] == {"accent_color": "#445566"}
+
+    page._set_accent_color(QColor("#abcdef"))
+    page.prepare_shutdown()
+    assert writes[-1] == {"accent_color": "#ABCDEF"}
+    assert applied == ["#445566"]
+
+
+def test_reset_cancels_pending_accent_color(qt_application, settings_page, monkeypatch):
+    page, values, _writes, _frame = settings_page
+    applied: list[str] = []
+    monkeypatch.setattr(
+        BaseStyles,
+        "set_accent_color",
+        classmethod(lambda _cls, color: applied.append(color) or color),
+    )
+
+    page._set_accent_color(QColor("#112233"))
+    page._reset_settings()
+    QTest.qWait(160)
+
+    assert applied[-1] == "#0F6CBD"
+    assert "#112233" not in applied
+    assert values["accent_color"] == "#0F6CBD"
 
 
 @pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])

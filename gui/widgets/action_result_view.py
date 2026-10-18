@@ -64,6 +64,9 @@ class ActionResultView(QWidget):
         self._search_offset = 0
         self._diagnostic = diagnostic
         self._latest_started = 0.0
+        self._history_signature: tuple[tuple[str, str], ...] = ()
+        self._target_signature: tuple[tuple[str, str], ...] = ()
+        self._artifact_signature: tuple[str, ...] = ()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 12, 0, 4)
         layout.setSpacing(8)
@@ -199,12 +202,23 @@ class ActionResultView(QWidget):
         if ignored_diagnostic:
             # 旧请求终态必须解除在途保护，但晚到正文不能抢占较新诊断的阅读位置。
             return
+        entries = tuple(
+            (
+                item.request_id,
+                f"{datetime.fromtimestamp(item.started_at).strftime('%H:%M:%S')} · "
+                f"{tr(item.spec.title)}",
+            )
+            for item in reversed(self._records.values())
+        )
         blocker = QSignalBlocker(self.history)
-        self.history.clear()
-        for item in reversed(self._records.values()):
-            stamp = datetime.fromtimestamp(item.started_at).strftime("%H:%M:%S")
-            self.history.addItem(f"{stamp} · {tr(item.spec.title)}", userData=item.request_id)
-        self.history.setCurrentIndex(self.history.findData(self._selected))
+        if entries != self._history_signature:
+            self.history.clear()
+            for request_id, label in entries:
+                self.history.addItem(label, userData=request_id)
+            self._history_signature = entries
+        index = self.history.findData(self._selected)
+        if index >= 0 and self.history.currentIndex() != index:
+            self.history.setCurrentIndex(index)
         del blocker
         if fresh and not self._diagnostic:
             self.detail_toggle.setChecked(result.spec.presentation in ("text", "notes"))
@@ -251,17 +265,23 @@ class ActionResultView(QWidget):
         self.message_label.setText(" ".join(result.message.splitlines())[:200])
         self.message_label.setVisible(bool(result.message) and not self._diagnostic)
         previous = self.targets.currentData()
-        blocker = QSignalBlocker(self.targets)
-        self.targets.clear()
+        target_entries = []
         for item in result.items:
             label = ActionResults.target_label(result, item.target)
             if not any(result.target_labels) and item.target in result.targets:
                 index = result.targets.index(item.target)
                 if index < len(result.target_names) and result.target_names[index]:
                     label += " · " + result.target_names[index]
-            self.targets.addItem(f"{label} · {tr(STATE_LABELS[item.state])}", userData=item.job_id)
-        if self.targets.findData(previous) >= 0:
-            self.targets.setCurrentIndex(self.targets.findData(previous))
+            target_entries.append((item.job_id, f"{label} · {tr(STATE_LABELS[item.state])}"))
+        blocker = QSignalBlocker(self.targets)
+        if tuple(target_entries) != self._target_signature:
+            self.targets.clear()
+            for job_id, label in target_entries:
+                self.targets.addItem(label, userData=job_id)
+            self._target_signature = tuple(target_entries)
+        index = self.targets.findData(previous)
+        if index >= 0 and self.targets.currentIndex() != index:
+            self.targets.setCurrentIndex(index)
         del blocker
         self.targets.setEnabled(bool(result.items))
         self.targets.setVisible(result.spec.presentation != "notes")
@@ -295,10 +315,12 @@ class ActionResultView(QWidget):
             else ""
         )
         self.preview_notice.setVisible(len(self._detail) > 64000)
-        self.artifacts.clear()
-        paths = item.artifacts if item else ()
-        for path in paths:
-            self.artifacts.addItem(artifact_name(path), userData=path)
+        paths = tuple(item.artifacts if item else ())
+        if paths != self._artifact_signature:
+            self.artifacts.clear()
+            for path in paths:
+                self.artifacts.addItem(artifact_name(path), userData=path)
+            self._artifact_signature = paths
         self.artifacts.setVisible(bool(paths) and not self._diagnostic)
         self.artifact_actions.setVisible(bool(paths) and not self._diagnostic)
         if result.state in ("failed", "partial") or (item and item.state == "failed"):

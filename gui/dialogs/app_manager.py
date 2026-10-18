@@ -140,6 +140,8 @@ class AppManagerPage(QWidget):
         self._close_after_dispose = False
         self._shutdown_registered = False
         self._details_open = False
+        # 只在本轮首次进入 split 时给默认比例；用户拖动后 resize 不再覆盖。
+        self._split_sizes_initialized = False
         self._detail_row_by_pkg = {}
         self._detail_icon_by_pkg = {}
         self._form_controller = AppManagerForm(self)
@@ -328,6 +330,7 @@ class AppManagerPage(QWidget):
         ):
             return None
         self._details_open = True
+        self._split_sizes_initialized = False
         self.details_page.activate(package_name)
         self._update_master_detail_layout()
         self.detail_opened.emit(package_name)
@@ -338,6 +341,7 @@ class AppManagerPage(QWidget):
             return
         self.details_page.deactivate("back")
         self._details_open = False
+        self._split_sizes_initialized = False
         self._update_master_detail_layout()
         self.detail_closed.emit()
 
@@ -407,11 +411,14 @@ class AppManagerPage(QWidget):
             return
         self.details_page.show()
         self._master_panel.setVisible(wide)
-        if wide:
+        if wide and not self._split_sizes_initialized:
             width = max(1, self._master_detail_splitter.width())
             self._master_detail_splitter.setSizes(
                 [max(1, width * 3 // 5), max(1, width * 2 // 5)]
             )
+            self._split_sizes_initialized = True
+        elif not wide:
+            self._split_sizes_initialized = False
         self._reflow_master_controls()
         self.updateGeometry()
 
@@ -470,6 +477,7 @@ class AppManagerPage(QWidget):
                 tr("无法加载应用，请检查设备后重试。")
             )
             self._set_load_state("error", message)
+            self.details_page.mark_load_cancelled(message)
         if not self._closing and self._load_refresh_pending and self._active:
             self._load_refresh_pending = False
             QTimer.singleShot(0, self._load_apps)
@@ -516,9 +524,9 @@ class AppManagerPage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # _update_master_detail_layout 已包含 top/action 重排；重复再跑一次会让
+        # 连续缩放时每个宽度变化做两遍 remove/add。
         self._update_master_detail_layout()
-        self._reflow_top_controls()
-        self._reflow_action_buttons()
 
     # ── 视图控制器委托 wrapper ─────────────────────────────────────────
 
@@ -589,6 +597,18 @@ class AppManagerPage(QWidget):
 
     def _filter(self):
         return (getattr(self, "_views_controller", None) or AppManagerViews(self))._filter()
+
+    def _schedule_filter(self):
+        # 立即路径必须经过页面 _filter，保留搜索按钮/清空等页面级契约；
+        # 连续追加输入由视图控制器的单发计时器合并到尾沿。
+        views = getattr(self, "_views_controller", None) or AppManagerViews(self)
+        text = self.search_input.text()
+        if not views._filter_timer.isActive() or not text.startswith(views._last_filter_text):
+            views._filter_timer.stop()
+            self._filter()
+            views._filter_timer.start()
+            return
+        views._filter_timer.start()
 
     def _flush_detail_filter(self) -> None:
         """同一轮详情结果合并筛选；定时器归页面所有，释放后不再投递。"""

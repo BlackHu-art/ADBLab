@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 
-from PySide6.QtCore import QDateTime, QSignalBlocker, Qt, Signal, Slot
+from PySide6.QtCore import QDateTime, QSignalBlocker, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -179,7 +179,12 @@ class RunResultsWidget(QWidget):
         detail_layout.addWidget(self.action_row)
         layout.addWidget(self.details)
 
-        self.search_edit.textChanged.connect(self.refresh)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(180)
+        self._refresh_timer.timeout.connect(self.refresh)
+        self._last_filter_text = ""
+        self.search_edit.textChanged.connect(self._schedule_refresh)
         self.search_edit.returnPressed.connect(self.search_edit.search)
         # 搜索图标与 Enter 只重查已有结果；清空仍由 textChanged 撤销文字条件。
         self.search_edit.searchSignal.connect(self.refresh)
@@ -200,12 +205,26 @@ class RunResultsWidget(QWidget):
         """返回当前筛选结果中选中的运行快照。"""
         return copy.deepcopy(self._selected)
 
+    def _schedule_refresh(self, *_args) -> None:
+        """首字符/替换/清空立即刷新，连续追加输入合并到 180ms 尾沿。"""
+        text = self.search_edit.text()
+        if not text or not self._refresh_timer.isActive() or not text.startswith(
+            self._last_filter_text
+        ):
+            self._refresh_timer.stop()
+            self.refresh()
+            self._refresh_timer.start()
+            return
+        self._refresh_timer.start()
+
     @Slot()
     def refresh(self, *_args) -> None:
         """刷新最多 200 条结果，按稳定标识保留选择并重查筛选条件。"""
+        self._refresh_timer.stop()
         selected_id = self._selected.run_id if self._selected is not None else ""
-        records = self._library.records
-        query = self.search_edit.text().strip().casefold()
+        records = self._library.records_view
+        self._last_filter_text = self.search_edit.text()
+        query = self._last_filter_text.strip().casefold()
         kind, state = self.kind_combo.currentData(), self.state_combo.currentData()
         self._visible_records = tuple(
             record
@@ -232,7 +251,8 @@ class RunResultsWidget(QWidget):
             else tr("尚无测试结果，完成 Monkey 或性能测试后会显示在这里")
         )
         with QSignalBlocker(self.table):
-            self.table.setRowCount(len(self._visible_records))
+            if self.table.rowCount() != len(self._visible_records):
+                self.table.setRowCount(len(self._visible_records))
             selected_row = 0
             for row, record in enumerate(self._visible_records):
                 values = (
@@ -242,13 +262,18 @@ class RunResultsWidget(QWidget):
                     self._state_label(record.state),
                 )
                 for column, value in enumerate(values):
-                    item = QTableWidgetItem(value)
+                    item = self.table.item(row, column)
+                    if item is None:
+                        item = QTableWidgetItem()
+                        self.table.setItem(row, column, item)
+                    if item.text() != value:
+                        item.setText(value)
                     item.setFont(self.table.font())
                     tooltip = _date_text(record.finished_at) if column == 0 else value
                     if column == 2:
                         tooltip = "\n".join((value, *_record_context(record)))
-                    item.setToolTip(tooltip)
-                    self.table.setItem(row, column, item)
+                    if item.toolTip() != tooltip:
+                        item.setToolTip(tooltip)
                 if record.run_id == selected_id:
                     selected_row = row
             if has_rows:

@@ -66,6 +66,7 @@ from gui.styles.fluent import (
     use_smooth_scroll,
 )
 from gui.styles.icon_loader import DEVICE_ICON, cached_fluent_icon
+from gui.styles.theme import normalise_accent_color
 from gui.widgets.adb_client_card import AdbClientSettingCard, AdbEnvironmentSettingCard
 from gui.widgets.home_banner import HomeBanner
 from gui.widgets.setting_card_layout import (
@@ -937,6 +938,19 @@ class SettingsPage(ScrollArea):
         self._frame = frame
         self._settings = AppSettings.instance()
         self._startup_detection_scheduled = False
+        # 取色器会在拖动时逐帧发出 colorChanged；合并到停止拖动后只应用一次全局 QSS。
+        self._accent_apply_timer = QTimer(self)
+        self._accent_apply_timer.setSingleShot(True)
+        self._accent_apply_timer.setInterval(120)
+        self._accent_apply_timer.timeout.connect(self._apply_pending_accent)
+        self._pending_accent: QColor | None = None
+        # 宽度拖动只提交最后一次布局；首次显示或字体/文案变化仍走同步重排。
+        self._settings_reflow_timer = QTimer(self)
+        self._settings_reflow_timer.setSingleShot(True)
+        self._settings_reflow_timer.setInterval(60)
+        self._settings_reflow_timer.timeout.connect(
+            lambda: self._reflow_settings(force=False)
+        )
         # 只翻译显示标签；持久化值与路由标识不随界面语言变化。
         self.THEME_LABELS = {mode: tr(label) for mode, label in type(self).THEME_LABELS.items()}
         self.THEME_MODES = {label: mode for mode, label in self.THEME_LABELS.items()}
@@ -1203,6 +1217,12 @@ class SettingsPage(ScrollArea):
 
     def prepare_shutdown(self) -> None:
         """异步关闭前停止设置页动画及客户端探测，不等待窗口最终隐藏。"""
+        self._accent_apply_timer.stop()
+        self._settings_reflow_timer.stop()
+        pending, self._pending_accent = self._pending_accent, None
+        if pending is not None:
+            # 关闭阶段只持久化最后选择，不再触发全量 QSS；避免退出被 700ms 阻塞。
+            self._settings.set("accent_color", normalise_accent_color(pending.name()))
         self._wheel_scroll.prepare_shutdown()
         for card in (self.adb_client_card, self.adb_check_card):
             card.expandAni.stop()
@@ -1376,14 +1396,21 @@ class SettingsPage(ScrollArea):
 
         apply_setting_text_style(widget, role, bold=bold)
 
-    def _reflow_settings(self) -> None:
-        """ExpandLayout 使用当前控件高度，先测量卡片再更新分组与页面总高。"""
+    def _reflow_settings(self, *, force: bool = True) -> None:
+        """ExpandLayout 使用当前控件高度，先测量卡片再更新分组与页面总高。
+
+        force=False 只用于 resize 的尾沿提交：宽度未变时直接返回，避免滚动条或
+        子控件高度回传造成的重复 remove/add。
+        """
 
         if not hasattr(self, "_card_presentations"):
             return
-        self._settings_reflow_width = self.viewport().width()
+        viewport_width = self.viewport().width()
+        if not force and viewport_width == getattr(self, "_settings_reflow_width", None):
+            return
+        self._settings_reflow_width = viewport_width
         margins = self.expand_layout.contentsMargins()
-        width = max(1, self.viewport().width() - margins.left() - margins.right())
+        width = max(1, viewport_width - margins.left() - margins.right())
         for presentation in self._card_presentations:
             presentation.reflow(width)
         for group in self._setting_groups:
@@ -1410,7 +1437,18 @@ class SettingsPage(ScrollArea):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # 卡片换行只依赖可用宽度；高度变化由滚动容器承担，不重挂所有操作控件。
-        # 字体、文案和状态更新仍显式调用重排，不能被这个尺寸事件短路。
+        # 拖动窗口时只保留最后一次宽度，字体/文案/状态变化仍同步重排。
+        if self.viewport().width() != getattr(self, "_settings_reflow_width", None):
+            # 首帧/拖动起点先同步落实一次，后续同一次拖动只保留尾沿；这样既有即时
+            # 反馈，又不会在每个像素级 resize 上重挂所有卡片。
+            if not self._settings_reflow_timer.isActive():
+                self._reflow_settings()
+            self._settings_reflow_timer.start()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # 首次可见且宽度确实变化时同步落实，不能等 60ms 定时器让首帧沿用旧网格。
+        self._settings_reflow_timer.stop()
         if self.viewport().width() != getattr(self, "_settings_reflow_width", None):
             self._reflow_settings()
 
@@ -1450,6 +1488,15 @@ class SettingsPage(ScrollArea):
         )
 
     def _set_accent_color(self, color: QColor) -> None:
+        """记录取色器最新颜色；停止拖动 120ms 后再应用，避免逐帧全量重建。"""
+        self._pending_accent = QColor(color)
+        self._accent_apply_timer.start()
+
+    def _apply_pending_accent(self) -> None:
+        """由 120ms 防抖计时器触发，应用并持久化最后一次强调色；pending 为空时无操作。"""
+        color, self._pending_accent = self._pending_accent, None
+        if color is None:
+            return
         value = BaseStyles.set_accent_color(color.name())
         self._settings.set("accent_color", value)
 
@@ -1475,6 +1522,9 @@ class SettingsPage(ScrollArea):
         BaseStyles.reload_from_settings()
 
     def _reset_settings(self) -> None:
+        # 重置会立即写默认色；必须取消 120ms 内的待应用颜色，否则旧色会在之后覆盖默认。
+        self._accent_apply_timer.stop()
+        self._pending_accent = None
         previous_language = self._settings.get("language", "Auto")
         self._settings.reset()
 

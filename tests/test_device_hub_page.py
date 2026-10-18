@@ -29,6 +29,30 @@ def _show_page(qt_application, width=960):
     return window, page
 
 
+def test_device_context_only_refreshes_cards_whose_presentation_changed(qt_application):
+    window, page = _show_page(qt_application)
+    cards = {card.device_id: card for card in page.device_cards}
+    calls = {device: 0 for device in cards}
+    originals = {device: card.set_snapshot for device, card in cards.items()}
+    try:
+        for device, card in cards.items():
+            def counted(*args, _device=device, _original=originals[device], **kwargs):
+                calls[_device] += 1
+                return _original(*args, **kwargs)
+
+            card.set_snapshot = counted
+
+        page.set_device_context(["demo-usb-a"], list(cards), "ready")
+        assert calls == {device: 0 for device in cards}
+
+        page.set_device_context([], list(cards), "ready")
+        assert calls["demo-usb-a"] == 1
+        assert calls["192.0.2.15:5555"] == 0
+    finally:
+        window.close()
+        qt_application.processEvents()
+
+
 def _settle_cards(qt_application, page):
     wait_until(qt_application, lambda: all(
         not card._details_transition_active for card in page.device_cards

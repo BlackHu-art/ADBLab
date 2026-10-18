@@ -821,6 +821,7 @@ class DeviceHubPage(QWidget):
         self._state = "empty"
         self._metadata: dict[str, dict[str, object]] = {}
         self._cards: dict[str, _DeviceCard] = {}
+        self._card_signatures: dict[str, tuple] = {}
         self._active_detail_cards: set[_DeviceCard] = set()
         self._shutdown_prepared = False
         self._connection_panel: QWidget | None = None
@@ -977,6 +978,7 @@ class DeviceHubPage(QWidget):
             return
         self._metadata[device_id] = snapshot
         self._cards[device_id].set_snapshot(snapshot, device_id in self._selected, self._state)
+        self._card_signatures[device_id] = self._card_signature(device_id)
 
     def set_device_context(self, selected, connected, state) -> None:
         """保持原三参数接口；同设备刷新原位更新，移除卡片延迟释放以避开信号栈。"""
@@ -986,6 +988,7 @@ class DeviceHubPage(QWidget):
         for device_id in tuple(self._cards):
             if device_id not in self._connected:
                 card = self._cards.pop(device_id)
+                self._card_signatures.pop(device_id, None)
                 card.set_snapshot(self._metadata.get(device_id, {}), False, "offline")
                 self._cards_layout.removeWidget(card)
                 card.hide()
@@ -1017,8 +1020,17 @@ class DeviceHubPage(QWidget):
         if was_active != is_active:
             self.details_transition_changed.emit(is_active)
 
+    def _card_signature(self, device_id: str) -> tuple:
+        """只比较影响卡片呈现的输入，避免同一选择集合反复重排全部卡片。"""
+
+        return (repr(self._metadata.get(device_id, {})), device_id in self._selected, self._state)
+
     def _refresh_cards(self) -> None:
         for device_id, card in self._cards.items():
+            signature = self._card_signature(device_id)
+            if self._card_signatures.get(device_id) == signature:
+                continue
+            self._card_signatures[device_id] = signature
             card.set_snapshot(
                 self._metadata.get(device_id, {}), device_id in self._selected,
                 self._state,

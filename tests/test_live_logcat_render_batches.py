@@ -147,6 +147,10 @@ def test_export_during_partial_render_saves_complete_filtered_snapshot(
         lambda *_args: (str(destination), ""),
     )
     page._export()
+    wait_until(
+        qt_application,
+        lambda: page._stream_controller._export_worker is None and destination.exists(),
+    )
     assert destination.read_text(encoding="utf-8").splitlines() == errors
 
 

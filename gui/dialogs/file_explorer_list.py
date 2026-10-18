@@ -61,6 +61,19 @@ class FileSizeItem(QTableWidgetItem):
         return self._size < other._size
 
 
+class FileTypeItem(QTableWidgetItem):
+    """类型列显示本地化文本，排序使用稳定的原始业务类型。"""
+
+    def __init__(self, text: str, file_type: str):
+        super().__init__(text)
+        self._type_key = str(file_type)
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if not isinstance(other, FileTypeItem):
+            return super().__lt__(other)
+        return self._type_key < other._type_key
+
+
 class FileModifiedItem(QTableWidgetItem):
     """日期显示保留原文；无年份与不可解析项独立置后，不伪造准确时间。"""
 
@@ -212,8 +225,12 @@ class FileExplorerList:
         )
 
     def _go_parent(self):
+        parent = os.path.dirname(self._frame.current_path.rstrip("/")) or "/"
+        if parent == self._frame.current_path:
+            # 根目录没有上级；不要先写下“正在打开”再被 _navigate 直接返回。
+            return
         self._frame.status_bar.setText(tr("Opening parent folder..."))
-        self._navigate(os.path.dirname(self._frame.current_path.rstrip("/")) or "/")
+        self._navigate(parent)
 
     # ── 目录列表 ────────────────────────────────────────────────────────
 
@@ -446,7 +463,7 @@ class FileExplorerList:
         *, size_bytes: int = 0,
     ):
         display_type = tr(file_type) if file_type in {"Folder", "File", "Link"} else file_type
-        type_item = QTableWidgetItem(display_type)
+        type_item = FileTypeItem(display_type, file_type)
         # 类型文字可随语言变化；目录导航和图标选择始终读取原始业务类型。
         type_item.setData(Qt.ItemDataRole.UserRole, file_type)
         type_item.setIcon(self._file_type_icon(name, file_type))

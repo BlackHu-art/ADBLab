@@ -152,6 +152,11 @@ class RunLibraryController(QObject):
         return copy.deepcopy(self._records)
 
     @property
+    def records_view(self) -> tuple[RunRecord, ...]:
+        """返回只读快照；RunRecord 不可变，列表展示无需逐次深拷贝。"""
+        return self._records
+
+    @property
     def presets(self) -> tuple[RunPreset, ...]:
         return copy.deepcopy(self._presets)
 

@@ -49,6 +49,8 @@ class SidePanel(QWidget):
         self._loaded_lazy_tabs = set()
         self._restricted_width_mode = False
         self._responsive_style_generation = 0
+        self._theme_icon_generation = 0
+        self._theme_icons_stopped = False
         self._responsive_coordinator = ResponsiveCoordinator()
         self._last_settled_generation = 0
         self._responsive_settle_timer = QTimer(self)
@@ -405,6 +407,8 @@ class SidePanel(QWidget):
 
     def shutdown(self):
         """依次关闭已加载标签页拥有的后台资源。"""
+        self._theme_icons_stopped = True
+        self._theme_icon_generation = getattr(self, "_theme_icon_generation", 0) + 1
         top_level = getattr(self, "_responsive_top_level", None)
         if top_level is not None:
             top_level.removeEventFilter(self)
@@ -453,9 +457,43 @@ class SidePanel(QWidget):
             roots.append(tools)
         return roots
 
+    _THEME_ICON_BATCH_SIZE = 16
+
+    def _apply_theme_icon(self, button: QPushButton, icon_name: str) -> None:
+        """按按钮类型同步主题图标；只处理调用方已确认存在的语义名。"""
+        icon = get_fluent_icon(icon_name)
+        if isinstance(button, PushButton):
+            button.setIcon(icon)
+        else:
+            button.setIcon(icon.qicon())
+
+    def _refresh_theme_icons(self, buttons: tuple[QPushButton, ...], generation: int) -> None:
+        """分帧刷新隐藏页按钮图标；代次变化或页面已销毁时停止后续批次。"""
+        from shiboken6 import isValid
+
+        if getattr(self, "_theme_icons_stopped", False):
+            return
+        if generation != self._theme_icon_generation:
+            return
+        batch = buttons[: self._THEME_ICON_BATCH_SIZE]
+        for button in batch:
+            if not isValid(button):
+                continue
+            icon_name = button.property("iconName")
+            if icon_name:
+                self._apply_theme_icon(button, icon_name)
+        rest = buttons[self._THEME_ICON_BATCH_SIZE :]
+        if rest and generation == self._theme_icon_generation:
+            QTimer.singleShot(0, self, lambda: self._refresh_theme_icons(rest, generation))
+
     def _on_theme_changed(self, _):
+        if getattr(self, "_theme_icons_stopped", False):
+            return
         visited = set()
-        # 视觉根已由 FluentWindow 各页面托管，主题刷新必须显式覆盖全部控件树。
+        self._theme_icon_generation = getattr(self, "_theme_icon_generation", 0) + 1
+        generation = self._theme_icon_generation
+        deferred: list[QPushButton] = []
+        # 可见按钮立即换图标；隐藏页按钮分帧刷新，避免阻塞主题切换首帧。
         for root in self._visual_roots():
             for child in (root, *root.findChildren(QWidget)):
                 child_id = id(child)
@@ -467,12 +505,17 @@ class SidePanel(QWidget):
                 elif isinstance(child, QPushButton):
                     # qfluentwidgets 按钮自维护主题，这里同步原生 Fluent 操作图标。
                     icon_name = child.property("iconName")
-                    if icon_name:
-                        icon = get_fluent_icon(icon_name)
-                        if isinstance(child, PushButton):
-                            child.setIcon(icon)
-                        else:
-                            child.setIcon(icon.qicon())
+                    if not icon_name:
+                        continue
+                    if child.isVisible():
+                        self._apply_theme_icon(child, icon_name)
+                    else:
+                        deferred.append(child)
+        if deferred:
+            QTimer.singleShot(
+                0, self,
+                lambda: self._refresh_theme_icons(tuple(deferred), generation),
+            )
         self.apply_device_theme()
         if self._apps_tab is not None:
             self._apps_tab._update_pct_total()

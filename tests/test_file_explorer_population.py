@@ -10,6 +10,26 @@ from services.file_explorer import DirectoryListing, FileEntry
 pytestmark = pytest.mark.ui
 
 
+def test_selecting_device_on_active_unloaded_page_starts_first_browse(
+    qt_application, monkeypatch,
+):
+    page = FileExplorerPage(device_ip="demo-a")
+    page._active = True
+    page._device_selected = False
+    page._device_connected = True
+    page._loaded_once = False
+    calls = []
+    monkeypatch.setattr(page, "_refresh", lambda *args, **kwargs: calls.append((args, kwargs)))
+    try:
+        page.set_device_selected(True)
+        assert page._loaded_once is True
+        assert calls
+    finally:
+        page.request_dispose("test")
+        page.close()
+        qt_application.processEvents()
+
+
 @pytest.fixture
 def page(qt_application, monkeypatch):
     monkeypatch.setattr(DirectoryListWorker, "start", lambda worker: None)

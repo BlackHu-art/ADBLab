@@ -88,6 +88,26 @@ def test_empty_results_then_live_update_has_one_selected_record(make_panel, qt_a
     assert panel.reuse_button.isEnabled()
 
 
+def test_search_typing_coalesces_and_reuses_existing_rows(make_panel, qt_application):
+    panel, _controller = make_panel((_record(), _record("two")))
+    first = panel.table.item(0, 2)
+    calls = []
+    original = panel.refresh
+
+    def counted(*args):
+        calls.append(1)
+        return original(*args)
+
+    panel.refresh = counted
+    panel.search_edit.setText("a")
+    panel.search_edit.setText("al")
+    panel.search_edit.setText("alp")
+    assert len(calls) == 1
+    assert panel.table.item(0, 2) is first
+    QTest.qWait(220)
+    assert len(calls) == 2
+
+
 def test_search_kind_and_state_filters_compose_and_distinguish_no_matches(make_panel):
     records = (
         _record(),

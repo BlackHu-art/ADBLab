@@ -41,6 +41,9 @@ class PerformanceSessions(QWidget):
         self._enabled = False
         self._devices: tuple[str, ...] = ()
         self._labels: dict[str, str] = {}
+        self._row_signatures: dict[str, tuple[str, str, str, str]] = {}
+        self._rendered_devices: tuple[str, ...] = ()
+        self._refreshing = False
         self.setMinimumWidth(0)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -101,17 +104,38 @@ class PerformanceSessions(QWidget):
         minutes, seconds = divmod(rest, 60)
         return f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes:02}:{seconds:02}"
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # 隐藏期间跳过表格重建；重新显示时用最新运行快照补齐。
+        self.refresh()
+
     def refresh(self, *_args) -> None:
         """保留离线或取消勾选后的运行会话，避免后台任务从列表中消失。"""
+        if self._refreshing:
+            return
+        self._refreshing = True
+        try:
+            self._refresh_rows()
+        finally:
+            self._refreshing = False
+
+    def _refresh_rows(self) -> None:
         pages = {
             key.device_id: page for key in self.registry.keys()
             if key.feature == "performance" and (page := self.registry.get(key)) is not None
         }
         self._devices = tuple(dict.fromkeys((*self._selected, *pages)))
-        self.setVisible(self._enabled and len(self._devices) > 1)
+        visible = self._enabled and len(self._devices) > 1
+        if self.isVisible() != visible:
+            self.setVisible(visible)
+        if not self.isVisible():
+            return
         blocker = QSignalBlocker(self.table)
         scroll = self.table.verticalScrollBar().value()
-        self.table.setRowCount(len(self._devices))
+        if self._devices != self._rendered_devices:
+            self.table.setRowCount(len(self._devices))
+            self._rendered_devices = self._devices
+            self._row_signatures.clear()
         current_row = -1
         for row, device in enumerate(self._devices):
             page = pages.get(device)
@@ -133,6 +157,12 @@ class PerformanceSessions(QWidget):
                 device, tr("设备 {number}").format(number=len(self._labels) + 1),
             )
             full = f"{label}\n{status}\n{snapshot.percent}% · {timing}\n{snapshot.detail}".strip()
+            signature = (label, status, progress, full)
+            if self._row_signatures.get(device) == signature:
+                if device == self._current:
+                    current_row = row
+                continue
+            self._row_signatures[device] = signature
             for column, text in enumerate((label, status, progress)):
                 item = self.table.item(row, column)
                 if item is None:
@@ -160,6 +190,7 @@ class PerformanceSessions(QWidget):
             self.device_requested.emit(device)
 
     def _apply_fonts(self, *_args) -> None:
+        self._row_signatures.clear()
         configure_fluent_control(self.table)
         self.table.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         self.table.horizontalHeader().setStyleSheet(

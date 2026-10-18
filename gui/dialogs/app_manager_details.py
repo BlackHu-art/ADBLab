@@ -197,11 +197,13 @@ class AppDetailsPage(QWidget):
 
     def _ps(self, parent, title, *, checkable=True):
         hl = QHBoxLayout()
-        hl.addWidget(apply_label_role(BodyLabel(title), FontRole.UI))
+        title_label = apply_label_role(BodyLabel(title), FontRole.UI)
+        hl.addWidget(title_label)
         if checkable:
             sb = PushButton()
             sb.setText(tr("全选 / 全不选"))
             sb.setToolTip(tr("切换此列表的全部权限选择"))
+            sb.setAccessibleName(f"{title} · {tr('全选 / 全不选')}")
             sb.setIcon(get_fluent_icon("check-square.svg"))
             sb.setIconSize(QSize(14, 14))
             sb.setMinimumWidth(130)
@@ -209,6 +211,8 @@ class AppDetailsPage(QWidget):
             hl.addWidget(sb)
         parent.addLayout(hl)
         lw = use_smooth_scroll(ListWidget())
+        lw.setAccessibleName(title)
+        title_label.setBuddy(lw)
         lw.setItemDelegate(_PermissionItemDelegate(lw))
         lw.setMinimumHeight(100)
         lw.setSelectionMode(
@@ -312,9 +316,10 @@ class AppDetailsPage(QWidget):
         self._android_user_ready = bool(ready and user_id is not None)
         self._user_context_ready = ready
         if cancelled_load:
-            # 旧代次结束回调已失效，主动恢复重试入口并撤销未完成快照的缓存标记。
+            # 普通列表刷新会暂时把 ready 置假并取消旧代次；这不是查询失败，
+            # 不能闪现错误态。刷新完成后由列表重新发起详情加载。
             self._loaded_package = ""
-            self._set_load_state("error", tr("无法加载应用详情。"))
+            self._set_load_state("idle", "")
         else:
             self._sync_operation_controls()
 
@@ -434,6 +439,11 @@ class AppDetailsPage(QWidget):
         normalized = message.strip()
         if normalized.lower().startswith(("error", "failed")):
             self._last_load_error = normalized
+
+    def mark_load_cancelled(self, message: str = "") -> None:
+        """列表刷新失败时，仅把因刷新而中断的详情恢复为可重试错误态。"""
+        if self.load_state == "loading" or not self._loaded_package:
+            self._set_load_state("error", message or tr("无法加载应用详情。"))
 
     def _set_load_state(self, state: str, message: str) -> None:
         if state == self.load_state and not message:

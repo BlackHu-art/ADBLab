@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
@@ -89,9 +89,27 @@ class AboutPanel(SettingCardGroup):
         )
         self.support_qr = ImageLabel(self.support_actions)
         self.support_qr.setObjectName("aboutSupportQr")
-        pixmap = QPixmap(resource_path("resources/ZFB.jpg"))
-        if not pixmap.isNull():
-            self.support_qr.setPixmap(pixmap)
+        source = QPixmap(resource_path("resources/ZFB.jpg"))
+        if not source.isNull():
+            # ImageLabel 绘制时按 IgnoreAspectRatio 铺满；先等比缩放并居中到方形
+            # 画布，既避免二维码纵向拉伸，也避免每次重绘缩放整张 1706x1815 原图。
+            dpr = max(1.0, self.support_qr.devicePixelRatioF())
+            side = max(1, round(132 * dpr))
+            square = QPixmap(side, side)
+            square.fill(Qt.GlobalColor.white)
+            painter = QPainter(square)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            scaled = source.scaled(
+                square.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            painter.drawPixmap(
+                (side - scaled.width()) // 2, (side - scaled.height()) // 2, scaled,
+            )
+            painter.end()
+            square.setDevicePixelRatio(dpr)
+            self.support_qr.setPixmap(square)
         self.support_qr.setFixedSize(QSize(132, 132))
         self.support_qr.setScaledContents(True)
         self.support_qr.hide()

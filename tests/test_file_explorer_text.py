@@ -82,9 +82,12 @@ def test_text_reader_preserves_raw_bytes_and_removes_local_temporary_file(monkey
     monkeypatch.setattr(workers.CommandRunner, "run_to_file", capture)
     worker = workers.TextReadWorker("test-device", "/notes.txt", False, 32)
     results = []
+    decoded = []
     worker.result_ready.connect(lambda value, error: results.append((value, error)))
+    worker.decoded_ready.connect(decoded.append)
     worker.run()
     assert results == [(payload, False)]
+    assert decoded and "line" in decoded[0].text
     assert paths and all(not path.exists() for path in paths)
 
 

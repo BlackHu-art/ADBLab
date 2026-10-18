@@ -440,6 +440,7 @@ class MainFrame(FluentWindow):
         self._scan_thread = None
         self._continuous_scan_enabled = False
         self._closing = False
+        self._accent_revision = 0
         self._scan_refresh_timer = QTimer(self)
         self._scan_refresh_timer.setSingleShot(True)
         self._scan_refresh_timer.timeout.connect(self._publish_scanned_devices)
@@ -1729,6 +1730,7 @@ class MainFrame(FluentWindow):
             record_history=_record_history,
         )
         super().switchTo(interface)
+        self._refresh_page_accent(interface)
         # 首次显示的页面可能仍带着构造期的旧几何：这里必须在首帧绘制前同时落实
         # 宿主最终几何和对应的响应式计划，否则用户会看到一次布局跳动。退出流程
         # 只需要页面可见性，不再为关闭路径同步跑一整代重规划。
@@ -2420,12 +2422,41 @@ class MainFrame(FluentWindow):
         if task_page is not None:
             task_page._sync_theme_state()
 
-    def _on_accent_color_changed(self, _color: str) -> None:
-        """强调色变化后刷新主窗口及已创建的内嵌页面。"""
+    def _content_pages(self) -> tuple[QWidget, ...]:
+        """返回主窗口直接持有的页面，供强调色按可见页刷新。"""
+        pages = [
+            getattr(self, name, None)
+            for name in (
+                "_home_page", "_devices_page", "_apps_page",
+                "_system_page", "_tasks_page", "_settings_page",
+            )
+        ]
+        pages.extend(getattr(self, "_workspace_pages", {}).values())
+        return tuple(page for page in pages if page is not None)
 
-        self._sync_plain_container_palettes()
-        for widget in (self, *self.findChildren(QWidget)):
+    def _refresh_page_accent(self, page: QWidget | None) -> None:
+        """只刷新当前页的注入样式；隐藏页在下次显示时按代次补刷。"""
+        if page is None:
+            return
+        revision = getattr(self, "_accent_revision", 0)
+        if getattr(page, "_accent_applied_revision", -1) == revision:
+            return
+        for widget in (page, *page.findChildren(QWidget)):
             refresh_fluent_widget_style(widget)
+        page._accent_applied_revision = revision
+
+    def _on_accent_color_changed(self, _color: str) -> None:
+        """强调色变化后刷新主窗口及当前可见页面，隐藏页延迟到显示时补刷。"""
+
+        self._accent_revision = getattr(self, "_accent_revision", 0) + 1
+        self._sync_plain_container_palettes()
+        refresh_fluent_widget_style(self)
+        for page in self._content_pages():
+            if not page.isVisible():
+                continue
+            for widget in (page, *page.findChildren(QWidget)):
+                refresh_fluent_widget_style(widget)
+            page._accent_applied_revision = self._accent_revision
         self.left_panel._on_theme_changed(BaseStyles.current_theme())
         for name in (
             "_home_page",
@@ -2533,7 +2564,8 @@ class MainFrame(FluentWindow):
         if getattr(self, "_closing", False):
             return
         # FluentWindow 默认用 120 ms 动画切换根背景，但外层堆栈的主题 QSS
-        # 会立即生效。两者不同步时，暗色半透明边框会短暂叠在浅色背景上。
+        # 会立即生效。两者不同步时，暗色半透明边框会短暂叠在浅色背景上；
+        # 项目契约要求主题 QSS 生效时根背景同步完成，因此这里停止动画并直达终态。
         self.backgroundColorAni.stop()
         self.setBackgroundColor(self._normalBackgroundColor())
         self._sync_plain_container_palettes()

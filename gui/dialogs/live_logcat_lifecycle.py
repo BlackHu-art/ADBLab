@@ -236,6 +236,10 @@ class LiveLogcatLifecycle:
                     trigger=trigger,
                 )
             return False
+        export_worker = getattr(self._frame._stream_controller, "_export_worker", None)
+        if export_worker is not None and export_worker.isRunning():
+            # 文件导出不属于监督器任务，但同样必须在页面销毁前退出。
+            return False
         if self._frame.worker is not None and not self._frame.worker.is_active():
             self._release_logcat_worker(self._frame.worker)
         if self._frame._pkg_worker is not None and not self._frame._pkg_worker.isRunning():

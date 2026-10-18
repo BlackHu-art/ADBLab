@@ -22,6 +22,7 @@ class FileExplorerImagePreview(QWidget):
         self._fit_pending = False
         self._fit_timer = QTimer(self)
         self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(80)
         self._fit_timer.timeout.connect(self._refit_image)
 
         layout = QVBoxLayout(self)
@@ -64,7 +65,7 @@ class FileExplorerImagePreview(QWidget):
         self.image_info.setText(details)
         self.image_info.setToolTip(details)
         self.image_info.setAccessibleDescription(details)
-        self._schedule_fit()
+        self._schedule_fit(0)
 
     def _fit_image_to_viewport(self, source: QPixmap) -> QPixmap:
         """从原始图片等比缩放到可视区域，且不放大小图。"""
@@ -97,11 +98,10 @@ class FileExplorerImagePreview(QWidget):
         # Fluent 的图像由 image 属性持有，QLabel.clear() 不会释放这份像素。
         self.image_label.setImage(QImage())
 
-    def _schedule_fit(self) -> None:
-        if self._fit_pending:
-            return
+    def _schedule_fit(self, delay_ms: int = 80) -> None:
+        """连续 resize 只保留尾沿一次缩放；首次显示源图仍立即请求。"""
         self._fit_pending = True
-        self._fit_timer.start(0)
+        self._fit_timer.start(max(0, int(delay_ms)))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

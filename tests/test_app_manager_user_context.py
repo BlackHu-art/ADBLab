@@ -200,6 +200,23 @@ def test_details_adopts_user_only_after_snapshot_and_binds_permission_queue(
     assert not detail.requested_list.count()
 
 
+def test_detail_refresh_does_not_flash_error_while_loading(user_page, qt_application):
+    page, workers = user_page
+    detail = page.details_page
+    detail.set_android_user(10)
+    detail.activate(PACKAGE)
+    load = workers[-1]
+    load.user_context_loaded.emit(10)
+    qt_application.processEvents()
+    assert detail.load_state == "loading"
+
+    detail.set_android_user(10, ready=False)
+    qt_application.processEvents()
+
+    assert detail.load_state != "error"
+    assert not detail.retry_btn.isVisible()
+
+
 def test_detail_context_change_reloads_same_package(user_page, qt_application):
     page, workers = user_page
     detail: AppDetailsPage = page.details_page

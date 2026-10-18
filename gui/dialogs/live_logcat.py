@@ -291,7 +291,9 @@ class LiveLogcatPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._filter_reflow_timer.start(0)
+        # 首次可见时同步落实筛选栏宽度，避免 0ms 定时器晚于首帧断言/绘制。
+        self._filter_reflow_timer.stop()
+        (getattr(self, "_form_controller", None) or LiveLogcatForm(self))._reflow_filters()
 
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
         return (
@@ -509,6 +511,14 @@ class LiveLogcatPage(QWidget):
 
     def closeEvent(self, event):
         """先隐藏并清理后台资源，完成后再释放页面会话。"""
+        export_worker = getattr(self._stream_controller, "_export_worker", None)
+        if export_worker is not None and export_worker.isRunning():
+            # 导出线程仍持有文件句柄；页面必须等它 finished 后再销毁。
+            self._close_pending = True
+            self._closing = True
+            self.hide()
+            event.ignore()
+            return
         if self._close_ready:
             self._debug_lifecycle("close_accepted")
             event.accept()
