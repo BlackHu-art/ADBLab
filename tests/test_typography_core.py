@@ -176,6 +176,13 @@ def test_settings_update_validates_fonts_and_schedules_one_save(tmp_path, monkey
         def cancel(self):
             self.cancelled = True
 
+        def is_alive(self):
+            return self.started and not self.cancelled
+
+        def join(self, timeout=None):
+            assert self.started
+            self.cancelled = True
+
     monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(settings_file))
     monkeypatch.setattr(settings_manager, "LEGACY_SETTINGS_FILE", str(legacy_file))
     monkeypatch.setattr(settings_manager.threading, "Timer", FakeTimer)
@@ -209,9 +216,7 @@ def test_settings_update_validates_fonts_and_schedules_one_save(tmp_path, monkey
         assert created_timers[0].cancelled is True
     finally:
         if settings_manager.AppSettings._instance is not None:
-            timer = settings_manager.AppSettings._instance._save_timer
-            if timer is not None:
-                timer.cancel()
+            settings_manager.AppSettings._instance.close()
         settings_manager.AppSettings._instance = old_instance
 
 
@@ -225,6 +230,7 @@ def test_settings_atomic_writes_cannot_overwrite_newer_snapshot(tmp_path, monkey
     dump_lock = threading.Lock()
     dump_count = 0
     original_dump = json.dump
+    workers = []
 
     def controlled_dump(value, file, *args, **kwargs):
         nonlocal dump_count
@@ -246,12 +252,14 @@ def test_settings_atomic_writes_cannot_overwrite_newer_snapshot(tmp_path, monkey
             settings._data["theme"] = "Light"
 
         first = threading.Thread(target=settings._save_atomic)
+        workers.append(first)
         first.start()
         assert first_dump_started.wait(2)
 
         with settings._lock:
             settings._data["theme"] = "Dark"
         second = threading.Thread(target=settings._save_atomic)
+        workers.append(second)
         second.start()
         release_first_dump.set()
         first.join(2)
@@ -262,6 +270,9 @@ def test_settings_atomic_writes_cannot_overwrite_newer_snapshot(tmp_path, monkey
         assert json.loads(settings_file.read_text(encoding="utf-8"))["theme"] == "Dark"
     finally:
         release_first_dump.set()
+        for worker in workers:
+            worker.join(3)
+        settings.close()
         settings_manager.AppSettings._instance = old_instance
 
 
@@ -282,6 +293,7 @@ def test_settings_load_migrates_legacy_panel_widths_to_ratio(tmp_path, monkeypat
         stored = json.loads(settings_file.read_text(encoding="utf-8"))
         assert stored["panel_split_ratio"] == 0.25
     finally:
+        settings_manager.AppSettings._instance.close()
         settings_manager.AppSettings._instance = old_instance
 
 
@@ -302,7 +314,5 @@ def test_settings_loads_and_validates_device_log_split_ratio(tmp_path, monkeypat
         settings.set("device_log_split_ratio", 5)
         assert settings.get("device_log_split_ratio") == 0.70
     finally:
-        timer = getattr(settings_manager.AppSettings._instance, "_save_timer", None)
-        if timer is not None:
-            timer.cancel()
+        settings_manager.AppSettings._instance.close()
         settings_manager.AppSettings._instance = old_instance

@@ -13,6 +13,7 @@ import pytest
 
 from core.exec import CommandResult
 from services import app_icons
+from services.apps import helper as app_helper
 
 
 def chunk(kind, data):
@@ -39,7 +40,7 @@ def icon_line(package="com.example.app", png=None):
 def transport(monkeypatch, tmp_path):
     helper = tmp_path / "icons helper.jar"
     helper.write_bytes(b"bundled-helper" * 1300)
-    monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(helper))
+    monkeypatch.setattr(app_helper, "resource_path", lambda _path: str(helper))
     calls = []
     outputs = [CommandResult(True), CommandResult(True, icon_line()), CommandResult(True)]
 
@@ -52,7 +53,7 @@ def transport(monkeypatch, tmp_path):
             return outcome()
         return outcome
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     return calls, outputs
 
 
@@ -64,7 +65,7 @@ def test_large_helper_preserves_native_transfer(transport):
 
 def test_native_batch_budget_includes_slow_client_startup(transport, monkeypatch):
     calls, _outputs = transport
-    run = app_icons.CommandRunner.run
+    run = app_helper.CommandRunner.run
 
     def slow_native(command, timeout, **kwargs):
         # 大 helper 的兼容上传和清理也需启动原生 adb，渲染还包含设备保护预算。
@@ -73,7 +74,7 @@ def test_native_batch_budget_includes_slow_client_startup(transport, monkeypatch
             return CommandResult(False, error=f"Timeout({timeout}s)")
         return run(command, timeout, **kwargs)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", slow_native)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", slow_native)
     assert collect() == [("com.example.app", make_png(), "")]
     assert len(calls) == 3
 
@@ -97,7 +98,7 @@ def test_active_legacy_icon_command_receives_cancel_but_cleanup_still_runs(
             assert cancelled is None
         return CommandResult(True, icon_line() if "app_process" in command[-1] else "")
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect(cancelled=cancel.is_set) == []
     assert seen[-1][0][-1].startswith("rm -f -- /data/local/tmp/adblab-icons-")
     assert len(seen) == (2 if phase == "deploy" else 3)
@@ -178,7 +179,7 @@ def test_missing_helper_returns_safe_failure_without_device_access(
     transport, monkeypatch, tmp_path
 ):
     calls, _outputs = transport
-    monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(tmp_path / "missing.jar"))
+    monkeypatch.setattr(app_helper, "resource_path", lambda _path: str(tmp_path / "missing.jar"))
     assert collect()[0][2] == "应用图标组件缺失"
     assert not calls
 

@@ -7,7 +7,7 @@ import logging
 from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, QTranslator
 from qfluentwidgets import FluentTranslator
 
-from core.settings_manager import normalise_language
+from core.settings.schema import normalise_language
 from gui.generated import translations_rc  # noqa: F401
 
 

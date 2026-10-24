@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import HeaderCardWidget, PushButton, SmoothScrollArea
 
-from adblab.application.device_context import DeviceContextSnapshot
+from adblab.application.device_context import DeviceContext, DeviceContextSnapshot
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
@@ -30,7 +30,6 @@ from gui.widgets.responsive_layout import prepare_responsive_content
 class SidePanel(QWidget):
     """创建并管理功能标签页，同时保持 MainFrame 使用的兼容接口。"""
 
-    _DISCOVERY_STATES = frozenset({"scanning", "empty", "unavailable", "ready"})
     selected_devices_changed = Signal(list)
     device_discovery_state_changed = Signal(str)
     responsive_layout_settled = Signal(int)
@@ -40,9 +39,7 @@ class SidePanel(QWidget):
         self.setObjectName("sidePanel")
         self.signals = SidePanelSignals()
         self._package_history = []
-        self._connected_device_cache = []
-        self._device_discovery_state = "scanning"
-        self._manual_refresh_previous_state: str | None = None
+        self._device_context = DeviceContext()
         self._user_selected_ip = False
         self._tabs_connected = False
         self._connected_lazy_tabs = set()
@@ -80,7 +77,7 @@ class SidePanel(QWidget):
     def _create_ui(self):
         # SidePanel 只保留跨页面状态与信号协调职责，不再创建可见页签/页面栈。
         # 设备面板与三个功能页由 MainFrame 直接注册为 FluentWindow 子页面。
-        self._devices_tab = DeviceManager(self, parent=self)
+        self._devices_tab = DeviceManager(self, parent=self, device_context=self._device_context)
         self._devices_tab.setParent(self)
         self._devices_tab.hide()
         self._device_widget = self._devices_tab.build_ui(parent=self)
@@ -205,12 +202,7 @@ class SidePanel(QWidget):
     def selected_devices(self) -> list[str]:
         """新操作只用已选在线设备；ADB 不可用时拒绝提交，扫描中保留最近快照。"""
 
-        if self._device_discovery_state == "unavailable":
-            return []
-        connected = set(self._connected_device_cache)
-        return list(dict.fromkeys(
-            device for device in self._devices_tab.selected_devices if device in connected
-        ))
+        return list(self._device_context.snapshot().selected_devices)
 
     @property
     def ip_address(self) -> str:
@@ -238,15 +230,11 @@ class SidePanel(QWidget):
     # ── MainFrame 使用的公共接口 ─────────────────────────────────────────
 
     def device_context_snapshot(self) -> DeviceContextSnapshot:
-        """复制当前选择、最近在线列表和发现状态，不建立第二份可写状态。"""
-        return DeviceContextSnapshot(
-            selected_devices=tuple(self.selected_devices),
-            connected_devices=tuple(self._connected_device_cache),
-            discovery_state=self._device_discovery_state,
-        )
+        """从唯一上下文读取不可变快照，不依赖设备控件是否已经投影。"""
+        return self._device_context.snapshot()
 
     def set_selected_devices(self, devices: list[str]) -> None:
-        """向现有设备列表提交选择，继续由列表统一过滤并发布选择变化。"""
+        """经设备适配器提交共享选择，并沿用原有视图投影与选择通知。"""
         self._devices_tab.set_selected_devices(devices)
 
     def connection_history(self) -> list[tuple[str, str]]:
@@ -270,35 +258,34 @@ class SidePanel(QWidget):
     def set_device_discovery_state(self, state: str) -> None:
         """提交并渲染唯一的设备发现状态。"""
 
-        normalized = str(state or "empty").lower()
-        if normalized not in self._DISCOVERY_STATES:
-            normalized = "empty"
-        previous = self._device_discovery_state
-        self._device_discovery_state = normalized
-        if normalized != "scanning":
-            self._manual_refresh_previous_state = None
-        self._devices_tab.set_discovery_state(normalized)
-        if normalized != previous:
+        previous = self._device_context.snapshot().discovery_state
+        self._device_context.set_discovery_state(state)
+        self._publish_discovery_state(previous)
+
+    def _publish_discovery_state(self, previous_state: str) -> None:
+        """按提交前状态发布变化，避免刷新先改上下文后漏发 Qt 通知。"""
+        current = self._device_context.snapshot().discovery_state
+        self._devices_tab.set_discovery_state(current)
+        if current != previous_state:
             self._refresh_loaded_action_states()
-            self.device_discovery_state_changed.emit(normalized)
+            self.device_discovery_state_changed.emit(current)
 
     def request_device_refresh(self) -> bool:
         """进入扫描态并只发送一次刷新请求；扫描结束前拒绝重复请求。"""
 
-        if self._device_discovery_state == "scanning":
+        previous = self._device_context.snapshot().discovery_state
+        if not self._device_context.begin_refresh():
             return False
-        self._manual_refresh_previous_state = self._device_discovery_state
-        self.set_device_discovery_state("scanning")
+        self._publish_discovery_state(previous)
         self.signals.refresh_devices_requested.emit()
         return True
 
     def on_device_refresh_superseded(self) -> None:
         """过期刷新结束后恢复缓存状态；已经到达的新快照始终优先。"""
 
-        previous = self._manual_refresh_previous_state
-        self._manual_refresh_previous_state = None
-        if self._device_discovery_state == "scanning" and previous is not None:
-            self.set_device_discovery_state(previous)
+        previous = self._device_context.snapshot().discovery_state
+        if self._device_context.restore_superseded_refresh():
+            self._publish_discovery_state(previous)
 
     def set_restricted_width_mode(self, restricted: bool) -> None:
         """受限工作区允许右侧页签缩小，并由滚动条保证内容可达。"""

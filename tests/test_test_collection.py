@@ -157,6 +157,14 @@ def test_pure_logic_executes_when_qt_imports_are_forbidden(tmp_path):
     assert result["qt_modules"] == []
 
 
+def test_device_context_suite_runs_without_qt(tmp_path):
+    result = _run_pytest(tmp_path, ["-q", "tests/test_device_context.py"], block_qt=True)
+    assert result["collected"]
+    assert set(result["passed"]) == set(result["collected"])
+    assert result["qt_modules"] == []
+    assert not result["has_settings_singleton"]
+
+
 def test_ui_fixture_dispatch_preserves_state_and_storage_between_test_kinds(tmp_path):
     probe = tmp_path / "test_fixture_dispatch.py"
     probe.write_text(textwrap.dedent("""
@@ -330,3 +338,83 @@ def test_registered_ui_functions_exist_and_carry_the_ui_marker(tmp_path):
         assert not missing, f"{name} 登记的用例不存在：{missing}"
         unmarked = sorted(item for item in registered if "ui" not in available[item])
         assert not unmarked, f"{name} 登记的用例缺少 ui 标记：{unmarked}"
+
+
+def test_settings_fixture_drains_replaced_timer_before_restoring_storage(tmp_path):
+    """共享夹具必须先排空全部 owner，后恢复模拟用户路径。"""
+    probe = tmp_path / "test_settings_owner_cleanup.py"
+    probe.write_text(textwrap.dedent('''
+        import threading
+        from pathlib import Path
+        import pytest
+        from core import settings_manager
+
+        state = {"release": threading.Event(), "closing": threading.Event(), "timers": []}
+
+        def test_seed_user_sentinel():
+            path = Path(settings_manager.SETTINGS_FILE)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("sentinel", encoding="utf-8")
+            state["user_path"] = path
+
+        @pytest.fixture
+        def release_guard():
+            yield
+            state["release"].set()
+            for timer in state["timers"]:
+                timer.cancel()
+                timer.join(3)
+            state["releaser"].join(3)
+
+        def test_replaced_timer_and_rebuilt_owner(
+            release_guard, isolated_app_settings, monkeypatch,
+        ):
+            first = isolated_app_settings
+            # 关闭旧 owner 模拟重启，随后创建的 owner 也必须归共享夹具所有。
+            first.set("theme", "Dark")
+            state["timers"].append(first._save_timer)
+            assert first.close()
+            settings_manager.AppSettings._instance = None
+            current = settings_manager.AppSettings.instance()
+            entered = threading.Event()
+            actual_write_lock = current._write_lock
+
+            class Gate:
+                def __enter__(self):
+                    entered.set()
+                    assert state["release"].wait(3)
+                    actual_write_lock.acquire()
+                def __exit__(self, *_args):
+                    actual_write_lock.release()
+
+            current._write_lock = Gate()
+            current.set("theme", "Light")
+            state["timers"].append(current._save_timer)
+            assert entered.wait(2)
+            current.set("theme", "Dark")
+            state["timers"].append(current._save_timer)
+            close = current.close
+
+            def observed_close():
+                state["closing"].set()
+                return close()
+
+            monkeypatch.setattr(current, "close", observed_close)
+
+            def release_when_closing():
+                if state["closing"].wait(2):
+                    state["release"].set()
+
+            state["releaser"] = threading.Thread(target=release_when_closing)
+            state["releaser"].start()
+
+        def test_storage_restored_only_after_all_timers_exit():
+            assert state["closing"].is_set(), "fixture must close replacement owner"
+            assert all(not timer.is_alive() for timer in state["timers"])
+            assert state["user_path"].read_text(encoding="utf-8") == "sentinel"
+    '''), encoding="utf-8")
+    result = _run_pytest(tmp_path, [
+        "-q", "-p", "tests.conftest", "--confcutdir", str(tmp_path), str(probe),
+    ], block_qt=True)
+    assert len(result["passed"]) == 3
+    assert not result["has_settings_singleton"]

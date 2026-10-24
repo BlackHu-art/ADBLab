@@ -11,14 +11,29 @@ import json
 import os
 import tempfile
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from utils.adb_resolver import CLIENT_SOURCE_TOKENS
-from utils.console_colors import normalise_console_level
+from core.settings import migrations as _migrations
+from core.settings import schema as _schema
 from utils.resource_path import resource_path
 from utils.user_data import user_config_path
+
+# 旧模块继续暴露同一规则对象，避免消费者持有相互漂移的默认值或迁移表。
+DEFAULTS = _schema.DEFAULTS
+SCRCPY_SETTING_DEFAULTS = _schema.SCRCPY_SETTING_DEFAULTS
+UI_SCALE_OPTIONS = _schema.UI_SCALE_OPTIONS
+LANGUAGE_OPTIONS = _schema.LANGUAGE_OPTIONS
+normalise_language = _schema.normalise_language
+normalise_ui_scale = _schema.normalise_ui_scale
+_FONT_SIZE_RULES = _schema._FONT_SIZE_RULES
+_normalise_integer = _schema._normalise_integer
+_normalise_adb_client = _schema._normalise_adb_client
+_legacy_panel_ratio = _migrations.legacy_panel_ratio
+_stored_schema_version = _migrations.stored_schema_version
+_MIGRATIONS = _migrations._MIGRATIONS
+CURRENT_SCHEMA_VERSION = _migrations.CURRENT_SCHEMA_VERSION
 
 SETTINGS_FILE = user_config_path("app_settings.json")
 LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
@@ -49,313 +64,35 @@ def _log_error(level: str, message: str) -> None:
     except Exception:
         pass
 
-# RemotePanel 只允许通过这组正式键跨会话保存 scrcpy 表单值。该映射同时作为
-# AppSettings 加载白名单的一部分，使旧版本已经写入 JSON 的同名键无需迁移即可恢复。
-SCRCPY_SETTING_DEFAULTS = {
-    "scrcpy_preset": "Smooth",
-    "scrcpy_maxsize": "1024",
-    "scrcpy_fps": "30",
-    "scrcpy_codec": "h264",
-    "scrcpy_buffer": "50",
-    "scrcpy_bitrate": "4",
-    "scrcpy_orientation": "0",
-}
-
-
-# Auto 保留平台的 DPI 策略；手动比例只在下一次 GUI 启动前传给 Qt。
-UI_SCALE_OPTIONS = ("Auto", 1.0, 1.25, 1.5, 1.75, 2.0)
-LANGUAGE_OPTIONS = ("Auto", "zh_CN", "zh_HK", "en_US")
-
-
-def normalise_language(value: Any) -> str:
-    """限定为受支持的界面语言；无效值回退到跟随系统。"""
-    return value if isinstance(value, str) and value in LANGUAGE_OPTIONS else "Auto"
-
-
-def normalise_ui_scale(value: Any) -> str | float:
-    """只接受设置页提供的显示比例，非法值安全回退到跟随系统。"""
-    if isinstance(value, bool):
-        return "Auto"
-    if isinstance(value, str) and value.strip().casefold() == "auto":
-        return "Auto"
-    try:
-        factor = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return "Auto"
-    return factor if factor in UI_SCALE_OPTIONS[1:] else "Auto"
-
-
-DEFAULTS = {
-    # 空字符串表示跟随 Qt 提供的系统默认界面字体。
-    "font_family": "",
-    "ui_font_size": 12,
-    "ui_scale": "Auto",
-    "language": "Auto",
-    "log_font_size": 9,
-    "save_directory": "",
-    "log_max_lines": 2000,
-    "console_log_level": "DEBUG",
-    "adb_client": "auto",
-    "confirm_dangerous_ops": True,
-    "continuous_device_scan": True,
-    "device_scan_interval_ms": 15000,
-    "always_on_top": False,
-    "performance_log_threshold_ms": 300,
-    "monkey_params": {
-        "events": 10000,
-        "throttle": 300,
-        "touch": 30,
-        "motion": 15,
-        "trackball": 0,
-        "nav": 20,
-        "majornav": 10,
-        "syskeys": 5,
-        "appswitch": 8,
-        "anyevent": 10,
-        "pinch": 2,
-        # 各事件比例须合计为 100%，启动 Monkey 前会再次统一校验。
-        "ignore_crashes": True,
-        "ignore_timeouts": True,
-        "ignore_security": True,
-    },
-    "theme": "System",
-    "accent_color": "#0F6CBD",
-    "mica_enabled": True,
-    "window_width": 1250,
-    "window_height": 700,
-    "left_panel_width": 400,
-    "right_panel_width": 600,
-    "panel_split_ratio": 0.5,
-    "device_log_split_ratio": 0.6,
-    **SCRCPY_SETTING_DEFAULTS,
-}
-
-_FONT_SIZE_RULES = {
-    "ui_font_size": (8, 22, 12),
-    "log_font_size": (7, 16, 9),
-}
-
-
-def _normalise_integer(value: Any, default: int) -> int:
-    """读取整型设置；布尔值、非整数和转换失败均回退到默认值。"""
-    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-
-
-def _normalise_adb_client(value: Any) -> str:
-    """限定 ADB 客户端选择：自动、命名来源或绝对路径；其余回退自动。
-
-    绝对路径只做形态校验，不检查文件是否存在：盘符临时不可用时不能丢配置，
-    缺失状态由设置界面和运行时诊断显示。
-    """
-
-    if not isinstance(value, str):
-        return DEFAULTS["adb_client"]
-    text = value.strip()
-    if not text:
-        return DEFAULTS["adb_client"]
-    if text in CLIENT_SOURCE_TOKENS:
-        return text
-    if os.path.isabs(text):
-        return text[:512]
-    return DEFAULTS["adb_client"]
-
 
 def _normalise_setting(key: str, value: Any) -> Any:
-    """校验需要稳定边界的设置，其他设置保持原有类型与行为。"""
+    """兼容旧入口，统一委托纯字段规则。"""
 
-    if key == "ui_scale":
-        return normalise_ui_scale(value)
-
-    if key == "language":
-        return normalise_language(value)
-
-    if key == "save_directory":
-        # 路径中的首尾空白可能属于真实目录名，不能随类型校验一并裁剪。
-        return value if isinstance(value, str) else DEFAULTS[key]
-
-    if key == "log_max_lines":
-        count = _normalise_integer(value, DEFAULTS[key])
-        return count if count > 0 else DEFAULTS[key]
-
-    if key == "console_log_level":
-        return normalise_console_level(value)
-
-    if key == "adb_client":
-        return _normalise_adb_client(value)
-
-    if key == "monkey_params":
-        defaults = DEFAULTS[key]
-        if not isinstance(value, dict):
-            return deepcopy(defaults)
-        # 只规范已知字段的类型；比例合计和执行范围仍由 Monkey 启动边界校验。
-        # 保留未来版本的未知字段，普通版本的字段清理由既有迁移流程负责。
-        normalised = deepcopy(value)
-        for field, default in defaults.items():
-            item = value.get(field, default)
-            if isinstance(default, bool):
-                normalised[field] = item if isinstance(item, bool) else default
-            else:
-                if field == "throttle" and isinstance(item, str):
-                    text = item.strip()
-                    item = text[:-2].rstrip() if text.casefold().endswith("ms") else text
-                normalised[field] = _normalise_integer(item, default)
-        return normalised
-
-    if key in SCRCPY_SETTING_DEFAULTS:
-        if value is None or isinstance(value, (bool, dict, list, tuple, set)):
-            return SCRCPY_SETTING_DEFAULTS[key]
-        text = str(value).strip()
-        return text[:128] if text else SCRCPY_SETTING_DEFAULTS[key]
-
-    if key == "theme":
-        aliases = {
-            "auto": "System",
-            "system": "System",
-            "light": "Light",
-            "dark": "Dark",
-        }
-        return aliases.get(str(value).strip().casefold(), DEFAULTS[key])
-
-    if key == "accent_color":
-        text = str(value).strip().upper()
-        if len(text) == 7 and text.startswith("#"):
-            try:
-                int(text[1:], 16)
-            except ValueError:
-                pass
-            else:
-                return text
-        return DEFAULTS[key]
-
-    if key == "mica_enabled":
-        return value if isinstance(value, bool) else DEFAULTS[key]
-
-    if key == "font_family":
-        if not isinstance(value, str):
-            return DEFAULTS[key]
-        family = value.strip()
-        if family.casefold() == "system default":
-            return ""
-        return family[:128]
-
-    if key in _FONT_SIZE_RULES:
-        minimum, maximum, default = _FONT_SIZE_RULES[key]
-        if isinstance(value, bool):
-            return default
-        try:
-            size = int(value)
-        except (TypeError, ValueError, OverflowError):
-            return default
-        return max(minimum, min(maximum, size))
-
-    if key in {"panel_split_ratio", "device_log_split_ratio"}:
-        if isinstance(value, bool):
-            return DEFAULTS[key]
-        try:
-            ratio = float(value)
-        except (TypeError, ValueError, OverflowError):
-            return DEFAULTS[key]
-        return max(0.2, min(0.7, ratio))
-
-    return value
-
-
-def _legacy_panel_ratio(left_width: Any, right_width: Any) -> float:
-    """把旧版左右像素宽度迁移为受限的左栏比例。"""
-
-    try:
-        left = max(0.0, float(left_width))
-        right = max(0.0, float(right_width))
-    except (TypeError, ValueError, OverflowError):
-        return DEFAULTS["panel_split_ratio"]
-    total = left + right
-    if total <= 0:
-        return DEFAULTS["panel_split_ratio"]
-    return max(0.2, min(0.7, left / total))
-
-
-def _stored_schema_version(stored: dict) -> int:
-    """读取存储字典的 schema 版本；缺失或非正整数一律视为 v1（种子时代）。"""
-
-    version = stored.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int):
-        return 1
-    return max(1, version)
+    return _schema.normalise_setting(key, value)
 
 
 def _migrate_1_to_2(stored: dict) -> None:
-    """v1 → v2：折算面板比例并补齐缺失键，用户已设值一律不动（ADR-0006）。"""
+    """兼容旧迁移入口，调用时传递当前管理器诊断接收器。"""
 
-    if "panel_split_ratio" not in stored:
-        stored["panel_split_ratio"] = _legacy_panel_ratio(
-            stored.get("left_panel_width"),
-            stored.get("right_panel_width"),
-        )
-    for key, default in DEFAULTS.items():
-        if key not in stored:
-            stored[key] = deepcopy(default)
-    monkey = stored.get("monkey_params")
-    if isinstance(monkey, dict):
-        merged = deepcopy(DEFAULTS["monkey_params"])
-        merged.update(monkey)
-        stored["monkey_params"] = merged
-    else:
-        stored["monkey_params"] = deepcopy(DEFAULTS["monkey_params"])
+    _migrations.migrate_1_to_2(stored, _log_error)
 
 
 def _migrate_2_to_3(stored: dict) -> None:
-    """v2 → v3：剔除未知键（含 monkey_params 内的死键）并记录警告（ADR-0006）。"""
+    """兼容旧清理步骤，诊断替换在每次调用时生效。"""
 
-    _prune_unknown_keys(stored)
+    _migrations.migrate_2_to_3(stored, _log_error)
 
 
 def _run_migrations(stored: dict, from_version: int) -> None:
-    """按版本升序对存储字典做原地结构迁移。"""
+    """兼容旧迁移调度，保持版本顺序与调用时诊断注入。"""
 
-    for version in range(from_version, CURRENT_SCHEMA_VERSION):
-        migration = _MIGRATIONS.get(version)
-        if migration is not None:
-            migration(stored)
+    _migrations.run_migrations(stored, from_version, _log_error)
 
 
 def _prune_unknown_keys(stored: dict) -> None:
-    """剔除未知顶层键与未知 monkey_params 键，每类一次性记录警告。"""
+    """兼容旧清理入口，由管理器保留错误接收器所有权。"""
 
-    unknown = sorted(
-        str(key) for key in stored if key not in DEFAULTS and key != "schema_version"
-    )
-    for key in unknown:
-        stored.pop(key, None)
-    if unknown:
-        _log_error(
-            "WARNING",
-            f"Ignored {len(unknown)} unknown settings key(s): {', '.join(unknown)}",
-        )
-    monkey = stored.get("monkey_params")
-    if not isinstance(monkey, dict):
-        return
-    monkey_defaults = DEFAULTS["monkey_params"]
-    monkey_unknown = sorted(str(key) for key in monkey if key not in monkey_defaults)
-    for key in monkey_unknown:
-        monkey.pop(key, None)
-    if monkey_unknown:
-        _log_error(
-            "WARNING",
-            f"Ignored {len(monkey_unknown)} unknown monkey_params key(s): "
-            f"{', '.join(monkey_unknown)}",
-        )
-
-
-_MIGRATIONS: dict[int, Callable[[dict], None]] = {
-    1: _migrate_1_to_2,
-    2: _migrate_2_to_3,
-}
-CURRENT_SCHEMA_VERSION = max(_MIGRATIONS) + 1
+    _migrations.prune_unknown_keys(stored, _log_error)
 
 
 class AppSettings:
@@ -371,6 +108,14 @@ class AppSettings:
     _save_timer: threading.Timer | None
     _seen_version: int
     _deferred_save_pending: bool
+    _save_timers: set[threading.Timer]
+    _active_saves: int
+    _save_condition: threading.Condition
+    _close_lock: threading.Lock
+    _closed: bool
+    _close_snapshot: dict | None
+    _close_snapshot_error: str
+    _close_saved: bool
 
     def __new__(cls, *, defer_migration_save: bool = False):
         if cls._instance is None:
@@ -381,6 +126,14 @@ class AppSettings:
                     instance._write_lock = threading.Lock()
                     instance._data = deepcopy(DEFAULTS)
                     instance._save_timer = None
+                    instance._save_timers = set()
+                    instance._active_saves = 0
+                    instance._save_condition = threading.Condition(instance._lock)
+                    instance._close_lock = threading.Lock()
+                    instance._closed = False
+                    instance._close_snapshot = None
+                    instance._close_snapshot_error = ""
+                    instance._close_saved = False
                     instance._seen_version = CURRENT_SCHEMA_VERSION
                     instance._future_extra = {}
                     instance._deferred_save_pending = False
@@ -466,6 +219,36 @@ class AppSettings:
     def _save_atomic(self, *, deferred_only: bool = False) -> bool:
         """原子保存并返回成功状态；失败保留原文件和内存值，供下次更新或关闭重试。"""
 
+        with self._lock:
+            if self._closed:
+                return False
+            self._active_saves += 1
+        return self._run_admitted_save(deferred_only=deferred_only)
+
+    def _run_admitted_save(self, *, deferred_only: bool = False) -> bool:
+        """完成已准入保存；包括等写锁的阶段都属于 owner 的排空义务。"""
+
+        try:
+            return self._write_snapshot(deferred_only=deferred_only)
+        finally:
+            with self._save_condition:
+                self._active_saves -= 1
+                self._save_condition.notify_all()
+
+    def _snapshot_locked(self) -> dict:
+        """在状态锁内完整冻结数据、版本和未来字段，避免重试读取外部可变对象。"""
+
+        return deepcopy({
+            **self._data,
+            "schema_version": self._seen_version,
+            **self._future_extra,
+        })
+
+    def _write_snapshot(
+        self, snapshot: dict | None = None, *, deferred_only: bool = False,
+    ) -> bool:
+        """串行原子落盘；普通保存锁后取快照，关闭保存使用首次冻结内容。"""
+
         temporary_path = ""
         try:
             # Timer、重置和关闭收尾可能同时触发保存；串行化整个写入过程，
@@ -474,12 +257,8 @@ class AppSettings:
                 with self._lock:
                     if deferred_only and not self._deferred_save_pending:
                         return True
-                    snapshot = deepcopy(self._data)
-                    # 版本号由加载/保存流程托管：来自更高版本的只读文件保留其
-                    # 版本号，避免降级安装把新文件改写回旧版本。
-                    snapshot["schema_version"] = self._seen_version
-                    # 保留更高版本文件的未知字段，避免降级安装一次保存就破坏新版本数据。
-                    snapshot.update(self._future_extra)
+                    if snapshot is None:
+                        snapshot = self._snapshot_locked()
                 target = os.fspath(SETTINGS_FILE)
                 target_directory = os.path.dirname(target) or os.curdir
                 os.makedirs(target_directory, exist_ok=True)
@@ -505,20 +284,65 @@ class AppSettings:
             return False
 
     def _schedule_save(self) -> None:
-        """重新启动单个防抖计时器。
-
-        旧计时器的取消在锁内完成，避免并发 update/reset 取消已被替换的
-        Timer 之后仍然启动新 Timer 的窗口（审计 T-5）。
-        """
+        """锁内登记并启动防抖线程；被替换线程直到真正退出仍由本实例持有。"""
 
         with self._lock:
+            if self._closed:
+                return
+            self._save_timers = {timer for timer in self._save_timers if timer.is_alive()}
             previous_timer = self._save_timer
             if previous_timer is not None:
                 previous_timer.cancel()
             timer = threading.Timer(0.5, self._save_atomic)
             timer.daemon = True
             self._save_timer = timer
-        timer.start()
+            self._save_timers.add(timer)
+            try:
+                timer.start()
+            except Exception:
+                # start 可能在线程已经启动后才抛错；只撤销确实不可 join 的对象。
+                if timer.ident is None:
+                    self._save_timers.discard(timer)
+                    self._save_timer = previous_timer
+                raise
+
+    def close(self) -> bool:
+        """封闭修改与保存准入，等待全部工作退出，再保存首次冻结快照。
+
+        仅供后台收尾和非 GUI 清理调用；无内部超时。False 表示排空后的冻结或
+        落盘失败；有快照时后续 close 仅重试该快照，成功后幂等且不再执行 I/O。
+        冻结失败时保持终止且不再读取可变数据，后续 close 仍返回 False。
+        不支持从本实例的 Timer、保存函数或错误回调重入。
+        """
+
+        with self._close_lock:
+            with self._lock:
+                if self._close_saved:
+                    return True
+                if not self._closed:
+                    self._closed = True
+                    try:
+                        self._close_snapshot = self._snapshot_locked()
+                    except Exception as error:
+                        # 任意运行时值可能拒绝复制；冻结失败也不能跳过资源排空，
+                        # 且重试不得改用已封闭后的可变数据冒充首次快照。
+                        self._close_snapshot_error = type(error).__name__
+                timers = tuple(self._save_timers)
+                for timer in timers:
+                    timer.cancel()
+            # 不持状态锁等线程或写锁，否则回调无法完成保存与活动计数归还。
+            for timer in timers:
+                timer.join()
+            with self._save_condition:
+                self._save_timers.difference_update(timers)
+                self._save_condition.wait_for(lambda: self._active_saves == 0)
+            if self._close_snapshot is None:
+                _log_error(
+                    "ERROR", f"Failed to freeze settings: {self._close_snapshot_error}",
+                )
+                return False
+            self._close_saved = self._write_snapshot(self._close_snapshot)
+            return self._close_saved
 
     def get(self, key: str, default: Any = None) -> Any:
         """读取设置，不存在时按默认设置和调用方默认值依次回退。"""
@@ -537,20 +361,22 @@ class AppSettings:
         ``schema_version`` 由加载/保存流程托管，调用方写入会被忽略并记录警告。
         """
 
-        if not isinstance(values, Mapping):
-            raise TypeError("values must be a mapping")
-        normalised = {
-            str(key): _normalise_setting(str(key), value)
-            for key, value in values.items()
-            if str(key) != "schema_version"
-        }
-        if any(str(key) == "schema_version" for key in values):
-            _log_error("WARNING", "schema_version is loader-managed; update() ignored it")
-        if not normalised:
-            return
         with self._lock:
-            self._data.update(normalised)
-        self._schedule_save()
+            if self._closed:
+                raise RuntimeError("AppSettings is closed")
+            if not isinstance(values, Mapping):
+                raise TypeError("values must be a mapping")
+            normalised = {
+                str(key): _normalise_setting(str(key), value)
+                for key, value in values.items()
+                if str(key) != "schema_version"
+            }
+            ignored_version = any(str(key) == "schema_version" for key in values)
+            if normalised:
+                self._data.update(normalised)
+                self._schedule_save()
+        if ignored_version:
+            _log_error("WARNING", "schema_version is loader-managed; update() ignored it")
 
     def set_many(self, values: Mapping[str, Any]) -> None:
         """兼容性批量设置别名。"""
@@ -561,6 +387,8 @@ class AppSettings:
         """将指定设置或全部设置恢复为默认值，并立即持久化。"""
 
         with self._lock:
+            if self._closed:
+                raise RuntimeError("AppSettings is closed")
             pending_timer = self._save_timer
             self._save_timer = None
             if key:
@@ -570,9 +398,10 @@ class AppSettings:
                     self._data.pop(key, None)
             else:
                 self._data = deepcopy(DEFAULTS)
-        if pending_timer is not None:
-            pending_timer.cancel()
-        self._save_atomic()
+            if pending_timer is not None:
+                pending_timer.cancel()
+            self._active_saves += 1
+        self._run_admitted_save()
 
     @property
     def save_directory(self) -> str:

@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
+from adblab.application.action_results import ActionResults
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
 from adblab.application.operations import OperationManager
@@ -732,33 +733,32 @@ def test_install_apk_uses_run_helper_and_preserves_result_fields():
 
 
 def test_parse_apk_info_accepts_existing_apk_case_insensitively():
-    owner = object()
-    controller = Mock(spec=["app_model", "_emit_operation", "window_owner"])
+    controller = ADBAppMixin.__new__(ADBAppMixin)
     controller.app_model = Mock()
-    controller.window_owner = owner
+    controller._emit_operation = Mock()
+    controller.action_results = ActionResults(lambda _result: None)
+    controller._shutting_down = False
+    controller.apk_picker = Mock()
+    controller.apk_picker.select_one.return_value = "C:/tmp/DEMO.APK"
 
-    with (
-        patch(
-            "controllers._app.QFileDialog.getOpenFileName",
-            return_value=("C:/tmp/DEMO.APK", ""),
-        ) as select_apk,
-        patch("controllers._app.os.path.isfile", return_value=True),
-    ):
+    with patch("controllers._app.os.path.isfile", return_value=True):
         ADBAppMixin.parse_apk_info(controller)
 
-    assert select_apk.call_args.args[0] is owner
+    controller.apk_picker.select_one.assert_called_once_with()
     controller.app_model.parse_apk_info_async.assert_called_once_with("C:/tmp/DEMO.APK")
     assert controller._emit_operation.call_args.args[1] is True
 
 
 def test_parse_apk_info_rejects_missing_file():
-    controller = Mock()
+    controller = ADBAppMixin.__new__(ADBAppMixin)
     controller.app_model = Mock()
+    controller._emit_operation = Mock()
+    controller.action_results = ActionResults(lambda _result: None)
+    controller._shutting_down = False
+    controller.apk_picker = Mock()
+    controller.apk_picker.select_one.return_value = "C:/tmp/demo.apk"
 
-    with (
-        patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/demo.apk", "")),
-        patch("controllers._app.os.path.isfile", return_value=False),
-    ):
+    with patch("controllers._app.os.path.isfile", return_value=False):
         ADBAppMixin.parse_apk_info(controller)
 
     controller.app_model.parse_apk_info_async.assert_not_called()

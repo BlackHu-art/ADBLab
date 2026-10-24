@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from controllers import _app, _media
+from controllers.media import diagnostics
 
 
 @pytest.mark.parametrize("kind", ["log", "logcat"])
@@ -26,7 +27,7 @@ def test_log_export_names_are_bounded_and_hide_connection_identifiers(
     clock = Mock()
     clock.now.return_value = datetime(2026, 10, 14, 18, 27, 4)
     monkeypatch.setattr(_app, "datetime", clock)
-    monkeypatch.setattr(_media, "datetime", clock)
+    monkeypatch.setattr(diagnostics, "datetime", clock)
     controller = SimpleNamespace(
         testing_model=Mock(),
         advanced_model=Mock(),

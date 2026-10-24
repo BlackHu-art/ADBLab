@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 related: [ARCHITECTURE.md, MODULE_MAP.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md, ../guides/OPERATION_RESULTS.md, ../guides/TESTING_GUIDE.md]
 ---
 
@@ -42,14 +42,14 @@ flowchart TD
 
 | 页面组 | 主要实现 | 容器与内容组织 |
 | --- | --- | --- |
-| 首页 | [HomePage](../../gui/pages/fluent_pages.py)、[HomeBanner](../../gui/widgets/home_banner.py) | ScrollArea 中放功能入口与摘要；不显示操作设备选择区 |
+| 首页 | [HomePage](../../gui/pages/home.py)、[HomeBanner](../../gui/widgets/home_banner.py) | ScrollArea 中放功能入口与摘要；不显示操作设备选择区 |
 | 设备概览 | [DeviceHubPage](../../gui/pages/device_hub.py)、[DeviceConnectionPanel](../../gui/widgets/device_connection.py) | WorkspaceSectionPage 的外层滚动区承载设备卡、连接区和详情；展示缓存快照 |
 | 应用与诊断、系统工具 | [AppPanel](../../gui/panels/app_panel.py)、[SystemPanel](../../gui/panels/system_panel.py)、[AdaptiveCategoryStack](../../gui/widgets/category_stack.py) | BasePanel 工厂和开放内容分区组成表单；主宿主负责页面滚动与宽度 |
 | 远程控制 | [RemotePanel](../../gui/panels/remote_panel.py)、[表单](../../gui/panels/remote_panel_form.py)、[投屏侧栏](../../gui/panels/remote_panel_dock.py) | 主页面承载镜像启动和参数；设备按键与手势由投屏侧栏或便携工具栏提供；不进入按设备创建的 registry |
-| 应用管理、文件管理 | [AppManagerPage](../../gui/dialogs/app_manager.py)、[FileExplorerPage](../../gui/dialogs/file_explorer.py) | 工具栏与主列表；列表保留自身滚动、选择、右键和传输/批次反馈 |
+| 应用管理、文件管理 | [AppManagerPage](../../gui/features/app_manager/page.py)、[FileExplorerPage](../../gui/features/file_explorer/page.py) | 工具栏与主列表；列表保留自身滚动、选择、右键和传输/批次反馈 |
 | 实时 Logcat | [LiveLogcatPage](../../gui/dialogs/live_logcat.py)、[表单与日志视口](../../gui/dialogs/live_logcat_form.py) | 筛选及命令栏与日志阅读区分开；换行、跟随、空态和横向滚条由日志视口管理 |
-| 性能采集 | [PerformancePage](../../gui/dialogs/performance_launcher.py)、[采集状态](../../gui/widgets/performance_sessions.py) | 配置、当前设备会话、指标/输出与归档入口分别组织；多选目标不等于自动批量启动 |
-| 截图与屏幕 | [ScreenshotPage](../../gui/features/media.py)、[查看器](../../gui/dialogs/screenshot_viewer_ui.py) | 概览媒体工具重挂到页面，画布保留缩放/翻页语义；释放时归还共用工具 |
+| 性能采集 | [PerformancePage](../../gui/features/performance/page.py)、[采集状态](../../gui/widgets/performance_sessions.py) | 配置、当前设备会话、指标/输出与归档入口分别组织；多选目标不等于自动批量启动 |
+| 截图与屏幕 | [ScreenshotPage](../../gui/features/media/__init__.py)、[查看器](../../gui/features/media/ui.py) | 概览媒体工具重挂到页面，画布保留缩放/翻页语义；释放时归还共用工具 |
 | 任务中心 | [TaskCenterPage](../../gui/pages/tasks_page.py)、[操作结果](../../gui/widgets/action_result_view.py)、[测试结果](../../gui/widgets/run_results.py) | 以状态快照增量更新任务行，普通操作正文与跨运行测试记录分开 |
 | 设置与关于 | [SettingsPage](../../gui/pages/fluent_pages.py)、[About](../../gui/features/about.py)、[ADB 设置卡](../../gui/widgets/adb_client_card.py) | 设置卡组置于页面滚动区；字体、主题和运行时探测各走自己的更新入口 |
 
@@ -139,7 +139,7 @@ BasePanel 的必填字段通过控件持有的反馈对象使用 Fluent `setErro
 
 图标缓存按来源、主题色和属性区分，GUI 线程复用有界 SVG 解析器，后台绘图独立解析；保留当前
 painter 的缩放、旋转和透明度，不缓存整页云母背景，不替换未知图标或库的全局绘制函数。
-文件浏览器是有意保留的例外：[file_explorer_icon](../../gui/dialogs/file_explorer_list.py) 使用 Qt
+文件浏览器是有意保留的例外：[file_explorer_icon](../../gui/features/file_explorer/list.py) 使用 Qt
 原生 SVG 图标，避免 Windows 退出阶段的 Python QIconEngine 生命周期问题；主题变化时由页面
 `_refresh_icons()` 重绑定，不应为统一缓存而移除该兼容路径。
 Logcat 的“跟随/换行”使用 [LogcatReadingButton](../../gui/dialogs/live_logcat_controls.py) 局部绘制：
@@ -147,7 +147,7 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 
 ## 4. 页面边界与响应式布局
 
-[WorkspaceSectionPage / GalleryPage](../../gui/pages/fluent_pages.py) 将滚动容器铺到内容区边界，
+[WorkspaceSectionPage / GalleryPage](../../gui/pages/workspace_containers.py) 将滚动容器铺到内容区边界，
 阅读留白由内部 wrapper 承担。主列表、日志和图片画布保留专用滚动边界；不能为对齐文字同时把
 滚动轨道向内缩，也不能把横向溢出简单统一为始终隐藏。
 
@@ -169,6 +169,11 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 
 [SettingsPage](../../gui/pages/fluent_pages.py) 记录最近布局的实际视口宽度，纯高度变化不再遍历
 普通设置卡。实际宽度变化和文案、字体、主题等显式刷新仍执行重排，不能只按宽度缓存所有内容变化。
+[设置卡布局](../../gui/widgets/setting_card_layout.py) 在测量标签前完成 `ensurePolished()`，让新建
+路径标签首次使用最终字体度量，避免展开诊断或二维码后才改变原始卡片高度。
+
+[应用管理顶部区域](../../gui/features/app_manager/form.py) 按共享网格列及跨列控件的最小宽度
+选择行数；极窄视口中摘要独占一行。选择计数的最小宽度改变时重新规划，保持计数、筛选与刷新入口可达。
 
 ## 5. 设备选择、连接与展开
 
@@ -203,11 +208,11 @@ FrameAnimation 空闲不启动计时器，隐藏、最小化和关闭时停止�
 当前绘制减负包括静态 SVG 缓存、响应式规划缓存、任务行按快照增量更新、应用列表局部绘制，以及
 隐藏性能页暂存日志后在激活时刷新。日志保留、批次渲染和阅读位置由各页面实现，不用减少业务采样
 或丢弃有效数据冒充绘制优化。相关消费者分别在
-[任务中心](../../gui/pages/tasks_page.py)、[应用行](../../gui/dialogs/app_manager_rows.py)、
-[性能日志](../../gui/dialogs/performance_launcher_log.py)和
+[任务中心](../../gui/pages/tasks_page.py)、[应用行](../../gui/features/app_manager/rows.py)、
+[性能日志](../../gui/features/performance/log.py)和
 [Logcat 数据流](../../gui/dialogs/live_logcat_stream.py)。
 
-应用管理的 [AppManagerViews](../../gui/dialogs/app_manager_views.py) 对超过 128 项的快照分批
+应用管理的 [AppManagerViews](../../gui/features/app_manager/views.py) 对超过 128 项的快照分批
 构建表格及图标视图，每批最多 64 项或约 6 ms；小列表即时完成。每批核对设备及加载请求，离页
 暂停、返回继续，关闭或替换快照取消旧批次。筛选和选择仍可更新，完整交付前维持加载忙碌状态，
 worker 结束不提前发布成功。行委托读取视图字体，字号变化不逐格写入字体。

@@ -111,7 +111,7 @@ def test_directory_reader_reports_safe_failure_category(monkeypatch, failure, ca
 
     if failure == "local":
         monkeypatch.setattr(
-            "models.file_explorer_worker.tempfile.TemporaryDirectory", unavailable_temporary,
+            "services.file_operations.tempfile.TemporaryDirectory", unavailable_temporary,
         )
 
     def capture(command, output_path, **kwargs):

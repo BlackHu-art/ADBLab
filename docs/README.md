@@ -50,9 +50,53 @@
 
 历史阶段与验收索引见 [archive/README](archive/README.md)。
 
+## 重构设计与验收索引
+
+- [重构后目录、架构与兼容性复审](superpowers/plans/2026-10-24-post-refactor-audit.md)：记录现有入口与调用链复核、APK 关闭取消反馈及测试清理协议修复。
+- [字体、布局与 Qt 退出验证记录](superpowers/plans/2026-10-24-ui-stability.md)：记录重构后遗留失败的根因、兼容修复和独立审阅。
+- [全项目持续重构路线图](superpowers/plans/2026-10-23-project-refactor-roadmap.md)记录整体范围、保留依据与阶段验收；必要架构及目录改造已完成并通过独立终审。
+  Controller 模型创建与装配已完成并行实施与独立审阅：[设计](superpowers/specs/2026-10-23-controller-model-composition-design.md)、
+  [计划与验收](superpowers/plans/2026-10-23-controller-model-composition.md)；相关项目目录与功能模块归位亦已完成。
+- 服务与 Logcat 功能目录归位：[设计](superpowers/specs/2026-10-24-feature-directory-boundaries-design.md)、
+  [实施计划与验证](superpowers/plans/2026-10-24-feature-directory-boundaries.md)。应用 helper、性能配置/结果和
+  Logcat 页面协作者按职责归包，保留旧公开入口，已完成验证与最终独立审阅。
+- FileExplorer、AppManager、Performance 功能包：[设计](superpowers/specs/2026-10-24-gui-feature-packages-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-gui-feature-packages.md)。已完成并最终审阅，保留旧入口和worker替换点。
+- 设置保存生命周期：[设计](superpowers/specs/2026-10-24-settings-save-lifecycle-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-settings-save-lifecycle.md)。已完成并最终审阅，保存线程与同步写入由owner统一关闭。
+- 截图功能包：[设计](superpowers/specs/2026-10-24-media-feature-package-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-media-feature-package.md)。六份实现已归包并最终审阅，保留旧入口及实际globals。
+- 设置规则与历史迁移分包：[设计](superpowers/specs/2026-10-24-settings-schema-boundaries-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-settings-schema-boundaries.md)。已完成并最终审阅；保持持久化owner和数据协议。
+- Remote窗口平台分包：[设计](superpowers/specs/2026-10-24-remote-windowing-package-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-remote-windowing-package.md)。已完成并最终审阅；保留原跟踪策略和工厂入口。
+- 首页与工作区页面分包：[设计](superpowers/specs/2026-10-24-home-workspace-pages-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-home-workspace-pages.md)。已完成并最终审阅，完整类归位且保留旧导出与设置替换边界。
+- 应用查询服务提取：[设计](superpowers/specs/2026-10-24-apps-query-services-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-apps-query-services.md)。已完成并最终审阅，保留身份、查询预算和信号发布契约。
+- Controller媒体职责归包：[设计](superpowers/specs/2026-10-24-controller-media-boundaries-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-controller-media-boundaries.md)。已完成并最终审阅，保留旧组合入口、注册与安装协议链。
+- 设备发现Qt适配器：[设计](superpowers/specs/2026-10-24-device-discovery-adapter-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-device-discovery-adapter.md)。已完成并最终审阅，窗口保留扫描资源所有权和旧同对象类入口。
+- 应用动作与归档服务：[设计](superpowers/specs/2026-10-24-apps-actions-archives-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-apps-actions-archives.md)。已完成并最终审阅，保留用户核验、写命令、归档格式及通知时序。
+- 文件事务服务：[设计](superpowers/specs/2026-10-24-file-operation-services-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-file-operation-services.md)。已完成并最终审阅，保留原始字节、取消、原子发布及清理归属。
+- 应用与文件 Qt worker 目录归位：[设计](superpowers/specs/2026-10-24-worker-directory-boundaries-design.md)、
+  [实施计划](superpowers/plans/2026-10-24-worker-directory-boundaries.md)。已完成并通过全项目独立终审；保留旧模块身份及页面工厂。
+- Controller 的设备连接生命周期依赖收敛：[设计](superpowers/specs/2026-10-23-device-connection-lifecycle-design.md)与
+  [实施计划](superpowers/plans/2026-10-23-device-connection-lifecycle.md)已完成代码实施与独立审阅；
+  无线配对历史准入与 ADB 重启通过生命周期接口接入，保留现有行为和数据兼容。阶段验证及限制见实施计划。
+- Controller 的 APK 文件选择依赖收敛：[设计](superpowers/specs/2026-10-23-controller-apk-picker-design.md)与
+  [实施计划](superpowers/plans/2026-10-23-controller-apk-picker.md)已完成代码实施与独立审阅；
+  选择接口与 Qt 适配器已接入 Controller 和主窗口。阶段验证、既有字体测试失败及人工边界见实施计划。
+- 设备上下文独立化：[设计](superpowers/specs/2026-10-22-device-context-design.md)与
+  [实施计划](superpowers/plans/2026-10-22-device-context.md)已完成第一阶段代码迁移、自动回归与
+  独立审阅；当前实现见架构与数据流文档，阶段验证记录及人工验收边界见实施计划。
+
 ## 保留的历史方案
 
-`superpowers/` 中已有的设计与计划保留原位置及当时状态，供理解实现缘由，不作为待执行任务或
+`superpowers/` 中以下历史设计与计划保留原位置及当时状态，供理解实现缘由，不作为待执行任务或
 当前验收要求：
 
 - 无线配对：[设计](superpowers/specs/2026-09-25-wireless-adb-pairing-design.md)、

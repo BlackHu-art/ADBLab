@@ -11,19 +11,20 @@ from PySide6.QtWidgets import QBoxLayout, QWidget
 from qfluentwidgets import HeaderCardWidget
 from shiboken6 import isValid
 
-from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
-from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
-from gui.dialogs.screenshot_viewer_tasks import (
+from gui.i18n import tr
+from gui.notifications import ToastLevel
+from gui.styles import BaseStyles
+
+from .actions import ScreenshotViewerActions
+from .nav import ScreenshotViewerNav
+from .tasks import (
     ScreenshotDeleteWorker,
     ScreenshotIOShutdownTask,
     ScreenshotReadWorker,
     ScreenshotValidateWorker,
 )
-from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
-from gui.dialogs.screenshot_viewer_widgets import ScreenshotFlipView, ScreenshotPipsPager
-from gui.i18n import tr
-from gui.notifications import ToastLevel
-from gui.styles import BaseStyles
+from .ui import ScreenshotViewerUI
+from .widgets import ScreenshotFlipView, ScreenshotPipsPager
 
 
 class ScreenshotPage(QWidget):

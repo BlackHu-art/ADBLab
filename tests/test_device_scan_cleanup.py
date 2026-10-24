@@ -23,12 +23,13 @@ def scan_cleanup_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
     from PySide6.QtCore import Qt
 
+    from adblab.presentation import qt_device_discovery as discovery
     from gui import main_frame
 
     monkeypatch.setattr(execution, "resolve_command", lambda command: list(command))
     monkeypatch.setattr(adb_debug, "command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(execution.ProcessRunner, "_global_procs", {})
-    monkeypatch.setattr(main_frame, "adb_runtime", lambda: None)
+    monkeypatch.setattr(discovery, "adb_runtime", lambda: None)
     scan = main_frame._ScanThread()
     monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _delay: True)
     snapshots, states = [], []
@@ -99,13 +100,13 @@ def test_scan_protocol_fault_preserves_custom_server(scan_cleanup_boundary, monk
 
 @pytest.mark.parametrize("stop_kind", ["timeout", "cancel"])
 def test_scan_waiting_for_client_can_stop(scan_cleanup_boundary, monkeypatch, stop_kind):
+    from adblab.presentation import qt_device_discovery as discovery
     from core import adb_transport
-    from gui import main_frame
     from tests.test_adb_client_admission import _ObservedLock, _while_client_busy
 
     lock = _ObservedLock()
     monkeypatch.setattr(adb_transport, "adb_client_lock", lock)
-    monkeypatch.setattr(main_frame, "adb_client_lock", lock)
+    monkeypatch.setattr(discovery, "adb_client_lock", lock)
     scan = scan_cleanup_boundary.scan
     scan.SCAN_CALL_TIMEOUT_S = 0.05 if stop_kind == "timeout" else 10
     calls = []

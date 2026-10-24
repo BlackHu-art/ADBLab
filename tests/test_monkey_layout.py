@@ -5,7 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QPoint
+from PySide6.QtGui import QRegion
 from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtWidgets import QWidget
 from qfluentwidgets import PrimaryPushButton
 
 from gui.styles import BaseStyles
@@ -35,6 +37,15 @@ def test_monkey_inner_sections_share_page_surface_in_hover_and_disabled_states(
     )
     section = apps.monkey_section
     blocks = (apps.monkey_package_card, apps.monkey_parameters_card)
+
+    def pixel_color(image, widget, point):
+        """把控件逻辑坐标映射到实际图像像素，兼容非整数显示缩放。"""
+        logical_point = widget.mapTo(section, point)
+        ratio = image.devicePixelRatio()
+        image_point = QPoint(int(logical_point.x() * ratio), int(logical_point.y() * ratio))
+        assert image.rect().contains(image_point)
+        return image.pixelColor(image_point)
+
     try:
         for enabled in (True, False, True):
             for block in blocks:
@@ -42,15 +53,27 @@ def test_monkey_inner_sections_share_page_surface_in_hover_and_disabled_states(
                 QTest.mouseMove(block, QPoint(8, 8))
                 qt_application.processEvents()
                 rendered = section.grab().toImage()
-                background = rendered.pixelColor(
-                    section.width() - 4, section.headerView.height() // 2,
+                background = pixel_color(
+                    rendered, section,
+                    QPoint(section.width() - 4, section.headerView.height() // 2),
                 )
-                for point in (QPoint(8, 8), QPoint(1, block.height() // 2)):
-                    assert rendered.pixelColor(block.mapTo(section, point)) == background
+                # 分区已无固定内缩，旧坐标可能命中文字；仅采样真实边距和布局间隙。
+                blank_region = QRegion(block.rect())
+                for child in block.children():
+                    if isinstance(child, QWidget) and child.isVisibleTo(block):
+                        blank_region = blank_region.subtracted(QRegion(child.geometry()))
+                assert not blank_region.isEmpty()
+                for blank in blank_region:
+                    for point in (
+                        QPoint(blank.left(), blank.center().y()),
+                        blank.center(),
+                        QPoint(blank.right(), blank.center().y()),
+                    ):
+                        assert pixel_color(rendered, block, point) == background
         field = apps.monkey_events
         rendered = section.grab().toImage()
-        assert rendered.pixelColor(
-            field.mapTo(section, QPoint(field.width() // 2, field.height() // 2)),
+        assert pixel_color(
+            rendered, field, QPoint(field.width() // 2, field.height() // 2),
         ) != background
     finally:
         _close_feature_panel(owner)

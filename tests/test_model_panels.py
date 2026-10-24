@@ -13,8 +13,6 @@ from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QApplication,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QStyle,
     QStyleOptionViewItem,
@@ -81,13 +79,12 @@ def test_side_panel_selection_is_a_unique_online_snapshot(qt_application):
     try:
         owner.update_device_list(["demo-a", "demo-b"])
         owner._devices_tab.set_selected_devices(["demo-a", "demo-b"])
-        owner._connected_device_cache = ["demo-b", "demo-b"]
+        owner.update_device_list(["demo-b", "demo-b"])
         snapshot = owner.selected_devices
         assert snapshot == ["demo-b"]
         snapshot.clear()
         assert owner.selected_devices == ["demo-b"]
-        owner._connected_device_cache = []
-        owner._refresh_loaded_action_states()
+        owner.update_device_list([])
         assert owner.selected_devices == []
         assert not owner._apps_tab.btn_screenshot.isEnabled()
     finally:
@@ -175,15 +172,11 @@ def test_discovery_failure_blocks_new_actions_but_preserves_selection_and_record
 
 def test_device_manager_shows_placeholder_for_new_unstored_device():
     _app = QApplication.instance() or QApplication([])
-    panel = Mock(selected_devices=[])
-    manager = SimpleNamespace(selected_devices=[])
-    manager.panel = panel
-    manager.listbox_devices = QListWidget()
+    manager, _widget, _panel = _build_connect_device_manager()
     manager.set_discovery_state = Mock()
-    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     with patch("gui.panels.device_manager.DeviceStore.get_full_devices_info", return_value=[]):
-        DeviceManager.update_device_list(manager, ["emulator-5554"])
+        manager.update_device_list(["emulator-5554"])
 
     assert manager.listbox_devices.count() == 1
     item = manager.listbox_devices.item(0)
@@ -194,12 +187,8 @@ def test_device_manager_shows_placeholder_for_new_unstored_device():
 
 def test_device_manager_updates_device_list_incrementally():
     _app = QApplication.instance() or QApplication([])
-    panel = Mock(selected_devices=[])
-    manager = SimpleNamespace(selected_devices=[])
-    manager.panel = panel
-    manager.listbox_devices = QListWidget()
+    manager, _widget, _panel = _build_connect_device_manager()
     manager.set_discovery_state = Mock()
-    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     first_infos = [
         {"Brand": "Google", "Model": "Pixel", "Aversion": "15", "ip": "device-1"},
@@ -212,12 +201,12 @@ def test_device_manager_updates_device_list_incrementally():
         "gui.panels.device_manager.DeviceStore.get_full_devices_info",
         side_effect=[first_infos, second_infos],
     ):
-        DeviceManager.update_device_list(manager, ["device-1", "device-2"])
+        manager.update_device_list(["device-1", "device-2"])
         first_item = manager.listbox_devices.item(0)
         first_item.setCheckState(Qt.Checked)
-        manager.selected_devices = ["device-1"]
+        assert manager.selected_devices == ["device-1"]
 
-        DeviceManager.update_device_list(manager, ["device-1", "device-3"])
+        manager.update_device_list(["device-1", "device-3"])
 
     assert manager.listbox_devices.count() == 2
     assert manager.listbox_devices.item(0) is first_item
@@ -229,23 +218,19 @@ def test_device_manager_updates_device_list_incrementally():
 
 def test_device_manager_none_device_list_clears_without_model_lookup():
     _app = QApplication.instance() or QApplication([])
-    panel = Mock(selected_devices=[])
-    manager = SimpleNamespace(selected_devices=["device-1"])
-    manager.panel = panel
-    manager.listbox_devices = QListWidget()
+    manager, _widget, _panel = _build_connect_device_manager()
     manager.set_discovery_state = Mock()
-    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
-    item = QListWidgetItem("device-1")
-    item.setData(Qt.UserRole, {"ip": "device-1"})
-    item.setCheckState(Qt.Checked)
-    manager.listbox_devices.addItem(item)
+    with patch("gui.panels.device_manager.DeviceStore.get_full_devices_info", return_value=[]):
+        manager.update_device_list(["device-1"])
+    manager.set_selected_devices(["device-1"])
 
     with patch("models.adb_device.ADBDevice.get_connected_devices_async") as get_devices:
-        DeviceManager.update_device_list(manager, None)
+        manager.update_device_list(None)
 
     get_devices.assert_not_called()
     assert manager.listbox_devices.count() == 0
-    assert panel._connected_device_cache == []
+    assert manager._device_context.snapshot().connected_devices == ()
+    assert manager.selected_devices == []
     manager.set_discovery_state.assert_not_called()
 
 
@@ -512,7 +497,7 @@ def test_side_panel_refresh_owns_scanning_state_and_rejects_duplicates():
 
         assert requested == [True]
         assert states == ["scanning"]
-        assert panel._device_discovery_state == "scanning"
+        assert panel.device_context_snapshot().discovery_state == "scanning"
         assert not panel._devices_tab.btn_refresh.isEnabled()
         assert "正在扫描" in panel._devices_tab.btn_refresh.toolTip()
 

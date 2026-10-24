@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
-from services.app_icons import run_app_helper
+from services.apps.helper import run_app_helper
 from utils.adb_values import normalize_android_package
 
 MAX_BATCH_SIZE = 30

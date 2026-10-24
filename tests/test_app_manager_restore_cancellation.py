@@ -62,7 +62,7 @@ def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_ph
             worker.abort()
         return CommandResult(success=True)
 
-    from models.app_manager_worker import safe_extract_zip
+    from services.apps.archives import safe_extract_zip
 
     def extract(zf, target):
         safe_extract_zip(zf, target)
@@ -71,7 +71,7 @@ def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_ph
 
     with (
         patch.object(worker, "_adb", side_effect=install),
-        patch("models.app_manager_worker.safe_extract_zip", side_effect=extract),
+        patch("services.apps.archives.safe_extract_zip", side_effect=extract),
     ):
         worker._restore_apps([str(archive)])
     assert len(calls) == {"extract": 0, "first_install": 1, "last_install": 2}[cancel_phase]
@@ -118,7 +118,7 @@ def test_backup_last_pull_cancellation_preserves_old_zip_and_emits_no_success(tm
 
     with (
         patch.object(worker, "_adb", side_effect=adb),
-        patch("models.app_manager_worker.shutil.make_archive") as archive,
+        patch("services.apps.archives.shutil.make_archive") as archive,
     ):
         worker._backup_app("org.example.app", str(tmp_path))
     archive.assert_not_called()
@@ -151,7 +151,7 @@ def test_backup_cancel_during_compression_preserves_old_zip(tmp_path):
 
     with (
         patch.object(worker, "_adb", side_effect=adb),
-        patch("models.app_manager_worker.shutil.make_archive", side_effect=compress),
+        patch("services.apps.archives.shutil.make_archive", side_effect=compress),
     ):
         worker._backup_app("org.example.app", str(tmp_path))
 

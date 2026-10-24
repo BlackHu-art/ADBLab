@@ -6,8 +6,8 @@
 - 使用仓库 `.venv`，诊断导入问题时核实 `sys.executable`、PySide6 和 pytest 的实际来源。
 - `tests/conftest.py` 按 `ui` marker 或显式 Qt 夹具依赖链，首次需要时创建 session 级 QApplication；
   Qt 用例结束后恢复主题、字体、Timer 和顶层窗口状态。纯逻辑用例不会因全局夹具提前创建 Qt 应用。
-- Windows 离屏平台若未提供系统字体库，测试夹具只读注册现有 Windows 字体，确保中文字形和
-  实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
+- Windows 离屏测试夹具注册系统中已有的中文及常用字体，即使平台能枚举部分字体也补齐，确保
+  中文字形和实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
 - 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
 - `ui` 与 `integration` marker 以 `tests/conftest.py` 的集中登记为主：`_UI_TEST_FILES` 标记整份
   Qt 测试文件，`_UI_TEST_FUNCTIONS` 标记混合文件中的 Qt 节点，`_INTEGRATION_TEST_FILES` 标记集成文件；
@@ -109,19 +109,29 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
 - fake process 实现 `poll/terminate/kill/wait/stdout` 等协议，验证 ProcessRunner 和 MobilePerfRunner。
 - `tmp_path` 隔离 JSON/YAML/截图/报告/临时配置。
 - 需要真实 AppSettings 读写语义时显式使用 `isolated_app_settings`，它隔离配置路径、旧配置路径和
-  单例，并在结束时取消、等待延迟保存 Timer；轻量页面替身仍可按需替换 `AppSettings.instance()`。
+  单例，在路径恢复前对本用例创建的每个 owner 调用 `close()`，排空被替换的 Timer 和同步保存；
+  模拟重启须先关闭旧 owner 再切换单例。故意保存失败时 False 仍代表资源已排空，不额外要求落盘成功。
+  轻量页面替身仍可按需替换 `AppSettings.instance()`；关闭链替身应提供真实消费的 `close()` 结果协议。
 - 全局 `isolated_run_library_storage` 夹具把归档服务及已加载 Qt 协调器的存储入口指向 `tmp_path`；
   第一次 Qt 用例按需加载并隔离协调器，不为纯逻辑测试主动导入 GUI。
   其他设置、设备历史及导出路径仍须由具体测试替换，不能由该夹具推断所有用户数据已隔离。
 - Qt 测试直接验证可观察行为，并替换外部 service；不依赖无业务意义的私有字段不存在断言。
+  Windows 离屏会话由 `qt_application` 注册系统中已有的中文及常用字体，即使字体库已能枚举
+  部分字体也要补齐；原生 Windows 插件和其他平台沿用自身字体发现，不改变生产字体回退。
 - fake/stub 必须实现被测边界实际消费的状态与失败语义，不能靠默认成功、随意的 `getattr`
   回退或自动吞错绕过真实协议。断言可以检查必要的调用参数与资源归属，不复制实现步骤。
-- UI 隔离夹具关闭本用例创建的窗口后，对包括已关闭窗口在内的全部新顶层窗口安排删除，再投递
-  `DeferredDelete`。仅调用 `close()` 或 `processEvents()` 不能证明 QObject 已释放；生命周期
+- UI 隔离夹具通过 [生命周期辅助器](../../tests/ui_lifecycle_helpers.py) 请求窗口 owner 停止资源，
+  在有界事件循环内确认后代 `QThread` 已实际 join；未完成启动的主窗口另等待真实启动中止边界。
+  辅助器接管自动关闭删除与已排队的 `deleteLater`，只在 GUI 测试 teardown 的安全边界释放对象树。
+  超时保留对象树并报告失败，后续清理重试保留对象，不强制终止线程。
+  仅调用 `close()` 或 `processEvents()` 不能证明 QObject 已释放；生命周期
   回归同时观察销毁信号、计时器停止和晚到回调。`isolated_ui_state_probe` 夹具记录每个新顶层
   窗口的 `timer_stopped` 与 shutdown 结果，可直接用于这些断言。
 - 清理夹具是兜底，不替代测试主体对关闭/取消的断言。仅已销毁 QObject 可被识别后跳过；活对象
   的 shutdown/close 异常必须暴露，失败后仍尽力释放资源，不能用宽泛 `except: pass` 掩盖问题。
+  布局测试也须隔离页面激活触发的目录等外部 I/O，保留实际线程和信号链；不能以设置
+  `_close_ready` 后关闭窗口作为资源已退出的证据。原生异常调查须保留子进程退出码及致命消息，
+  pytest 已打印通过或一次复跑成功都不能证明进程正常退出或竞态已修复。
 - 测试工作流 YAML 的关键文本/结构，防止打包模式和发布资产回归。
 
 ## 测试代码规范与失效判定

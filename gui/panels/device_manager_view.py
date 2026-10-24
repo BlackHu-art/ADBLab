@@ -323,10 +323,25 @@ class DeviceManagerView:
             refresh_button.setAccessibleDescription(tooltip)
 
     def update_device_list(self, devices: list[str] | None = None):
-        if devices is None:
-            devices = []
-        devices = list(dict.fromkeys(devices or []))
-        prev = set(self._frame.selected_devices)
+        """提交成功列表并投影视图，选择通知仍先于协调器的发现状态通知。"""
+        self._frame._device_context.replace_connected_devices(
+            devices if devices is not None else (),
+        )
+        self._render_device_list()
+        self._update_action_states()
+        # 项目增删会改变真实行高及横向滚动条占位，必须立即刷新 splitter 安全下限。
+        self._frame.listbox_devices.doItemsLayout()
+        update_minimums = getattr(self._frame, "_update_device_minimum_heights", None)
+        if callable(update_minimums):
+            update_minimums()
+        request_reflow = getattr(self._frame.panel, "request_responsive_reflow", None)
+        if callable(request_reflow):
+            request_reflow(ReflowReason.EXPLICIT)
+
+    def _render_device_list(self) -> None:
+        """按共享状态复用设备行，不提交状态或发布选择，允许初始化时保留注入数据。"""
+        devices = self._frame._device_context.display_devices
+        selected = set(self._frame._device_context.checked_devices)
         blocker = QSignalBlocker(self._frame.listbox_devices)
         try:
             existing = self._frame._device_items_by_ip()
@@ -340,7 +355,7 @@ class DeviceManagerView:
                 # DeviceStore 可能仍在后台补全新设备信息，先显示占位行，避免刷新后列表短暂为空。
                 infos = {
                     str(info.get("ip", "")): info
-                    for info in DeviceStore.get_full_devices_info(devices)
+                    for info in DeviceStore.get_full_devices_info(list(devices))
                 }
                 for device in devices:
                     info = infos.get(device) or {
@@ -362,22 +377,12 @@ class DeviceManagerView:
                     item.setText(txt)
                     item.setData(Qt.ItemDataRole.UserRole, info)
                     item.setCheckState(
-                        Qt.CheckState.Checked if ip_addr in prev else Qt.CheckState.Unchecked
+                        Qt.CheckState.Checked if ip_addr in selected else Qt.CheckState.Unchecked
                     )
                     item.setToolTip(txt)
                     self._sync_device_card(item, txt, info)
         finally:
             del blocker
-        self._frame.panel._connected_device_cache = devices
-        self._update_action_states()
-        # 项目增删会改变真实行高及横向滚动条占位，必须立即刷新 splitter 安全下限。
-        self._frame.listbox_devices.doItemsLayout()
-        update_minimums = getattr(self._frame, "_update_device_minimum_heights", None)
-        if callable(update_minimums):
-            update_minimums()
-        request_reflow = getattr(self._frame.panel, "request_responsive_reflow", None)
-        if callable(request_reflow):
-            request_reflow(ReflowReason.EXPLICIT)
 
     def _update_action_states(self) -> None:
         """根据已连接和已勾选设备统一更新操作按钮状态。"""

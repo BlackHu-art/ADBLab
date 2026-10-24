@@ -30,9 +30,7 @@ def isolated_settings(tmp_path, monkeypatch):
     finally:
         current = settings_manager.AppSettings._instance
         if current is not None and current is not previous_instance:
-            timer = current._save_timer
-            if timer is not None:
-                timer.cancel()
+            current.close()
         settings_manager.AppSettings._instance = previous_instance
 
 
@@ -157,6 +155,7 @@ def test_scrcpy_settings_round_trip_across_app_settings_rebuild(isolated_setting
         pending_timer.cancel()
     settings._save_atomic()
 
+    settings.close()
     settings_manager.AppSettings._instance = None
     reloaded = settings_manager.AppSettings.instance()
 
@@ -207,18 +206,19 @@ def test_adb_client_preference_round_trips_and_rejects_invalid_values(isolated_s
         pending_timer.cancel()
     settings._save_atomic()
 
+    settings.close()
     settings_manager.AppSettings._instance = None
     reloaded = settings_manager.AppSettings.instance()
     assert reloaded.get("adb_client") == source
 
     custom = str(isolated_settings.parent / "tools/adb")
-    settings.update({"adb_client": f"  {custom}  "})
-    assert settings.get("adb_client") == custom
+    reloaded.update({"adb_client": f"  {custom}  "})
+    assert reloaded.get("adb_client") == custom
 
-    settings.update({"adb_client": "not-a-source"})
-    assert settings.get("adb_client") == "auto"
-    settings.update({"adb_client": 7})
-    assert settings.get("adb_client") == "auto"
+    reloaded.update({"adb_client": "not-a-source"})
+    assert reloaded.get("adb_client") == "auto"
+    reloaded.update({"adb_client": 7})
+    assert reloaded.get("adb_client") == "auto"
 
 
 def test_existing_json_scrcpy_keys_load_without_migration(isolated_settings):
@@ -332,6 +332,7 @@ def test_current_settings_gain_auto_scale_without_rewriting_existing_fonts(isola
     settings.set("ui_scale", 1.75)
     settings._save_timer.cancel()
     settings._save_atomic()
+    settings.close()
     settings_manager.AppSettings._instance = None
     reloaded = settings_manager.AppSettings.instance()
     assert reloaded.get("ui_scale") == 1.75
@@ -345,6 +346,7 @@ def test_language_round_trip_keeps_the_current_schema(isolated_settings, languag
     settings.set("language", language)
     settings._save_timer.cancel()
     settings._save_atomic()
+    settings.close()
     settings_manager.AppSettings._instance = None
 
     assert settings_manager.AppSettings.instance().get("language") == language
@@ -593,3 +595,72 @@ def test_numeric_text_and_legacy_throttle_units_keep_their_values(isolated_setti
     assert monkey["throttle"] == 60000
     assert monkey["touch"] == 25
     assert monkey["ignore_crashes"] is False
+
+
+@pytest.mark.parametrize("defer", [False, True])
+def test_future_legacy_copy_keeps_unknown_fields_and_seen_version(
+    isolated_settings, monkeypatch, defer,
+):
+    legacy = isolated_settings.parent.parent / "legacy" / "app_settings.json"
+    legacy.parent.mkdir(parents=True)
+    source = {
+        "schema_version": 99, "log_max_lines": "2500", "theme": "dark",
+        "future": {"items": [1, 2]},
+        "monkey_params": {"events": "12345", "future_monkey": {"enabled": True}},
+    }
+    legacy.write_text(json.dumps(source), encoding="utf-8")
+    reports = []
+    monkeypatch.setattr(settings_manager, "_log_error", lambda *message: reports.append(message))
+
+    settings = settings_manager.AppSettings.instance(defer_migration_save=defer)
+    assert isolated_settings.exists() is (not defer)
+    assert settings.get("log_max_lines") == 2500
+    assert settings.get("theme") == "Dark"
+    assert settings.get("monkey_params")["events"] == 12345
+    assert settings.get("monkey_params")["future_monkey"] == {"enabled": True}
+    if defer:
+        assert settings.flush_deferred_save() is True
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == 99
+    assert stored["future"] == {"items": [1, 2]}
+    assert stored["log_max_lines"] == 2500
+    assert stored["monkey_params"]["future_monkey"] == {"enabled": True}
+    assert reports == [(
+        "WARNING", "Settings schema v99 is newer than supported v3; "
+        "known keys loaded, file left untouched",
+    )]
+    assert legacy.read_text(encoding="utf-8") == json.dumps(source)
+
+
+def test_current_schema_normalization_does_not_rewrite_source_on_load(isolated_settings):
+    isolated_settings.parent.mkdir(parents=True)
+    source = b'{"schema_version": 3, "log_max_lines": false, "theme": "dark", "future": 1}'
+    isolated_settings.write_bytes(source)
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("log_max_lines") == 2000
+    assert settings.get("theme") == "Dark"
+    assert settings.get("future") is None
+    assert isolated_settings.read_bytes() == source
+
+
+def test_runtime_unknown_keys_and_reset_preserve_future_metadata(isolated_settings, monkeypatch):
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(
+        '{"schema_version": 99, "future": {"items": [1]}, "theme": "Dark"}',
+        encoding="utf-8",
+    )
+    settings = settings_manager.AppSettings.instance()
+    with monkeypatch.context() as updates:
+        updates.setattr(settings, "_schedule_save", lambda: None)
+        settings.update({"runtime_unknown": {"value": 2}})
+        assert settings.get("runtime_unknown") == {"value": 2}
+        settings.reset()
+        assert settings.get("runtime_unknown") is None
+        assert settings.get("theme") == "System"
+        assert settings.close() is True
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == 99
+    assert stored["future"] == {"items": [1]}
+    assert stored["theme"] == "System"

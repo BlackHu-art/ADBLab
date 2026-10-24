@@ -10,6 +10,7 @@ import pytest
 from core.adb_transport import ExecutionResult
 from core.exec import CommandResult, _normalise_result
 from services import app_icons
+from services.apps import helper as app_helper
 from tests.test_app_icons_service import collect, icon_line, make_png
 
 CLEANED = "\n__ADBLAB_ICONS_CLEANED__\n"
@@ -19,14 +20,14 @@ CLEANED = "\n__ADBLAB_ICONS_CLEANED__\n"
 def inline(monkeypatch, tmp_path):
     helper = tmp_path / "helper.jar"
     helper.write_bytes(b"small-bundled-helper")
-    monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(helper))
+    monkeypatch.setattr(app_helper, "resource_path", lambda _path: str(helper))
     calls = []
 
     def run(command, timeout, **kwargs):
         calls.append((command, timeout, kwargs))
         return CommandResult(True, icon_line() + CLEANED if "app_process" in command[-1] else "")
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     return helper, calls
 
 
@@ -36,14 +37,14 @@ def test_small_helper_needs_one_shell_call_including_confirmed_cleanup(
 ):
     _helper, calls = inline
     if normalised:
-        original = app_icons.CommandRunner.run
+        original = app_helper.CommandRunner.run
 
         def run(*args, **kwargs):
             result = original(*args, **kwargs)
             result.output = result.output.strip()
             return result
 
-        monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+        monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect() == [("com.example.app", make_png(), "")]
     assert len(calls) == 1
     command, timeout, kwargs = calls[0]
@@ -81,7 +82,7 @@ def test_unconfirmed_inline_exit_runs_exact_cleanup_without_replaying(inline, mo
         assert cancelled is None
         return CommandResult(True)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     events = collect(cancelled=stop.is_set)
     assert not events if cancel else events == [("com.example.app", b"", "应用图标读取失败")]
     assert len(calls) == 2
@@ -96,7 +97,7 @@ def test_inline_cleanup_failure_never_publishes_icon(inline, monkeypatch):
         calls.append((command, timeout, kwargs))
         return CommandResult(True, icon_line()) if len(calls) == 1 else CommandResult(False)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect() == [("com.example.app", b"", "应用图标临时文件清理失败")]
 
 
@@ -110,7 +111,7 @@ def test_inline_deployment_failure_is_reported_without_native_replay(inline, mon
             stdout=("__ADBLAB_ICONS_DEPLOY_FAILED__" + CLEANED).encode(), returncode=0,
         ), timeout)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect() == [("com.example.app", b"", "应用图标组件传输失败")]
     assert len(calls) == 1 and calls[0][0][3] == "shell"
 
@@ -132,7 +133,7 @@ def test_inline_cancelled_result_does_not_publish_even_when_cleanup_confirmed(in
         stopped.set()
         return CommandResult(True, icon_line() + CLEANED)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect(cancelled=stopped.is_set) == []
     assert len(calls) == 1
 
@@ -148,6 +149,6 @@ def test_confirmed_cleanup_does_not_weaken_output_validation(inline, monkeypatch
         calls.append((command, timeout, kwargs))
         return CommandResult(True, body + CLEANED)
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     assert collect() == [("com.example.app", b"", "设备图标响应无效")]
     assert len(calls) == 1

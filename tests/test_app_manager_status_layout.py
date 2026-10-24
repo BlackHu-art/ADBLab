@@ -61,3 +61,60 @@ def test_long_status_retains_full_tooltip_without_changing_filter_geometry(qt_ap
         assert page.status_bar.width() < page.status_bar.fontMetrics().horizontalAdvance(message)
     finally:
         page.close()
+
+
+def test_status_reflows_when_selection_count_grows_in_narrow_filter_area(
+    qt_application, monkeypatch,
+):
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda cls, role, size=None: QFont("Arial", size or 22)),
+    )
+    page = AppManagerPage(device_ip="status-demo")
+    apps = [
+        (f"应用 {index}", f"com.example.app{index}", "Enabled", "User")
+        for index in range(12)
+    ]
+    try:
+        page._populate(apps)
+        page.resize(350, 900)
+        page.show()
+        for packages in (set(), {app[1] for app in apps}, set()):
+            page.selected_packages = packages
+            page._update_selection_ui()
+            wait_for_stable_geometry(qt_application, (*page._top_controls, page.stack))
+            assert str(len(packages)) in page.selection_label.text()
+            assert page.selection_label.width() >= page.selection_label.minimumSizeHint().width()
+            assert page.status_bar.width() >= page.status_bar.minimumSizeHint().width()
+            for control in page._top_controls:
+                assert page.rect().contains(mapped_rect(control, page))
+    finally:
+        page.close()
+
+
+def test_status_preserves_count_and_geometry_across_width_and_font_round_trips(
+    qt_application, monkeypatch,
+):
+    font_size = [12]
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda cls, role, size=None: QFont("Arial", size or font_size[0])),
+    )
+    page = AppManagerPage(device_ip="status-demo")
+    try:
+        page._populate([("示例应用", "com.example.demo", "Enabled", "User")])
+        page.selected_packages = {"com.example.demo"}
+        page._update_selection_ui()
+        page.show()
+        for width, size in ((1040, 12), (350, 22), (340, 22), (540, 12), (1040, 12)):
+            font_size[0] = size
+            page._apply_theme()
+            page.resize(width, 900)
+            wait_for_stable_geometry(qt_application, (*page._top_controls, page.stack))
+            assert page.selected_packages == {"com.example.demo"}
+            assert page.selection_label.width() >= page.selection_label.minimumSizeHint().width()
+            assert page.status_bar.width() >= page.status_bar.minimumSizeHint().width()
+            for control in page._top_controls:
+                assert page.rect().contains(mapped_rect(control, page))
+    finally:
+        page.close()

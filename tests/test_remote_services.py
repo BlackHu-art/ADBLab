@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 import pytest
 from PySide6.QtCore import SIGNAL, Qt, QThread
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QListWidgetItem
 from qfluentwidgets import InfoLevel
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
@@ -2584,12 +2583,11 @@ def test_remote_panel_controls_follow_full_session_state(qt_application):
         assert remote.btn_stop.isEnabled() is False
         assert all(not button.isEnabled() for button in remote._remote_control_buttons)
 
-        item = QListWidgetItem("device-1")
-        item.setData(Qt.ItemDataRole.UserRole, {"ip": "device-1"})
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked)
-        side_panel._devices_tab.listbox_devices.addItem(item)
-        side_panel._connected_device_cache = ["device-1"]
+        with patch(
+            "gui.panels.device_manager_view.DeviceStore.get_full_devices_info", return_value=[],
+        ):
+            side_panel.update_device_list(["device-1"])
+        side_panel.set_selected_devices(["device-1"])
         remote.update_action_states()
 
         assert remote.btn_start.isEnabled() is True

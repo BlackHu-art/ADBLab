@@ -1,25 +1,12 @@
-"""提供 Logcat 日志等级语法高亮器。"""
+"""保留旧 Logcat 模块路径，并与功能包共享实现及替换点。"""
 
-from typing import cast
+import sys
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject
-from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat
+from gui.features.logcat import highlighter as _implementation
 
-from gui.dialogs.live_logcat_worker import LogcatWorker
+if TYPE_CHECKING:
+    from gui.features.logcat.highlighter import LogcatHighlighter as LogcatHighlighter
+    from gui.features.logcat.highlighter import LogcatWorker as LogcatWorker
 
-
-class LogcatHighlighter(QSyntaxHighlighter):
-    def __init__(self, parent=None):
-        super().__init__(cast(QObject, parent))
-        self._colors = {}
-
-    def set_theme(self, theme_colors: dict):
-        self._colors = theme_colors
-        self.rehighlight()
-
-    def highlightBlock(self, text: str):
-        level = LogcatWorker._parse_level(text)
-        color = self._colors.get(level, self._colors.get("U", "#cccccc"))
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        self.setFormat(0, len(text), fmt)
+sys.modules[__name__] = _implementation

@@ -15,13 +15,13 @@ from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
 
 
-def _restart_adb_controller(notified):
+def _restart_adb_controller(events):
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
     controller.signals = Mock()
     controller.log_service = Mock()
     controller.refresh_devices = Mock()
-    controller.window_owner = SimpleNamespace(
-        note_adb_server_restarted=lambda: notified.append(True)
+    controller.device_lifecycle = SimpleNamespace(
+        note_adb_server_restarted=lambda: events.append("notify"),
     )
     return controller
 
@@ -29,25 +29,40 @@ def _restart_adb_controller(notified):
 def test_restart_adb_success_notifies_runtime_before_refresh():
     """重启本机 ADB 服务成功后先通知运行时作废能力，再安排设备列表刷新。"""
 
-    notified: list[bool] = []
-    controller = _restart_adb_controller(notified)
+    events = []
+    controller = _restart_adb_controller(events)
+    controller.signals.operation_completed.emit.side_effect = (
+        lambda *_args: events.append("feedback")
+    )
 
-    with patch("controllers._device.QTimer.singleShot") as timer:
+    with patch(
+        "controllers._device.QTimer.singleShot", side_effect=lambda *_args: events.append("timer"),
+    ) as timer:
         controller._process_restart_adb_result({"success": True, "raw_output": "ok"})
 
-    assert notified == [True]
-    timer.assert_called_once()
-    controller.signals.operation_completed.emit.assert_called_once()
+    assert events == ["notify", "timer", "feedback"]
+    timer.assert_called_once_with(3000, controller.signals, controller.refresh_devices)
+    controller.signals.operation_completed.emit.assert_called_once_with(
+        "restart_adb", True, "ADB service has been restarted: ok",
+    )
+    controller.refresh_devices.assert_not_called()
+    timer.call_args.args[-1]()
+    controller.refresh_devices.assert_called_once_with()
 
 
 def test_restart_adb_failure_keeps_runtime_state_untouched():
     notified: list[bool] = []
     controller = _restart_adb_controller(notified)
 
-    controller._process_restart_adb_result({"success": False, "error": "boom"})
+    with patch("controllers._device.QTimer.singleShot") as timer:
+        controller._process_restart_adb_result({"success": False, "error": "boom"})
 
     assert notified == []
     controller.refresh_devices.assert_not_called()
+    timer.assert_not_called()
+    controller.signals.operation_completed.emit.assert_called_once_with(
+        "restart_adb", False, "ADB restart failed: boom",
+    )
 
 
 @pytest.mark.parametrize("success", [True, False])

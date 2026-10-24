@@ -226,9 +226,9 @@ def test_scan_state_from_older_generation_does_not_revoke_manual_success():
     thread._run_devices_scan = lambda *_args, **_kwargs: None
     thread._sleep_interruptibly = lambda _delay: True
     thread.discovery_state_changed.connect(states.append)
-    with patch("gui.main_frame.adb_runtime", return_value=None), patch(
-        "gui.main_frame.CommandRunner.active_count", return_value=0,
-    ), patch("gui.main_frame.ProcessRunner"):
+    with patch("adblab.presentation.qt_device_discovery.adb_runtime", return_value=None), patch(
+        "adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0,
+    ), patch("adblab.presentation.qt_device_discovery.ProcessRunner"):
         thread.run()
     assert len(states) == 1
     controller.refresh_devices()
@@ -268,9 +268,9 @@ def test_scan_republishes_same_devices_after_manual_generation_changes():
         return False
 
     thread._sleep_interruptibly = advance_manual_refresh
-    with patch("gui.main_frame.adb_runtime", return_value=None), patch(
-        "gui.main_frame.CommandRunner.active_count", return_value=0,
-    ), patch("gui.main_frame.ProcessRunner"):
+    with patch("adblab.presentation.qt_device_discovery.adb_runtime", return_value=None), patch(
+        "adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0,
+    ), patch("adblab.presentation.qt_device_discovery.ProcessRunner"):
         thread.run()
     assert snapshots == [["scan-device"], ["scan-device"]]
     assert snapshots[0].discovery_token != snapshots[1].discovery_token

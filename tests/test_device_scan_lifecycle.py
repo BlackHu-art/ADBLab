@@ -27,16 +27,17 @@ def scan_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
     from PySide6.QtCore import Qt
 
+    from adblab.presentation import qt_device_discovery as discovery
     from gui import main_frame
 
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "resolve_command", lambda command: list(command))
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(execution.ProcessRunner, "_global_procs", {})
-    monkeypatch.setattr(main_frame, "adb_runtime", lambda: None)
+    monkeypatch.setattr(discovery, "adb_runtime", lambda: None)
     scan_clock = SimpleNamespace(offset=0.0)
     monkeypatch.setattr(
-        main_frame, "time",
+        discovery, "time",
         SimpleNamespace(monotonic=lambda: time.monotonic() + scan_clock.offset),
     )
     scan = main_frame._ScanThread()

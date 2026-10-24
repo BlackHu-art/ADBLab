@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -15,6 +15,12 @@ related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_I
 
 ADBLab 通过 Qt Signal/Slot 连接桌面界面与异步设备操作。普通面板走 Controller/model；
 应用管理、文件、Logcat、性能和 Remote 等复杂功能也直接使用专用 worker/service，并非严格 MVC。
+
+设置规则位于 `core/settings/schema.py`，历史字典变换位于 `core/settings/migrations.py`，后者显式接收诊断回调。
+`core/settings_manager.py` 仍是唯一持久化与线程资源owner；`gui/i18n.py` 直接消费纯语言规则，无需加载该owner。
+
+Remote窗口契约和Win32/X11/事件订阅实现位于 `services/remote/windowing/`；原 `window_tracking.py` 保留实际
+跟踪策略和平台工厂。平台模块只依赖契约，不反向导入策略；旧X11和事件入口保留相同类/资源集合的兼容导出。
 
 ```mermaid
 flowchart LR
@@ -77,8 +83,11 @@ flowchart LR
 - `MainFrame` 组合 SidePanel、ADBController、QtTaskSupervisor、RunLibraryController 和页面树。
   六个物理页面为 Home、Devices/Apps/System 三个业务宿主、Tasks、Settings；可见左栏功能通过
   `WorkspaceRoute` 映射到宿主，具体目录只在 [路由表](BUSINESS_FLOW.md#workspace-路由目录)维护。
-- `SidePanel` 是隐藏的兼容协调器，持有设备状态和业务面板控制器；可见内容由业务宿主持有。
-  原 DeviceManager 列表仍是批量复选的兼容状态源，顶部栏与设备概览提交到同一状态源。
+- `SidePanel` 是隐藏的兼容协调器，拥有纯 Python `DeviceContext` 和业务面板控制器；可见内容
+  由业务宿主持有。它在构建控件前创建上下文并注入 DeviceManager，列表、顶部栏与设备概览
+  都经同一适配入口提交选择；列表复选只投影状态，不再作为查询真源。独立构造的 DeviceManager
+  可拥有自己的上下文，窗口之间不共享状态。上下文不依赖 Qt，不管理扫描、元数据或持久化，
+  由主线程串行提交，具体数据与信号顺序见[设备数据流](DATA_FLOW.md#设备发现与元数据流)。
   MainFrame 通过 `device_context_snapshot()` 读取不可变选择、在线列表和发现状态，通过
   `set_selected_devices()` 提交选择；连接历史返回值副本。公开的面板属性及
   `take_overview_content()` 明确组合与视觉归属，不再由主窗口穿透内部设备控件和缓存。
@@ -137,20 +146,70 @@ flowchart LR
   必须可调用。异步释放必须提供可连接的 `dispose_ready`；缺少完成信号时报告契约错误并保留
   关闭屏障，不能把未知资源状态视为成功。裸 QWidget 和同步释放页面仍可使用原工厂入口。
 - App Manager、File Explorer、Live Logcat、Performance、Screenshot 为内嵌功能页，公开入口在
-  `gui/features/`；部分实现仍在 `gui/dialogs/`，文件名不代表 QDialog 契约。
+  `gui/features/`；应用管理、文件浏览、Logcat 和性能页的页面与协作者分别归于
+  `app_manager/`、`file_explorer/`、`logcat/`、`performance/` 功能包，包入口延迟加载页面。
+  截图页面与五个协作者归入 `gui/features/media/`；页面保留包入口中的真实定义和原 eager 导入，
+  使公开模块的 worker/关闭任务替换仍作用于真实 globals，旧 screenshot dialogs 同身份兼容。
+  对应旧 `gui.dialogs` 路径指向同一实现模块，保留原替换点和静态类型导出；新实现内部使用
+  功能包内导入，AppManager 的页面 worker 晚绑定和详情页独立绑定保持不变。
+  共享瞬态对话框和生命周期工具仍在 `gui/dialogs/`，文件名不代表 QDialog 契约。
   Remote 复用 RemotePanel，不进入 registry；About 随 Settings 创建和销毁。
 - AppPanel 持有共用包名及媒体工具，列表会话关闭不释放这些控件；截图页释放前将媒体工具归还
   AppPanel，重建时再挂载。宿主承接深层功能的滚动范围，隐藏会话不参与当前尺寸计算，
   包括 Qt 的 `hasHeightForWidth()` / `heightForWidth()` 测量，避免隐藏长页撑大当前输出区。
 
 代码入口：`gui/pages/workspace_features.py`、`gui/features/base.py`、`gui/main_frame.py`。
+首页及其卡片实际位于 `gui/pages/home.py`，Gallery/分类/工作区容器位于
+`gui/pages/workspace_containers.py`。旧 `fluent_pages` 静态导出同一类对象；设置及其辅助类继续在
+旧模块定义，保留已有依赖替换边界。MainFrame 仍负责页面构造与回调装配。
 验证入口：`test_workspace_feature_host.py`、`test_workspace_route_payload.py`、
 `test_workspace_device_recovery.py`、`test_session_device_admission.py`（均在 `tests/`）。
 
 ## 协调与执行边界
 
+- `services/apps/helper.py` 持有应用查询临时 helper 的传输、取消和精确路径清理；图标与元数据
+  服务分别依赖此边界，helper 不反向依赖业务解析器。`services.app_icons` 保留公开 helper
+  入口与结果类型的同对象导出；私有传输依赖归 helper 模块所有。
+- `services/apps/package_details.py` 拥有包信息纯解析，`queries.py` 拥有用户核验、列表、单次快照、
+  批量详情及元数据兼容查询的完整事务。执行器、取消、时钟、预算和loader由调用方显式注入，
+  查询服务保持原截止时间与发布门禁。`actions.py` 拥有四种应用写动作，`archives.py` 拥有备份/恢复
+  完整事务；同步回调保留原通知、取消和清理位置。`AppManagerWorker` 仍拥有线程、Signal、用户准入
+  和延迟翻译；恢复在每次安装前通过其窄适配复核固定用户，不复制用户政策或强中断已开始的写命令。
+  这些服务及fake注入执行不依赖Qt；真实CommandRunner的日志链仍可能加载Qt，不承诺真实执行器无Qt。
+- `services/file_operations.py` 拥有目录读取、正文读取、远端保存及本地保存事务；执行器、Event取消与
+  同步值/日志回调由原Qt worker注入。命令/字节协议仍在`file_explorer.py`，安全下载仍在`file_download.py`。
+  worker保留构造期marker/命令、Signal及decoded标志；事务拥有局部暂存和远端清理列表，清理按原逆序执行。
+  `ADBWorker`和`TransferWorker`保持原短命令/进程生命周期，不引入新的线程或传输监督器。
+- 应用与文件 Qt worker 的真实实现位于 `adblab/presentation/workers/app_manager.py` 和
+  `file_explorer.py`；旧 `models/*_worker.py` 指向同一模块对象，保留类身份和实际全局依赖替换。
+  GUI 从新路径导入，但页面本地工厂、QObject 父对象、信号接线和关闭监督仍由原页面拥有。
+  新包入口不聚合 worker；新实现不反向加载 models 或 GUI。旧入口仍经过 models 的聚合导入，
+  模块位置与类的 `__module__` 反映真实新目录，不伪装旧位置，也不宣称测得启动提速。
+- `services/performance/config.py` 保存运行配置及序列化，`results.py` 保存冻结结果与文件发现。
+  两者不加载进程运行器；`services/mobileperf_runner.py` 保留旧公开对象导出、worker 启动位置和
+  进程/reader/代次生命周期，结果路径规则通过纯函数共享。
 - `controllers.ADBController` 组合设备、输入、媒体、应用、文件、系统 mixin 与 `_ADBControllerBase`。
   基类按 MRO 合并 `_handlers`，根据 `command_finished(method, result)` 分派结果处理器。
+  媒体协调分别由 `controllers/media/screenshot.py`、`recording.py`、`diagnostics.py` 承载；
+  旧 `_media.ADBMediaMixin` 只组合这三个职责。各职责保留自己的处理器表，组合类不重复声明；
+  截图 operation 校验与安装 mixin 继续沿原 cooperative super 链执行，不新增模型或资源 owner。
+- 四模型创建集中在 `controllers/model_dependencies.py`；公开 Controller 可注入无参 `model_factory`，
+  默认工厂按原顺序创建独占模型。base 在设置读取后调用一次，保存到既有四个模型属性，再建立用例和
+  信号连接。模型集合只传递构造结果，不缓存模型或接管关闭；业务与 shutdown 仍读取原属性。
+- APK 文件选择通过纯 Python `ApkFilePicker` 接口注入；MainFrame 创建 `QtApkFilePicker`，
+  公开 Controller 构造器为旧调用提供相同 Qt 实现，选择时才读取父窗口。安装与解析入口保留原
+  同步任务作用域、取消反馈及目标快照；业务 mixin 不直接调用文件框。GUI 关闭入口同步封闭
+  `ActionResults` 后才调度后台停止；安装入口在选择返回后、发出取消反馈或创建批次前复核
+  Controller 关闭状态和结果准入，解析入口在非空返回后使用相同复核。这样既阻止模态事件循环
+  结束后续发任务，也阻止关闭后的取消反馈；复核不访问窗口，资源清理仍由原关闭屏障负责。
+- 无线历史准入与 ADB 重启通知通过 `DeviceConnectionLifecycle` 注入；MainFrame 创建窗口专属
+  `QtDeviceConnectionLifecycle`，公开 Controller 构造为旧调用提供同一惰性适配器。适配器封装
+  窗口和配对协调器访问；`WirelessHistoryGuard` 动态复核 owner/pairing 身份、环境代次及窗口关闭，
+  Controller 另保留自身 shutdown 检查与原历史任务复核点。后台只读 Python 引用/标量，不调用
+  GUI 准入或控件；普通取消和已开始写入仍按原边界处理，持久化语义见[数据流](DATA_FLOW.md#设备发现与元数据流)。
+  重启仍先失效配对再提交模型，成功后通知运行时与扫描，随后由 Controller 安排延迟刷新。
+  `window_owner` 保留用于后绑定、更换窗口及默认 APK 选择兼容，业务设备 mixin 不再穿透窗口结构；
+  适配器不拥有新的线程、Timer 或关闭流程。
 - `models/adb_model.py::async_command` 将普通命令放入全局 QThreadPool，长任务放入每模型
   `long_pool`。operation 关键字参数转成 `OperationMetadata`，不传入底层方法；owner/generation
   用来拒绝错代或晚到结果。关闭时先封闭新任务准入，尚未执行的方法体返回取消结果。
@@ -219,7 +278,7 @@ flowchart LR
 | StartupTask / 启动显示子进程 | 设置回写和连接历史各用一个单次 QThread，先后执行；协调器等待线程退出后继续阶段或取消。独立 Qt 进程承担启动图标绘制，交接后异步回收，退出时有界兜底 |
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
 | `ADBAdvanced._record_pool` | 双槽池等待录屏完成并保存，超过槽位的保存请求排队；模型关闭同时等待运行与排队任务收口 |
-| `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
+| `qt_device_discovery._ScanThread` | 实现在 `adblab/presentation`，主窗口拥有实例并接线、停止与等待；快速查询走可取消的 CommandRunner，原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；旧 MainFrame 模块导出同一类对象，快照和防抖契约不变 |
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；后台通知抵达 GUI 后读取最新快照，模式与实际能力分别投影；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
 | FileTransferCoordinator / 文件预览线程 | 页面串行调度传输，预览优先排队但不抢占运行中的普通传输；动态监督 worker、子进程及准备前登记的清理义务，后台等待实际 join 和进程退出；图片线程交付 QImage，GUI 拥有有界像素缓存；文本读取保留原始字节，保存和另存为也由受监督的后台任务执行 |
@@ -271,7 +330,10 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
    未确认退出时记录关闭失败，不能仅凭短命令已返回就报告资源归零。
 3. 停止阶段返回后在 GUI 线程尝试补交 Monkey/性能终态，保留资源残留及单页归档失败事实；
    `LogService.shutdown()` 在 GUI 线程刷新诊断并冻结字符串快照，再由后台 finalizer 保存应用设置。
-   设置保存返回明确结果；失败保留原文件和内存值，并向尚未关闭的诊断队列补交无隐私的失败摘要。
+   finalizer 调用 `AppSettings.close()` 封闭准入并等待全部设置 Timer 和已准入同步保存，再保存冻结快照。
+   设置冻结或落盘失败返回 False 时资源已排空，并向尚未关闭的诊断队列补交无隐私的失败摘要；
+   磁盘失败保留原文件及冻结快照供重试，冻结失败不重新读取关闭后的可变数据。阻塞 I/O 仍由
+   finalizer 的存活状态受监督，不以内层超时提前撤销归属。关闭中的窗口忽略晚到主题通知。
    最后排空测试记录及诊断写入队列。某页归档或设置保存失败仍继续其他收尾，失败不能报告为成功。
 4. 汇总收尾结果并完成关闭；超时返回不表示资源全部退出。
 

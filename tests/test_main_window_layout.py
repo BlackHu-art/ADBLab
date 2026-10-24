@@ -55,6 +55,18 @@ def isolate_settings_client_detection(monkeypatch):
     monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
 
 
+@pytest.fixture(autouse=True)
+def isolate_layout_directory_transactions(monkeypatch):
+    """布局页保留真实目录线程和结果信号，只把设备事务替换为合成快照。"""
+    from services.file_explorer import DirectoryListing
+
+    def read_directory(*_args, cancelled, publish, **_kwargs):
+        if not cancelled():
+            publish(DirectoryListing((), {}), False)
+
+    monkeypatch.setattr("services.file_operations.read_directory", read_directory)
+
+
 @dataclass
 class _FakeScreen:
     name: str
@@ -184,9 +196,16 @@ def build_main_frame(
     if not isinstance(controller.action_results, ActionResults):
         controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
     controller.operation_manager.active_snapshot.return_value = ()
+
+    def controller_factory(_logger, *, apk_picker, device_lifecycle, load_device_history=True):
+        controller.apk_picker = apk_picker
+        controller.device_lifecycle = device_lifecycle
+        controller.history_load_requested = load_device_history
+        return controller
+
     with (
         patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
-        patch("gui.main_frame.ADBController", lambda _log_service: controller),
+        patch("gui.main_frame.ADBController", controller_factory),
         patch.object(MainFrame, "_bootstrap_adb_async", lambda _self: None),
         patch(
             "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
@@ -2191,6 +2210,8 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
 ):
     """独立 Apps 页面在 Windows 支持宽度下保持 Monkey 字段完整。"""
 
+    from tests.ui_geometry_helpers import assert_contained, assert_non_overlapping
+
     if qt_application.platformName() != "windows":
         pytest.skip("Exact main-window breakpoint contract targets the Windows platform plugin")
 
@@ -2227,17 +2248,45 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
         def snapshot(size: QSize):
             frame.resize(size)
             qt_application.processEvents()
+            navigation = frame.navigationInterface.panel
+            expected_mode = (
+                NavigationDisplayMode.EXPAND
+                if size.width() >= frame.NAVIGATION_EXPAND_BREAKPOINT
+                else NavigationDisplayMode.COMPACT
+            )
+            # 主窗先提交导航断点，正文协调器随后才能以最终 viewport 收敛。
+            wait_until(
+                qt_application,
+                lambda: navigation.displayMode == expected_mode
+                and navigation.expandAni.state() == QAbstractAnimation.State.Stopped,
+            )
             app_panel.apply_responsive_width(0)
             wait_until(qt_application, lambda: coordinator.diagnostics.stable)
 
+            assert frame.size() == size
             assert app_panel.monkey_events.isVisibleTo(frame)
 
-            plans = (
-                app_panel.monkey_parameter_binding.applied_plan,
-                app_panel.monkey_percentage_binding.applied_plan,
-                flag_binding.applied_plan,
+            bindings = (
+                app_panel.monkey_parameter_binding,
+                app_panel.monkey_percentage_binding,
+                flag_binding,
             )
-            assert all(plan is not None and not plan.overflow_required for plan in plans)
+            for binding in bindings:
+                plan = binding.applied_plan
+                assert plan is not None and not plan.overflow_required
+                container = binding._container_ref()
+                assert container is not None
+                assert_contained(container, app_panel.monkey_parameters_card)
+                assert_non_overlapping(binding.widgets(), container)
+                rectangles = tuple(mapped_rect(widget, container) for widget in binding.widgets())
+                assert all(rect.isValid() for rect in rectangles)
+                positions = tuple((rect.top(), rect.left()) for rect in rectangles)
+                assert positions == tuple(sorted(positions))
+                for widget in binding.widgets():
+                    assert widget.isVisibleTo(frame)
+                    assert_contained(widget, container)
+                    assert_text_fits(widget)
+                    assert widget.height() >= widget.fontMetrics().height()
             for field in (
                 app_panel.monkey_events,
                 app_panel.monkey_throttle,
@@ -2266,21 +2315,20 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
             flag_starts = tuple(
                 widget.mapTo(flag_binding._container_ref(), QPoint(0, 0)).x()
                 for widget in (
+                    app_panel.monkey_exceptions_heading,
                     app_panel.monkey_chk_crashes,
                     app_panel.monkey_chk_timeouts,
                     app_panel.monkey_chk_security,
                 )
             )
-            return (
-                tuple(plan.mode.name for plan in plans if plan is not None),
-                (parameter_starts, percentage_starts, flag_starts),
-            )
+            return parameter_starts, percentage_starts, flag_starts
 
-        default_modes, default_starts = snapshot(QSize(1250, 700))
-        minimum_modes, minimum_starts = snapshot(QSize(860, 500))
+        default_starts = snapshot(QSize(1250, 700))
+        minimum_starts = snapshot(QSize(860, 500))
+        restored_starts = snapshot(QSize(1250, 700))
 
-        # 基础参数两组，事件分布和异常选项各三组；每组自身有序且贴齐左边界，
-        # 不再要求不同语义分组使用相同列宽，合计归属事件分布标题。
+        # 异常处理标题与三个选项共用一行；完整语义组从标题开始贴齐左边界。
+        # 不要求不同分组使用相同列宽，实际包含关系和不重叠断言约束可见结果。
         for starts in default_starts:
             assert starts[0] == 0
             assert all(left < right for left, right in zip(starts, starts[1:]))
@@ -2291,9 +2339,7 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
         # 最小窗口下各组按自身内容切换成不同列数；跨组列起点无需强制对齐，
         # 前面的 overflow 与文本测量断言已经保证字段完整可达。
         assert all(position >= 0 for starts in minimum_starts for position in starts)
-        modes = {"wide", "three", "medium", "two", "compact", "one"}
-        assert all(mode in modes for mode in default_modes)
-        assert all(mode in modes for mode in minimum_modes)
+        assert restored_starts == default_starts
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

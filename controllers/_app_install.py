@@ -8,9 +8,6 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any, cast
 
-from PySide6.QtCore import QCoreApplication
-from PySide6.QtWidgets import QFileDialog
-
 from adblab.application.device_batch import DeviceBatchStart, DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata
 from adblab.application.install_batch import (
@@ -109,12 +106,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
     def install_apk(self, devices: list) -> str | None:
         if not self._require_devices(devices, "install"):
             return None
-        apk_path, _ = QFileDialog.getOpenFileName(
-            getattr(self, "window_owner", None),
-            QCoreApplication.translate("ADBLab", "Select APK File"),
-            "",
-            QCoreApplication.translate("ADBLab", "APK Files (*.apk);;All Files (*)"),
-        )
+        apk_path = self.apk_picker.select_one()
+        if not self._accepts_apk_selection():
+            return None
         if not apk_path:
             self._emit_operation("install", False, "APK selection canceled")
             return None
@@ -127,12 +121,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
     def batch_install_apk(self, devices: list) -> str | None:
         if not self._require_devices(devices, "batch_install"):
             return None
-        apk_paths, _ = QFileDialog.getOpenFileNames(
-            getattr(self, "window_owner", None),
-            QCoreApplication.translate("ADBLab", "Select APK files to install"),
-            "",
-            QCoreApplication.translate("ADBLab", "APK Files (*.apk);;All Files (*)"),
-        )
+        apk_paths = self.apk_picker.select_many()
+        if not self._accepts_apk_selection():
+            return None
         if not apk_paths:
             self._emit_operation("batch_install", False, "APK selection canceled")
             return None

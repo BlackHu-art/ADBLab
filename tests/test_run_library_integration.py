@@ -1,5 +1,6 @@
 """验证任务历史参数路由和应用关闭的结果保存顺序。"""
 
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,6 +11,47 @@ from gui.close_controller import CloseController
 from gui.main_frame import MainFrame
 from gui.run_library import RunLibraryController
 from services.run_library import RunLibrary, RunRecord
+
+
+def test_finalizer_waits_replaced_settings_timer(isolated_app_settings):
+    """生产收尾必须等待已被替换、正在保存的真实 Timer。"""
+    from tests.test_settings_save_lifecycle import WriteGate
+
+    settings = isolated_app_settings
+    gate = WriteGate()
+    settings._write_lock = gate
+    controller = CloseController(SimpleNamespace())
+    done = threading.Event()
+    errors = []
+
+    def finalize():
+        try:
+            controller._flush_shutdown_state()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=finalize)
+    try:
+        settings.set("theme", "Dark")
+        old_timer = settings._save_timer
+        assert gate.entered.wait(2)
+        settings.set("theme", "Light")
+        latest = settings._save_timer
+        worker.start()
+        assert not done.wait(0.05)
+        gate.release.set()
+        worker.join(3)
+        assert done.is_set()
+        assert not errors
+        assert not old_timer.is_alive()
+        assert not latest.is_alive()
+        assert settings._save_atomic() is False
+    finally:
+        gate.release.set()
+        if worker.ident is not None:
+            worker.join(3)
 
 
 def test_history_reuse_does_not_choose_old_device_or_start_test():
@@ -70,13 +112,12 @@ def test_finalizer_drains_last_result_before_returning(tmp_path, monkeypatch, qt
     library.record_run(record)
     frame = SimpleNamespace(run_library=library, _shutdown_deadline_at=time.monotonic() + 3)
     settings = Mock()
-    settings._save_timer = None
     monkeypatch.setattr("core.settings_manager.AppSettings.instance", lambda: settings)
     CloseController(frame)._flush_shutdown_state()
     restored = RunLibrary(tmp_path / "runs.json")
     restored.load()
     assert restored.records == (record,)
-    settings._save_atomic.assert_called_once()
+    settings.close.assert_called_once()
 
 
 def test_library_failure_does_not_skip_other_settings_finalization(monkeypatch):
@@ -85,7 +126,6 @@ def test_library_failure_does_not_skip_other_settings_finalization(monkeypatch):
         _shutdown_deadline_at=time.monotonic() + 3,
     )
     settings = Mock()
-    settings._save_timer = None
     monkeypatch.setattr("core.settings_manager.AppSettings.instance", lambda: settings)
     try:
         CloseController(frame)._flush_shutdown_state()
@@ -93,7 +133,7 @@ def test_library_failure_does_not_skip_other_settings_finalization(monkeypatch):
         assert "本地结果或诊断记录未能完成保存" == str(error)
     else:
         raise AssertionError("保存失败必须报告收尾失败")
-    settings._save_atomic.assert_called_once()
+    settings.close.assert_called_once()
 
 
 def test_settings_failure_reaches_finalizer_and_is_saved_after_log_freeze(
@@ -106,8 +146,7 @@ def test_settings_failure_reaches_finalizer_and_is_saved_after_log_freeze(
         _shutdown_diagnostic_text="12:00:00 [WARNING] previous diagnostic",
     )
     settings = Mock()
-    settings._save_timer = None
-    settings._save_atomic.return_value = False
+    settings.close.return_value = False
     monkeypatch.setattr("core.settings_manager.AppSettings.instance", lambda: settings)
     with pytest.raises(RuntimeError, match="应用设置未能完成保存"):
         CloseController(frame)._flush_shutdown_state()
@@ -154,12 +193,11 @@ def test_archive_failure_does_not_block_other_archives_or_settings(monkeypatch):
     frame.task_supervisor.stop_finalizer_async.assert_called_once()
     assert "private-output-path" not in str(frame.log_service.log.call_args_list)
     settings = Mock()
-    settings._save_timer = None
     monkeypatch.setattr("core.settings_manager.AppSettings.instance", lambda: settings)
     with pytest.raises(RuntimeError):
         close._flush_shutdown_state()
     frame.run_library.shutdown.assert_called_once()
-    settings._save_atomic.assert_called_once()
+    settings.close.assert_called_once()
 
 def test_load_failure_is_read_error_and_does_not_fail_close():
     from gui.run_library import _LibraryQueue

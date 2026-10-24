@@ -34,13 +34,22 @@ def isolated_app_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.setattr(settings_manager, "LEGACY_SETTINGS_FILE", str(tmp_path / "legacy.json"))
     monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
+    owners = []
+    original_new = settings_manager.AppSettings.__new__
+
+    def tracked_new(cls, **kwargs):
+        owner = original_new(cls, **kwargs)
+        if all(owner is not previous for previous in owners):
+            owners.append(owner)
+        return owner
+
+    # 模拟重启可在同一用例重建单例；路径恢复前仍须排空每个实际 owner。
+    monkeypatch.setattr(settings_manager.AppSettings, "__new__", staticmethod(tracked_new))
     settings = settings_manager.AppSettings.instance()
     yield settings
-    timer = settings._save_timer
-    if timer is not None:
-        timer.cancel()
-        timer.join(timeout=2)
-        assert not timer.is_alive(), "Settings timer did not stop"
+    for owner in reversed(owners):
+        # False 为冻结或落盘失败，close 仍已排空资源；故障测试不强制保存成功。
+        owner.close()
 
 
 @pytest.fixture(autouse=True)
@@ -64,9 +73,9 @@ def qt_application():
     from PySide6.QtWidgets import QApplication
 
     application = QApplication.instance() or QApplication([])
-    if sys.platform == "win32" and not QFontDatabase.families():
-        # Windows 离屏插件不枚举系统字体；显式加载系统现有字体，
-        # 让文字尺寸与视觉测试使用真实字形，而不是方框占位。
+    if sys.platform == "win32" and os.environ["QT_QPA_PLATFORM"] == "offscreen":
+        # Windows 离屏插件可能只枚举部分字体，不能以字体库非空判断中文字体可用。
+        # 会话内显式注册系统现有字体，让字体选择、度量和视觉测试使用真实字形。
         font_directory = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
         for filename in ("msyh.ttc", "msyhbd.ttc", "segoeui.ttf", "consola.ttf"):
             font_path = font_directory / filename
@@ -108,13 +117,13 @@ def isolated_ui_state_probe():
 @pytest.fixture
 def isolated_ui_state(qt_application, isolated_ui_state_probe, isolated_app_settings):
     """在设置隔离仍有效时销毁窗口、恢复 UI，最后由设置夹具停止持久化计时器。"""
-    from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtGui import QFont
-    from shiboken6 import isValid
 
     from gui.styles import BaseStyles
     from gui.styles.fonts import _font
     from gui.styles.typography import typography_manager
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
 
     initial_theme = BaseStyles.current_theme()
     initial_font = QFont(qt_application.font())
@@ -133,42 +142,10 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe, isolated_app_sett
     initial_font_projection = dict(_font)
     yield
 
-    cleanup_errors = []
-    for window in set(qt_application.topLevelWidgets()) - initial_windows:
-        if not isValid(window):
-            continue
-        try:
-            initial_timers = window.findChildren(QTimer)
-            timer_was_active = any(timer.isActive() for timer in initial_timers)
-            for timer in initial_timers:
-                if timer.isActive():
-                    timer.stop()
-            shutdown = getattr(window, "shutdown", None)
-            if callable(shutdown):
-                shutdown()
-            if not isValid(window):
-                continue
-            post_shutdown_timers = window.findChildren(QTimer)
-            post_shutdown_timer_was_active = any(
-                timer.isActive() for timer in post_shutdown_timers
-            )
-            for timer in post_shutdown_timers:
-                if timer.isActive():
-                    timer.stop()
-            isolated_ui_state_probe["cleanup"][id(window)] = {
-                "post_shutdown_timer_was_active": post_shutdown_timer_was_active,
-                "timer_stopped": all(not timer.isActive() for timer in post_shutdown_timers),
-                "timer_was_active": timer_was_active,
-            }
-            if window.isVisible():
-                window.close()
-        except Exception as error:
-            # 活对象的清理失败必须报告；先继续释放其它窗口，避免污染下个用例。
-            cleanup_errors.append(error)
-        finally:
-            # close 不代表 QObject 已释放；失败及已关闭窗口也必须完成释放。
-            if isValid(window):
-                window.deleteLater()
+    cleanup_errors = cleanup_ui_windows(
+        set(qt_application.topLevelWidgets()) - initial_windows,
+        cleanup_records=isolated_ui_state_probe["cleanup"],
+    )
     # 先销毁主题订阅者；恢复信号不能再让已结束窗口安排新的设置写入。
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     if BaseStyles.current_font_config() != initial_font_config:

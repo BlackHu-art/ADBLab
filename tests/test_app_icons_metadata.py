@@ -8,6 +8,7 @@ import pytest
 
 from core.exec import CommandResult
 from services import app_icons, app_metadata
+from services.apps import helper as app_helper
 from tests.test_app_icons_service import icon_line, make_png
 from tests.test_app_metadata import metadata_line
 
@@ -27,16 +28,16 @@ def fingerprint(package="com.example.app", **changes):
 def transport(monkeypatch, tmp_path):
     helper = tmp_path / "helper.jar"
     helper.write_bytes(b"small-helper")
-    monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(helper))
+    monkeypatch.setattr(app_helper, "resource_path", lambda _path: str(helper))
     calls = []
-    outputs = [CommandResult(True, verified_line() + app_icons._CLEANED)]
+    outputs = [CommandResult(True, verified_line() + app_helper._CLEANED)]
 
     def run(command, timeout, **kwargs):
         calls.append((command, timeout, kwargs))
         result = outputs.pop(0)
         return result() if callable(result) else result
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     return helper, calls, outputs
 
 
@@ -66,7 +67,7 @@ def test_matching_render_identity_delivers_png_with_one_cleaned_shell(transport)
 ])
 def test_metadata_a_then_render_b_never_labels_b_pixels_as_a(transport, change):
     _helper, calls, outputs = transport
-    outputs[0] = CommandResult(True, verified_line(**change) + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, verified_line(**change) + app_helper._CLEANED)
     events = collect(expected={"com.example.app": fingerprint()})
     assert events == [("com.example.app", b"", "应用或设备配置已变化，请刷新应用列表")]
     assert len(calls) == 1
@@ -76,7 +77,7 @@ def test_metadata_a_then_render_b_never_labels_b_pixels_as_a(transport, change):
                                       {"com.other.app": "a" * 64}])
 def test_no_valid_expected_identity_keeps_existing_icon_protocol(transport, expected):
     _helper, calls, outputs = transport
-    outputs[0] = CommandResult(True, icon_line() + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, icon_line() + app_helper._CLEANED)
     assert collect(expected=expected) == [("com.example.app", make_png(), "")]
     script = shlex.split(calls[0][0][-1])[0]
     assert "Main com.example.app" in script and "--icons-metadata" not in script
@@ -95,7 +96,7 @@ def test_mixed_batch_allows_current_pixels_without_reusable_identity_for_unverif
 ):
     _helper, _calls, outputs = transport
     outputs[0] = CommandResult(True, verified_line() + "\n"
-                               + verified_line("com.example.other", user=11) + app_icons._CLEANED)
+                               + verified_line("com.example.other", user=11) + app_helper._CLEANED)
     assert collect(["com.example.app", "com.example.other"],
                    expected={"com.example.app": fingerprint()}) == [
         ("com.example.app", make_png(), ""), ("com.example.other", make_png(), ""),
@@ -110,7 +111,7 @@ def test_mixed_batch_allows_current_pixels_without_reusable_identity_for_unverif
 ], ids=["old-protocol", "duplicate", "foreign-package", "bad-metadata", "bad-png", "truncated"])
 def test_verified_protocol_failures_do_not_deliver_png_or_retry(transport, body):
     _helper, calls, outputs = transport
-    outputs[0] = CommandResult(True, body + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, body + app_helper._CLEANED)
     events = collect(expected={"com.example.app": fingerprint()})
     assert not events[0][1] and events[0][2] and len(calls) == 1
 
@@ -118,7 +119,7 @@ def test_verified_protocol_failures_do_not_deliver_png_or_retry(transport, body)
 @pytest.mark.parametrize("error", ["IDENTITY_CHANGED", "USER_CHANGED"])
 def test_device_detected_change_during_render_is_an_actionable_failure(transport, error):
     _helper, _calls, outputs = transport
-    outputs[0] = CommandResult(True, f"ERROR\tcom.example.app\t{error}" + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, f"ERROR\tcom.example.app\t{error}" + app_helper._CLEANED)
     events = collect(expected={"com.example.app": fingerprint()})
     assert not events[0][1] and "刷新" in events[0][2]
 
@@ -137,7 +138,7 @@ def test_cancelled_verified_icons_do_not_publish_after_confirmed_cleanup(transpo
 
     def cancel():
         stop.set()
-        return CommandResult(True, verified_line() + app_icons._CLEANED)
+        return CommandResult(True, verified_line() + app_helper._CLEANED)
 
     outputs[0] = cancel
     assert collect(expected={"com.example.app": fingerprint()}, cancelled=stop.is_set) == []
@@ -146,7 +147,7 @@ def test_cancelled_verified_icons_do_not_publish_after_confirmed_cleanup(transpo
 
 def test_large_helper_verified_mode_preserves_push_and_precise_cleanup(transport):
     helper, calls, outputs = transport
-    helper.write_bytes(b"x" * (app_icons._MAX_INLINE_HELPER_BYTES + 1))
+    helper.write_bytes(b"x" * (app_helper._MAX_INLINE_HELPER_BYTES + 1))
     outputs[:] = [CommandResult(True), CommandResult(True, verified_line()), CommandResult(True)]
     assert collect(expected={"com.example.app": fingerprint()})[0][1] == make_png()
     assert calls[0][0][3] == "push"
@@ -157,7 +158,7 @@ def test_large_helper_verified_mode_preserves_push_and_precise_cleanup(transport
 @pytest.mark.parametrize("returned_user", [0, 10])
 def test_bound_user_is_checked_even_without_cached_fingerprint(transport, returned_user):
     _helper, calls, outputs = transport
-    outputs[0] = CommandResult(True, verified_line(user=returned_user) + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, verified_line(user=returned_user) + app_helper._CLEANED)
     events = []
     app_icons.load_app_icons(
         "synthetic-device", ["com.example.app"], lambda: False,

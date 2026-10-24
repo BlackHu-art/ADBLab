@@ -188,3 +188,48 @@ def test_wrong_thread_close_defers_native_release_until_owner_thread(monkeypatch
 
     subscription.close()
     assert len(user.removed) == 3
+
+
+@pytest.mark.parametrize("failure", ["unhook", "wrong_thread"])
+def test_legacy_and_new_event_exports_observe_same_failed_release(monkeypatch, failure):
+    from services.remote import window_events as old
+    from services.remote.windowing import events as new
+
+    before = set(old._RETAINED_SUBSCRIPTIONS)
+    assert old._RETAINED_SUBSCRIPTIONS is new._RETAINED_SUBSCRIPTIONS
+    assert old.WinEventSubscription is new.WinEventSubscription
+    user = FakeUser32()
+    changes = []
+    subscription = _subscribe(monkeypatch, user, lambda: changes.append(True))
+    try:
+        assert type(subscription) is new.WinEventSubscription
+        assert subscription.active
+        user.emit(0x800B)
+        assert changes == [True]
+        if failure == "unhook":
+            user.UnhookWinEvent.call = lambda _handle: False
+            subscription.close()
+        else:
+            worker = threading.Thread(target=subscription.close)
+            worker.start()
+            worker.join(timeout=1)
+            assert not worker.is_alive()
+        assert user.removed == []
+        assert not subscription.active
+        assert subscription in old._RETAINED_SUBSCRIPTIONS
+        assert subscription in new._RETAINED_SUBSCRIPTIONS
+        user.emit(0x800B)
+        user.emit(3, hwnd=999)
+        assert changes == [True]
+
+        user.UnhookWinEvent.call = user._unhook
+        subscription.close()
+        assert sorted(user.removed) == [0x100000001, 0x100000002, 0x100000003]
+        assert old._RETAINED_SUBSCRIPTIONS == before
+        assert new._RETAINED_SUBSCRIPTIONS == before
+        user.emit(0x800B)
+        user.emit(3, hwnd=999)
+        assert changes == [True]
+    finally:
+        user.UnhookWinEvent.call = user._unhook
+        subscription.close()

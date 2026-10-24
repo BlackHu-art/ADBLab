@@ -9,7 +9,12 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import SearchLineEdit
 
-from adblab.application.action_results import ActionResults, ActionSpec, capture_action_job
+from adblab.application.action_results import (
+    ActionEnvelope,
+    ActionResults,
+    ActionSpec,
+    capture_action_job,
+)
 from controllers.action_catalog import ACTION_SIGNALS
 from controllers.signals import ADBControllerSignals
 from gui.widgets.action_result_view import ActionResultView
@@ -20,7 +25,11 @@ pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
-def result_frame(qt_application):
+def result_frame(qt_application, monkeypatch):
+    # 启动零延迟回调在构造后才解析此方法，替身须覆盖整个窗口存活期。
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock(),
+    )
     controller = Mock()
     controller.signals = ADBControllerSignals()
     controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
@@ -32,6 +41,185 @@ def result_frame(qt_application):
     frame._unbind_window_screen()
     frame._close_ready = True
     frame.close()
+
+
+@pytest.fixture
+def apk_actions(result_frame, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    from adblab.application.apk_selection import ApkFilePicker
+    from controllers._app import ADBAppMixin
+    from controllers._base import _ADBControllerBase
+
+    frame = result_frame
+    controller = frame.adb_controller
+    controller.apk_picker = Mock(spec=ApkFilePicker)
+    controller.apk_picker.select_one.return_value = None
+    controller.apk_picker.select_many.return_value = ()
+    controller._shutting_down = False
+    controller._accepts_apk_selection = (
+        _ADBControllerBase._accepts_apk_selection.__get__(controller)
+    )
+    controller._require_devices = _ADBControllerBase._require_devices.__get__(controller)
+    controller._emit_operation = _ADBControllerBase._emit_operation.__get__(controller)
+    controller._attempt_actions_preserving_first = (
+        _ADBControllerBase._attempt_actions_preserving_first
+    )
+    operations = QSignalSpy(controller.signals.operation_completed)
+    controller.batch_install_apk.side_effect = lambda devices: ADBAppMixin.batch_install_apk(
+        controller, devices,
+    )
+    controller.parse_apk_info.side_effect = lambda: ADBAppMixin.parse_apk_info(controller)
+    jobs = []
+    submissions = []
+
+    def install(kind, requests):
+        submissions.append((kind, requests))
+        jobs.extend(capture_action_job("install_apk_async", r.device_id) for r in requests)
+        return "fixture-operation"
+
+    controller._start_install_batch.side_effect = install
+    controller.app_model.parse_apk_info_async.side_effect = lambda path: jobs.append(
+        capture_action_job("parse_apk_info_async", path),
+    )
+    for method in ("getOpenFileName", "getOpenFileNames"):
+        monkeypatch.setattr(
+            QFileDialog, method, Mock(side_effect=AssertionError("unexpected dialog")),
+        )
+    log = Mock()
+    monkeypatch.setattr(frame.log_service, "log", log)
+
+    def emit(operation, targets=None):
+        if operation == "batch_install":
+            frame.left_panel.signals.batch_install_requested.emit(
+                targets if targets is not None else ["device-a"],
+            )
+        else:
+            frame.left_panel.signals.parse_apk_info_requested.emit()
+
+    return SimpleNamespace(
+        frame=frame, controller=controller, picker=controller.apk_picker,
+        store=controller.action_results, jobs=jobs, submissions=submissions, emit=emit, log=log,
+        operations=operations,
+    )
+
+
+def test_apk_picker_reentry_keeps_one_request_and_original_targets(apk_actions):
+    ctx = apk_actions
+    ctx.frame.left_panel.update_device_list(["device-a", "device-b"])
+    ctx.frame.left_panel.set_selected_devices(["device-a"])
+    original = ["device-a"]
+    requests_seen = []
+
+    def select():
+        request = ctx.store.recent()[0]
+        assert request.state == "running"
+        requests_seen.append(request.request_id)
+        assert ctx.jobs == []
+        assert ctx.submissions == []
+        ctx.emit("batch_install", ["device-b"])
+        original[:] = ["device-b"]
+        ctx.frame.left_panel.set_selected_devices(["device-b"])
+        return ("a.apk",)
+
+    ctx.picker.select_many.side_effect = select
+    ctx.emit("batch_install", original)
+    ctx.picker.select_many.assert_called_once_with()
+    assert len(ctx.store.recent()) == 1
+    assert ctx.store.recent()[0].targets == ("device-a",)
+    assert ctx.frame.left_panel.selected_devices == ["device-b"]
+    assert len(ctx.submissions) == 1
+    assert [r.device_id for r in ctx.submissions[0][1]] == ["device-a"]
+    assert len(ctx.jobs) == 1
+    assert ctx.jobs[0].request_id == requests_seen[0]
+    assert ctx.jobs[0].target == "device-a"
+    assert capture_action_job("probe") is None
+
+
+def test_apk_parse_picker_reentry_uses_original_signal_scope(apk_actions, tmp_path):
+    ctx = apk_actions
+    path = tmp_path / "demo.APK"
+    path.write_bytes(b"fixture")
+    requests_seen = []
+
+    def select():
+        request = ctx.store.recent()[0]
+        assert request.state == "running"
+        requests_seen.append(request.request_id)
+        assert ctx.jobs == []
+        ctx.emit("parse_apk_info")
+        return str(path)
+
+    ctx.picker.select_one.side_effect = select
+    ctx.emit("parse_apk_info")
+    ctx.picker.select_one.assert_called_once_with()
+    ctx.controller.app_model.parse_apk_info_async.assert_called_once_with(str(path))
+    assert len(ctx.store.recent()) == 1
+    assert len(ctx.jobs) == 1
+    assert ctx.jobs[0].request_id == requests_seen[0]
+    assert capture_action_job("probe") is None
+
+
+@pytest.mark.parametrize("operation", ["batch_install", "parse_apk_info"])
+@pytest.mark.parametrize("raises", [False, True])
+def test_apk_signals_preserve_cancel_and_exception_results(apk_actions, operation, raises):
+    ctx = apk_actions
+    picker = ctx.picker.select_many if operation == "batch_install" else ctx.picker.select_one
+    if raises:
+        picker.side_effect = RuntimeError("picker failed")
+    ctx.emit(operation)
+    results = ctx.store.recent()
+    assert len(results) == 1
+    assert results[0].state == (
+        "failed" if raises or operation == "batch_install" else "cancelled"
+    )
+    if raises:
+        assert "picker failed" in results[0].message
+        ctx.log.assert_any_call("ERROR", "Action submission failed: RuntimeError")
+    elif operation == "batch_install":
+        assert "APK selection canceled" in results[0].message
+    else:
+        assert ctx.operations.count() == 0
+    assert ctx.jobs == []
+    assert ctx.submissions == []
+    ctx.controller.app_model.parse_apk_info_async.assert_not_called()
+    assert capture_action_job("probe") is None
+
+
+@pytest.mark.parametrize("operation", ["batch_install", "parse_apk_info"])
+def test_apk_signal_is_rejected_when_frame_is_closing(apk_actions, operation):
+    ctx = apk_actions
+    before = ctx.store.recent()
+    ctx.frame._closing = True
+    ctx.emit(operation)
+    ctx.picker.select_one.assert_not_called()
+    ctx.picker.select_many.assert_not_called()
+    assert ctx.store.recent() == before
+    assert ctx.jobs == []
+    assert ctx.submissions == []
+    ctx.controller.app_model.parse_apk_info_async.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["batch_install", "parse_apk_info"])
+def test_apk_picker_empty_return_after_results_close_does_not_revive_request(
+    apk_actions, operation,
+):
+    ctx = apk_actions
+
+    def select():
+        ctx.store.close()
+        return () if operation == "batch_install" else None
+
+    picker = ctx.picker.select_many if operation == "batch_install" else ctx.picker.select_one
+    picker.side_effect = select
+    ctx.emit(operation)
+    picker.assert_called_once_with()
+    assert ctx.store.recent() == ()
+    assert ctx.jobs == []
+    assert ctx.submissions == []
+    ctx.controller.app_model.parse_apk_info_async.assert_not_called()
+    assert capture_action_job("probe") is None
+    assert not any(call.args[:1] == ("ERROR",) for call in ctx.log.call_args_list)
 
 
 @pytest.fixture
@@ -435,6 +623,114 @@ def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkey
     notices[-1][1]["on_action"]()
     assert frame._task_page.isVisibleTo(frame)
     assert frame._task_page.action_results._selected == jobs[0].request_id
+
+
+@pytest.fixture
+def restart_actions(result_frame, monkeypatch):
+    from controllers._base import _ADBControllerBase
+    from controllers._device import ADBDeviceMixin
+
+    frame = result_frame
+    frame._on_nav_requested("settings")
+    controller = frame.adb_controller
+    controller._shutting_down = False
+    for name in ("_emit_operation", "_handle_async_response", "_complete_action_envelope"):
+        setattr(controller, name, getattr(_ADBControllerBase, name).__get__(controller))
+    controller._attempt_actions_preserving_first = (
+        _ADBControllerBase._attempt_actions_preserving_first
+    )
+    controller._process_restart_adb_result = (
+        ADBDeviceMixin._process_restart_adb_result.__get__(controller)
+    )
+    controller._handler_map = {"restart_adb": controller._process_restart_adb_result}
+    controller.restart_adb.side_effect = lambda: ADBDeviceMixin.restart_adb(controller)
+    jobs = []
+    controller.device_model = SimpleNamespace(restart_adb_async=Mock(
+        side_effect=lambda: jobs.append(capture_action_job("restart_adb_async")),
+    ))
+    timer = Mock()
+    notify = Mock()
+    log = Mock()
+    monkeypatch.setattr("controllers._device.QTimer", SimpleNamespace(singleShot=timer))
+    monkeypatch.setattr(frame, "note_adb_server_restarted", notify)
+    monkeypatch.setattr(frame.log_service, "log", log)
+    monkeypatch.setattr("gui.action_feedback.show_toast", Mock())
+    return SimpleNamespace(
+        frame=frame, controller=controller, store=controller.action_results, jobs=jobs,
+        emit=frame.left_panel.signals.restart_adb_requested.emit,
+        timer=timer, notify=notify, log=log,
+    )
+
+
+@pytest.mark.parametrize("success", [False, True])
+def test_restart_signal_keeps_action_scope_and_reentry_guard(restart_actions, monkeypatch, success):
+    ctx = restart_actions
+    requests_seen = []
+
+    def invalidate(reason):
+        assert reason == "server_restart"
+        pending = ctx.store.recent()[0]
+        assert pending.state == "running"
+        assert pending.spec.section == "settings.maintenance"
+        requests_seen.append(pending.request_id)
+        assert ctx.jobs == []
+        ctx.emit()
+
+    hook = Mock(side_effect=invalidate)
+    monkeypatch.setattr(ctx.frame, "invalidate_wireless_pairing", hook)
+    ctx.emit()
+    hook.assert_called_once_with("server_restart")
+    ctx.controller.device_model.restart_adb_async.assert_called_once_with()
+    assert len(ctx.jobs) == 1 and ctx.jobs[0] is not None
+    assert ctx.jobs[0].request_id == requests_seen[0]
+    assert len(ctx.store.recent()) == 1
+    assert ctx.store.recent()[0].state == "running"
+    assert capture_action_job("probe") is None
+    ctx.controller._handle_async_response("restart_adb_async", ActionEnvelope(
+        {"success": success, "raw_output": "synthetic result", "error": "synthetic failure"},
+        ctx.jobs[0],
+    ))
+    result = ctx.store.recent()[0]
+    assert result.request_id == requests_seen[0]
+    assert result.state == ("succeeded" if success else "failed")
+    assert len(result.items) == 1
+    assert result.items[0].job_id == ctx.jobs[0].job_id
+    if success:
+        ctx.notify.assert_called_once_with()
+        ctx.timer.assert_called_once_with(
+            3000, ctx.controller.signals, ctx.controller.refresh_devices,
+        )
+    else:
+        ctx.notify.assert_not_called()
+        ctx.timer.assert_not_called()
+    assert capture_action_job("probe") is None
+
+
+@pytest.mark.parametrize("failure", ["closing", "hook"])
+def test_restart_signal_rejects_closing_and_reports_hook_exceptions(
+    restart_actions, monkeypatch, failure,
+):
+    ctx = restart_actions
+    hook = Mock(side_effect=RuntimeError("synthetic invalidation failed"))
+    monkeypatch.setattr(ctx.frame, "invalidate_wireless_pairing", hook)
+    ctx.frame._closing = failure == "closing"
+    try:
+        ctx.emit()
+    finally:
+        ctx.frame._closing = False
+    if failure == "closing":
+        hook.assert_not_called()
+        assert ctx.store.recent() == ()
+    else:
+        hook.assert_called_once_with("server_restart")
+        assert len(ctx.store.recent()) == 1
+        assert ctx.store.recent()[0].state == "failed"
+        ctx.log.assert_any_call("ERROR", "Action submission failed: RuntimeError")
+    ctx.controller.device_model.restart_adb_async.assert_not_called()
+    assert ctx.jobs == []
+    ctx.notify.assert_not_called()
+    ctx.timer.assert_not_called()
+    assert capture_action_job("probe") is None
 
 
 def test_task_center_exposes_running_plain_commands_without_native_operation(

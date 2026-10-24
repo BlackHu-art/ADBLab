@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
+from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
 from controllers._device import ADBDeviceMixin
 from models.adb_device import ADBDevice
 from models.device_store import DeviceStore
@@ -42,6 +43,7 @@ def wireless_controller(tmp_path, monkeypatch):
     pairing.accepts_outcome = lambda value: value is outcome
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
     controller.window_owner = SimpleNamespace(_adb_pairing=pairing, _closing=False)
+    controller.device_lifecycle = QtDeviceConnectionLifecycle(lambda: controller.window_owner)
     controller._shutting_down = False
     controller._overview_store_lock = None
     controller.executor = DeferredExecutor()
@@ -135,31 +137,44 @@ def test_unaccepted_outcomes_do_not_refresh_or_save(wireless_controller, rejecti
     controller._emit_operation.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["revision", "owner_closing", "controller_closing",
-                                    "coordinator_replaced"])
-def test_queued_history_rechecks_environment_and_shutdown(wireless_controller, change):
-    controller, pairing, outcome, history_path = wireless_controller
-    controller.accept_wireless_connection(outcome)
+LIFECYCLE_CHANGES = (
+    "revision", "owner_closing", "controller_closing", "coordinator_replaced", "owner_replaced",
+)
+
+
+def invalidate_history(controller, pairing, change):
     if change == "revision":
         pairing.context_revision += 1
     elif change == "owner_closing":
         controller.window_owner._closing = True
     elif change == "controller_closing":
         controller._shutting_down = True
-    else:
+    elif change == "coordinator_replaced":
         controller.window_owner._adb_pairing = SimpleNamespace(context_revision=7)
+    else:
+        controller.window_owner = SimpleNamespace(_closing=False, _adb_pairing=pairing)
+
+
+@pytest.mark.parametrize("change", LIFECYCLE_CHANGES)
+def test_queued_history_rechecks_environment_and_shutdown(wireless_controller, change):
+    controller, pairing, outcome, history_path = wireless_controller
+    controller.accept_wireless_connection(outcome)
+    invalidate_history(controller, pairing, change)
     controller.executor.drain()
     assert not history_path.exists()
     assert DeviceStore.get_all() == []
 
 
-def test_environment_change_while_reading_cache_prevents_write(wireless_controller, monkeypatch):
+@pytest.mark.parametrize("change", LIFECYCLE_CHANGES)
+def test_environment_change_while_reading_cache_prevents_write(
+    wireless_controller, monkeypatch, change,
+):
     controller, pairing, outcome, history_path = wireless_controller
     original = DeviceStore.get_all
 
     def invalidate_after_read():
         records = original()
-        pairing.context_revision += 1
+        invalidate_history(controller, pairing, change)
         return records
 
     monkeypatch.setattr(DeviceStore, "get_all", invalidate_after_read)
@@ -169,7 +184,10 @@ def test_environment_change_while_reading_cache_prevents_write(wireless_controll
     assert original() == []
 
 
-def test_history_rechecks_revision_after_waiting_for_overview_write_lock(wireless_controller):
+@pytest.mark.parametrize("change", LIFECYCLE_CHANGES)
+def test_history_rechecks_lifecycle_after_waiting_for_overview_write_lock(
+    wireless_controller, change,
+):
     controller, pairing, outcome, history_path = wireless_controller
     waiting = threading.Event()
     lock = threading.Lock()
@@ -189,7 +207,7 @@ def test_history_rechecks_revision_after_waiting_for_overview_write_lock(wireles
         controller.accept_wireless_connection(outcome)
         try:
             assert waiting.wait(2)
-            pairing.context_revision += 1
+            invalidate_history(controller, pairing, change)
         finally:
             lock.release()
     assert not history_path.exists()
@@ -241,6 +259,49 @@ def test_history_submission_after_executor_shutdown_preserves_verified_refresh(
     controller.refresh_devices.assert_called_once_with()
     controller._emit_operation.assert_not_called()
     assert "synthetic executor" not in str(controller.log_service.log.call_args)
+
+
+def test_started_history_write_preserves_natural_completion(wireless_controller, monkeypatch):
+    controller, _pairing, outcome, history_path = wireless_controller
+    original = DeviceStore.add_device
+
+    def close_during_write(**kwargs):
+        controller.window_owner._closing = True
+        original(**kwargs)
+
+    monkeypatch.setattr(DeviceStore, "add_device", close_during_write)
+    controller.accept_wireless_connection(outcome)
+    controller.executor.drain()
+    records = yaml.safe_load(history_path.read_text("utf-8"))
+    assert list(records.values()) == [{
+        "ip": outcome.connection_endpoint, "Brand": "Unknown", "Model": "Unknown", "Aversion": "",
+    }]
+    assert len(DeviceStore.get_all()) == 1
+    controller.refresh_devices.assert_called_once_with()
+    controller._emit_operation.assert_not_called()
+    controller.log_service.log.assert_not_called()
+
+
+@pytest.mark.parametrize("invalidate", [False, True])
+def test_history_guard_is_rechecked_on_submission_failure(wireless_controller, invalidate):
+    controller, _pairing, outcome, history_path = wireless_controller
+
+    def fail_submit(*_args):
+        if invalidate:
+            controller.window_owner._closing = True
+        raise RuntimeError("synthetic secret")
+
+    controller.executor = SimpleNamespace(submit=fail_submit)
+    controller.accept_wireless_connection(outcome)
+    assert not history_path.exists()
+    controller.refresh_devices.assert_called_once_with()
+    controller._emit_operation.assert_not_called()
+    if invalidate:
+        controller.log_service.log.assert_not_called()
+    else:
+        controller.log_service.log.assert_called_once_with(
+            "WARNING", "无线连接已确认，但连接历史未能安排保存",
+        )
 
 
 def test_restart_invalidates_pairing_before_model_submission(wireless_controller):

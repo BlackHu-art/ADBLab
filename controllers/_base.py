@@ -11,12 +11,15 @@ from adblab.application.action_results import (
     ActionResults,
     report_action_message,
 )
+from adblab.application.apk_selection import ApkFilePicker
 from adblab.application.device_batch import DeviceBatchUseCase
+from adblab.application.device_connection_lifecycle import DeviceConnectionLifecycle
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
 from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from adblab.application.operations import OperationManager, OperationState
 from adblab.application.screen_record import ScreenRecordUseCase
+from controllers.model_dependencies import ControllerModelFactory
 from controllers.signals import ADBControllerSignals
 from core.exec import ProcessRunner
 from core.log_service import LogService
@@ -29,26 +32,30 @@ from core.perf_trace import (
     summarize_perf,
 )
 from core.settings_manager import AppSettings
-from models.adb_advanced import ADBAdvanced
-from models.adb_app import ADBApp
-from models.adb_device import ADBDevice
-from models.adb_testing import ADBTesting
 from models.device_store import DeviceStore
 
 
 class _ADBControllerBase:
     """封装 ADBController 共用的模型、信号和处理器分派基础设施。"""
 
-    def __init__(self, log_service: LogService, *, load_device_history: bool = True):
+    def __init__(
+        self, log_service: LogService, *, apk_picker: ApkFilePicker,
+        device_lifecycle: DeviceConnectionLifecycle,
+        model_factory: ControllerModelFactory,
+        load_device_history: bool = True,
+    ) -> None:
         """装配控制器；仅已完成历史加载的 GUI 组合根可显式跳过同步读取。"""
+        self.apk_picker = apk_picker
+        self.device_lifecycle = device_lifecycle
         self.signals = ADBControllerSignals()
         self.log_service = log_service
         self.action_results = ActionResults(self.signals.action_result_changed.emit)
         self._settings = AppSettings.instance()
-        self.device_model = ADBDevice()
-        self.app_model = ADBApp()
-        self.testing_model = ADBTesting()
-        self.advanced_model = ADBAdvanced()
+        models = model_factory()
+        self.device_model = models.device_model
+        self.app_model = models.app_model
+        self.testing_model = models.testing_model
+        self.advanced_model = models.advanced_model
         self._pending_lock = threading.Lock()
         self._device_topology_lock = threading.Lock()
         self._device_topology_generation = 0
@@ -174,6 +181,10 @@ class _ADBControllerBase:
                     first_error.add_note(f"{label} also failed: {type(exc).__name__}: {exc}")
         if first_error is not None:
             raise first_error
+
+    def _accepts_apk_selection(self) -> bool:
+        """同步选框可能运行嵌套事件循环；返回后重检关闭许可再提交模型或批次。"""
+        return not self._shutting_down and not self.action_results.closed
 
     def _require_devices(self, devices: list, op_name: str) -> bool:
         """校验设备列表；为空时发出失败结果并返回 False。"""

@@ -7,6 +7,8 @@ logcat、dumpsys、Monkey、文件管理和性能采集能力整合到统一界�
 
 应用版本以 [`utils/app_metadata.py`](utils/app_metadata.py) 为唯一来源。
 
+![项目预览](resources/PreView.gif)
+
 ## 界面与功能
 
 主窗口左侧直接选择具体功能，页面内不再重复展示功能页签，主要工具在窗口内运行：

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 ---
@@ -33,20 +33,21 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 | Medium | 稳态能力健康检查只保留一次 1 秒尝试，本机服务引导也只在运行实例首次初始化做一次 | 已评估「稳态重试」与「冷却期重试引导」，但会改变 `test_adb_runtime` 固定的行为与 [ADB_FAST](../guides/ADB_FAST.md) 语义，需先做产品决策；当前失败后按 `CHECK_INTERVAL` 在下一轮用完整能力预算恢复 | 待确认 |
 | Low | 设备面板与设置页各有一个「重启 ADB」入口 | 两个入口复用同一 `restart_adb_requested` 信号和同一结果处理器，重启后都会作废能力并重测；是否删除隐藏面板按钮需产品决策 | Open |
 | Low | ADB 客户端冷启动耗时缺少不同主机的验证矩阵 | 当前识别已有后台串行探测、逐项回填与动态等待预算，失败不入缓存；准确预算见 [客户端选择与执行模式](../guides/ADB_FAST.md#客户端选择与执行模式)。仍需测量不同主机和安全软件环境下的首次识别，不能把单机结果当作固定性能 | 待确认 |
-| Low | Windows 上的 macOS ADB 重检模拟用例存在路径分隔符断言差异 | [重检测试](../../tests/test_qt_adb_runtime.py) 的 `test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches` 在 Windows 临时目录中模拟 darwin；重检已发现新工具，但解析器返回混合分隔符，最终与 `str(Path)` 的比较失败。该节点仍可复现，需校准跨平台路径契约，不能据此认定真实 macOS 发现失败 | Open |
+| Low | 历史 Qt 原生退出缺少当时的致命消息及线程堆栈，无法唯一归因 | 已用合成线程复现并修复布局测试销毁活动 QThread 的清理缺口；该机制与历史 fast-fail 一致，但不证明历史唯一触发。后续异常需同时保留 Qt 致命消息、测试阶段及真实进程退出码，不能由单次复跑通过宣布所有原生退出问题消失 | 历史证据边界，当前缺口已有回归 |
 
 ## UI 一致性与体验优化
 
 以下以 [当前 UI 实现](UI_IMPLEMENTATION.md) 为参照。**已确认**表示代码路径或隔离探针已有证据；
 **待测量**表示存在可量化的重复工作，但还没有证实它造成实机卡顿；**产品决策**不等同于实现错误。
 已闭环的 UI-01（文件页字体）、UI-02（表格强调色焦点）、UI-03（表单错误反馈）、UI-04（设置页
-纯高度变化的重复重排）、UI-08（导航材质测试契约）移出活动清单；当前机制与回归入口见
+纯高度变化的重复重排）、UI-08（导航材质测试契约）、UI-09（应用状态区共享列预算与选择计数）、
+UI-10（设置卡首次字体度量）移出活动清单；当前机制与回归入口见
 [UI 实现](UI_IMPLEMENTATION.md)。
 设置页仍在宽度或文案、字体、主题变化时重排，保留内容可读性。以下仅保留待优化项。
 
 | 编号 / 优先级 | 差异与证据 | 最小优化方向及验收入口 | 状态 |
 | --- | --- | --- | --- |
-| UI-05 / 后续 | 文件大目录仍一次提交全部 UI 行。[FileExplorerList._on_ls_result](../../gui/dialogs/file_explorer_list.py) 已暂停重绘与排序，但仍在 GUI 线程一次循环构造全部行，最后再排序和过滤；尚无当前硬件下的大目录响应耗时结论 | 用合成 1k/10k 条目录测量快照到可交互耗时，再决定是否分批或调整模型；不直接进行大规模重构。保持 request_id、路径归属、排序、最新过滤词与选择语义。关联 [排序](../../tests/test_file_explorer_ordering.py)、[搜索](../../tests/test_file_explorer_search.py)、[文件视图](../../tests/test_file_explorer_visual.py) | 规模影响待测量 |
+| UI-05 / 后续 | 文件大目录仍一次提交全部 UI 行。[FileExplorerList._on_ls_result](../../gui/features/file_explorer/list.py) 已暂停重绘与排序，但仍在 GUI 线程一次循环构造全部行，最后再排序和过滤；尚无当前硬件下的大目录响应耗时结论 | 用合成 1k/10k 条目录测量快照到可交互耗时，再决定是否分批或调整模型；不直接进行大规模重构。保持 request_id、路径归属、排序、最新过滤词与选择语义。关联 [排序](../../tests/test_file_explorer_ordering.py)、[搜索](../../tests/test_file_explorer_search.py)、[文件视图](../../tests/test_file_explorer_visual.py) | 规模影响待测量 |
 | UI-06 / 可选 | 局部动效没有统一减少动画偏好。设备选择和连接区有调用级动画参数，设备详情、滚轮和 [FrameAnimation](../../gui/widgets/frame_animation.py) 未共同消费系统/应用级减少动画决策。这不是已有设置失效，也不表示当前高刷时钟无效 | 先决定是否提供偏好，再统一决策入口；不能仅把时长归零而遗漏终帧、焦点、布局门禁和二维码显示确认。后续覆盖 [时钟](../../tests/test_frame_animation.py)、[滚轮](../../tests/test_settings_scroll.py)、三类设备展开测试 | 产品决策，待确认 |
 | UI-07 / 可选 | 表格列宽与排序分组规则尚未统一。文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序 | 先决定哪些表格需要手动调整以及目录置顶规则，不能仅为外观一致替换现有排序和宽度策略；按对应表格测试验证大字号、长文本、过滤与排序后选择 | 产品决策，待确认 |
 

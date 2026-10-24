@@ -153,3 +153,37 @@ def test_icon_worker_preserves_expected_identity_for_transport_validation(monkey
     )
     worker.run()
     assert identities == [{"com.example.one": "a" * 64}]
+
+
+def test_metadata_identity_read_cancellation_keeps_current_delivery(monkeypatch):
+    worker = module.AppManagerWorker(
+        'synthetic-device', 'load_metadata_batch', user_id=10,
+        packages=['com.example.one', 'com.example.two'],
+    )
+    rows, legacy = observe(worker)
+
+    class CancelOnIdentity:
+        package = 'com.example.one'
+        label = '应用一'
+        version = '1.2 (12)'
+        installed = '2026-09-25'
+        fingerprint = 'a' * 64
+
+        @property
+        def user_id(self):
+            worker.abort()
+            return 10
+
+    monkeypatch.setattr(module, 'load_app_metadata', lambda *args: SimpleNamespace(
+        records={
+            'com.example.one': CancelOnIdentity(), 'com.example.two': record('com.example.two'),
+        },
+        unsupported=False,
+    ))
+    monkeypatch.setattr(worker, '_adb', lambda *args, **kwargs: pytest.fail('不得发起兼容查询'))
+    worker.run()
+    assert rows == [{
+        'package': 'com.example.one', 'label': '应用一', 'version': '1.2 (12)',
+        'installed': '2026-09-25', 'fingerprint': 'a' * 64,
+    }]
+    assert legacy == []

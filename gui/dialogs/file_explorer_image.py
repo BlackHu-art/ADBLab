@@ -1,114 +1,32 @@
-"""提供文件浏览器页内复用的图片预览控件。"""
+"""保留旧文件浏览器模块路径，并与功能包共享实现及替换点。"""
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
+import sys
+from typing import TYPE_CHECKING
 
-from gui.i18n import tr
-from gui.styles import FontRole
-from gui.styles.fluent import apply_label_role, use_instant_scroll
-from gui.styles.icon_loader import get_themed_icon
+from gui.features.file_explorer import image as _implementation
 
+if TYPE_CHECKING:
+    from gui.features.file_explorer.image import BodyLabel as BodyLabel
+    from gui.features.file_explorer.image import (
+        FileExplorerImagePreview as FileExplorerImagePreview,
+    )
+    from gui.features.file_explorer.image import FontRole as FontRole
+    from gui.features.file_explorer.image import ImageLabel as ImageLabel
+    from gui.features.file_explorer.image import PushButton as PushButton
+    from gui.features.file_explorer.image import QImage as QImage
+    from gui.features.file_explorer.image import QPixmap as QPixmap
+    from gui.features.file_explorer.image import QSize as QSize
+    from gui.features.file_explorer.image import QSizePolicy as QSizePolicy
+    from gui.features.file_explorer.image import Qt as Qt
+    from gui.features.file_explorer.image import QTimer as QTimer
+    from gui.features.file_explorer.image import QVBoxLayout as QVBoxLayout
+    from gui.features.file_explorer.image import QWidget as QWidget
+    from gui.features.file_explorer.image import Signal as Signal
+    from gui.features.file_explorer.image import SmoothScrollArea as SmoothScrollArea
+    from gui.features.file_explorer.image import __all__ as __all__
+    from gui.features.file_explorer.image import apply_label_role as apply_label_role
+    from gui.features.file_explorer.image import get_themed_icon as get_themed_icon
+    from gui.features.file_explorer.image import tr as tr
+    from gui.features.file_explorer.image import use_instant_scroll as use_instant_scroll
 
-class FileExplorerImagePreview(QWidget):
-    """保持页内图片预览稳定，并让源图片适配可视区域。"""
-
-    closeRequested = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._source_pixmap = QPixmap()
-        self._fit_pending = False
-        self._fit_timer = QTimer(self)
-        self._fit_timer.setSingleShot(True)
-        self._fit_timer.setInterval(80)
-        self._fit_timer.timeout.connect(self._refit_image)
-
-        layout = QVBoxLayout(self)
-        self.image_viewport = use_instant_scroll(SmoothScrollArea())
-        self.image_viewport.setWidgetResizable(False)
-        self.image_viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label = ImageLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_viewport.setWidget(self.image_label)
-        layout.addWidget(self.image_viewport, 1)
-
-        self.image_info = apply_label_role(
-            BodyLabel(), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
-        )
-        self.image_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_info.setWordWrap(True)
-        self.image_info.setMinimumWidth(0)
-        self.image_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.image_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.image_info.setAccessibleName(tr("Image details"))
-        layout.addWidget(self.image_info)
-
-        self.image_close = PushButton()
-        self.image_close.setText(tr("Close"))
-        self.image_close.setToolTip(tr("Close the image preview"))
-        self.image_close.setIcon(get_themed_icon("x.svg"))
-        self.image_close.setIconSize(QSize(14, 14))
-        self.image_close.clicked.connect(self.closeRequested.emit)
-        layout.addWidget(self.image_close, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def set_image_source(
-        self, source: QPixmap, name: str, native_size: QSize | None = None,
-    ) -> None:
-        """展示有界预览像素，说明文字使用解码前取得的源尺寸。"""
-        self._source_pixmap = QPixmap(source)
-        size = (
-            native_size if native_size is not None and not native_size.isEmpty() else source.size()
-        )
-        details = f"{size.width()}x{size.height()}  |  {name}"
-        self.image_info.setText(details)
-        self.image_info.setToolTip(details)
-        self.image_info.setAccessibleDescription(details)
-        self._schedule_fit(0)
-
-    def _fit_image_to_viewport(self, source: QPixmap) -> QPixmap:
-        """从原始图片等比缩放到可视区域，且不放大小图。"""
-
-        available = self.image_viewport.viewport().contentsRect().size()
-        if source.isNull() or available.width() <= 0 or available.height() <= 0:
-            return QPixmap(source)
-        if source.width() <= available.width() and source.height() <= available.height():
-            return QPixmap(source)
-        return source.scaled(
-            available,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
-    def _refit_image(self) -> None:
-        self._fit_pending = False
-        if self._source_pixmap.isNull():
-            return
-        pixmap = self._fit_image_to_viewport(self._source_pixmap)
-        self.image_label.setPixmap(pixmap)
-        self.image_label.setFixedSize(pixmap.size())
-
-    def release_image_source(self) -> None:
-        """释放预览前取消待处理适配并清空图片。"""
-
-        self._fit_timer.stop()
-        self._fit_pending = False
-        self._source_pixmap = QPixmap()
-        # Fluent 的图像由 image 属性持有，QLabel.clear() 不会释放这份像素。
-        self.image_label.setImage(QImage())
-
-    def _schedule_fit(self, delay_ms: int = 80) -> None:
-        """连续 resize 只保留尾沿一次缩放；首次显示源图仍立即请求。"""
-        self._fit_pending = True
-        self._fit_timer.start(max(0, int(delay_ms)))
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._schedule_fit()
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        self._schedule_fit()
-
-__all__ = ["FileExplorerImagePreview"]
+sys.modules[__name__] = _implementation

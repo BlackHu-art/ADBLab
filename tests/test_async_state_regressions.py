@@ -343,10 +343,10 @@ def test_reordered_discovery_restores_panel_state_and_refresh_button(monkeypatch
         controller.refresh_devices()
         tasks[order[0]].run()
         if order[0] == 0:
-            assert panel._device_discovery_state == "scanning"
+            assert panel.device_context_snapshot().discovery_state == "scanning"
         tasks[order[1]].run()
         assert controller.device_discovery_token()[1] == 0
-        assert panel._device_discovery_state == "empty"
+        assert panel.device_context_snapshot().discovery_state == "empty"
         assert panel._devices_tab.btn_refresh.isEnabled()
         assert panel.request_device_refresh()
         model.begin_shutdown()

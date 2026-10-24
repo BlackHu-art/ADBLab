@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-09
+last_verified: 2026-10-23
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -17,7 +17,8 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | MainFrame | 主窗口和 GUI 组合根 | `gui/main_frame.py::MainFrame` |
 | 应用翻译资源 | 以 Qt `.qm` 词库保存并内嵌在 Python 资源模块中的界面译文 | `gui/i18n.py`；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | SidePanel | 持有业务概览面板和共享设备状态的兼容门面 | `gui/panels/side_panel.py::SidePanel` |
-| DeviceManager | 隐藏的原设备面板控制器；其列表复选状态仍是批量目标的兼容状态源，不是单设备会话 registry | `gui/panels/device_manager.py::DeviceManager` |
+| DeviceContext | SidePanel 拥有的纯 Python 设备状态；保存发现列表、稳定展示顺序、勾选及发现状态，输出不可变快照 | `adblab/application/device_context.py::DeviceContext` |
+| DeviceManager | 隐藏的原设备面板控制器；向共享 DeviceContext 提交选择并投影列表，不拥有单设备会话 registry | `gui/panels/device_manager.py::DeviceManager` |
 | DeviceContextBar | 页面堆叠外的设备选择及会话控件；内部管理连接弹层，连接入口锚定设备概览 | `gui/widgets/device_context_bar.py::DeviceContextBar` |
 | DeviceHubPage | 设备概览与工作流入口，只显示发现快照，不持有独立选择或设备命令 | `gui/pages/device_hub.py::DeviceHubPage` |
 | WorkspaceRoute | 定位业务宿主、功能、可选设备和载荷的路由值对象 | `gui/pages/workspace_features.py::WorkspaceRoute` |
@@ -25,7 +26,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | CollapsibleTools | 展开/收起容器；当前用于测试参数和性能会话，只管显隐，不拥有业务会话 | `gui/widgets/collapsible_tools.py::CollapsibleTools` |
 | AdaptiveNavigation | 在页签与下拉框之间自适应切换的功能选择控件，不拥有业务页面与历史 | `gui/widgets/adaptive_navigation.py::AdaptiveNavigation` |
 | AdaptiveCategoryStack | 业务面板内部一次显示一个分类的内容栈 | `gui/widgets/category_stack.py::AdaptiveCategoryStack` |
-| 批量操作目标 | 从设备概览或功能页设备栏提交的零台或多台共享目标集合，以原 DeviceManager 复选状态为准 | `gui/widgets/device_context_bar.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
+| 批量操作目标 | 从设备概览或功能页设备栏提交的零台或多台共享目标集合，取自 DeviceContext 的有效选择快照 | `adblab/application/device_context.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
 | 会话设备 | 应用管理、文件、Logcat、性能等功能页绑定的设备；查看会话和批量勾选不是同一概念，已运行任务保持原目标 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
 | FeatureSessionKey | 由 feature、device_id、generation 组成的不可变页面会话标识 | `gui/features/base.py::FeatureSessionKey` |
 | FeatureSessionRegistry | 懒创建并复用内嵌功能页，转发 activate/deactivate/request_dispose 和关闭任务登记 | `gui/features/base.py::FeatureSessionRegistry` |

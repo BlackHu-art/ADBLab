@@ -528,7 +528,7 @@ def test_cancelled_save_waits_for_cleanup_without_publishing(qt_application, blo
 def test_local_save_runs_off_gui_and_preserves_preview_bytes(qt_application, monkeypatch, tmp_path):
     from gui.dialogs import file_explorer_ops as ops
     from gui.dialogs.file_explorer import FileExplorerPage
-    from models import file_explorer_worker as workers
+    from services import file_operations
     from tests.ui_geometry_helpers import wait_until
 
     target = tmp_path / "copy.txt"
@@ -537,13 +537,13 @@ def test_local_save_runs_off_gui_and_preserves_preview_bytes(qt_application, mon
     )
     monkeypatch.setattr(ops.QFileDialog, "getSaveFileName", lambda *args: (str(target), ""))
     threads = []
-    replace = workers.os.replace
+    replace = file_operations.os.replace
 
     def publish(source, destination):
         threads.append(threading.get_ident())
         replace(source, destination)
 
-    monkeypatch.setattr(workers.os, "replace", publish)
+    monkeypatch.setattr(file_operations.os, "replace", publish)
     page = FileExplorerPage(device_ip="original-device")
     try:
         page._show_text_viewer(
@@ -666,18 +666,21 @@ def test_text_save_rejects_unrepresentable_target_without_touching_similar_file(
 
 def test_text_save_cleanup_failure_keeps_success_result(monkeypatch):
     from models import file_explorer_worker as workers
+    from services import file_operations
 
     worker = workers.TextSaveWorker("synthetic-device", "/target.txt", b"edited", False)
     results = []
     calls = []
     worker.result_ready.connect(lambda *args: results.append(args))
-    monkeypatch.setattr(worker, "_resolve_target", lambda: "/target.txt")
+    monkeypatch.setattr(
+        file_operations, "_resolve_text_target", lambda *args, **kwargs: "/target.txt",
+    )
 
-    def shell(_command, *, root=False, cleanup=False):
+    def shell(_device, _command, *, root=False, cleanup=False, run, cancelled):
         calls.append(cleanup)
         return CommandResult(success=not cleanup)
 
-    monkeypatch.setattr(worker, "_shell", shell)
+    monkeypatch.setattr(file_operations, "_text_shell", shell)
     monkeypatch.setattr(
         workers.CommandRunner, "run", lambda *args, **kwargs: CommandResult(success=True),
     )

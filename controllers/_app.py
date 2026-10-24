@@ -6,9 +6,6 @@ import os
 import re
 from datetime import datetime
 
-from PySide6.QtCore import QCoreApplication
-from PySide6.QtWidgets import QFileDialog
-
 from controllers._app_install import ADBAppInstallMixin
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
@@ -65,13 +62,10 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
             )
 
     def parse_apk_info(self):
-        apk_path, _ = QFileDialog.getOpenFileName(
-            getattr(self, "window_owner", None),
-            QCoreApplication.translate("ADBLab", "Select APK File"),
-            "",
-            QCoreApplication.translate("ADBLab", "APK Files (*.apk);;All Files (*)"),
-        )
+        apk_path = self.apk_picker.select_one()
         if not apk_path:
+            return
+        if not self._accepts_apk_selection():
             return
         if not apk_path.lower().endswith(".apk") or not os.path.isfile(apk_path):
             self._emit_operation("apk_info", False, f"❌ Invalid APK file selected: {apk_path}")

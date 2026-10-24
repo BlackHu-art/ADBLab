@@ -55,7 +55,7 @@ def test_log_exports_same_second_get_unique_paths(tmp_path):
     )
     with (
         patch("controllers._app.datetime") as appclock,
-        patch("controllers._media.datetime") as mediaclock,
+        patch("controllers.media.diagnostics.datetime") as mediaclock,
     ):
         for clock in (appclock, mediaclock):
             clock.now.return_value.strftime.return_value = "123456"

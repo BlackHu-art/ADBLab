@@ -3,6 +3,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from adblab.application.action_results import ActionResults
+from adblab.application.apk_selection import ApkFilePicker
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest
@@ -37,9 +39,12 @@ class _RaiseAfterBeginManager(OperationManager):
 def _controller():
     ids = (f"operation-{number}" for number in range(1, 100))
     controller = ADBAppMixin.__new__(ADBAppMixin)
+    controller.apk_picker = Mock(spec=ApkFilePicker)
     controller.signals = Mock()
     controller.log_service = Mock()
     controller.app_model = Mock()
+    controller.action_results = ActionResults(lambda _result: None)
+    controller._shutting_down = False
     controller.operation_manager = OperationManager()
     controller._generate_operation_id = lambda: next(ids)
     controller.install_batch_use_case = InstallBatchUseCase(
@@ -230,9 +235,9 @@ def _finish(controller, call, *, success=True, **changes):
 def test_overlapping_install_batches_keep_identity_and_emit_only_terminal_results():
     controller = _controller()
     with patch.object(
-        __import__("controllers._app", fromlist=["QFileDialog"]).QFileDialog,
-        "getOpenFileNames",
-        side_effect=[(["a.apk"], ""), (["b.apk"], "")],
+        controller.apk_picker,
+        "select_many",
+        side_effect=[('a.apk',), ('b.apk',)],
     ):
         operation_a = controller.batch_install_apk(["device-a", "device-b"])
         operation_b = controller.batch_install_apk(["device-a", "device-b"])
@@ -258,7 +263,7 @@ def test_overlapping_install_batches_keep_identity_and_emit_only_terminal_result
 
 def test_cancel_before_first_submit_emits_one_terminal_after_start_handoff():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         manager, thread, results, errors = _pause_before_first_submit(
             controller,
             lambda: controller.batch_install_apk(["device-a"]),
@@ -278,7 +283,7 @@ def test_cancel_before_first_submit_emits_one_terminal_after_start_handoff():
 
 def test_protocol_failure_before_first_submit_emits_one_terminal_after_start_handoff():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         manager, thread, results, errors = _pause_before_first_submit(
             controller,
             lambda: controller.batch_install_apk(["device-a"]),
@@ -298,7 +303,7 @@ def test_protocol_failure_before_first_submit_emits_one_terminal_after_start_han
 
 def test_valid_result_before_first_submit_emits_one_terminal_after_start_handoff():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         manager, thread, results, errors = _pause_before_first_submit(
             controller,
             lambda: controller.batch_install_apk(["device-a"]),
@@ -321,7 +326,7 @@ def test_valid_result_before_first_submit_emits_one_terminal_after_start_handoff
 
 def test_retry_cancel_before_first_submit_emits_one_child_terminal_after_handoff():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         parent_id = controller.batch_install_apk(["device-a"])
     parent_call = _submitted(controller, parent_id)[0]
     parent_outcome = _finish(controller, parent_call, success=False)
@@ -360,7 +365,7 @@ def test_queued_log_error_happens_after_terminal_handoff_without_state_leak():
     controller.log_service.log.side_effect = fail_queued_log
 
     with (
-        patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")),
+        patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)),
         pytest.raises(RuntimeError, match="log unavailable"),
     ):
         controller.batch_install_apk(["device-a"])
@@ -375,7 +380,7 @@ def test_queued_log_error_happens_after_terminal_handoff_without_state_leak():
 
 def test_generated_id_collision_cannot_release_another_normal_start_reservation():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["parent.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('parent.apk',)):
         parent_id = controller.batch_install_apk(["device-parent"])
     parent_call = _submitted(controller, parent_id)[0]
     failed_parent = _finish(controller, parent_call, success=False)
@@ -385,7 +390,7 @@ def test_generated_id_collision_cannot_release_another_normal_start_reservation(
         controller.operation_manager,
         id_factory=lambda: "unit-1",
     )
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         manager, thread, results, errors = _pause_before_first_submit(
             controller,
             lambda: controller.batch_install_apk(["device-a"]),
@@ -410,7 +415,7 @@ def test_generated_id_collision_cannot_release_another_normal_start_reservation(
 
 def test_generated_id_collision_cannot_release_another_start_from_retry_or_empty_retry():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         failed_parent_id = controller.batch_install_apk(["device-a"])
         successful_parent_id = controller.batch_install_apk(["device-b"])
     failed_call = _submitted(controller, failed_parent_id)[0]
@@ -454,7 +459,7 @@ def test_generated_id_collision_cannot_release_another_start_from_retry_or_empty
 
 def test_cancel_terminalization_keeps_normal_ownership_until_publication():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["parent.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('parent.apk',)):
         parent_id = controller.batch_install_apk(["device-parent"])
     failed_parent = _finish(controller, _submitted(controller, parent_id)[0], success=False)
     controller.signals.operation_completed.emit.reset_mock()
@@ -498,7 +503,7 @@ def test_cancel_terminalization_keeps_normal_ownership_until_publication():
 
 def test_protocol_fail_terminalization_keeps_retry_ownership_until_publication():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         parent_id = controller.batch_install_apk(["device-a"])
     failed_parent = _finish(controller, _submitted(controller, parent_id)[0], success=False)
     controller.signals.operation_completed.emit.reset_mock()
@@ -542,7 +547,7 @@ def test_old_generation_envelope_cannot_change_reused_retry_generation(
     metadata_changes,
 ):
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileName", return_value=("parent.apk", "")):
+    with patch.object(controller.apk_picker, "select_one", return_value='parent.apk'):
         parent_id = controller.install_apk(["device-parent"])
     parent_call = _submitted(controller, parent_id)[0]
     failed_parent = _finish(controller, parent_call, success=False)
@@ -1094,7 +1099,7 @@ def test_start_error_after_manager_begin_propagates_without_operation_or_barrier
     )
 
     with (
-        patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")),
+        patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)),
         pytest.raises(RuntimeError, match="mark running failed"),
     ):
         controller.batch_install_apk(["device-a"])
@@ -1109,13 +1114,13 @@ def test_start_error_after_manager_begin_propagates_without_operation_or_barrier
 
 def test_single_apk_entry_uses_same_operation_identity_for_every_device():
     controller = _controller()
-    with patch(
-        "controllers._app.QFileDialog.getOpenFileName",
-        return_value=("a.apk", ""),
+    with patch.object(
+        controller.apk_picker, "select_one",
+        return_value='a.apk',
     ) as select_apk:
         operation_id = controller.install_apk(["device-a", "device-b"])
 
-    assert select_apk.call_args.args[0] is None
+    select_apk.assert_called_once_with()
     tasks = _submitted(controller, operation_id)
     assert len(tasks) == 2
     assert {call.args[4] for call in tasks} == {"install"}
@@ -1127,12 +1132,12 @@ def test_single_apk_entry_uses_same_operation_identity_for_every_device():
 
 def test_install_batch_partial_maps_to_compat_failure_and_reports_counts():
     controller = _controller()
-    with patch(
-        "controllers._app.QFileDialog.getOpenFileNames",
-        return_value=(["a.apk"], ""),
+    with patch.object(
+        controller.apk_picker, "select_many",
+        return_value=('a.apk',),
     ) as select_apks:
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
-    assert select_apks.call_args.args[0] is None
+    select_apks.assert_called_once_with()
     first, second = _submitted(controller, operation_id)
 
     assert _finish(controller, first) is None
@@ -1151,7 +1156,7 @@ def test_install_batch_submission_failures_are_immediately_terminal_once():
     controller = _controller()
     controller.app_model.install_apk_async.side_effect = RuntimeError("pool stopped")
 
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
 
     assert operation_id
@@ -1166,7 +1171,7 @@ def test_install_batch_submission_failures_are_immediately_terminal_once():
 
 def test_install_batch_cancel_ignores_late_result_and_emits_once():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
     first, second = _submitted(controller, operation_id)
     assert _finish(controller, first) is None
@@ -1194,7 +1199,7 @@ def test_cancel_from_submission_callback_returns_true_and_terminal_is_emitted_af
         cancellation_results.append(controller.cancel_install_batch(kwargs["_operation_id"]))
 
     controller.app_model.install_apk_async.side_effect = cancel_during_submit
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
 
     assert cancellation_results == [True]
@@ -1215,7 +1220,7 @@ def test_cancel_after_use_case_start_returns_defers_terminal_until_controller_ha
         return started
 
     controller.install_batch_use_case.start = Mock(side_effect=cancel_before_controller_handoff)
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
 
     assert cancellations == [True]
@@ -1239,7 +1244,7 @@ def test_synchronous_install_result_emits_terminal_exactly_once_after_start_hand
         )
 
     controller.app_model.install_apk_async.side_effect = complete_during_submit
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
 
     assert operation_id
@@ -1259,7 +1264,7 @@ def test_synchronous_install_protocol_failure_emits_terminal_exactly_once_after_
         controller._fail_operation_protocol(snapshot, "Operation metadata mismatch")
 
     controller.app_model.install_apk_async.side_effect = fail_protocol_during_submit
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
 
     assert operation_id
@@ -1277,7 +1282,7 @@ def test_synchronous_install_protocol_failure_emits_terminal_exactly_once_after_
 
 def test_retry_failed_install_batch_submits_only_failed_unit_with_parent_identity():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         parent_id = controller.batch_install_apk(["device-a", "device-b"])
     first, second = _submitted(controller, parent_id)
     _finish(controller, first)
@@ -1308,7 +1313,7 @@ def test_retry_failed_install_batch_submits_only_failed_unit_with_parent_identit
 )
 def test_install_protocol_identity_mismatch_fails_closed(metadata_changes, payload_changes):
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     call = _submitted(controller, operation_id)[0]
 
@@ -1333,7 +1338,7 @@ def test_install_protocol_identity_mismatch_fails_closed(metadata_changes, paylo
 )
 def test_install_metadata_missing_owner_token_is_dropped_before_protocol_fail(metadata_changes):
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     call = _submitted(controller, operation_id)[0]
     ownership = controller._install_owned_operations[operation_id]
@@ -1357,7 +1362,7 @@ def test_install_metadata_missing_owner_token_is_dropped_before_protocol_fail(me
 
 def test_install_invalid_payload_fails_closed_and_counts_entire_operation():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
     call = _submitted(controller, operation_id)[0]
 
@@ -1373,7 +1378,7 @@ def test_install_invalid_payload_fails_closed_and_counts_entire_operation():
 
 def test_install_duplicate_and_terminal_late_callbacks_have_no_side_effects():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
     first, second = _submitted(controller, operation_id)
 
@@ -1398,7 +1403,7 @@ def test_install_duplicate_and_terminal_late_callbacks_have_no_side_effects():
 
 def test_install_operation_protocol_failure_uses_application_terminal_facade():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     snapshot = controller.operation_manager.get(operation_id)
 
@@ -1416,7 +1421,7 @@ def test_externally_terminalized_install_is_reconciled_without_fabricated_signal
         controller.operation_manager,
         id_factory=lambda: "unit-id",
     )
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     old_call = _submitted(controller, operation_id)[0]
     old_snapshot = controller.operation_manager.get(operation_id)
@@ -1428,7 +1433,7 @@ def test_externally_terminalized_install_is_reconciled_without_fabricated_signal
         expected_generation=old_snapshot.generation_token,
         message="external owner",
     )
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["b.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('b.apk',)):
         reused = controller.batch_install_apk(["device-b"])
     assert reused == "shared-id"
     assert (
@@ -1452,7 +1457,7 @@ def test_externally_terminalized_install_is_reconciled_without_fabricated_signal
 
 def test_next_unique_install_start_sweeps_all_externally_terminalized_owners():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         old_id = controller.batch_install_apk(["device-a"])
     old_snapshot = controller.operation_manager.get(old_id)
     controller.operation_manager.finish(
@@ -1462,7 +1467,7 @@ def test_next_unique_install_start_sweeps_all_externally_terminalized_owners():
         expected_generation=old_snapshot.generation_token,
     )
 
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["b.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('b.apk',)):
         new_id = controller.batch_install_apk(["device-b"])
 
     assert new_id != old_id
@@ -1503,7 +1508,7 @@ def test_starting_install_orphan_is_released_after_claim_and_start_barriers_clos
 
 def test_last_of_two_stale_claims_releases_shared_orphan_ownership():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     call = _submitted(controller, operation_id)[0]
     metadata = _metadata(call)
@@ -1541,7 +1546,7 @@ def test_last_of_two_stale_claims_releases_shared_orphan_ownership():
 
 def test_cancel_screenshot_cannot_cancel_shared_manager_install_operation():
     controller = _full_controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     before = controller.operation_manager.get(operation_id)
 
@@ -1573,7 +1578,7 @@ def test_old_screenshot_protocol_failure_cannot_finish_reused_install_generation
         controller.operation_manager,
         id_factory=lambda: "new-unit",
     )
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch.object(controller.apk_picker, "select_many", return_value=('a.apk',)):
         operation_id = controller.batch_install_apk(["device-a"])
     current = controller.operation_manager.get(operation_id)
 

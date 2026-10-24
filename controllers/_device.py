@@ -136,26 +136,17 @@ class ADBDeviceMixin(_ADBControllerBase):
         在线 transport 与连接端点分别使用；后台写入前重查环境及关闭状态，不为历史
         追加 ADB 查询。已开始的存储 I/O 自然完成，历史保存失败不撤销已核实连接。
         """
-        owner = getattr(self, "window_owner", None)
-        pairing = getattr(owner, "_adb_pairing", None)
-        accepts = getattr(pairing, "accepts_outcome", None)
-        if (
-            getattr(self, "_shutting_down", False)
-            or getattr(owner, "_closing", False)
-            or not callable(accepts)
-            or not accepts(outcome)
-        ):
+        if getattr(self, "_shutting_down", False):
             return
-        revision = outcome.context_revision
+        guard = self.device_lifecycle.capture_wireless_history(outcome)
+        if guard is None:
+            return
 
         def _is_current() -> bool:
-            # 后台只读取生命周期代次，不调用 Qt 对象的方法或读取控件。
+            # 适配器只读窗口生命周期；Controller 保留自身关闭准入。
             return bool(
                 not getattr(self, "_shutting_down", False)
-                and self.window_owner is owner
-                and not getattr(owner, "_closing", False)
-                and getattr(owner, "_adb_pairing", None) is pairing
-                and getattr(pairing, "context_revision", None) == revision
+                and guard.is_current()
             )
 
         if not _is_current():
@@ -462,19 +453,13 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def restart_adb(self):
         """提交重启前撤销无线配对上下文，失败重启也不能继续旧会话。"""
-        owner = getattr(self, "window_owner", None)
-        invalidate = getattr(owner, "invalidate_wireless_pairing", None)
-        if callable(invalidate):
-            invalidate("server_restart")
+        self.device_lifecycle.invalidate_wireless_pairing("server_restart")
         self.device_model.restart_adb_async()
 
     def _process_restart_adb_result(self, result: dict):
         if result.get("success"):
             # 重启后既有连接与能力状态都已失效，先通知运行时重测再安排刷新。
-            owner = getattr(self, "window_owner", None)
-            notify = getattr(owner, "note_adb_server_restarted", None)
-            if callable(notify):
-                notify()
+            self.device_lifecycle.note_adb_server_restarted()
             QTimer.singleShot(3000, self.signals, self.refresh_devices)
             self._emit_operation(
                 "restart_adb",

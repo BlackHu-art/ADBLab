@@ -85,6 +85,9 @@ class SettingsCardPresentation:
         for label in (card.titleLabel, card.contentLabel):
             if label.isHidden():
                 continue
+            # 新建的路径标签可能尚未应用 QSS；先落实最终字体，避免首次卡高
+            # 混入默认字号，直到后续交互重排才收缩并改变整页滚动范围。
+            label.ensurePolished()
             label.setMinimumHeight(0)
             label.setMaximumHeight(16777215)
             height = max(label.fontMetrics().height(), label.heightForWidth(text_width))

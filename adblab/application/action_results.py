@@ -155,6 +155,11 @@ class ActionResults:
         self._last_completed_request = ""
         self._target_labels: dict[str, str] = {}
 
+    @property
+    def closed(self) -> bool:
+        """结果准入关闭后保持终态；同步模态选择返回时可据此拒绝续发任务。"""
+        return self._closed
+
     def set_target_labels(self, labels: dict[str, str]) -> None:
         """接收组合根的会话设备名称；只影响后续提交，不改写历史快照。"""
         if not self._closed:

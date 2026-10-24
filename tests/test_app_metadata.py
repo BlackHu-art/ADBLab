@@ -9,7 +9,8 @@ import threading
 import pytest
 
 from core.exec import CommandResult
-from services import app_icons, app_metadata
+from services import app_metadata
+from services.apps import helper as app_helper
 
 
 def metadata_line(package="com.example.app", **changes):
@@ -32,9 +33,9 @@ def metadata_line(package="com.example.app", **changes):
 def transport(monkeypatch, tmp_path):
     helper = tmp_path / "helper.jar"
     helper.write_bytes(b"small-metadata-helper")
-    monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(helper))
+    monkeypatch.setattr(app_helper, "resource_path", lambda _path: str(helper))
     calls = []
-    outputs = [CommandResult(True, metadata_line() + app_icons._CLEANED)]
+    outputs = [CommandResult(True, metadata_line() + app_helper._CLEANED)]
 
     def run(command, timeout, **kwargs):
         calls.append((command, timeout, kwargs))
@@ -43,7 +44,7 @@ def transport(monkeypatch, tmp_path):
             raise result
         return result() if callable(result) else result
 
-    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    monkeypatch.setattr(app_helper.CommandRunner, "run", run)
     return helper, calls, outputs
 
 
@@ -80,10 +81,10 @@ def test_unicode_metadata_reads_all_fields_in_one_cleaned_shell(transport):
 def test_cache_identity_tracks_user_package_version_resources_and_update(transport, field, value):
     _helper, _calls, outputs = transport
     initial = collect().records["com.example.app"]
-    outputs.append(CommandResult(True, metadata_line(**{field: value}) + app_icons._CLEANED))
+    outputs.append(CommandResult(True, metadata_line(**{field: value}) + app_helper._CLEANED))
     changed = collect().records["com.example.app"]
     assert initial.fingerprint != changed.fingerprint
-    outputs.append(CommandResult(True, metadata_line(**{field: value}) + app_icons._CLEANED))
+    outputs.append(CommandResult(True, metadata_line(**{field: value}) + app_helper._CLEANED))
     assert collect().records["com.example.app"].fingerprint == changed.fingerprint
 
 
@@ -91,13 +92,13 @@ def test_name_and_install_date_do_not_change_icon_identity(transport):
     _helper, _calls, outputs = transport
     initial = collect().records["com.example.app"].fingerprint
     outputs.append(CommandResult(True, metadata_line(label="new label", installed="2020-01-01")
-                                 + app_icons._CLEANED))
+                                 + app_helper._CLEANED))
     assert collect().records["com.example.app"].fingerprint == initial
 
 
 def test_android_and_duplicate_packages_keep_single_exact_result(transport):
     _helper, calls, outputs = transport
-    outputs[0] = CommandResult(True, metadata_line("android") + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, metadata_line("android") + app_helper._CLEANED)
     assert set(collect(["android", "android"]).records) == {"android"}
     assert "Main --metadata android" in calls[0][0][-1]
 
@@ -112,7 +113,7 @@ def test_missing_helper_is_explicitly_unsupported(transport):
 def test_only_complete_context_unavailable_response_is_unsupported(transport):
     _helper, _calls, outputs = transport
     outputs[0] = CommandResult(True, "META_ERROR\tcom.example.app\tCONTEXT_UNAVAILABLE"
-                               + app_icons._CLEANED)
+                               + app_helper._CLEANED)
     result = collect()
     assert result.unsupported and not result.records
 
@@ -120,14 +121,14 @@ def test_only_complete_context_unavailable_response_is_unsupported(transport):
 def test_partial_context_failure_does_not_request_another_query(transport):
     _helper, _calls, outputs = transport
     outputs[0] = CommandResult(True, "META_ERROR\tcom.example.app\tCONTEXT_UNAVAILABLE"
-                               + app_icons._CLEANED)
+                               + app_helper._CLEANED)
     result = collect(["com.example.app", "com.example.other"])
     assert not result.unsupported and not result.records
 
 
 def test_null_version_name_preserves_existing_blank_version_display(transport):
     _helper, _calls, outputs = transport
-    outputs[0] = CommandResult(True, metadata_line(version_name="") + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, metadata_line(version_name="") + app_helper._CLEANED)
     assert collect().records["com.example.app"].version == ""
 
 
@@ -142,7 +143,7 @@ def test_null_version_name_preserves_existing_blank_version_display(transport):
         "unknown-error", "foreign-error", "foreign-package", "duplicate", "unicode", "oversized"])
 def test_failed_or_malformed_response_never_enables_fallback(transport, body):
     _helper, _calls, outputs = transport
-    outputs[0] = CommandResult(True, body + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, body + app_helper._CLEANED)
     result = collect()
     assert not result.records and not result.unsupported
 
@@ -155,7 +156,7 @@ def test_failed_or_malformed_response_never_enables_fallback(transport, body):
 ])
 def test_bad_metadata_fields_are_rejected(transport, changes):
     _helper, _calls, outputs = transport
-    outputs[0] = CommandResult(True, metadata_line(**changes) + app_icons._CLEANED)
+    outputs[0] = CommandResult(True, metadata_line(**changes) + app_helper._CLEANED)
     result = collect()
     assert not result.records and not result.unsupported
 
@@ -165,7 +166,7 @@ def test_invalid_unicode_scalar_is_rejected_before_gui_delivery(transport):
     raw = base64.b64decode(metadata_line().split("\t")[2]).decode()
     invalid = raw.replace('"1.2"', '"\\ud800"').encode()
     outputs[0] = CommandResult(True, "META\tcom.example.app\t"
-                               + base64.b64encode(invalid).decode() + app_icons._CLEANED)
+                               + base64.b64encode(invalid).decode() + app_helper._CLEANED)
     assert not collect().records
 
 
@@ -183,10 +184,10 @@ def test_invalid_package_never_reaches_device(transport, package):
 
 def test_metadata_batch_limit_is_thirty_and_command_line_stays_bounded(transport):
     helper, calls, outputs = transport
-    helper.write_bytes(b"x" * app_icons._MAX_INLINE_HELPER_BYTES)
+    helper.write_bytes(b"x" * app_helper._MAX_INLINE_HELPER_BYTES)
     packages = [f"com.example.app{index:02d}" + "x" * 238 for index in range(30)]
     outputs[0] = CommandResult(True, "\n".join(metadata_line(pkg) for pkg in packages)
-                               + app_icons._CLEANED)
+                               + app_helper._CLEANED)
     assert len(collect(packages).records) == 30
     assert len(" ".join(calls[0][0])) < 32767
     assert not collect(packages + ["com.example.overflow"]).records
@@ -239,7 +240,7 @@ def test_cancelled_metadata_is_not_published_and_cleanup_ignores_cancellation(tr
 
 def test_large_helper_retains_push_and_independent_cleanup(transport):
     helper, calls, outputs = transport
-    helper.write_bytes(b"x" * (app_icons._MAX_INLINE_HELPER_BYTES + 1))
+    helper.write_bytes(b"x" * (app_helper._MAX_INLINE_HELPER_BYTES + 1))
     outputs[:] = [CommandResult(True), CommandResult(True, metadata_line()), CommandResult(True)]
     assert collect().records["com.example.app"].label.startswith("应用")
     assert calls[0][0][3] == "push" and len(calls) == 3

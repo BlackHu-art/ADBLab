@@ -50,6 +50,11 @@ def frame(monkeypatch, qt_application):
     class ConnectedPairingDouble(PairingDouble):
         connected = Signal(object)
 
+        def prepare_shutdown(self):
+            """主窗口请求取消；保留忙碌状态，完成仍由测试显式投递。"""
+            self.calls.append(("prepare_shutdown",))
+            self.cancel()
+
     def create_pairing(_supervisor, parent):
         pairing = ConnectedPairingDouble()
         pairing.setParent(parent)
@@ -598,10 +603,10 @@ def test_superseded_manual_refresh_restores_state_and_allows_retry(frame, state)
     )
     panel.set_device_discovery_state(state)
     assert panel.request_device_refresh()
-    assert panel._device_discovery_state == "scanning"
+    assert panel.device_context_snapshot().discovery_state == "scanning"
     assert not panel.request_device_refresh()
     panel.on_device_refresh_superseded()
-    assert panel._device_discovery_state == state
+    assert panel.device_context_snapshot().discovery_state == state
     assert panel.request_device_refresh()
 
 
@@ -611,8 +616,8 @@ def test_superseded_refresh_cannot_replace_new_device_snapshot(frame):
     assert panel.request_device_refresh()
     frame._on_devices_updated(["demo-a"])
     panel.on_device_refresh_superseded()
-    assert panel._device_discovery_state == "ready"
-    assert panel._connected_device_cache == ["demo-a"]
+    assert panel.device_context_snapshot().discovery_state == "ready"
+    assert panel.device_context_snapshot().connected_devices == ("demo-a",)
 
 
 def test_current_package_result_cannot_overwrite_edited_input(frame, qt_application):
@@ -937,6 +942,26 @@ def test_device_overview_connects_and_refreshes_without_top_bar(frame, qt_applic
     assert not panel.isVisible() and not panel.is_expanded
     assert not hub.connect_button.isChecked()
     assert frame._adb_pairing.calls[-1] == ("cancel",)
+
+
+def test_mainframe_shutdown_cancels_pairing_without_faking_completion(frame, qt_application):
+    frame._on_nav_requested("devices")
+    frame.show()
+    qt_application.processEvents()
+    frame._show_global_connection()
+    pairing = frame._adb_pairing
+    wait_until(qt_application, lambda: pairing.busy)
+    pairing.continuation = SimpleNamespace(endpoint="192.0.2.1:5555")
+    idle = QSignalSpy(pairing.idle)
+
+    frame._prepare_ui_for_shutdown()
+
+    assert pairing.calls.count(("prepare_shutdown",)) == 1
+    assert pairing.calls[-1] == ("cancel",)
+    assert pairing.continuation is None
+    assert pairing.busy and pairing.state == "Stopping"
+    assert idle.count() == 0
+    assert not frame._connection_panel.isEnabled()
 
 
 def test_device_bar_returns_for_feature_in_same_host_and_hides_on_back(frame, qt_application):

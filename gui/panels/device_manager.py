@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QGridLayout,
+    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import InfoBadge
 
+from adblab.application.device_context import DeviceContext
 from gui.i18n import tr
 from gui.notifications import show_toast
 from gui.panels.base_panel import BasePanel
@@ -44,8 +46,10 @@ def _resolve_device_controller(frame, attr, controller_cls):
 class DeviceManager(BasePanel):
     """维护设备列表展示，并向统一信号层转发设备操作。"""
 
-    def __init__(self, panel, parent=None):
+    def __init__(self, panel, parent=None, *, device_context: DeviceContext | None = None) -> None:
+        """使用协调器注入的状态；独立构造时拥有自己的上下文。"""
         super().__init__(panel, parent)
+        self._device_context = device_context if device_context is not None else DeviceContext()
         self._layout_controller = DeviceManagerLayout(self)
         self._view_controller = DeviceManagerView(self)
 
@@ -129,7 +133,7 @@ class DeviceManager(BasePanel):
         )
         self.listbox_devices.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.listbox_devices.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        # 设备操作以复选状态为唯一真源，关闭独立行选择以避免高亮与勾选含义冲突。
+        # 复选框投影共享上下文的选择，关闭独立行选择以避免高亮与勾选含义冲突。
         self.listbox_devices.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.listbox_devices.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
         self.listbox_devices.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
@@ -206,14 +210,10 @@ class DeviceManager(BasePanel):
         self._device_body_mode = None
         self._device_responsive_binding = _DeviceResponsiveBinding(self)
         self.action_binding = self._device_responsive_binding
+        self._view_controller._render_device_list()
         self._sync_device_control_heights()
         self._update_device_minimum_heights()
-        initial_state = str(
-            getattr(self.panel, "_device_discovery_state", "scanning") or "scanning"
-        ).lower()
-        if initial_state not in {"scanning", "empty", "unavailable", "ready"}:
-            initial_state = "scanning"
-        self.set_discovery_state(initial_state)
+        self.set_discovery_state(self._device_context.snapshot().discovery_state)
         self._update_action_states()
         self._apply_device_card_styles()
         gd_l.addWidget(body_host)
@@ -377,15 +377,8 @@ class DeviceManager(BasePanel):
 
     @property
     def selected_devices(self) -> list[str]:
-        selected = []
-        for index in range(self.listbox_devices.count()):
-            item = self.listbox_devices.item(index)
-            if item is None or item.checkState() != Qt.CheckState.Checked:
-                continue
-            info = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(info, dict) and info.get("ip"):
-                selected.append(str(info["ip"]))
-        return selected
+        """返回原始勾选副本，发现状态的操作准入由 SidePanel 和功能入口处理。"""
+        return list(self._device_context.checked_devices)
 
     @property
     def ip_address(self) -> str:
@@ -449,34 +442,47 @@ class DeviceManager(BasePanel):
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         self.btn_all.clicked.connect(lambda: self._set_all_checked(True))
         self.btn_none.clicked.connect(lambda: self._set_all_checked(False))
-        self.listbox_devices.itemChanged.connect(lambda _item: self._update_action_states())
+        self.listbox_devices.itemChanged.connect(self._on_device_item_changed)
 
-    def _set_all_checked(self, checked: bool):
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        blocker = QSignalBlocker(self.listbox_devices)
-        try:
-            for i in range(self.listbox_devices.count()):
-                item = self.listbox_devices.item(i)
-                assert item is not None  # stub Optional 收窄
-                item.setCheckState(state)
-        finally:
-            del blocker
+    def _on_device_item_changed(self, item: QListWidgetItem) -> None:
+        """仅把单行勾选差异提交到上下文，元数据修改仍保留原动作刷新通知。"""
+        info = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(info, dict) and info.get("ip"):
+            device = str(info["ip"])
+            selected = set(self._device_context.checked_devices)
+            checked = item.checkState() == Qt.CheckState.Checked
+            if checked != (device in selected):
+                if checked:
+                    selected.add(device)
+                else:
+                    selected.discard(device)
+                self.set_selected_devices(list(selected))
+                return
         self._update_action_states()
+
+    def _set_all_checked(self, checked: bool) -> None:
+        self.set_selected_devices(list(self._device_context.display_devices) if checked else [])
 
     def set_selected_devices(self, devices: list[str]) -> None:
-        """全局多选栏提交目标集合，列表复选仍是兼容接口的唯一真源。"""
-
-        selected = set(devices)
-        blocker = QSignalBlocker(self.listbox_devices)
-        for row in range(self.listbox_devices.count()):
-            item = self.listbox_devices.item(row)
-            if item is None:
-                continue
-            info = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(info, dict) and info.get("ip"):
-                item.setCheckState(
-                    Qt.CheckState.Checked
-                    if str(info["ip"]) in selected else Qt.CheckState.Unchecked
-                )
-        del blocker
+        """先提交共享选择再投影视图；显式调用始终保留一次原选择通知。"""
+        self._device_context.set_selected_devices(devices)
+        self._render_selected_devices()
         self._update_action_states()
+
+    def _render_selected_devices(self) -> None:
+        """投影勾选时屏蔽行信号，避免渲染再次被当成用户选择。"""
+        selected = set(self._device_context.checked_devices)
+        blocker = QSignalBlocker(self.listbox_devices)
+        try:
+            for row in range(self.listbox_devices.count()):
+                item = self.listbox_devices.item(row)
+                if item is None:
+                    continue
+                info = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(info, dict) and info.get("ip"):
+                    item.setCheckState(
+                        Qt.CheckState.Checked
+                        if str(info["ip"]) in selected else Qt.CheckState.Unchecked
+                    )
+        finally:
+            del blocker

@@ -9,7 +9,7 @@ import pytest
 
 
 def _module():
-    name = "services.remote.x11_window_tracking"
+    name = "services.remote.windowing.x11"
     assert importlib.util.find_spec(name) is not None, "Linux X11 window tracking is unavailable"
     return importlib.import_module(name)
 

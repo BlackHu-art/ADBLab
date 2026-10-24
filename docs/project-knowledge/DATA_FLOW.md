@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-15
+last_verified: 2026-10-24
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -18,7 +18,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | `WorkspaceRoute` | 首页快捷入口、左侧一级功能导航、设备卡和功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
 | 应用翻译资源 | `resources/i18n/*.qm` 经静态 `translations_rc` 注册 | GUI 启动安装应用翻译器，缺失词条回退源文案 | Qt 资源系统、`QTranslator`、界面显示文案 | 翻译器由 QApplication 持有并保留到事件循环退出；生成与验证见 [构建指南](../guides/BUILD_AND_RUN.md) |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
-| 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
+| 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model 或 services/apps 包信息解析、权限解析服务 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
 | 应用管理用户快照 | 每轮列表 worker 读取的当前 Android 用户及同用户列表结果 | 用户编号与成功列表同代接收；后续 worker 显式携带该编号，详情和权限队列保留同一归属 | 固定设备页面的内存状态；不写配置、不向用户展示设备用户标识 | 刷新开始撤销写入资格，成功快照恢复；用户变化隔离旧选择、缓存和详情，准入规则见 [应用管理流程](BUSINESS_FLOW.md#3-应用管理与安装批次) |
 | 应用权限列表 | 单包 dumpsys 的活动包及可确认的共享 UID 块 | `services/app_permissions.py` 按小节和快照用户解析，统一校验权限标识 | 详情页声明、请求和运行时权限列表；提交时保留原始权限名 | 随详情查询代次更新；未知用户或冲突状态不推断授权 |
 | 应用列表元数据 | 设备端 `app_process` 临时 helper 的 PackageManager；明确不支持时有限 dumpsys 兼容 | `services/app_metadata.py` 校验有界 Base64/UTF-8 JSON；每批最多 30 包；向 GUI 仅交付名称、版本、安装日期和缓存身份摘要 | 应用管理页面的文字缓存与本轮成功集合；不持久化 | 可见文字先于图标；刷新可暂时显示旧文字，但只有本轮成功响应才能标记已验证；用户、版本、更新时间、路径与资源配置参与缓存身份 |
@@ -34,6 +34,10 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | 运行时工具缓存 | PyInstaller onefile bundle | 按版本校验并复制，普通工具与 scrcpy 桥接使用不同校验深度，见下方文件型存储表 | 平台 cache 目录 `runtime/<version>` | 跨进程复用；开发/onedir 不复制 |
 
 ## 设备发现与元数据流
+
+连续扫描线程及带代次的列表/状态载荷实现在 `adblab/presentation/qt_device_discovery.py`。
+`gui/main_frame.py` 保留同一类对象的旧导出；MainFrame 继续拥有线程、连接信号、防抖和关闭，
+适配器不反向导入主窗口，不新增状态存储或设备查询。
 
 ```mermaid
 sequenceDiagram
@@ -80,8 +84,17 @@ sequenceDiagram
 取得锁及读取缓存后再校验环境代次与关闭状态。只保存已验证的连接 IP:port，并从当前 transport
 缓存与同端点历史合并有效品牌、型号、系统版本，保留历史别名；不为落盘额外查询 ADB。
 无法获得合法连接端点时只刷新设备列表；历史保存失败记录固定诊断，不撤销已确认的连接。
-DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
-兼容状态源，全局栏和 DeviceHubPage 都将选择交回同一 DeviceManager，再接收更新后的快照。
+DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保存在 DeviceContext，
+不从历史恢复选择。对象归属见[架构说明](ARCHITECTURE.md#启动与组合根)。全局栏、DeviceHubPage
+和旧设备列表均由 DeviceManager 适配器向同一上下文提交，再投影视图并发布原选择信号；
+程序投影使用 QSignalBlocker，避免作为用户输入重复提交。
+上下文将最近成功发现顺序与稳定展示顺序分别保存：存续行及勾选维持原顺序，新设备追加且不自动
+勾选，离线后重连不恢复已移除的勾选。成功列表更新先提交列表与勾选、渲染并通知选择，再发布
+ready/empty；仅状态变化时发送发现状态通知。选择信号保留原勾选载荷，消费者通过 SidePanel
+快照读取有效目标；unavailable 屏蔽有效目标但保留列表与勾选，scanning 保留最近目标，各功能
+继续执行原有准入规则。成功空列表才清除在线与勾选，单独设置 empty 不替代一次列表提交。
+手动刷新在上下文中保存刷新前状态；Qt 适配先发布 scanning 再发送请求，重复刷新不再提交。
+被取代时仅恢复仍在 scanning 的旧状态，新终态会清除恢复信息；扫描身份及关闭准入仍由原链路校验。
 会话身份与操作目标分别保存；页内列表单选通过 `MainFrame._select_operation_devices()` 一次同步二者，
 清空目标保留原会话缓存和停止入口，不能改变在途任务的设备归属。交互规则见
 [统一操作设备入口](../guides/OPERATION_RESULTS.md#统一操作设备入口)。
@@ -97,11 +110,27 @@ DeviceContextBar 在进程内分配固定显示编号，组合根向 Monkey、�
 [ARCHITECTURE](ARCHITECTURE.md#功能会话与路由)维护；安装、截图和取消路径见
 [BUSINESS_FLOW](BUSINESS_FLOW.md)。这些状态保存在进程内，不从历史配置或测试结果恢复运行。
 
+应用写动作与备份/恢复事务由`services/apps/actions.py`、`archives.py`执行，Qt worker同步转发原通知。
+恢复每次安装前复核原用户，已安装数量不回滚；备份仍先在目标目录暂存，再经取消检查后原子替换ZIP。
+文件目录/正文读写事务由`services/file_operations.py`持有暂存文件和远端清理列表，原始字节、marker与
+发布/清理顺序保持。服务不新增持久化状态、格式或迁移；Qt 适配实现归于
+`adblab/presentation/workers/`，页面实例归属、Signal与关闭监督仍沿原worker链路。
+
 ## 设置与设备存储生命周期
+
+默认值和字段规范化由 [schema](../../core/settings/schema.py) 维护，版本识别、字典迁移和未知键清理由
+[migrations](../../core/settings/migrations.py) 维护。两者不读取设置文件或创建设置实例；迁移诊断由调用方
+显式传入。`core/settings_manager.py` 保留同对象兼容出口，并独占路径、错误sink、状态与保存生命周期。
 
 AppSettings 以可重入锁保护读取、更新、计时器引用和写盘快照。`update()`/`set_many()` 将一组字段
 合并为一次内存更新并只安排一个防抖保存；进程内保存回调再由独立写锁串行，并在取得写锁后
 获取最新快照，避免旧写覆盖新值。跨进程仍没有文件锁，不能视为数据库事务。
+实例登记全部未退出 Timer 和已准入同步保存；取消被替换 Timer 不撤销其资源归属。
+后台 `close()` 封闭准入、冻结最后已接受状态，等待线程真正退出及同步保存排空，再原子写入。
+成功后重复关闭不再写；落盘失败只重试同一冻结快照。冻结本身失败也先排空，再返回 False，
+没有有效快照时不从已封闭的可变数据重新取值。False 不表示仍有未等待的保存任务。
+关闭后的修改接口抛 RuntimeError，普通及 deferred 保存返回 False，只读接口继续有效。
+此阻塞屏障不在 GUI 线程调用；应用关闭截止时间由现有 finalizer 监督，超时不等于资源已退出。
 GUI 首次加载可选择延后旧版本/旧路径设置的迁移回写，内存规范化和缩放读取保持同步；图标
 首帧后的后台阶段使用相同写锁保存最新快照。普通调用仍立即回写；延后保存失败记录错误、
 保留待写状态，后续正常保存成功才清除，不改变 schema 或文件格式。
@@ -188,7 +217,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 旧分栏兼容 | `panel_split_ratio`、`left_panel_width`、`right_panel_width`、`device_log_split_ratio` | 仅为旧配置 schema 兼容保留；新 FluentWindow 运行时不创建 splitter，也不再写入这些键 |
 | Remote | `scrcpy_preset`、`scrcpy_maxsize`、`scrcpy_fps`、`scrcpy_codec`、`scrcpy_buffer`、`scrcpy_bitrate`、`scrcpy_orientation` | RemotePanel；这些键由 `SCRCPY_SETTING_DEFAULTS` 白名单纳入 `DEFAULTS`，运行时可写且重启可载入 |
 
-正式配置键及默认值以 `core/settings_manager.py::DEFAULTS` 为准。Remote 键经字符串
+正式配置键及默认值以 `core/settings/schema.py::DEFAULTS` 为准，旧manager出口引用同一对象。Remote 键经字符串
 规范化后保存；未知运行时键不会因此自动进入加载白名单。`AppSettings.reset()` 深复制默认值，
 取消防抖计时器并立即保存，不与默认嵌套对象共享可变状态。
 

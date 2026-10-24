@@ -33,6 +33,9 @@ class CloseController:
         self._frame._flush_pending_layout_state()
         self._frame._close_started = True
         self._frame._closing = True
+        # 选框的嵌套事件循环可在后台关闭任务启动前返回；同步封结果准入，
+        # 让 Controller 在选择返回后停止续发任务，不等待资源清理线程。
+        self._frame.adb_controller.action_results.close()
         self._frame._shutdown_deadline_at = time.monotonic() + max(
             0.0,
             float(self._frame.SHUTDOWN_DEADLINE_SECONDS),
@@ -404,10 +407,7 @@ class CloseController:
         """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""
         from core.settings_manager import AppSettings
 
-        s = AppSettings.instance()
-        if s._save_timer:
-            s._save_timer.cancel()
-        settings_saved = s._save_atomic()
+        settings_saved = AppSettings.instance().close()
         library = getattr(self._frame, "run_library", None)
         library_saved = True
         if library is not None:

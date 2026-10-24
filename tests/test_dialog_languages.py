@@ -31,6 +31,7 @@ def test_apk_choosers_translate_titles_and_filters_without_submitting_on_cancel(
     qt_application, monkeypatch, dialog_language, language, single_title, batch_title,
     file_filter, operation,
 ):
+    from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
     from controllers._app import ADBAppMixin
     from controllers._app_install import ADBAppInstallMixin
 
@@ -38,6 +39,7 @@ def test_apk_choosers_translate_titles_and_filters_without_submitting_on_cancel(
     owner = QWidget()
     controller = SimpleNamespace(
         window_owner=owner, _require_devices=Mock(return_value=True),
+        apk_picker=QtApkFilePicker(lambda: owner),
         _emit_operation=Mock(), _start_install_batch=Mock(), app_model=Mock(),
     )
     multiple = operation == "batch_install_apk"

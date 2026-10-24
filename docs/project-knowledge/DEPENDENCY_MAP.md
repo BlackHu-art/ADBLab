@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-14
+last_verified: 2026-10-24
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -14,9 +14,21 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 这不是全仓库的严格导入层级：Controller 还组合 `adblab/application` 的纯 Python 用例与结果
 状态，`adblab/presentation` 为运行时服务提供 Qt 适配。`gui/features` 的页面实现和
-`gui/panels/remote_panel.py` 会直接依赖 `models` 或 `services` 中的 worker/service；主窗口也
-负责组装存储、执行与关闭服务。部分页面组合控制器仍位于 `gui/dialogs/*.py`，但它们由
-Workspace 作为 QWidget 承载，不代表独立窗口边界。`core` 仅 `log_service.py` 直接导入 Qt；设置层错误日志经
+`gui/panels/remote_panel.py` 会直接依赖专用 Qt 适配器或 `services`；主窗口也
+负责组装存储、执行与关闭服务。AppManager、FileExplorer、Logcat、Performance、Media 的实际页面和
+协作者位于各自的 `gui/features/` 功能包，旧 `gui/dialogs` 模块保留兼容入口；页面由 Workspace
+作为 QWidget 承载，不代表独立窗口边界。首页与工作区容器分别在 `gui/pages/home.py` 和
+`workspace_containers.py`，旧 `fluent_pages` 静态导出相同类对象。应用解析、查询、写动作和归档事务在
+`services/apps/`，由现有 Qt worker 注入执行/取消及同步通知，worker保留线程、用户准入和翻译。
+文件四种读写事务在`services/file_operations.py`，复用原命令/字节协议与注入执行器；Qt worker
+只适配信号和取消，TransferWorker继续拥有原长进程生命周期。新事务服务不反向导入worker或GUI。
+应用与文件页面直接导入 `adblab/presentation/workers/` 的两个实现；旧 models worker 路径
+通过同模块别名兼容。新 worker 不导入 models/controllers/gui/qfluentwidgets，仍依赖 PySide6、
+执行基础设施及业务服务；其父 presentation/application 包原有聚合保持，不能视为完全懒加载。
+连续发现的 `_ScanThread` 与载荷位于 `adblab/presentation/qt_device_discovery.py`，依赖执行基础设施，
+不反向导入 GUI；MainFrame 保留实例生命周期与同对象旧导出。媒体 Controller 按截图、录屏和诊断
+归入 `controllers/media/`，旧 `_media` 保留组合入口，模型与执行资源归属不变。
+`core` 仅 `log_service.py` 直接导入 Qt；设置层错误日志经
 `set_error_sink` 注入。`CommandRunner`/`ProcessRunner` 位于 `core/exec.py`，`core` 不反向依赖
 `models`。
 

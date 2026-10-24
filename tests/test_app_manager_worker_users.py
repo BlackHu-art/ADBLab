@@ -330,3 +330,161 @@ def test_launch_existing_task_warning_still_reports_success(device, monkeypatch)
     worker.operation_feedback.connect(lambda *args: feedback.append(args))
     worker.run()
     assert done == ["launch"] and feedback[-1][0] == "success"
+
+@pytest.mark.parametrize(('operation', 'cancel_at', 'expected'), [
+    ('load_apps', None, ['user', 'apps']),
+    ('load_apps', 'user', ['user', 'apps']),
+    ('app_snapshot', None, ['user', 'details', 'permissions']),
+    ('app_snapshot', 'user', ['user']),
+    ('app_snapshot', 'details', ['user', 'details']),
+    ('app_details', None, ['user', 'details']),
+    ('permissions', None, ['user', 'permissions']),
+])
+def test_query_signal_order_and_cancellation_boundaries(
+    monkeypatch, operation, cancel_at, expected,
+):
+    worker = module.AppManagerWorker(
+        'synthetic-device', operation, user_id=10, package_name='com.example.app',
+    )
+    events, logs = [], []
+
+    def event(name):
+        events.append(name)
+        if name == cancel_at:
+            worker.abort()
+
+    worker.user_context_loaded.connect(lambda user: event('user'))
+    worker.apps_loaded.connect(lambda apps: event('apps'))
+    worker.app_details_loaded.connect(lambda details: event('details'))
+    worker.permissions_loaded.connect(lambda *parts: event('permissions'))
+    worker.log_message.connect(logs.append)
+    monkeypatch.setattr(worker, '_read_current_user', lambda: 10)
+    commands = []
+
+    def execute(*args, **kwargs):
+        commands.append(args)
+        if 'packages' in args:
+            return CommandResult(True, '' if '-d' in args else
+                                 'package:/data/app/base=com.example.app')
+        return CommandResult(True, 'versionCode=7')
+
+    monkeypatch.setattr(worker, '_adb', execute)
+    worker.run()
+    assert events == expected
+    if operation == 'load_apps':
+        assert logs == ['Fetching installed apps...', 'Loaded 1 apps.']
+        assert len(commands) == 2
+    else:
+        assert commands == [('shell', 'dumpsys package com.example.app')]
+
+
+def test_list_keeps_loaded_log_when_cancelled_during_parsing(monkeypatch):
+    worker = module.AppManagerWorker('synthetic-device', 'load_apps', user_id=10)
+    logs, rows = [], []
+    worker.log_message.connect(logs.append)
+    worker.apps_loaded.connect(rows.append)
+
+    class CancelDuringSplit(str):
+        def splitlines(self):
+            worker.abort()
+            return super().splitlines()
+
+    results = iter([
+        SimpleNamespace(success=True, stdout=CancelDuringSplit('package:/data/app/base=com.demo'),
+                        error='', output='', returncode=0, outcome='succeeded', stale=False),
+        CommandResult(True, ''),
+    ])
+    monkeypatch.setattr(worker, '_adb', lambda *args, **kwargs: next(results))
+    worker._load_apps()
+    assert logs == ['Fetching installed apps...', 'Loaded 1 apps.']
+    assert rows == []
+
+
+@pytest.mark.parametrize('operation', [
+    'load_metadata_batch', 'load_icon_batch', 'load_detail_batch',
+])
+@pytest.mark.parametrize('user_id', [None, 10, True])
+def test_batch_operations_skip_current_user_query(monkeypatch, operation, user_id):
+    worker = module.AppManagerWorker(
+        'synthetic-device', operation, user_id=user_id, packages=['com.example.app'],
+    )
+    commands, deliveries, errors = [], [], []
+    worker.operation_feedback.connect(lambda *args: errors.append(args))
+    worker.app_metadata_loaded.connect(lambda row: deliveries.append('metadata'))
+    worker.app_icon_loaded.connect(lambda *args: deliveries.append('icon'))
+    worker.app_detail_batch.connect(lambda *args: deliveries.append('detail'))
+    monkeypatch.setattr(worker, '_read_current_user',
+                        lambda: pytest.fail('batch 不得读取当前用户'))
+
+    def execute(*args, **kwargs):
+        commands.append(args)
+        return CommandResult(True, '__ADBLAB_PKG_BEGIN_0__\nversionCode=7\n__ADBLAB_PKG_END_0__')
+
+    def icons(device, packages, cancelled, emit, **options):
+        emit('com.example.app', b'fake-icon', 'a' * 64)
+
+    monkeypatch.setattr(worker, '_adb', execute)
+    monkeypatch.setattr(module, 'load_app_icons', icons)
+    monkeypatch.setattr(module, 'load_app_metadata', lambda *args: SimpleNamespace(
+        records={'com.example.app': SimpleNamespace(
+            package='com.example.app', label='应用', version='', installed='',
+            fingerprint='a' * 64, user_id=10,
+        )}, unsupported=False,
+    ))
+    worker.run()
+    if user_id is True:
+        assert deliveries == commands == []
+        assert errors == [('error', '尚未确认应用所属用户，请刷新应用列表后重试。')]
+    else:
+        assert deliveries == [{'load_metadata_batch': 'metadata', 'load_icon_batch': 'icon',
+                               'load_detail_batch': 'detail'}[operation]]
+        assert not errors
+        assert len(commands) == int(operation == 'load_detail_batch')
+
+
+def test_list_failure_callback_keeps_original_outer_exception_scope(monkeypatch):
+    worker = module.AppManagerWorker('synthetic-device', 'load_apps', user_id=10)
+    errors = []
+    monkeypatch.setattr(
+        worker, '_adb', lambda *args, **kwargs: CommandResult(False, error='offline'),
+    )
+
+    def failure(message):
+        errors.append(message)
+        if len(errors) == 1:
+            raise RuntimeError('feedback failed')
+
+    monkeypatch.setattr(worker, '_report_failure', failure)
+    worker._load_apps()
+    assert errors == ['Failed to list apps: offline', 'Error: feedback failed']
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_detail_parsing_cancellation_keeps_current_delivery_and_stops_next(monkeypatch, fallback):
+    from services.apps import queries
+
+    worker = module.AppManagerWorker(
+        'synthetic-device', 'load_detail_batch', packages=['com.one', 'com.two'],
+    )
+    rows, commands = [], []
+    worker.app_detail_batch.connect(lambda *args: rows.append(args))
+    parse = queries.parse_batch_detail
+
+    def parse_then_cancel(package, output):
+        worker.abort()
+        return parse(package, output)
+
+    def execute(*args, **kwargs):
+        commands.append(args)
+        if len(commands) == 1 and fallback:
+            return CommandResult(True, 'no markers')
+        return CommandResult(True, (
+            '__ADBLAB_PKG_BEGIN_0__\nversionName=1.2\nversionCode=7\n__ADBLAB_PKG_END_0__\n'
+            '__ADBLAB_PKG_BEGIN_1__\nversionName=1.2\nversionCode=7\n__ADBLAB_PKG_END_1__'
+        ))
+
+    monkeypatch.setattr(queries, 'parse_batch_detail', parse_then_cancel)
+    monkeypatch.setattr(worker, '_adb', execute)
+    worker.run()
+    assert rows == [('com.one', 'one', '1.2 (7)', '')]
+    assert len(commands) == (2 if fallback else 1)

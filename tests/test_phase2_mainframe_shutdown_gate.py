@@ -11,8 +11,9 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRunnable, Qt, QThread, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
+from adblab.application.action_results import ActionResults
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
@@ -112,6 +113,7 @@ def _frame(controller_shutdown, *, scan_thread=None, deadline=0.5, left_panel=No
     frame._flush_pending_layout_state = Mock()
     frame.left_panel = left_panel or FakeLeftPanel()
     frame.adb_controller = Mock()
+    frame.adb_controller.action_results = ActionResults(lambda _result: None)
     frame.adb_controller.shutdown.side_effect = controller_shutdown
     frame.log_service = Mock()
     frame._workspace_feature_hosts = {}
@@ -125,9 +127,8 @@ def _bind_settings_finalizer(frame, settings):
     """让关机用例只保存自身设置，避免共享事件队列命中其他用例的全局补丁。"""
 
     def flush():
-        if settings._save_timer:
-            settings._save_timer.cancel()
-        settings._save_atomic()
+        if settings.close() is False:
+            raise RuntimeError("应用设置未能完成保存")
 
     frame._flush_shutdown_state = flush
 
@@ -299,7 +300,6 @@ def test_close_accounts_for_inflight_device_connection_client(
     model.command_finished.connect(finished, Qt.ConnectionType.DirectConnection)
     frame = _frame(controller.shutdown, deadline=2 if client_state == "refuses_exit" else 0.5)
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
     try:
         getattr(model, f"{operation}_device_async")("192.0.2.1:5555")
@@ -581,12 +581,11 @@ def test_mainframe_two_stage_close_is_nonblocking_broadcast_first_and_idempotent
         left_panel=FakeLeftPanel(events),
     )
     settings = Mock()
-    settings._save_timer = None
     shutdown_events = []
     frame.log_service.shutdown.side_effect = lambda: shutdown_events.append(
         ("log_shutdown", threading.get_ident())
     )
-    settings._save_atomic.side_effect = lambda: shutdown_events.append(
+    settings.close.side_effect = lambda: shutdown_events.append(
         ("settings_save", threading.get_ident())
     )
     _bind_settings_finalizer(frame, settings)
@@ -620,7 +619,7 @@ def test_mainframe_two_stage_close_is_nonblocking_broadcast_first_and_idempotent
     assert frame._shutdown_residual == ()
     assert len(ticks) >= 5
     assert max(b - a for a, b in pairwise(ticks)) < 0.1
-    settings._save_atomic.assert_called_once()
+    settings.close.assert_called_once()
     frame.log_service.shutdown.assert_called_once()
     assert [name for name, _thread_id in shutdown_events] == [
         "log_shutdown",
@@ -643,7 +642,6 @@ def test_shutdown_callable_failure_is_failed_and_remains_residual():
 
     frame = _frame(broken_shutdown, deadline=0.3)
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
 
     frame.closeEvent(CloseEvent())
@@ -664,8 +662,7 @@ def test_slow_shutdown_finalizer_does_not_block_gui_and_is_reported_residual():
     finalizer_release = threading.Event()
     frame = _frame(lambda: None, deadline=0.09)
     settings = Mock()
-    settings._save_timer = None
-    settings._save_atomic.side_effect = lambda: finalizer_release.wait(1)
+    settings.close.side_effect = lambda: finalizer_release.wait(1)
     _bind_settings_finalizer(frame, settings)
     ticks = []
 
@@ -727,7 +724,6 @@ def test_feature_tasks_are_registered_before_host_shutdown():
     host = FeatureHost()
     frame._workspace_feature_hosts = {"system": host}
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
 
     frame.closeEvent(CloseEvent())
@@ -752,7 +748,6 @@ def test_pairing_tasks_are_registered_before_ui_and_coordinator_shutdown(qt_appl
         prepare_shutdown=lambda: events.append("hide_pairing_secrets"),
     )
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
     frame.closeEvent(CloseEvent())
     _drive_until(qt_application, lambda: frame._close_ready, frame=frame)
@@ -775,7 +770,6 @@ def test_panel_registration_failure_still_schedules_stop_and_reports(qt_applicat
 
     frame = _frame(lambda: None, left_panel=FailingPanel())
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
 
     frame.closeEvent(CloseEvent())
@@ -818,7 +812,6 @@ def test_feature_shutdown_failure_is_reported_and_other_hosts_still_stop(stage):
     frame = _frame(lambda: None)
     frame._workspace_feature_hosts = {name: FeatureHost(name) for name in ("first", "second")}
     settings = Mock()
-    settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
 
     frame.closeEvent(CloseEvent())
@@ -850,7 +843,6 @@ def test_mainframe_deadline_closes_with_residual_without_claiming_resource_zero(
         left_panel=FakeLeftPanel(),
     )
     settings = Mock()
-    settings._save_timer = None
     event = CloseEvent()
     _bind_settings_finalizer(frame, settings)
 
@@ -862,7 +854,7 @@ def test_mainframe_deadline_closes_with_residual_without_claiming_resource_zero(
     assert frame._shutdown_residual
     assert any(item.kind == "controller_shutdown" for item in frame._shutdown_residual)
     assert frame.task_supervisor.supervisor.active_count >= 1
-    settings._save_atomic.assert_called_once()
+    settings.close.assert_called_once()
     frame.log_service.shutdown.assert_called_once()
     blocker.set()
 
@@ -897,7 +889,100 @@ def test_close_controller_flush_shutdown_state_persists_pending_settings(tmp_pat
     finally:
         current = settings_manager.AppSettings._instance
         if current is not None and current is not previous_instance:
-            timer = current._save_timer
-            if timer is not None:
-                timer.cancel()
+            current.close()
         settings_manager.AppSettings._instance = previous_instance
+
+
+@pytest.mark.parametrize("closing", [True, False])
+def test_closing_window_ignores_late_theme_signal(
+    qt_application, isolated_app_settings, monkeypatch, closing,
+):
+    """真实主题信号仅在关闭窗口被拒绝，正常窗口仍保存并刷新。"""
+    import sys
+
+    from gui.styles import BaseStyles
+
+    settings = isolated_app_settings
+    if closing:
+        assert settings.close()
+    class ThemeWindow(QWidget):
+        _on_theme_changed = MainFrame._on_theme_changed
+
+    frame = ThemeWindow()
+    frame._closing = closing
+    frame._refresh_save_path = Mock()
+    frame._refresh_window_chrome_theme = Mock()
+    frame._sync_title_bar_typography = Mock()
+    frame._theme_navigation_widget = Mock()
+    frame.left_panel = Mock()
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+
+    BaseStyles.theme_changed.connect(frame._on_theme_changed)
+    try:
+        BaseStyles.theme_changed.emit("Dark")
+        assert not errors
+        assert settings.get("theme") == ("System" if closing else "Dark")
+        assert frame._refresh_save_path.call_count == (0 if closing else 1)
+        assert settings._save_timer is None if closing else settings._save_timer is not None
+    finally:
+        BaseStyles.theme_changed.disconnect(frame._on_theme_changed)
+        frame.deleteLater()
+
+
+def test_real_settings_timer_is_retained_by_timed_out_finalizer(
+    qt_application, isolated_app_settings, monkeypatch,
+):
+    """阻塞旧 Timer 时 finalizer 持续持有资源，监督超时不阻塞 GUI 心跳。"""
+    from gui.close_controller import CloseController
+    from tests.test_settings_save_lifecycle import WriteGate
+
+    settings = isolated_app_settings
+    gate = WriteGate()
+    settings._write_lock = gate
+    frame = _frame(lambda: None, deadline=0.09)
+    frame._flush_shutdown_state = CloseController(frame)._flush_shutdown_state
+    ticks = []
+    finalizer_threads = []
+    actual_close = settings.close
+
+    def observed_close():
+        finalizer_threads.append(threading.current_thread())
+        return actual_close()
+
+    monkeypatch.setattr(settings, "close", observed_close)
+    try:
+        settings.set("theme", "Dark")
+        old_timer = settings._save_timer
+        assert gate.entered.wait(2)
+        settings.set("theme", "Light")
+        latest_timer = settings._save_timer
+        frame.closeEvent(CloseEvent())
+        frame.closeEvent(CloseEvent())
+        _drive_until(
+            qt_application, lambda: frame._close_ready, timeout=0.4, frame=frame,
+            heartbeat=lambda: ticks.append(time.perf_counter()),
+        )
+        assert frame._close_ready
+        assert len(ticks) >= 5
+        assert any(item.kind == "shutdown_finalizer" for item in frame._shutdown_residual)
+        finalizers = [
+            task for task in frame._shutdown_handles
+            if task._name == "adblab-shutdown-finalizer"
+        ]
+        assert len(finalizers) == 1
+        assert finalizers[0].is_running()
+        assert old_timer.is_alive()
+        gate.release.set()
+        assert finalizers[0].wait(3)
+        assert len(finalizer_threads) == 1
+        finalizer_threads[0].join(3)
+        assert not finalizer_threads[0].is_alive()
+        assert not old_timer.is_alive()
+        assert not latest_timer.is_alive()
+    finally:
+        gate.release.set()
+        for task in frame._shutdown_handles:
+            task.wait(3)
+        for thread in finalizer_threads:
+            thread.join(3)

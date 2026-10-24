@@ -1,6 +1,7 @@
 """主窗分段启动、默认同步兼容和中断清理的无设备回归。"""
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -30,12 +31,14 @@ def startup(qt_application, monkeypatch):
     monkeypatch.setattr("gui.main_frame.LogService", lambda: logger)
     controllers = []
 
-    def controller_factory(_logger, *, load_device_history=True):
+    def controller_factory(_logger, *, apk_picker, device_lifecycle, load_device_history=True):
         controller = Mock()
         controller.signals = Mock()
         controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
         controller.operation_manager.active_snapshot.return_value = ()
         controller.history_load_requested = load_device_history
+        controller.apk_picker = apk_picker
+        controller.device_lifecycle = device_lifecycle
         controllers.append(controller)
         return controller
 
@@ -68,6 +71,39 @@ def page_names(frame):
             for index in range(frame.stackedWidget.count())]
 
 
+@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.parametrize("preloaded", [False, True])
+def test_mainframe_injects_one_picker_without_opening_dialog(
+    startup, monkeypatch, deferred, preloaded,
+):
+    from PySide6.QtWidgets import QFileDialog
+
+    from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
+
+    single = Mock(return_value=("", ""))
+    multiple = Mock(return_value=([], ""))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", single)
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", multiple)
+    create, _bootstrap, _detection, controllers = startup
+    frames = []
+    for _ in range(2):
+        frame = create(deferred_startup=deferred, device_history_loaded=preloaded)
+        if deferred:
+            for _position in STARTUP_POSITIONS:
+                frame.advance_startup()
+        frames.append(frame)
+    single.assert_not_called()
+    multiple.assert_not_called()
+    first, second = controllers
+    assert isinstance(first.apk_picker, QtApkFilePicker)
+    assert isinstance(second.apk_picker, QtApkFilePicker)
+    assert first.apk_picker is not second.apk_picker
+    for controller, frame in zip(controllers, frames):
+        assert controller.history_load_requested is not preloaded
+        assert controller.apk_picker.select_one() is None
+        assert single.call_args.args[0] is frame
+
+
 def test_preloaded_history_is_visible_without_requesting_another_load(startup, monkeypatch):
     from models.device_store import DeviceStore
 
@@ -80,6 +116,61 @@ def test_preloaded_history_is_visible_without_requesting_another_load(startup, m
     history = frame.left_panel.connection_history()
     assert any("192.0.2.10:5555" in str(item) for item in history)
     assert controllers[0].history_load_requested is False
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.parametrize("preloaded", [False, True])
+def test_mainframe_injects_distinct_lazy_device_lifecycles(
+    startup, monkeypatch, deferred, preloaded,
+):
+    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+    from services.adb_pairing import PairingOutcome
+
+    invalidate = Mock()
+    notify = Mock()
+    monkeypatch.setattr(MainFrame, "invalidate_wireless_pairing", invalidate)
+    monkeypatch.setattr(MainFrame, "note_adb_server_restarted", notify)
+    create, _bootstrap, _detection, controllers = startup
+    frames = []
+    for _ in range(2):
+        frame = create(deferred_startup=deferred, device_history_loaded=preloaded)
+        if deferred:
+            for _position in STARTUP_POSITIONS:
+                frame.advance_startup()
+        frames.append(frame)
+    invalidate.assert_not_called()
+    notify.assert_not_called()
+    assert all(frame._adb_pairing is None for frame in frames)
+    assert all(isinstance(c.device_lifecycle, QtDeviceConnectionLifecycle) for c in controllers)
+    assert controllers[0].device_lifecycle is not controllers[1].device_lifecycle
+    outcome = PairingOutcome(
+        request_id=4, context_revision=7, paired=True, connected=True,
+        reason="connected", state="Connected", device_id="synthetic-transport",
+    )
+    guards = []
+    for controller, frame in zip(controllers, frames):
+        assert controller.history_load_requested is not preloaded
+        frame._adb_pairing = SimpleNamespace(
+            context_revision=7, accepts_outcome=lambda value: value is outcome,
+        )
+        guard = controller.device_lifecycle.capture_wireless_history(outcome)
+        assert guard is not None and guard.is_current()
+        guards.append(guard)
+    replacement = SimpleNamespace(
+        _closing=False, _adb_pairing=frames[0]._adb_pairing,
+        invalidate_wireless_pairing=Mock(), note_adb_server_restarted=Mock(),
+    )
+    controllers[0].window_owner = replacement
+    controllers[0].device_lifecycle.invalidate_wireless_pairing("server_restart")
+    controllers[0].device_lifecycle.note_adb_server_restarted()
+    replacement.invalidate_wireless_pairing.assert_called_once_with("server_restart")
+    replacement.note_adb_server_restarted.assert_called_once_with()
+    assert not guards[0].is_current()
+    assert guards[1].is_current()
+    invalidate.assert_not_called()
+    notify.assert_not_called()
+    for frame in frames:
+        frame._adb_pairing = None
 
 
 @pytest.mark.parametrize("preloaded", [False, True])

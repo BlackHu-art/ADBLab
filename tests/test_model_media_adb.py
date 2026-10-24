@@ -1767,7 +1767,7 @@ def test_recording_start_submits_background_save_once_without_duration_timer():
     records = ScreenRecordUseCase()
     records.start("device-1", "b1", "C:/tmp", 10)
     controller = SimpleNamespace(screen_records=records, _emit_operation=Mock(), _auto_pull=Mock())
-    with patch("controllers._media.QTimer.singleShot") as timer:
+    with patch("PySide6.QtCore.QTimer.singleShot") as timer:
         ADBMediaMixin._process_start_screen_record_result(controller, {
             "success": True, "device_ip": "device-1", "batch_id": "b1",
             "remote_path": "/sdcard/video.mp4", "filename": "video.mp4", "duration": 10,

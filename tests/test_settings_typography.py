@@ -150,6 +150,33 @@ def test_reset_cancels_pending_accent_color(qt_application, settings_page, monke
 
 
 @pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
+def test_initial_settings_reflow_uses_final_path_font_metrics(
+    qt_application, settings_page, width, font_size,
+):
+    page, values, writes, _frame = settings_page
+    values["ui_font_size"] = font_size
+    BaseStyles.reload_from_settings()
+    page.resize(width, 640)
+    page.show()
+    _settle_settings(qt_application, page)
+    path = page.save_card.contentLabel
+    assert path.height() == path.fontMetrics().height()
+    initial = (
+        page.save_card.height(), page.save_card.parentWidget().height(),
+        page.widget().height(), page.verticalScrollBar().maximum(),
+    )
+
+    page._reflow_settings()
+    _settle_settings(qt_application, page)
+
+    assert (
+        page.save_card.height(), page.save_card.parentWidget().height(),
+        page.widget().height(), page.verticalScrollBar().maximum(),
+    ) == initial
+    assert not writes
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
 def test_diagnostics_card_and_dynamic_summary_remain_inside_visible_ancestors(
     qt_application, settings_page, width, font_size,
 ):

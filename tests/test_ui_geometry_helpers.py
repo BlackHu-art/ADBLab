@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import gc
+import subprocess
+import sys
+import textwrap
+import threading
+import weakref
 from builtins import ExceptionGroup
 from dataclasses import replace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QThread, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QWidget
 from shiboken6 import delete, isValid
@@ -237,3 +243,231 @@ def test_isolated_ui_state_accepts_window_deleted_by_its_shutdown(qt_application
     with pytest.raises(StopIteration):
         next(isolation)
     assert not isValid(window)
+
+
+class _ControlledCleanupThread(QThread):
+    """不访问外部资源，清理回归可在 finally 可靠解除阻塞。"""
+
+    def __init__(self, entered, release, parent):
+        super().__init__(parent)
+        self.entered = entered
+        self.release = release
+
+    def run(self):
+        self.entered.set()
+        self.release.wait(10)
+
+
+def test_isolated_ui_state_prepares_owner_and_joins_active_child_before_deletion(qt_application):
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}}, None)
+    next(isolation)
+    entered, release = threading.Event(), threading.Event()
+    prepared = []
+
+    class PreparedWindow(QWidget):
+        def _prepare_ui_for_shutdown(self):
+            prepared.append(True)
+            # 模拟既有异步清理：等待线程时仍须允许 GUI 回调兑现。
+            QTimer.singleShot(0, release.set)
+
+    window = PreparedWindow()
+    worker = _ControlledCleanupThread(entered, release, window)
+    worker.start()
+    assert entered.wait(2)
+    try:
+        with pytest.raises(StopIteration):
+            next(isolation)
+        assert prepared == [True]
+        assert not isValid(window)
+        assert not isValid(worker)
+    finally:
+        release.set()
+        if isValid(worker):
+            assert worker.wait(2000)
+        if isValid(window):
+            assert cleanup_ui_windows((window,), cleanup_records={}) == []
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("shutdown_raises", [False, True])
+def test_ui_cleanup_timeout_retains_owner_and_continues_other_windows(
+    qt_application, shutdown_raises,
+):
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    entered, release = threading.Event(), threading.Event()
+    failure = RuntimeError("synthetic shutdown failure")
+
+    class BlockedWindow(QWidget):
+        def shutdown(self):
+            if shutdown_raises:
+                raise failure
+
+    window = BlockedWindow()
+    other_window = QWidget()
+    worker = _ControlledCleanupThread(entered, release, window)
+    worker.start()
+    assert entered.wait(2)
+    owner_ref = weakref.ref(window)
+    records = {}
+    try:
+        errors = cleanup_ui_windows((window, other_window), cleanup_records=records, timeout_ms=5)
+        assert len(errors) == 1 + int(shutdown_raises)
+        if shutdown_raises:
+            assert errors[0] is failure
+        assert isinstance(errors[-1], TimeoutError)
+        assert records[id(window)]["retained"] is True
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(other_window)
+        assert isValid(window)
+        del window
+        gc.collect()
+        assert owner_ref() is not None
+        assert worker.isRunning()
+    finally:
+        release.set()
+        assert worker.wait(2000)
+        owner = owner_ref()
+        if owner is not None and isValid(owner):
+            # 复核已退出线程后须移除保留引用，失败的 shutdown 仍如实返回。
+            cleanup_ui_windows((owner,), cleanup_records={})
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert owner is not None and not isValid(owner)
+        # 预期异常的 traceback 也会持有 self；这里只衡量清理保留表的引用。
+        failure.__traceback__ = None
+        del owner
+        gc.collect()
+        assert owner_ref() is None
+
+
+def test_ui_cleanup_close_error_still_joins_stopped_children_and_releases_windows(
+    qt_application, monkeypatch,
+):
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    window, other_window = QWidget(), QWidget()
+    entered, release = threading.Event(), threading.Event()
+    worker = _ControlledCleanupThread(entered, release, window)
+    worker.start()
+    release.set()
+    assert worker.wait(2000)
+    failure = RuntimeError("synthetic close failure")
+
+    def fail_close():
+        raise failure
+
+    monkeypatch.setattr(window, "close", fail_close)
+    window.show()
+    try:
+        errors = cleanup_ui_windows((window, other_window), cleanup_records={})
+        assert errors == [failure]
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(window)
+        assert not isValid(other_window)
+    finally:
+        if isValid(window):
+            window.hide()
+            cleanup_ui_windows((window,), cleanup_records={})
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_ui_cleanup_retries_retained_owner_even_when_no_new_window_is_supplied(qt_application):
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    window = QWidget()
+    entered, release = threading.Event(), threading.Event()
+    worker = _ControlledCleanupThread(entered, release, window)
+    worker.start()
+    assert entered.wait(2)
+    try:
+        errors = cleanup_ui_windows((window,), cleanup_records={}, timeout_ms=0)
+        assert len(errors) == 1 and isinstance(errors[0], TimeoutError)
+        release.set()
+        assert worker.wait(2000)
+        assert cleanup_ui_windows((), cleanup_records={}, timeout_ms=0) == []
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(window)
+    finally:
+        release.set()
+        if isValid(worker):
+            assert worker.wait(2000)
+        if isValid(window):
+            cleanup_ui_windows((window,), cleanup_records={})
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.mark.parametrize("delete_mode", ["automatic", "posted"])
+def test_ui_cleanup_retains_live_thread_owner_when_deletion_was_already_requested(delete_mode):
+    """危险析构断言在受控子进程中执行，红灯不能杀死父 pytest。"""
+    script = textwrap.dedent("""
+        import ctypes
+        import sys
+        import threading
+        from PySide6.QtCore import QCoreApplication, QEvent, QThread, Qt
+        from PySide6.QtWidgets import QApplication, QWidget
+        from shiboken6 import isValid
+        from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+        if sys.platform == "win32":
+            ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
+        app = QApplication([])
+        entered, release = threading.Event(), threading.Event()
+        class Worker(QThread):
+            def run(self):
+                entered.set()
+                release.wait(5)
+        window = QWidget()
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        window.show()
+        worker = Worker(window)
+        worker.start()
+        assert entered.wait(2)
+        if sys.argv[1] == "posted":
+            window.deleteLater()
+        try:
+            errors = cleanup_ui_windows((window,), cleanup_records={}, timeout_ms=0)
+            assert len(errors) == 1 and isinstance(errors[0], TimeoutError)
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            assert isValid(window) and worker.isRunning()
+        finally:
+            release.set()
+            if isValid(worker):
+                assert worker.wait(2000)
+            if isValid(window):
+                assert cleanup_ui_windows((window,), cleanup_records={}, timeout_ms=0) == []
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            assert not isValid(window)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-X", "faulthandler", "-c", script, delete_mode],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, (
+        f"child exit {result.returncode:#x}\n{result.stdout}\n{result.stderr}"
+    )
+
+
+@pytest.mark.parametrize("advanced_stages", [0, 1, 2])
+def test_ui_cleanup_uses_real_abort_boundary_for_incomplete_mainframe(
+    qt_application, monkeypatch, advanced_stages,
+):
+    from tests.test_mainframe_startup import startup
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    startup_scope = startup.__wrapped__(qt_application, monkeypatch)
+    create, _bootstrap, _detection, _controllers = next(startup_scope)
+    frame = create(deferred_startup=True)
+    aborted = []
+    frame.startup_aborted.connect(lambda: aborted.append(True))
+    try:
+        for _ in range(advanced_stages):
+            frame.advance_startup()
+        assert cleanup_ui_windows((frame,), cleanup_records={}) == []
+        assert aborted == [True]
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(frame)
+    finally:
+        with pytest.raises(StopIteration):
+            next(startup_scope)

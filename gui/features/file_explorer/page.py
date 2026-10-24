@@ -1,0 +1,1433 @@
+"""提供设备文件浏览、传输、编辑和管理页。"""
+
+import weakref
+
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QPainter
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QSizePolicy,
+    QSplitter,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    CheckBox,
+    CommandBar,
+    InfoBadge,
+    InfoLevel,
+    LineEdit,
+    PlainTextEdit,
+    PushButton,
+    RoundMenu,
+    SearchLineEdit,
+    TableWidget,
+    TransparentToolButton,
+)
+
+from adblab.presentation.workers.file_explorer import ADBWorker, TransferWorker
+from gui.dialogs.fluent_dialog import FluentMessageBox
+from gui.dialogs.lifecycle import (
+    alive_callback,
+    is_qobject_alive,
+    safe_disconnect,
+)
+from gui.i18n import tr
+from gui.styles import BaseStyles
+from gui.styles.fluent import (
+    add_menu_action,
+    apply_focus_indicator,
+    apply_font_role,
+    apply_label_role,
+    apply_reading_surface,
+    create_transient_menu,
+    use_smooth_scroll,
+)
+from gui.styles.reading_surface import stop_reading_surface
+from gui.styles.typography import FontRole
+from services import file_explorer as explorer_service
+
+from .image import FileExplorerImagePreview
+from .list import (
+    FileExplorerItemDelegate,
+    FileExplorerList,
+    file_explorer_icon,
+)
+from .ops import FileExplorerOps
+from .transfers import FileTransferCoordinator
+from .view import FileExplorerView
+
+__all__ = ["FileExplorerPage"]
+
+
+class _FileExplorerStatusLabel(CaptionLabel):
+    """状态保持单行，完整目录和操作信息留给悬停与辅助技术读取。"""
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(8, super().minimumSizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(BaseStyles.get_color("TEXT_SECONDARY"))
+        painter.drawText(
+            self.contentsRect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.fontMetrics().elidedText(
+                self.text().replace("\n", " "), Qt.TextElideMode.ElideRight,
+                self.contentsRect().width(),
+            ),
+        )
+        painter.end()
+
+
+class FileExplorerPage(QWidget):
+    """按设备持有状态的页内文件浏览器会话。"""
+
+    refresh_action: QAction
+    mkdir_action: QAction
+    touch_action: QAction
+    pull_action: QAction
+    push_action: QAction
+    delete_action: QAction
+
+    dispose_ready = Signal()
+    operation_availability_changed = Signal(bool)
+
+    TYPE_COL = 0
+    NAME_COL = 1
+    SIZE_COL = 2
+    MODIFIED_COL = 3
+
+    TEXT_EXTS = {
+        "txt",
+        "log",
+        "json",
+        "xml",
+        "html",
+        "csv",
+        "md",
+        "ini",
+        "conf",
+        "prop",
+        "sh",
+        "bat",
+        "py",
+        "js",
+        "css",
+        "cpp",
+        "h",
+        "hpp",
+        "c",
+        "rc",
+        "",
+    }
+    IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "bmp"}
+    ARCHIVE_EXTS = {"zip", "gz", "tar", "tgz", "xz", "7z", "rar"}
+    AUDIO_EXTS = {"mp3", "wav", "ogg", "m4a", "aac", "flac"}
+    VIDEO_EXTS = {"mp4", "mkv", "webm", "mov", "avi"}
+    def __init__(self, parent=None, device_ip: str = "", task_supervisor=None):
+        super().__init__(parent)
+        self._list_controller = FileExplorerList(self)
+        self._view_controller = FileExplorerView(self)
+        self._ops_controller = FileExplorerOps(self)
+        self._preview_text_source: explorer_service.TextPreview | None = None
+        self.device_ip = device_ip
+        self._device_connected = bool(device_ip)
+        self._device_selected = bool(device_ip)
+        self.current_path = "/storage/emulated/0"
+        self.history = []
+        self.forward_stack = []
+        self.clipboard = []
+        self.copy_mode = False
+        self.symlink_targets = {}
+        self._workers = []
+        self._cleanup_workers = set()
+        self._transfers = FileTransferCoordinator(self, task_supervisor)
+        self._worker_ui_bindings = {}
+        self._worker_lifecycle_handlers = {}
+        self._refresh_request_id = 0
+        self._active_refresh = None
+        self._active_refresh_worker = None
+        self._pending_navigation = None
+        self._directory_loading = False
+        self._closing = False
+        self._disposing = False
+        self._disposed = False
+        self._close_when_disposed = False
+        self._activated_once = False
+        self._loaded_once = False
+        self._active = False
+        self._shutdown_registered = False
+        self._preview_active = False
+        self._preview_request_id = 0
+        self._preview_full_path = ""
+        self._preview_name = ""
+        self._sort_col = 0
+        self._sort_order = Qt.SortOrder.AscendingOrder
+
+        self.setWindowTitle(tr('File Explorer - {value0}').format(value0=device_ip))
+        self.setWindowIcon(file_explorer_icon("folder-open.svg"))
+        self.setObjectName("fileExplorerPage")
+        self.setProperty("feature", "file_explorer")
+        self.setProperty("deviceConnected", self._device_connected)
+        self.setMinimumSize(0, 0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._init_ui()
+        self._sync_directory_controls()
+        self._apply_theme()
+        BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
+
+    def prepare_for_workspace(self) -> None:
+        """由工作区隐藏重复标题，保留宿主统一的设备会话信息。"""
+        self.set_device_selected(False)
+        self.set_workspace_embedded(True)
+
+    def set_workspace_embedded(self, embedded: bool) -> None:
+        """切换页头和内容留白，不改变目录、预览、worker 或关闭契约。"""
+        self.setProperty("workspace_embedded", bool(embedded))
+        self.header_card.setVisible(not embedded)
+        layout = self.layout()
+        assert layout is not None
+        margins = (32, 6, 32, 30) if embedded else (8, 6, 8, 6)
+        layout.setContentsMargins(*margins)
+        self._reflow_top_controls()
+        self._sync_preview_layout()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+        layout.setContentsMargins(8, 6, 8, 6)
+
+        # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
+        # 页面内容顶部统一为 Fluent CardWidget 卡片页头。
+        # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
+        self.header_card = CardWidget()
+        self.header_card.setObjectName("dialogHeaderCard")
+        self.header_card.setBorderRadius(BaseStyles.RADIUS_LG)
+        hl = QVBoxLayout(self.header_card)
+        hl.setContentsMargins(12, 8, 12, 8)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self.dialog_title = apply_label_role(
+            BodyLabel(tr("File Explorer")), FontRole.TITLE, color_key="TITLE_COLOR"
+        )
+        self.dialog_title.setObjectName("dialogTitle")
+        self.status_badge = InfoBadge.info(tr("No device"), self.header_card)
+        self.status_badge.setProperty("fontRole", FontRole.UI.value)
+        self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.status_badge.setToolTip(tr("Device availability for file operations"))
+        title_row.addWidget(self.dialog_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.status_badge)
+        self.dialog_subtitle = apply_label_role(
+            BodyLabel(tr("Browse and manage device files")),
+            FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
+        self.dialog_subtitle.setObjectName("dialogSubtitle")
+        self.dialog_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self.dialog_subtitle)
+        layout.addWidget(self.header_card)
+
+        self._path_layout = QGridLayout()
+        self._path_layout.setSpacing(4)
+        self._path_label = apply_label_role(BodyLabel(tr("Path:")), FontRole.UI)
+        self.path_field = LineEdit()
+        self.path_field.setText(self.current_path)
+        self._path_label.setBuddy(self.path_field)
+        self.path_field.setAccessibleName(tr("Remote path"))
+        self.path_field.returnPressed.connect(
+            lambda: self._navigate(self.path_field.text().strip())
+        )
+        self.search_field = SearchLineEdit()
+        self.search_field.setPlaceholderText(tr("Search..."))
+        self.search_field.setAccessibleName(tr("File search"))
+        self.search_field.textChanged.connect(self._filter)
+        self.search_field.returnPressed.connect(self.search_field.search)
+        # 显式搜索沿用当前目录的本地筛选，不导航或重新读取设备目录。
+        self.search_field.searchSignal.connect(self._filter)
+        layout.addLayout(self._path_layout)
+
+        self._path_navigation = QWidget(self)
+        navigation_layout = QHBoxLayout(self._path_navigation)
+        navigation_layout.setContentsMargins(0, 0, 0, 0)
+        navigation_layout.setSpacing(4)
+        self.back_btn = TransparentToolButton()
+        self.back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
+        self.back_btn.setIconSize(QSize(14, 14))
+        self.back_btn.setToolTip(tr("Return to the previous folder"))
+        self.back_btn.setAccessibleName(tr("Back"))
+        self.back_btn.clicked.connect(self._go_back)
+        self.back_btn.setEnabled(False)
+        self.fwd_btn = TransparentToolButton()
+        self.fwd_btn.setIcon(file_explorer_icon("arrow-right.svg"))
+        self.fwd_btn.setIconSize(QSize(14, 14))
+        self.fwd_btn.setToolTip(tr("Return to the next folder"))
+        self.fwd_btn.setAccessibleName(tr("Forward"))
+        self.fwd_btn.clicked.connect(self._go_forward)
+        self.fwd_btn.setEnabled(False)
+        self.up_btn = TransparentToolButton()
+        self.up_btn.setIcon(file_explorer_icon("arrow-up.svg"))
+        self.up_btn.setIconSize(QSize(14, 14))
+        self.up_btn.setToolTip(tr("Open the parent folder"))
+        self.up_btn.setAccessibleName(tr("Parent folder"))
+        self.up_btn.clicked.connect(self._go_parent)
+        for button in (self.back_btn, self.fwd_btn, self.up_btn):
+            navigation_layout.addWidget(button)
+
+        self.command_bar = CommandBar(self)
+        self.command_bar.setObjectName("fileExplorerCommandBar")
+        self.command_bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # 按钮自带文字留白，零外间距也避免原生溢出计算遗漏末项间距而裁切更多按钮。
+        self.command_bar.setSpaing(0)
+        self.command_bar.setIconSize(QSize(16, 16))
+        self.command_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.command_bar.moreButton.setAccessibleName(tr("更多"))
+        self.command_bar.moreButton.setToolTip(tr("更多文件操作"))
+        # QAction 同时供主栏和溢出菜单使用，操作资格只能写入这一个状态来源。
+        action_specs = (
+            ("refresh", "Refresh", "Reload the current device folder",
+             "arrows-clockwise.svg", self._refresh),
+            ("mkdir", "New Folder", "Create a folder in the current location",
+             "folder-plus.svg", self._mkdir),
+            ("touch", "New File", "Create an empty file in the current location",
+             "file-plus.svg", self._touch),
+            ("pull", "Pull", "Copy selected items to the computer",
+             "download-simple.svg", self._pull_selected),
+            ("push", "Push", "Copy a local file to the current device folder",
+             "upload-simple.svg", self._push_file),
+            ("delete", "Delete", "Remove the selected device items",
+             "trash.svg", self._delete_selected),
+        )
+        for name, text, tooltip, icon, callback in action_specs:
+            action = QAction(file_explorer_icon(icon), tr(text), self)
+            action.setObjectName(f"fileExplorer{name.title()}Action")
+            action.setToolTip(tr(tooltip))
+            action.triggered.connect(callback)
+            setattr(self, f"{name}_action", action)
+            self.command_bar.addAction(action)
+            if name in {"refresh", "touch", "push"}:
+                self.command_bar.addSeparator()
+        self.root_cb = CheckBox()
+        self.root_cb.setText(tr("Root"))
+        self.root_cb.setToolTip(tr("Use root access (su)"))
+        self.root_cb.setAccessibleName(tr("Use root access"))
+        self.root_cb.toggled.connect(self._list_controller.cancel_link_requests)
+        self.root_cb.toggled.connect(self._view_controller.invalidate_cache)
+        command_layout = QHBoxLayout()
+        command_layout.setContentsMargins(0, 0, 0, 0)
+        command_layout.setSpacing(8)
+        command_layout.addWidget(self.command_bar, 1)
+        command_layout.addWidget(self.root_cb)
+        layout.addLayout(command_layout)
+        self._reflow_top_controls()
+
+        self.browser_panel = QWidget(self)
+        self.browser_panel.setObjectName("fileExplorerBrowserPanel")
+        browser_layout = QVBoxLayout(self.browser_panel)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.setSpacing(4)
+
+        self.table = use_smooth_scroll(TableWidget(self.browser_panel))
+        self.table.setItemDelegate(FileExplorerItemDelegate(self.table))
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
+        self.table.setIconSize(QSize(16, 16))
+        self.table.setColumnCount(4)
+        self.table.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.table.setHorizontalHeaderLabels([tr("Type"), tr("Name"), tr("Size"), tr("Modified")])
+        self.table.verticalHeader().setVisible(False)
+        for i in (self.TYPE_COL, self.NAME_COL, self.SIZE_COL, self.MODIFIED_COL):
+            self.table.horizontalHeader().setSectionResizeMode(
+                i, QHeaderView.ResizeMode.Interactive
+            )
+        self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        self.table.cellDoubleClicked.connect(self._on_double_click)
+        self.table.horizontalHeader().sectionClicked.connect(self._header_clicked)
+        type_header = self.table.horizontalHeader()
+        type_width = max(
+            self.table.iconSize().width() + 24,
+            type_header.fontMetrics().horizontalAdvance(tr("Type")) + 24,
+        )
+        self.table.setColumnWidth(self.TYPE_COL, type_width)
+        self.table.setColumnWidth(self.NAME_COL, 360)
+        self.table.setColumnWidth(self.SIZE_COL, 92)
+        self.table.setColumnWidth(self.MODIFIED_COL, 140)
+        # 末列承接面板剩余宽度，名称列保持可拖动且不被窗口缩放重置。
+        self.table.horizontalHeader().setStretchLastSection(True)
+        browser_layout.addWidget(self.table, 1)
+
+        self.status_bar = apply_label_role(
+            _FileExplorerStatusLabel(tr("Ready")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self.status_bar.setAccessibleName(tr("File explorer status"))
+        browser_layout.addWidget(self.status_bar)
+
+        self.preview_panel = self._build_preview_panel()
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.content_splitter.setObjectName("fileExplorerContentSplitter")
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.addWidget(self.browser_panel)
+        self.content_splitter.addWidget(self.preview_panel)
+        self.content_splitter.setStretchFactor(0, 3)
+        self.content_splitter.setStretchFactor(1, 2)
+        self.content_splitter.setSizes([620, 380])
+        layout.addWidget(self.content_splitter, 1)
+        self._sync_preview_layout()
+
+    def _build_preview_panel(self) -> CardWidget:
+        """构建可在宽屏侧栏和窄屏子页之间切换的预览栈。"""
+
+        panel = CardWidget(self)
+        panel.setObjectName("fileExplorerPreviewPanel")
+        panel.setBorderRadius(BaseStyles.RADIUS_LG)
+        panel.setMinimumWidth(0)
+        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(10, 8, 10, 10)
+        panel_layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        self.preview_back_btn = PushButton(panel)
+        self.preview_back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
+        self.preview_back_btn.setToolTip(tr("Back to file list"))
+        self.preview_back_btn.setAccessibleName(tr("Back to file list"))
+        self.preview_back_btn.clicked.connect(self._close_preview)
+        header.addWidget(self.preview_back_btn)
+        self.preview_title = apply_label_role(
+            BodyLabel(tr("Preview")), FontRole.UI, color_key="TITLE_COLOR"
+        )
+        self.preview_title.setWordWrap(True)
+        self.preview_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        header.addWidget(self.preview_title, 1)
+        self.preview_close_btn = PushButton(panel)
+        self.preview_close_btn.setIcon(file_explorer_icon("x.svg"))
+        self.preview_close_btn.setToolTip(tr("Close preview"))
+        self.preview_close_btn.setAccessibleName(tr("Close preview"))
+        self.preview_close_btn.clicked.connect(self._close_preview)
+        header.addWidget(self.preview_close_btn)
+        panel_layout.addLayout(header)
+
+        self.preview_stack = QStackedWidget(panel)
+        self.preview_stack.setObjectName("fileExplorerPreviewStack")
+
+        self.preview_empty_page = QWidget(self.preview_stack)
+        empty_layout = QVBoxLayout(self.preview_empty_page)
+        self.preview_empty_label = apply_label_role(
+            BodyLabel(tr("Select a text file, image, or script output to preview it here.")),
+            FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
+        self.preview_empty_label.setWordWrap(True)
+        self.preview_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch(1)
+        empty_layout.addWidget(self.preview_empty_label)
+        empty_layout.addStretch(1)
+        self.preview_stack.addWidget(self.preview_empty_page)
+
+        self.preview_loading_page = QWidget(self.preview_stack)
+        loading_layout = QVBoxLayout(self.preview_loading_page)
+        self.preview_loading_label = apply_label_role(
+            BodyLabel(tr("Loading preview…")), FontRole.UI, color_key="TEXT_SECONDARY"
+        )
+        self.preview_loading_label.setWordWrap(True)
+        self.preview_loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_layout.addStretch(1)
+        loading_layout.addWidget(self.preview_loading_label)
+        loading_layout.addStretch(1)
+        self.preview_stack.addWidget(self.preview_loading_page)
+
+        self.preview_text_page = QWidget(self.preview_stack)
+        text_layout = QVBoxLayout(self.preview_text_page)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_text_edit = PlainTextEdit(self.preview_text_page)
+        apply_reading_surface(self.preview_text_edit)
+        self.preview_text_edit.setAccessibleName(tr("File text preview"))
+        text_layout.addWidget(self.preview_text_edit, 1)
+        text_actions = QHBoxLayout()
+        self.preview_save_as_btn = PushButton(tr("Save As…"), self.preview_text_page)
+        self.preview_save_as_btn.setToolTip(tr("Save the edited text to the computer"))
+        self.preview_save_as_btn.clicked.connect(self._save_preview_as)
+        self.preview_save_device_btn = PushButton(tr("Save to Device"), self.preview_text_page)
+        self.preview_save_device_btn.setToolTip(tr("Write the edited text back to the device"))
+        self.preview_save_device_btn.clicked.connect(self._save_preview_to_device)
+        text_actions.addWidget(self.preview_save_as_btn)
+        text_actions.addWidget(self.preview_save_device_btn)
+        text_actions.addStretch(1)
+        text_layout.addLayout(text_actions)
+        self.preview_stack.addWidget(self.preview_text_page)
+
+        self.preview_image = FileExplorerImagePreview(self.preview_stack)
+        self.preview_image.closeRequested.connect(self._close_preview)
+        self.preview_image.image_close.hide()
+        self.preview_stack.addWidget(self.preview_image)
+
+        self.preview_output = PlainTextEdit(self.preview_stack)
+        self.preview_output.setReadOnly(True)
+        apply_reading_surface(self.preview_output)
+        self.preview_output.setAccessibleName(tr("Script output preview"))
+        self.preview_stack.addWidget(self.preview_output)
+
+        panel_layout.addWidget(self.preview_stack, 1)
+        self.preview_stack.setCurrentWidget(self.preview_empty_page)
+        return panel
+
+    def _show_preview_loading(self, title: str) -> None:
+        self._preview_active = True
+        self.preview_title.setText(title)
+        self.preview_loading_label.setText(tr('Loading {value0}…').format(value0=title))
+        self.preview_stack.setCurrentWidget(self.preview_loading_page)
+        self._sync_preview_layout()
+
+    def _begin_preview_request(self, title: str) -> int:
+        self._view_controller.cancel_preview()
+        self._preview_request_id += 1
+        self._preview_text_source = None
+        self._preview_full_path = ""
+        self._show_preview_loading(title)
+        return self._preview_request_id
+
+    def _preview_request_is_current(self, request_id: int) -> bool:
+        return not self._disposing and request_id == self._preview_request_id
+
+    def _show_text_preview(
+        self,
+        name: str,
+        content: str,
+        full_path: str,
+        *,
+        editable: bool = True,
+        source: explorer_service.TextPreview | None = None,
+    ) -> None:
+        self._preview_active = True
+        self._preview_name = name
+        self._preview_full_path = full_path
+        self._preview_text_source = source or explorer_service.decode_text_preview(
+            content.encode("utf-8"), len(content.encode("utf-8")),
+        )
+        self.preview_title.setText(name)
+        self.preview_text_edit.setPlainText(content)
+        self.preview_text_edit.document().setModified(False)
+        self.preview_text_edit.setReadOnly(not editable)
+        self.preview_save_as_btn.setEnabled(editable)
+        self.preview_save_device_btn.setEnabled(
+            editable and self._can_operate() and not self._ops_controller.saving,
+        )
+        self.preview_stack.setCurrentWidget(self.preview_text_page)
+        self._sync_preview_layout()
+        if not editable:
+            self.status_bar.setText(
+                tr("Preview truncated; editing is disabled")
+                if source is None or source.truncated
+                else tr("Invalid UTF-8 text; editing is disabled")
+            )
+        else:
+            self.status_bar.setText(tr('Previewing {value0}').format(value0=name))
+        self.preview_text_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _show_image_preview(self, name: str, pixmap, native_size=None) -> None:
+        self._preview_active = True
+        self._preview_name = name
+        self._preview_full_path = ""
+        self._preview_text_source = None
+        self.preview_title.setText(name)
+        self.preview_image.set_image_source(pixmap, name, native_size)
+        self.preview_stack.setCurrentWidget(self.preview_image)
+        self._sync_preview_layout()
+
+    def _show_output_preview(self, name: str, output: str, *, error: bool = False) -> None:
+        self._preview_active = True
+        self._preview_name = name
+        self._preview_full_path = ""
+        self._preview_text_source = None
+        self.preview_title.setText(tr('Output: {value0}').format(value0=name))
+        self.preview_output.setPlainText(output)
+        self.preview_output.setProperty("previewError", bool(error))
+        self.preview_stack.setCurrentWidget(self.preview_output)
+        self.status_bar.setText(
+            tr("Script failed: {value0}").format(value0=name)
+            if error
+            else tr("Script finished: {value0}").format(value0=name)
+        )
+        self._sync_preview_layout()
+        self.preview_output.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _show_preview_error(self, title: str, message: str) -> None:
+        self._preview_active = True
+        self._preview_text_source = None
+        self.preview_title.setText(title)
+        self.preview_output.setPlainText(message or tr("Unable to load preview"))
+        self.preview_output.setProperty("previewError", True)
+        self.preview_stack.setCurrentWidget(self.preview_output)
+        self.status_bar.setText(tr('Preview failed: {value0}').format(value0=title))
+        self._sync_preview_layout()
+
+    def _close_preview(self) -> None:
+        """收起预览并使在途结果失效，释放图片后把焦点还给文件列表。"""
+
+        self._view_controller.cancel_preview()
+        self._preview_request_id += 1
+        self.preview_image.release_image_source()
+        self._preview_active = False
+        self._preview_name = ""
+        self._preview_full_path = ""
+        self._preview_text_source = None
+        self.preview_title.setText(tr("Preview"))
+        self.preview_stack.setCurrentWidget(self.preview_empty_page)
+        self._sync_preview_layout()
+        if self.browser_panel.isVisible():
+            self.table.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _save_preview_as(self) -> None:
+        content = self._preview_bytes()
+        if self._preview_name and content is not None:
+            self._save_as(self._preview_name, content)
+
+    def _preview_bytes(self) -> bytes | None:
+        """只允许完整正文保存；未编辑时返回读取快照，避免 Qt 换行转换。"""
+        source = self._preview_text_source
+        if (source is None or not source.editable or self.preview_text_edit.isReadOnly()
+                or self.preview_stack.currentWidget() is not self.preview_text_page):
+            return None
+        return source.encode(
+            self.preview_text_edit.toPlainText(),
+            modified=self.preview_text_edit.document().isModified(),
+        )
+
+    def _save_preview_to_device(self) -> None:
+        content = self._preview_bytes()
+        if self._preview_name and self._preview_full_path and content is not None:
+            self._save_to_device(
+                self._preview_name,
+                content,
+                self._preview_full_path,
+            )
+
+    def _sync_preview_layout(self) -> None:
+        """仅为活动预览分配空间；宽屏并排显示，窄屏以带返回按钮的子页显示。"""
+
+        if not hasattr(self, "content_splitter"):
+            return
+        width = self.contentsRect().width()
+        if bool(self.property("workspace_embedded")):
+            # 原窗口左右各 24 像素留白现位于内容中，预览断点仍按原有效宽度计算。
+            width -= 48
+        narrow = width < 880
+        self.preview_back_btn.setVisible(narrow)
+        self.preview_close_btn.setVisible(not narrow)
+        if narrow:
+            self.browser_panel.setVisible(not self._preview_active)
+            self.preview_panel.setVisible(self._preview_active)
+            if self._preview_active:
+                self.content_splitter.setSizes([0, max(1, self.content_splitter.width())])
+            else:
+                self.content_splitter.setSizes([max(1, self.content_splitter.width()), 0])
+        else:
+            self.browser_panel.show()
+            self.preview_panel.setVisible(self._preview_active)
+            if self._preview_active and min(self.content_splitter.sizes() or [0]) <= 0:
+                self.content_splitter.setSizes([620, 380])
+
+    def _set_directory_loading(self, loading: bool) -> None:
+        self._directory_loading = bool(loading)
+        self._sync_directory_controls()
+
+    def _sync_directory_controls(self) -> None:
+        """根据设备和目录请求状态统一维护文件操作可用性。"""
+
+        if not hasattr(self, "refresh_action"):
+            return
+        available = self._can_operate()
+        interactive = (
+            available and not self._directory_loading and not self._ops_controller.mutating
+        )
+        self.path_field.setEnabled(interactive)
+        self.root_cb.setEnabled(interactive)
+        self.up_btn.setEnabled(interactive)
+        for action in self.command_bar.actions():
+            action.setEnabled(interactive)
+        self.back_btn.setEnabled(interactive and bool(self.history))
+        self.fwd_btn.setEnabled(interactive and bool(self.forward_stack))
+        self.refresh_action.setEnabled(available)
+        # 失选和离线仍可滚动查看缓存，设备操作由各入口继续复核准入。
+        self.table.setEnabled(not (self._directory_loading or self._closing or self._disposing))
+        self.preview_save_device_btn.setEnabled(
+            available and bool(self._preview_full_path) and not self.preview_text_edit.isReadOnly()
+            and not self._ops_controller.saving
+        )
+        self.operation_availability_changed.emit(available)
+
+    def _reflow_top_controls(self) -> None:
+        """窄屏只将搜索移到下一行，文件命令始终由原生溢出菜单承接。"""
+
+        if not hasattr(self, "_path_layout"):
+            return
+        layout = self.layout()
+        assert layout is not None
+        margins = layout.contentsMargins()
+        available_width = max(1, self.contentsRect().width() - margins.left() - margins.right())
+        for widget in (self._path_navigation, self._path_label, self.path_field, self.search_field):
+            self._path_layout.removeWidget(widget)
+        for column in range(4):
+            self._path_layout.setColumnStretch(column, 0)
+        self._path_layout.addWidget(self._path_navigation, 0, 0)
+        self._path_layout.addWidget(self._path_label, 0, 1)
+        self._path_layout.addWidget(self.path_field, 0, 2)
+        self._path_layout.setColumnStretch(2, 1)
+        if available_width < 720:
+            self._path_layout.addWidget(self.search_field, 1, 0, 1, 3)
+        else:
+            self._path_layout.addWidget(self.search_field, 0, 3)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow_top_controls()
+        self._sync_preview_layout()
+
+    def _create_context_menu(self) -> RoundMenu:
+        """创建跟随 qfluentwidgets 主题的上下文菜单。"""
+
+        return create_transient_menu(self)
+
+    # ── 主题 ────────────────────────────────────────────────────────────
+
+    def _refresh_icons(self) -> None:
+        """原生 SVG 图标绑定当前主题，更新图像但保留行、选择及目录状态。"""
+        self.setWindowIcon(file_explorer_icon("folder-open.svg"))
+        for button, name in (
+            (self.back_btn, "arrow-left.svg"),
+            (self.fwd_btn, "arrow-right.svg"),
+            (self.up_btn, "arrow-up.svg"),
+            (self.refresh_action, "arrows-clockwise.svg"),
+            (self.mkdir_action, "folder-plus.svg"),
+            (self.touch_action, "file-plus.svg"),
+            (self.pull_action, "download-simple.svg"),
+            (self.push_action, "upload-simple.svg"),
+            (self.delete_action, "trash.svg"),
+            (self.preview_back_btn, "arrow-left.svg"),
+            (self.preview_close_btn, "x.svg"),
+            (self.preview_image.image_close, "x.svg"),
+        ):
+            button.setIcon(file_explorer_icon(name))
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.TYPE_COL)
+            if item is not None:
+                item.setIcon(self._file_type_icon(self._file_name_at(row), self._file_type_at(row)))
+
+    def _apply_theme(self, _value=None):
+        bs = BaseStyles
+        ui_font = bs.font_for_role(FontRole.UI)
+        mono_font = bs.font_for_role(FontRole.MONO)
+        # 公共入口随强调色刷新，仅键盘导航显示外框且始终预留相同边宽。
+        apply_focus_indicator(self.table, selector="QTableView", keyboard_only=True)
+        self.setFont(ui_font)
+        # 页头由 CardWidget 绘制，主题变化仍需保留设备连接与操作选择的区分。
+        if hasattr(self, "header_card"):
+            self.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
+            self.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
+            self.status_badge.setFont(bs.font_for_role(FontRole.UI))
+            self._refresh_status_badge()
+        # Fluent 委托和默认行高不跟随应用字号，显式同步且不重建列表或重置列宽。
+        self.table.setFont(ui_font)
+        header = self.table.horizontalHeader()
+        header.setFont(ui_font)
+        # 类型列只显示图标，但表头文字会随字号变宽；只增不减，保留用户手动加宽。
+        type_width = max(
+            self.table.iconSize().width() + 16,
+            header.fontMetrics().horizontalAdvance(tr("Type")) + 8,
+        )
+        if self.table.columnWidth(self.TYPE_COL) < type_width:
+            self.table.setColumnWidth(self.TYPE_COL, type_width)
+        self.table.verticalHeader().setDefaultSectionSize(
+            max(38, self.table.fontMetrics().height() + 16)
+        )
+        # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
+        self._path_label.setFont(ui_font)
+        self.status_bar.setFont(bs.font_for_role(FontRole.UI_SMALL))
+        self.path_field.setFont(mono_font)
+        self.search_field.setFont(ui_font)
+        for field in (self.path_field, self.search_field):
+            field.setFixedHeight(max(34, field.fontMetrics().height() + 12))
+        self.command_bar.setFont(ui_font)
+        self.root_cb.setFont(ui_font)
+        self.root_cb.setMinimumHeight(max(29, self.root_cb.fontMetrics().height() + 8))
+        for button in (*self.command_bar.commandButtons, self.command_bar.moreButton):
+            button.setFont(ui_font)
+            hint = button.sizeHint()
+            button.setFixedSize(
+                hint.width(), max(hint.height(), button.fontMetrics().height() + 16)
+            )
+            if button is not self.command_bar.moreButton:
+                action = button.action()
+                assert action is not None
+                button.setAccessibleName(action.text())
+                button.setAccessibleDescription(action.toolTip())
+        command_height = max(button.height() for button in self.command_bar.commandButtons)
+        self.command_bar.setFixedHeight(command_height)
+        self.command_bar.updateGeometry()
+        for button in (self.back_btn, self.fwd_btn, self.up_btn):
+            button.setFixedSize(34, command_height)
+        self.preview_title.setFont(bs.font_for_role(FontRole.UI))
+        self.preview_empty_label.setFont(bs.font_for_role(FontRole.UI))
+        self.preview_loading_label.setFont(bs.font_for_role(FontRole.UI))
+        for button in (self.preview_save_as_btn, self.preview_save_device_btn):
+            apply_font_role(button, FontRole.UI, ensure_height=True)
+        self.preview_image.image_info.setFont(bs.font_for_role(FontRole.UI_SMALL))
+        self.preview_text_edit.setFont(mono_font)
+        self.preview_text_edit.document().setDefaultFont(mono_font)
+        self.preview_output.setFont(bs.font_for_role(FontRole.LOG))
+        self.preview_output.document().setDefaultFont(bs.font_for_role(FontRole.LOG))
+        self._refresh_icons()
+
+    # ── ADB 辅助方法 ────────────────────────────────────────────────────
+
+    def _connect_worker_ui(self, worker, signal, handler, *, guard_objects=()):
+        """连接 worker 的界面回调，并在页面或关联控件销毁后拒绝晚到信号。"""
+
+        page_ref = weakref.ref(self)
+        guard_refs = tuple(weakref.ref(obj) for obj in guard_objects if obj is not None)
+
+        def guarded(*args):
+            page = page_ref()
+            if page is None or getattr(page, "_closing", False) or not is_qobject_alive(page):
+                return
+            if any(not is_qobject_alive(ref()) for ref in guard_refs):
+                return
+            handler(*args)
+
+        signal.connect(guarded, Qt.ConnectionType.QueuedConnection)
+        self._worker_ui_bindings.setdefault(worker, []).append((signal, guarded))
+        return guarded
+
+    def _disconnect_worker_ui(self, worker) -> None:
+        """断开指定 worker 的全部界面回调。"""
+
+        for signal, handler in self._worker_ui_bindings.pop(worker, ()):
+            safe_disconnect(signal, handler)
+
+    def _prune_worker(self, worker) -> None:
+        if worker not in self._workers:
+            return
+        if not self._transfers.worker_finished(worker):
+            return
+        self._disconnect_worker_ui(worker)
+        lifecycle_handler = self._worker_lifecycle_handlers.pop(worker, None)
+        if lifecycle_handler is not None:
+            safe_disconnect(worker.finished, lifecycle_handler)
+        if worker in self._workers:
+            self._workers.remove(worker)
+        self._cleanup_workers.discard(worker)
+        if self._active_refresh_worker is worker:
+            self._active_refresh_worker = None
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+        if self._disposing and not self._transfers.is_running():
+            QTimer.singleShot(0, self._finish_async_dispose)
+
+    def _track_worker(self, worker):
+        """统一接管线程所有权及终态清理，供传输与图片读取共用。"""
+        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
+        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
+        self._worker_lifecycle_handlers[worker] = lifecycle_handler
+        self._workers.append(worker)
+        worker.setParent(self)
+        return worker
+
+    def _run_adb(self, *args, timeout: int = 30, _cleanup: bool = False, _device_ip=None):
+        """新命令必须仍有操作资格；清理仅用于已启动传输留下的临时文件。"""
+        if not _cleanup and not self._can_operate():
+            return None
+        worker = ADBWorker(_device_ip or self.device_ip, list(args), timeout=timeout)
+        if _cleanup:
+            self._cleanup_workers.add(worker)
+        return self._track_worker(worker)
+
+    def _run_transfer(self, *args, _device_ip=None):
+        """在实际创建传输前复核固定设备资格，防止弹窗和回调越过选择变化。"""
+        if not self._can_operate():
+            return None
+        worker = TransferWorker(_device_ip or self.device_ip, list(args))
+        return self._track_worker(worker)
+
+    def _cleanup_remote_file(self, path: str, *, root: bool = False) -> None:
+        """原会话传输的临时文件必须在取消选择后继续清理，不能改向新设备。"""
+        command = explorer_service.delete_command(path)
+        worker = self._run_adb("shell", self._root(command) if root else command, _cleanup=True)
+        if worker is not None:
+            worker.start()
+
+    # ── 列表控制器委托 wrapper ──────────────────────────────────────────
+
+    def _root(self, cmd: str) -> str:
+        return self._list_controller._root(cmd)
+
+    def _safe_name(self, name: str) -> bool:
+        return self._list_controller._safe_name(name)
+
+    def _dpath(self, *parts) -> str:
+        return self._list_controller._dpath(*parts)
+
+    def _navigate(self, path: str, push: bool = True):
+        return self._list_controller._navigate(path, push)
+
+    def _go_back(self):
+        return self._list_controller._go_back()
+
+    def _go_forward(self):
+        return self._list_controller._go_forward()
+
+    def _go_parent(self):
+        return self._list_controller._go_parent()
+
+    def _refresh(
+        self,
+        *,
+        requested_path: str | None = None,
+        navigation_action: str = "refresh",
+    ):
+        return self._list_controller._refresh(
+            requested_path=requested_path,
+            navigation_action=navigation_action,
+        )
+
+    def _on_ls_result(
+        self,
+        output,
+        error,
+        *,
+        request_id: int | None = None,
+        requested_path: str | None = None,
+    ):
+        controller = getattr(self, "_list_controller", None)
+        if controller is None:
+            controller = FileExplorerList(self)
+        return controller._on_ls_result(
+            output,
+            error,
+            request_id=request_id,
+            requested_path=requested_path,
+        )
+
+    def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
+        controller = getattr(self, "_list_controller", None)
+        if controller is None:
+            controller = FileExplorerList(self)
+        return controller._set_file_row(row, name, file_type, size, modified)
+
+    def _file_name_at(self, row: int) -> str:
+        return self._list_controller._file_name_at(row)
+
+    def _file_type_at(self, row: int) -> str:
+        return self._list_controller._file_type_at(row)
+
+    def _file_type_icon(self, name: str, file_type: str):
+        return self._list_controller._file_type_icon(name, file_type)
+
+    def _file_type_icon_name(self, name: str, file_type: str) -> str:
+        return self._list_controller._file_type_icon_name(name, file_type)
+
+    def _parse_ls(self, line: str) -> dict | None:
+        return self._list_controller._parse_ls(line)
+
+    def _ext(self, name: str) -> str:
+        return self._list_controller._ext(name)
+
+    def _safe_int(self, s: str) -> int:
+        return self._list_controller._safe_int(s)
+
+    def _fmt_size(self, s: str) -> str:
+        return self._list_controller._fmt_size(s)
+
+    def _on_double_click(self, row, col):
+        return self._list_controller._on_double_click(row, col)
+
+    def _filter(self, text):
+        return self._list_controller._filter(text)
+
+    def _header_clicked(self, col):
+        return self._list_controller._header_clicked(col)
+
+    # ── 预览查看控制器委托 wrapper ──────────────────────────────────────
+
+    def _directory_action(self, action, *args):
+        """目录入口统一拒绝半成品；已冻结路径的传输和预览回调不经过此准入。"""
+        if not self._can_use_directory_snapshot():
+            return None
+        return action(*args)
+
+    def _view_or_pull(self, name: str):
+        return self._directory_action(self._view_controller._view_or_pull, name)
+
+    def _view_file(self, name: str, is_image: bool = False):
+        return self._directory_action(self._view_controller._view_file, name, is_image)
+
+    def _view_image(self, name: str, full_path: str):
+        return self._view_controller._view_image(name, full_path)
+
+    def _show_image(
+        self,
+        request_id: int,
+        name: str,
+        tmp_path: str,
+        dev_tmp: str,
+        *,
+        output: str = "",
+        error: bool = False,
+    ):
+        return self._view_controller._show_image(
+            request_id,
+            name,
+            tmp_path,
+            dev_tmp,
+            output=output,
+            error=error,
+        )
+
+    def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
+        return self._view_controller._show_text_viewer(name, content, error, full_path)
+
+    # ── 文件操作控制器委托 wrapper ──────────────────────────────────────
+
+    @staticmethod
+    def _global_save_dir() -> str:
+        return FileExplorerOps._global_save_dir()
+
+    def _save_as(self, name, content):
+        return self._ops_controller._save_as(name, content)
+
+    def _save_to_device(self, name, content, full_path):
+        return self._ops_controller._save_to_device(name, content, full_path)
+
+    def _on_save_result(self, output, error, name):
+        return self._ops_controller._on_save_result(output, error, name)
+
+    def _pull_file(self, name: str):
+        return self._directory_action(self._ops_controller._pull_file, name)
+
+    def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
+        return self._ops_controller._finish_root_pull(o, e, name, dev_tmp, save_path)
+
+    def _pull_selected(self):
+        return self._directory_action(self._ops_controller._pull_selected)
+
+    def _push_file(self):
+        return self._directory_action(self._ops_controller._push_file)
+
+    def _on_transfer_done(self, o, e, msg):
+        controller = getattr(self, "_ops_controller", None)
+        if controller is None:
+            controller = FileExplorerOps(self)
+        return controller._on_transfer_done(o, e, msg)
+
+    def _on_file_op_done(self, output: str, error: bool, success_msg: str):
+        controller = getattr(self, "_ops_controller", None)
+        if controller is None:
+            controller = FileExplorerOps(self)
+        return controller._on_file_op_done(output, error, success_msg)
+
+    def _mkdir(self):
+        return self._directory_action(self._ops_controller._mkdir)
+
+    def _touch(self):
+        return self._directory_action(self._ops_controller._touch)
+
+    def _rename_item(self, name: str):
+        return self._directory_action(self._ops_controller._rename_item, name)
+
+    def _delete_item(self, name: str):
+        return self._directory_action(self._ops_controller._delete_item, name)
+
+    def _request_delete(self, names: str | list[str]):
+        return self._directory_action(self._ops_controller._request_delete, names)
+
+    def _delete_selected(self):
+        return self._directory_action(self._ops_controller._delete_selected)
+
+    def _copy_items(self, copy_mode: bool):
+        # 复制缓存不要求设备在线，但不能把未提交快照中的行拼接到旧目录路径。
+        if self._list_controller.populating:
+            return
+        return self._ops_controller._copy_items(copy_mode)
+
+    def _paste_items(self):
+        return self._directory_action(self._ops_controller._paste_items)
+
+    def _show_chmod(self, name: str, is_dir: bool):
+        return self._directory_action(self._ops_controller._show_chmod, name, is_dir)
+
+    # ── 右键菜单 ────────────────────────────────────────────────────────
+
+    def _context_menu(self, pos):
+        if not self._can_use_directory_snapshot():
+            return
+        idx = self.table.indexAt(pos)
+        if not idx.isValid():
+            return
+        row = idx.row()
+        name = self._file_name_at(row)
+        if name == "..":
+            return
+        is_dir = self._file_type_at(row) == "Folder"
+        menu = self._create_context_menu()
+        if is_dir or self._file_type_at(row) == "Link":
+            add_menu_action(menu, tr("Open"), callback=lambda: self._on_double_click(row, 0))
+        else:
+            is_image = self._ext(name).lower() in self.IMAGE_EXTS
+            add_menu_action(menu, tr("View"), callback=lambda: self._view_file(name, is_image))
+        menu.addSeparator()
+        add_menu_action(menu, tr("Pull"), callback=lambda: self._pull_file(name))
+        if not is_dir:
+            add_menu_action(menu, tr("Push Here"), callback=self._push_file)
+        if not is_dir and name.endswith(".apk"):
+            add_menu_action(menu, tr("Install APK"), callback=lambda: self._install_apk(name))
+        if not is_dir and name.endswith(".sh"):
+            add_menu_action(menu, tr("Execute Script"), callback=lambda: self._exec_script(name))
+        add_menu_action(menu, tr("Permissions"), callback=lambda: self._show_chmod(name, is_dir))
+        menu.addSeparator()
+        add_menu_action(menu, tr("Rename"), callback=lambda: self._rename_item(name))
+        add_menu_action(menu, tr("Delete"), callback=lambda: self._request_delete(name))
+        menu.addSeparator()
+        add_menu_action(menu, tr("Copy"), callback=lambda: self._copy_items(True))
+        add_menu_action(menu, tr("Cut"), callback=lambda: self._copy_items(False))
+        if self.clipboard:
+            add_menu_action(menu, tr("Paste"), callback=self._paste_items)
+        menu.addSeparator()
+        add_menu_action(menu, tr("Properties"), callback=lambda: self._show_props(name, is_dir))
+        menu.exec(self.table.mapToGlobal(pos))
+
+    def _install_apk(self, name: str):
+        if not self._can_use_directory_snapshot():
+            return
+        full = self._dpath(self.current_path, name)
+        cmd = self._root(explorer_service.install_apk_command(full))
+        w = self._run_adb("shell", cmd)
+        if w is None:
+            return
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e: self.status_bar.setText(
+                tr("APK {value0} installed").format(value0=name)
+                if not e
+                else tr("APK install failed: {value0}").format(value0=o)
+            ),
+        )
+        w.start()
+
+    def _exec_script(self, name: str):
+        if not self._can_use_directory_snapshot():
+            return
+        full = self._dpath(self.current_path, name)
+        cmd = explorer_service.script_command(full, self.root_cb.isChecked())
+        request_id = self._begin_preview_request(tr('Output: {value0}').format(value0=name))
+        w = self._run_adb("shell", self._root(cmd) if self.root_cb.isChecked() else cmd)
+        if w is None:
+            return
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e: self._show_script_output(name, o, e, request_id=request_id),
+        )
+        w.start()
+
+    def _show_script_output(self, name, output, error, *, request_id: int | None = None):
+        if request_id is not None and not self._preview_request_is_current(request_id):
+            return
+        self._show_output_preview(name, output, error=bool(error))
+
+    def _show_props(self, name: str, is_dir: bool):
+        if not self._can_use_directory_snapshot():
+            return
+        full = self._dpath(self.current_path, name)
+        if is_dir:
+            w = self._run_adb(
+                "shell", self._root(explorer_service.folder_size_command(full)),
+            )
+            if w is None:
+                return
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e: self._show_props_done(
+                    name,
+                    full,
+                    "Folder",
+                    (o.strip() if e else (o.strip().split()[0] if o.strip() else "?")),
+                    e,
+                ),
+            )
+            w.start()
+        else:
+            w = self._run_adb("shell", self._root(explorer_service.ls_command(full)))
+            if w is None:
+                return
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e: self._show_props_file(name, full, o, e),
+            )
+            w.start()
+
+    def _show_props_file(self, name, full, output, error):
+        if error:
+            FluentMessageBox.critical(
+                self,
+                tr('Properties Error: {value0}').format(value0=name),
+                output or tr("Unable to read file properties"),
+            )
+            self.status_bar.setText(
+                tr("Failed to read properties for {value0}").format(value0=name)
+            )
+            return
+        entry = self._parse_ls(output.splitlines()[0] if output.strip() else "")
+        if entry:
+            info = tr(
+                "Name: {value0}\nType: {value1}\nSize: {value2}\nPath: {value3}\n"
+                "Permissions: {value4}\nOwner: {value5}:{value6}\nModified: {value7}"
+            ).format(
+                value0=name,
+                value1=tr(self._ext(name)),
+                value2=self._fmt_size(entry["size"]),
+                value3=full,
+                value4=entry["perms"],
+                value5=entry["owner"],
+                value6=entry["group"],
+                value7=entry["modified"],
+            )
+        else:
+            info = tr('Name: {value0}\nPath: {value1}').format(value0=name, value1=full)
+        FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)
+
+    def _show_props_done(self, name, full, ftype, size, error):
+        if error:
+            FluentMessageBox.critical(
+                self,
+                tr('Properties Error: {value0}').format(value0=name),
+                size or tr("Unable to read folder properties"),
+            )
+            self.status_bar.setText(
+                tr("Failed to read properties for {value0}").format(value0=name)
+            )
+            return
+        info = tr("Name: {value0}\nType: {value1}\nSize: {value2}\nPath: {value3}").format(
+            value0=name, value1=tr(ftype), value2=size, value3=full
+        )
+        FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)
+
+    # ── 页会话生命周期 ──────────────────────────────────────────────────
+
+    def activate(self, payload=None) -> None:
+        """激活页面；仅首次激活时加载目录，后续切页保留会话状态。"""
+
+        if self._disposing or self._disposed:
+            return
+        self._active = True
+        self._list_controller.resume_population()
+        requested_path = ""
+        # 程序传入的路径保留真实身份；仅路径输入框提交时清理用户键入的外层空白。
+        if isinstance(payload, dict):
+            requested_path = str(payload.get("path", "") or "")
+        elif isinstance(payload, str):
+            requested_path = payload
+        self._activated_once = True
+        if not self._loaded_once:
+            if not self._can_operate():
+                self.status_bar.setText(tr("Select a device to browse files"))
+                return
+            self._loaded_once = True
+            if requested_path and requested_path != self.current_path:
+                self._refresh(requested_path=requested_path, navigation_action="replace")
+            else:
+                self._refresh()
+            return
+        if requested_path and requested_path != self.current_path:
+            self._navigate(requested_path)
+
+    def deactivate(self, _reason: str = "navigation") -> None:
+        """离开页面时保留路径、预览和后台任务，供返回后继续使用。"""
+
+        self._active = False
+        self._list_controller.pause_population()
+
+    def _can_operate(self) -> bool:
+        """固定会话只允许对当前已选且在线的原设备发起新操作。"""
+        return bool(
+            self.device_ip and self._device_selected and self._device_connected
+            and not self._closing and not self._disposing
+        )
+
+    def _can_use_directory_snapshot(self) -> bool:
+        """文件命令还要求当前目录快照已完整提交，防止半列表与旧路径组合。"""
+        return self._can_operate() and not self._list_controller.populating
+
+    def _refresh_status_badge(self) -> None:
+        """连接、选择和主题更新共用同一状态展示，在线不等于已获操作资格。"""
+        if not self.device_ip:
+            text, level = tr("未选择设备"), InfoLevel.INFOAMTION
+        elif not self._device_connected:
+            text, level = tr("离线"), InfoLevel.ERROR
+        elif not self._device_selected:
+            text, level = tr("未选为操作目标"), InfoLevel.INFOAMTION
+        else:
+            text, level = tr("就绪"), InfoLevel.SUCCESS
+        self.status_badge.setText(text)
+        self.status_badge.setLevel(level)
+
+    def set_device_selected(self, selected: bool) -> None:
+        """同步操作资格，保留浏览缓存和原会话资源，不自动换设备。"""
+        selected = bool(selected and self.device_ip)
+        if selected != self._device_selected:
+            self._list_controller.cancel_link_requests()
+            self._view_controller.invalidate_cache()
+        self._device_selected = selected
+        if not selected:
+            self._list_controller.cancel_refresh()
+        elif self._active and not self._loaded_once and self._can_operate():
+            # 页面先在未选设备状态打开时不会加载；随后勾选该设备应直接进入目录，
+            # 不能要求用户再点一次刷新。
+            self._loaded_once = True
+            self._refresh()
+        self._refresh_status_badge()
+        self._sync_directory_controls()
+        if not self._device_selected:
+            self._ops_controller.cancel_save()
+            self._transfers.cancel_pending()
+            self.status_bar.setText(
+                tr("Select this device in the device bar to perform file operations")
+            )
+
+    def set_device_connected(self, connected: bool) -> None:
+        """同步稳定会话设备的在线状态，不静默切换到其他设备。"""
+
+        connected = bool(connected and self.device_ip)
+        became_available = connected and not self._device_connected
+        if connected != self._device_connected:
+            self._list_controller.cancel_link_requests()
+            self._view_controller.invalidate_cache()
+        self._device_connected = connected
+        self.setProperty("deviceConnected", connected)
+        self._refresh_status_badge()
+        if not connected:
+            self._list_controller.cancel_refresh()
+        self._sync_directory_controls()
+        if not connected:
+            self._ops_controller.cancel_save()
+            self._transfers.cancel_pending()
+            self.status_bar.setText(tr("Device offline; reconnect or choose another device"))
+        elif (became_available and self._can_operate() and self._active
+              and self._activated_once and not self._loaded_once):
+            self._loaded_once = True
+            self._refresh()
+
+    def request_dispose(self, _reason: str = "user") -> bool:
+        """请求异步释放 worker；返回 ``False`` 表示等待 ``dispose_ready``。"""
+
+        if self._disposed:
+            return True
+        if self._disposing:
+            ready = not self._transfers.is_running()
+            if ready:
+                self._finish_dispose(emit_ready=False)
+            return ready
+        self._disposing = True
+        self._closing = True
+        self._list_controller.cancel_link_requests()
+        self._list_controller.cancel_refresh(restore=False)
+        self._active = False
+        self._sync_directory_controls()
+        self._active_refresh = None
+        self._pending_navigation = None
+        self._preview_request_id += 1
+        self._transfers.request_stop()
+        self._transfers.cancel_pending()
+        safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        stop_reading_surface(self.preview_text_edit)
+        stop_reading_surface(self.preview_output)
+
+        workers = list(dict.fromkeys((*self._workers, *self._worker_ui_bindings)))
+        for worker in workers:
+            self._disconnect_worker_ui(worker)
+            if worker in self._cleanup_workers:
+                continue
+            if not self._transfers.worker_active(worker):
+                self._prune_worker(worker)
+                continue
+            try:
+                self._transfers._stop_worker(worker)
+            except RuntimeError:
+                continue
+
+        if self._transfers.is_running():
+            return False
+        self._finish_dispose(emit_ready=False)
+        return True
+
+    def _finish_async_dispose(self) -> None:
+        if not self._disposing or self._disposed:
+            return
+        if self._transfers.is_running():
+            return
+        self._finish_dispose(emit_ready=True)
+
+    def _finish_dispose(self, *, emit_ready: bool) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self.preview_image.release_image_source()
+        self._view_controller.dispose()
+        for worker in tuple(self._workers):
+            self._prune_worker(worker)
+        if self._close_when_disposed:
+            self.hide()
+        if emit_ready:
+            self.dispose_ready.emit()
+
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """动态监督线程与既有请求的清理义务，捕获停止后追加的清理。"""
+        if not self._transfers.is_running():
+            return ()
+        handle = self._transfers
+        supervisor.register(
+            f"{task_prefix}-workers",
+            owner_id=owner_id,
+            kind="file_explorer_workers",
+            request_stop=handle.request_stop,
+            wait=handle.wait,
+            is_running=handle.is_running,
+            force_stop=handle.force_stop,
+        )
+        self._shutdown_registered = True
+        return (f"{task_prefix}-workers",)
+
+    # ── 资源清理 ────────────────────────────────────────────────────────
+
+    def closeEvent(self, event):
+        """直接关闭控件时也等待运行中的 worker 完成清理。"""
+
+        if self._disposed or self.request_dispose("window_close"):
+            event.accept()
+            return
+        self._close_when_disposed = True
+        self.hide()
+        event.ignore()
