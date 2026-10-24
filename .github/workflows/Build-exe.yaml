@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: ["main"]
+    branches: ["main", "codex/installer-acceptance-*"]
 
 env:
   PYTHONUTF8: "1"
@@ -40,7 +40,7 @@ jobs:
           from utils.app_metadata import APP_RELEASE_TAG
 
           event = os.environ["GITHUB_EVENT_NAME"]
-          publish = event == "push" or (
+          publish = (event == "push" and os.environ["GITHUB_REF"] == "refs/heads/main") or (
               event == "workflow_dispatch" and os.environ["REQUESTED_PUBLISH"] == "true"
           )
           if publish and os.environ["GITHUB_REF"] != "refs/heads/main":
@@ -282,6 +282,21 @@ jobs:
           name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
           python scripts/check_windows_installer.py --installer "dist/$name-setup.exe" --version "${{ needs.version.outputs.version }}" --workspace "$RUNNER_TEMP/adblab-installer-smoke" --iscc "$RUNNER_TEMP/inno-6.7.3/ISCC.exe" --disposable
 
+      - name: Accept installer lifecycle as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          & ./scripts/run_windows_installer_standard_user.ps1 `
+            -Python (Get-Command python).Source `
+            -Installer (Join-Path $PWD "dist/$name-setup.exe") `
+            -Version "${{ needs.version.outputs.version }}" `
+            -Iscc (Join-Path $env:RUNNER_TEMP 'inno-6.7.3/ISCC.exe') `
+            -Workspace (Join-Path $env:RUNNER_TEMP 'adblab-installer-standard') `
+            -Disposable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Zip Windows onedir artifact
         if: runner.os == 'Windows'
         shell: pwsh
@@ -379,8 +394,13 @@ jobs:
 
           temporary = Path(os.environ["RUNNER_TEMP"])
           smoke = temporary / "adblab-installer-smoke"
+          standard = temporary / "adblab-installer-standard"
+          logs = [*smoke.rglob("*.log"), *standard.rglob("*.log")]
+          logs = [path for path in logs if path.is_file() and not path.is_symlink()
+                  and path.resolve() == path.absolute()]
+          logs.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)), reverse=True)
           candidates = [Path("build/windows-installer/compiler.log"),
-                        temporary / "inno-prepare.log", *sorted(smoke.rglob("*.log"))]
+                        temporary / "inno-prepare.log", *logs]
           count = 0
           for path in candidates:
               if not path.is_file() or path.is_symlink() or path.resolve() != path.absolute():

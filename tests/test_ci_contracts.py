@@ -173,7 +173,7 @@ def test_manual_build_defaults_to_build_only_and_main_push_still_triggers():
     publish = manual["inputs"]["publish"]
     assert publish["type"] == "boolean"
     assert publish["default"] is False
-    assert events["push"]["branches"] == ["main"]
+    assert events["push"]["branches"] == ["main", "codex/installer-acceptance-*"]
 
 
 @pytest.mark.parametrize("event,ref,requested,expected", [
@@ -185,6 +185,8 @@ def test_manual_build_defaults_to_build_only_and_main_push_still_triggers():
     ("workflow_dispatch", "refs/tags/v3.2.18", "true", None),
     ("push", "refs/heads/main", "", "true"),
     ("push", "refs/heads/main", "false", "true"),
+    ("push", "refs/heads/codex/installer-acceptance-20261024", "", "false"),
+    ("push", "refs/heads/codex/installer-acceptance-20261024", "true", "false"),
 ])
 def test_version_job_computes_publish_mode_and_rejects_non_main(
     monkeypatch, tmp_path, event, ref, requested, expected,
@@ -382,6 +384,32 @@ def test_windows_installer_build_and_smoke_gate_precede_zip_and_upload(tmp_path)
                          if step.get("uses", "").startswith("actions/upload-artifact@"))
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="原生 PowerShell 步骤只在 Windows 执行")
+def test_standard_user_acceptance_blocks_archive_on_failure(tmp_path):
+    """标准账户验收必须在归档前执行，PowerShell 子脚本失败不能继续上传。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    index, step = next((i, item) for i, item in enumerate(steps)
+                       if "run_windows_installer_standard_user.ps1" in item.get("run", ""))
+    assert step["if"] == "runner.os == 'Windows'"
+    assert step["shell"] == "pwsh"
+    assert not step.get("continue-on-error", False)
+    archive = next(i for i, item in enumerate(steps) if "Compress-Archive" in item.get("run", ""))
+    assert index < archive
+    script = tmp_path / "scripts/run_windows_installer_standard_user.ps1"
+    script.parent.mkdir()
+    script.write_text("exit 7\n", encoding="utf-8")
+    command = re.sub(r"\$\{\{.*?\}\}", "fixture", step["run"])
+    runner = tmp_path / "step.ps1"
+    runner.write_text(command, encoding="utf-8")
+    result = subprocess.run(
+        [shutil.which("pwsh") or "powershell.exe", "-NoProfile", "-NonInteractive",
+         "-File", str(runner)],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+        env=dict(os.environ, RUNNER_TEMP=str(tmp_path)),
+    )
+    assert result.returncode == 7, result.stderr
+
+
 def _installer_diagnostics_step():
     steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
     diagnostics = [step for step in steps if step.get("id") == "installer_diagnostics"]
@@ -422,6 +450,9 @@ def test_installer_diagnostics_print_only_owned_log_tails_without_writes(tmp_pat
         "runner-temp/adblab-installer-smoke/product-smoke/first-install.log": (
             b"installation failed: exit 1\ninvalid byte: \xff\n"
         ),
+        "runner-temp/adblab-installer-standard/bootstrap.log": (
+            b"standard user failed: no fallback\n"
+        ),
         "build/windows-installer/unrelated.log": b"PRIVATE unrelated build log\n",
         "runner-temp/unrelated.log": b"PRIVATE unrelated runner log\n",
         "runner-temp/adblab-installer-smoke/product-smoke/user-data.txt": b"PRIVATE user data\n",
@@ -437,6 +468,7 @@ def test_installer_diagnostics_print_only_owned_log_tails_without_writes(tmp_pat
     assert "准备失败：签名校验" in result.stdout
     assert "FAIL upgrade fixture: expected ready" in result.stdout
     assert "installation failed: exit 1" in result.stdout
+    assert "standard user failed: no fallback" in result.stdout
     assert "fixture line 020" not in result.stdout
     assert "fixture line 021" in result.stdout
     assert "truncated" in result.stdout.lower()
@@ -451,14 +483,17 @@ def test_installer_diagnostics_bound_file_count_and_single_line_bytes(tmp_path):
     directory.mkdir(parents=True)
     for index in range(41):
         data = f"failure detail {index:02}\n".encode()
-        if index == 0:
+        if index == 40:
             data = b"A" * 100_000 + b"\n" + data
-        (directory / f"{index:02}.log").write_bytes(data)
+        path = directory / f"{index:02}.log"
+        path.write_bytes(data)
+        os.utime(path, (1_700_000_000 + index, 1_700_000_000 + index))
     result = _run_installer_diagnostics(tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "failure detail 00" in result.stdout
+    assert "failure detail 01" in result.stdout
     assert "failure detail 39" in result.stdout
-    assert "failure detail 40" not in result.stdout
+    assert "failure detail 40" in result.stdout
+    assert "failure detail 00" not in result.stdout
     assert result.stdout.lower().count("truncated") >= 2
     assert len(result.stdout) < 70_000
 

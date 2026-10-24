@@ -53,6 +53,10 @@ procedure WinSetLastError(Error: LongWord);
 procedure WinExitProcess(ExitCode: LongWord);
   external 'ExitProcess@kernel32.dll stdcall';
 
+#ifdef ADBLAB_TEST_FAULTS
+  #include "..\..\tests\fixtures\windows_installer\fault_hooks.iss"
+#endif
+
 procedure Require(Condition: Boolean; MessageText: String);
 begin
   if not Condition then RaiseException(MessageText);
@@ -526,14 +530,23 @@ begin
       SetArrayLength(CurrentFiles, 0); SetArrayLength(PendingFiles, 0);
     end;
     PreflightInstall;
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('preflight', '');
+#endif
     if OldState <> 'installing' then begin
       if FileExists(ControlPath(PreviousName)) then
         Require(DeleteFile(ControlPath(PreviousName)), '无法清理旧提交日志。');
       PublishManifest(Embedded, PendingName);
+#ifdef ADBLAB_TEST_FAULTS
+      InstallerTestCheckpoint('pending', '');
+#endif
       PublishIdentity('installing', CompletedVersion, TargetVersion, CompletedDigest, TargetDigest);
     end;
     PendingVersion := TargetVersion; PendingDigest := TargetDigest;
     PendingFiles := TargetFiles;
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('installing', '');
+#endif
   except
     Result := GetExceptionMessage;
     ReleaseMaintenanceLock;
@@ -572,15 +585,31 @@ begin
       Require(FileExists(Path) and (GetSHA256OfFile(Path) = TargetFiles[I].Digest), '安装文件不完整，请重新运行原安装程序修复。');
     end;
     for I := 0 to GetArrayLength(CurrentFiles) - 1 do
-      if FindManaged(TargetFiles, CurrentFiles[I].RelativePath) < 0 then
+      if FindManaged(TargetFiles, CurrentFiles[I].RelativePath) < 0 then begin
         DeleteManaged(ManagedPath(CurrentFiles[I].RelativePath), CurrentFiles[I].Digest, '');
+#ifdef ADBLAB_TEST_FAULTS
+        InstallerTestCheckpoint('retired', CurrentFiles[I].RelativePath);
+#endif
+      end;
     Embedded := ExpandConstant('{tmp}\') + ManifestName;
     if (CompletedVersion <> '') and not FileExists(ControlPath(PreviousName)) then
       PublishManifest(ControlPath(ManifestName), PreviousName);
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('previous', '');
+#endif
     PublishManifest(Embedded, ManifestName);
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('manifest', '');
+#endif
     PublishIdentity('ready', TargetVersion, '', TargetDigest, '');
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('ready', '');
+#endif
     Require(GetSHA256OfFile(ControlPath(PendingName)) = TargetDigest, '待完成清单冲突。');
     Require(DeleteFile(ControlPath(PendingName)), '无法清理待完成清单，请重新运行安装程序。');
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('pending-cleaned', '');
+#endif
     if FileExists(ControlPath(PreviousName)) then
       Require(DeleteFile(ControlPath(PreviousName)), '无法清理提交日志，请重新运行安装程序。');
     InstallationReady := True;
@@ -635,14 +664,23 @@ begin
   if CurUninstallStep = usUninstall then begin
     Require(HasMaintenanceLock, '维护锁未持有。');
     PublishIdentity('removing', CompletedVersion, PendingVersion, CompletedDigest, PendingDigest);
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('removing', '');
+#endif
     for I := 0 to GetArrayLength(CurrentFiles) - 1 do begin
       Other := FindManaged(PendingFiles, CurrentFiles[I].RelativePath);
       Alternative := '';
       if Other >= 0 then Alternative := PendingFiles[Other].Digest;
       DeleteManaged(ManagedPath(CurrentFiles[I].RelativePath), CurrentFiles[I].Digest, Alternative);
+#ifdef ADBLAB_TEST_FAULTS
+      InstallerTestCheckpoint('uninstall-file', CurrentFiles[I].RelativePath);
+#endif
     end;
     for I := 0 to GetArrayLength(PendingFiles) - 1 do
       DeleteManaged(ManagedPath(PendingFiles[I].RelativePath), PendingFiles[I].Digest, '');
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('uninstall-payload', '');
+#endif
   end;
   if CurUninstallStep = usPostUninstall then begin
     try
@@ -653,6 +691,9 @@ begin
     Require(not RegKeyExists(HKCU64, UninstallKey), '卸载登记仍存在，卸载未完成。');
     Require(not FileExists(ExpandConstant('{userprograms}\ADBLab\ADBLab.lnk')) and
       not FileExists(ExpandConstant('{userdesktop}\ADBLab.lnk')), '快捷方式仍存在，卸载未完成。');
+#ifdef ADBLAB_TEST_FAULTS
+    InstallerTestCheckpoint('uninstall-post', '');
+#endif
     Path := ControlPath(PendingName);
     if FileExists(Path) then Require(DeleteFile(Path), '无法删除待完成清单。');
     Path := ControlPath(ManifestName);

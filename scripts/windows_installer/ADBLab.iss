@@ -9,6 +9,9 @@
   #error ProtocolInclude is required
 #endif
 #include ProtocolInclude
+#if defined(ADBLAB_TEST_FAULTS) || defined(FaultRoot) || defined(FaultStage) || defined(FaultToken)
+  #error Fault injection is forbidden in the production entry point
+#endif
 
 [Setup]
 AppId={{#InstallAppId}

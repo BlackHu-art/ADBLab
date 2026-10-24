@@ -436,11 +436,12 @@ schema；卸载不清除此目录、`~/ADBLab`、自定义导出或设备数据�
 
 ### Build 工作流
 
-`.github/workflows/Build-exe.yaml` 在 `main` push 或手动触发时：
+`.github/workflows/Build-exe.yaml` 在 `main`、`codex/installer-acceptance-*` push 或手动触发时：
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本，并确定是否发布：`main` push 自动发布；手动
    `workflow_dispatch` 默认 `publish=false`，只构建和上传 Actions artifacts。手动设为 `publish=true`
-   时仅允许 `main`，其他分支明确失败。仅构建允许重复已有版本；发布模式提前拒绝已有远端 tag，
+   时仅允许 `main`，其他分支明确失败。`codex/installer-acceptance-*` push 固定只构建，不发布，
+   可通过 Git 接口启动新提交验收。仅构建允许重复已有版本；发布模式提前拒绝已有远端 tag，
    并校验 `.github/release-notes/<tag>.md`：UTF-8 正文非空，首行为 `# ADBLab <tag>`，
    标题后必须有正文。缺失、空白或版本不符均在构建前失败；仅构建模式不要求发布说明。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
@@ -467,7 +468,13 @@ schema；卸载不清除此目录、`~/ADBLab`、自定义导出或设备数据�
    测试安装包并验证升级、降级拒绝、中断修复和精确卸载，再安装正式 setup，验证稳定入口、
    frozen 三探针、占用拒绝、同版本修复、卸载和重装。真实 Shell 用户数据目录、默认导出目录
    及安装内未知文件均放置保留哨兵。验收器要求显式 `--disposable`、GitHub hosted Windows runner 和本产品
-   AppId 尚未安装；本机不能直接运行。任一步失败都阻断压缩与上传。Windows 精确上传 ZIP 和
+   AppId 尚未安装；本机不能直接运行。随后由 PowerShell 启动器在同一 hosted runner 创建一次性
+   标准账户，核验未提升且非管理员的真实令牌、独立 profile/HKU；用白名单环境运行基础验收、
+   阶段故障、固定官方旧 ZIP 载荷升级、默认位置/桌面快捷方式及真实应用安装中启动拒绝。
+   故障宏只允许测试模板，正式 setup 编译入口拒绝；旧载荷封装不代表历史发布过安装器。
+   子阶段失败均传播，账户按创建时 SID 清理，日志与失败现场留在 runner，成功摘要写入 Actions
+   日志；[补充验收记录](../superpowers/plans/2026-10-24-windows-installer-extended-acceptance.md)
+   区分配置范围与实际通过结果。任一步失败都阻断压缩与上传。Windows 精确上传 ZIP 和
    setup 两条文件路径；Linux x64、macOS x64 与 arm64 仍各自只上传原归档，不使用目录通配。
 7. 仅发布模式进入 Release job，单独使用 `contents: write`。下载失败即停止；
    `scripts/check_build_artifacts.py release` 要求恰好五个预期版本、路径的产物：原四归档和
