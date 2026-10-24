@@ -368,6 +368,53 @@ jobs:
           path: dist/${{ matrix.artifact }}-${{ needs.version.outputs.version }}.${{ matrix.archive_extension }}
           if-no-files-found: error
 
+      - name: Print Windows installer failure diagnostics
+        id: installer_diagnostics
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          smoke = temporary / "adblab-installer-smoke"
+          candidates = [Path("build/windows-installer/compiler.log"),
+                        temporary / "inno-prepare.log", *sorted(smoke.rglob("*.log"))]
+          count = 0
+          for path in candidates:
+              if not path.is_file() or path.is_symlink() or path.resolve() != path.absolute():
+                  continue
+              if count == 40:
+                  print("[truncated: more than 40 installer diagnostic logs]")
+                  break
+              count += 1
+              label = path.relative_to(temporary) if path.is_absolute() else path
+              print(f"--- Installer diagnostic: {label} ---")
+              try:
+                  size = path.stat().st_size
+                  with path.open("rb") as stream:
+                      prefix = stream.read(2)
+                      encoding = {b"\xff\xfe": "utf-16-le", b"\xfe\xff": "utf-16-be"}.get(
+                          prefix, "utf-8-sig"
+                      )
+                      offset = max(0, size - 65536)
+                      if encoding.startswith("utf-16"):
+                          offset -= offset % 2
+                      stream.seek(offset)
+                      data = stream.read(65538)
+                  lines = data.decode(encoding, errors="replace").removeprefix("\ufeff").splitlines()
+                  if offset or len(lines) > 80:
+                      print("[truncated: showing the last 80 lines within a 64 KiB tail]")
+                  for line in lines[-80:]:
+                      # 前缀确保日志内容不会被 Actions 解释为工作流命令。
+                      print("| " + line)
+              except OSError as error:
+                  print(f"[Unable to read diagnostic: {type(error).__name__}]")
+          if not count:
+              print("No installer diagnostic logs found.")
+          PY
+
   release:
     needs: [version, build]
     if: needs.version.outputs.publish == 'true' && needs.build.result == 'success'

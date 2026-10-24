@@ -382,6 +382,94 @@ def test_windows_installer_build_and_smoke_gate_precede_zip_and_upload(tmp_path)
                          if step.get("uses", "").startswith("actions/upload-artifact@"))
 
 
+def _installer_diagnostics_step():
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    diagnostics = [step for step in steps if step.get("id") == "installer_diagnostics"]
+    assert len(diagnostics) == 1, "Windows installer failures must expose their diagnostic logs"
+    return diagnostics[0]
+
+
+def _run_installer_diagnostics(tmp_path):
+    code = _installer_diagnostics_step()["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    return subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, capture_output=True,
+        text=True, encoding="utf-8", check=False,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path / "runner-temp"), "PYTHONUTF8": "1"},
+    )
+
+
+def test_installer_diagnostics_only_run_after_windows_failure():
+    """失败诊断不放宽原步骤门禁，也不增加发布集合中的 artifact。"""
+    step = _installer_diagnostics_step()
+    assert step["if"] == "failure() && runner.os == 'Windows'"
+    assert step["shell"] == "bash"
+    build = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]
+    assert not build.get("continue-on-error", False)
+    assert all(not item.get("continue-on-error", False) for item in build["steps"])
+    assert len([item for item in build["steps"]
+                if item.get("uses", "").startswith("actions/upload-artifact@")]) == 2
+
+
+def test_installer_diagnostics_print_only_owned_log_tails_without_writes(tmp_path):
+    """实际执行工作流 Python，编译与安装错误必须进入 stdout，其他文件不得泄露。"""
+    contents = {
+        "build/windows-installer/compiler.log": b"compiler failed: exit 7\n",
+        "runner-temp/inno-prepare.log": "准备失败：签名校验\n".encode("utf-16"),
+        "runner-temp/adblab-installer-smoke/upgrade-fixture/compile-1.0.0.log": (
+            "\n".join(f"fixture line {i:03}" for i in range(100))
+            + "\nFAIL upgrade fixture: expected ready\n"
+        ).encode(),
+        "runner-temp/adblab-installer-smoke/product-smoke/first-install.log": (
+            b"installation failed: exit 1\ninvalid byte: \xff\n"
+        ),
+        "build/windows-installer/unrelated.log": b"PRIVATE unrelated build log\n",
+        "runner-temp/unrelated.log": b"PRIVATE unrelated runner log\n",
+        "runner-temp/adblab-installer-smoke/product-smoke/user-data.txt": b"PRIVATE user data\n",
+        "dist/setup.exe": b"PRIVATE binary\n",
+    }
+    for name, data in contents.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    result = _run_installer_diagnostics(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "compiler failed: exit 7" in result.stdout
+    assert "准备失败：签名校验" in result.stdout
+    assert "FAIL upgrade fixture: expected ready" in result.stdout
+    assert "installation failed: exit 1" in result.stdout
+    assert "fixture line 020" not in result.stdout
+    assert "fixture line 021" in result.stdout
+    assert "truncated" in result.stdout.lower()
+    assert "PRIVATE" not in result.stdout
+    assert {path.relative_to(tmp_path).as_posix(): path.read_bytes()
+            for path in tmp_path.rglob("*") if path.is_file()} == contents
+
+
+def test_installer_diagnostics_bound_file_count_and_single_line_bytes(tmp_path):
+    """异常长行与过多日志都须截断，仍保留最后的失败原因。"""
+    directory = tmp_path / "runner-temp/adblab-installer-smoke/fixture"
+    directory.mkdir(parents=True)
+    for index in range(41):
+        data = f"failure detail {index:02}\n".encode()
+        if index == 0:
+            data = b"A" * 100_000 + b"\n" + data
+        (directory / f"{index:02}.log").write_bytes(data)
+    result = _run_installer_diagnostics(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "failure detail 00" in result.stdout
+    assert "failure detail 39" in result.stdout
+    assert "failure detail 40" not in result.stdout
+    assert result.stdout.lower().count("truncated") >= 2
+    assert len(result.stdout) < 70_000
+
+
+def test_installer_diagnostics_missing_logs_do_not_create_directories(tmp_path):
+    result = _run_installer_diagnostics(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "no installer diagnostic logs" in result.stdout.lower()
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize("platform,executable,archive", [
     ("Windows", "dist/$name/$name.exe", "Compress-Archive"),
     ("macOS", "$executable", "ditto -c"),
