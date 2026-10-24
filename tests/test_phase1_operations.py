@@ -8,14 +8,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from adblab.application.cancellation import CancellationError, CancellationToken
-from adblab.application.envelope import (
+from controllers._base import _ADBControllerBase
+from core.perf_trace import split_perf
+from core.tasks.cancellation import CancellationError, CancellationToken
+from models.adb_model import ADBModelCore, async_command
+from services.tasks.envelope import (
     OperationEnvelope,
     OperationMetadata,
     attach_operation_metadata,
     split_operation_metadata,
 )
-from adblab.application.operations import (
+from services.tasks.operations import (
     ConflictingOperationResultError,
     IncompleteOperationError,
     OperationArtifact,
@@ -24,9 +27,6 @@ from adblab.application.operations import (
     OperationTransitionError,
     OperationUnitResult,
 )
-from controllers._base import _ADBControllerBase
-from core.perf_trace import split_perf
-from models.adb_model import ADBModelCore, async_command
 
 
 def _manager(ids=("operation-1", "operation-2")):

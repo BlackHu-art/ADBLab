@@ -2,7 +2,7 @@
 
 import pytest
 
-from adblab.application.supervision import StopDisposition, TaskStopResult
+from core.tasks.supervision import StopDisposition, TaskStopResult
 from gui.dialogs.live_logcat import LiveLogcatPage, LogcatWorker
 from gui.dialogs.live_logcat_worker import LogcatTermination, LogcatTerminationKind
 from tests.test_phase2_live_logcat_gate import FakeQtTaskSupervisor

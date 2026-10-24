@@ -14,7 +14,7 @@ from qfluentwidgets import (
     InfoLevel,
 )
 
-from adblab.application.cancellation import CancellationToken
+from core.tasks.cancellation import CancellationToken
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import is_qobject_alive
 from gui.i18n import tr
@@ -89,7 +89,9 @@ class AppPanel(BasePanel):
         self._build_apps_header(lo)
         self.category_stack = AdaptiveCategoryStack("apps", w)
 
-        g_ts = self._card_group(tr("文本与屏幕"))
+        g_text = self._card_group(tr("文本输入"))
+        self.text_input_tools = g_text
+        g_ts = self._card_group(tr("截图与录屏"))
         self.text_screen_tools = g_ts
         # 截图页可清除并重建；控件与录屏状态归本面板，暂存宿主不参与可见布局。
         self.text_screen_tools_parking = QWidget(self)
@@ -105,7 +107,7 @@ class AppPanel(BasePanel):
         )
         self._screenshot_running = False
         self._add_responsive_row(
-            gts_l,
+            g_text.viewLayout,
             (self.email_text_sender, 3),
             (self.btn_send_text, 1),
             compact_columns=1,
@@ -625,7 +627,7 @@ class AppPanel(BasePanel):
         self.report_artifacts = ReportArtifactsView(g_r)
         g_r.viewLayout.addWidget(self.report_artifacts)
         self.category_stack.add_category(
-            "daily", tr("应用与诊断"), (g_pm, g_m, g_r, g_perf)
+            "daily", tr("应用与诊断"), (g_pm, g_text, g_m, g_r, g_perf)
         )
         self.category_stack.add_alias("monkey", "daily")
         self.category_stack.add_alias("packages", "daily")

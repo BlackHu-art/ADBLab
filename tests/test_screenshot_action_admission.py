@@ -7,8 +7,6 @@ import pytest
 from PySide6.QtGui import QFont, QImage
 from PySide6.QtTest import QSignalSpy
 
-from adblab.application.action_results import ActionResults
-from adblab.application.operations import OperationManager
 from controllers._media import ADBMediaMixin
 from controllers.signals import ADBControllerSignals
 from core.settings_manager import DEFAULTS, AppSettings
@@ -18,6 +16,8 @@ from gui.pages.workspace_features import WorkspaceFeatureHost
 from gui.panels.app_panel import AppPanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from models.adb_model import ADBModelCore, async_command
+from services.tasks.action_results import ActionResults
+from services.tasks.operations import OperationManager
 
 pytestmark = [pytest.mark.ui, pytest.mark.integration]
 

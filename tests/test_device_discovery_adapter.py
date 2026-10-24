@@ -24,7 +24,7 @@ def discovery_boundary(tmp_path, monkeypatch):
         monkeypatch.setenv(name, str(tmp_path / name.lower()))
     from shiboken6 import delete, isValid
 
-    discovery = importlib.import_module("adblab.presentation.qt_device_discovery")
+    discovery = importlib.import_module("gui.workers.device_discovery")
     from core import adb_transport
     from core import exec as execution
     from gui import main_frame
@@ -70,7 +70,7 @@ def test_scan_classes_are_identical_through_legacy_entry(discovery_boundary):
     boundary = discovery_boundary
     for name in ("_ScanThread", "_ScannedDevices", "_ScanDiscoveryState"):
         assert getattr(boundary.legacy, name) is getattr(boundary.discovery, name)
-    assert boundary.legacy._ScanThread.__module__ == "adblab.presentation.qt_device_discovery"
+    assert boundary.legacy._ScanThread.__module__ == "gui.workers.device_discovery"
     owner = QObject()
     try:
         scan = boundary.make_scan(parent=owner, interval_ms=1)
@@ -95,6 +95,7 @@ def test_adapter_import_does_not_load_main_frame_or_fluent_widgets(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
+            "-B",
             "-c",
             """
 import subprocess
@@ -104,8 +105,10 @@ def forbidden(*args, **kwargs):
     raise AssertionError('import must not start a process')
 
 subprocess.Popen.__init__ = forbidden
-import adblab.presentation.qt_device_discovery
+import gui.workers.device_discovery
 assert 'gui.main_frame' not in sys.modules
+assert 'gui.workers.app_manager' not in sys.modules
+assert 'gui.workers.file_explorer' not in sys.modules
 assert not any(
     name == 'qfluentwidgets' or name.startswith('qfluentwidgets.') for name in sys.modules
 )

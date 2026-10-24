@@ -5,16 +5,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from adblab.application.action_results import (
+from controllers._app_install import ADBAppInstallMixin
+from core.exec import CommandResult
+from models.adb_app import ADBApp
+from models.app_manager_worker import AppManagerWorker
+from services.tasks.action_results import (
     ActionResults,
     ActionSpec,
     capture_action_job,
     report_action_message,
 )
-from controllers._app_install import ADBAppInstallMixin
-from core.exec import CommandResult
-from models.adb_app import ADBApp
-from models.app_manager_worker import AppManagerWorker
 
 DENIED = (
     "Exception occurred while executing 'clear':\n"

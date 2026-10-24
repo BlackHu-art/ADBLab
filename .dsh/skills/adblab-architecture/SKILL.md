@@ -18,12 +18,15 @@ whenToUse: 需要在 ADBLab 中定位实现位置、判断改动归属层，或�
 
 ```
 main.py → gui/ → controllers/ → models/ → core/ + utils/ → 设备与操作系统
-                    ↘ adblab/application（纯用例）  ↙
+                    ↘ services/（纯用例）          ↙
 gui/features、gui/panels/remote_panel 例外：直接依赖 models/ 或 services/ 的 worker/service
 ```
 
-- `core/` 不反向依赖 `models`/`gui`；`core/` 内只有 `log_service.py` 依赖 Qt，
-  `core/__init__.py` 禁止导入 Qt（保住 mobileperf 的无 Qt 边界）。
+- `core/` 不反向依赖 `models`/`gui`；`log_service.py` 和 `tasks/qt_supervisor.py` 是显式 Qt 叶子；
+  `core/__init__.py` 和 `core/tasks/__init__.py` 禁止导入 Qt（保住 mobileperf 与纯资源契约边界）。
+- 业务 operation/结果在 `services/tasks/`，设备上下文/批次在 `services/devices/`，安装/文件选择接口
+  在 `services/apps/`；通用取消与资源监督在 `core/tasks/`。Qt 适配与 worker 在 `gui/adapters/`、
+  `gui/workers/`，轻量包根不聚合页面；原 models worker 入口仍指向同一实现模块。
 - 设置层错误日志经 `core.settings_manager.set_error_sink` 注入，不在 core 里 import Qt。
 
 ## 执行边界

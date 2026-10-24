@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from threading import RLock
 
-from .operations import (
+from services.tasks.operations import (
     OperationManager,
     OperationSnapshot,
     OperationState,

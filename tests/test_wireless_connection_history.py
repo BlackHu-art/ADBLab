@@ -11,8 +11,8 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
 from controllers._device import ADBDeviceMixin
+from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 from models.adb_device import ADBDevice
 from models.device_store import DeviceStore
 from services.adb_pairing import PairingOutcome

@@ -46,7 +46,7 @@ from PySide6.QtCore import QThread
 
 leaf, order = sys.argv[1:]
 old_name = "models." + leaf + "_worker"
-new_name = "adblab.presentation.workers." + leaf
+new_name = "gui.workers." + leaf
 first_name, second_name = ((old_name, new_name) if order == "old-first"
                            else (new_name, old_name))
 first = importlib.import_module(first_name)
@@ -57,7 +57,7 @@ second = importlib.import_module(second_name)
 assert first is second
 assert sys.modules[old_name] is sys.modules[new_name] is first
 assert getattr(sys.modules["models"], leaf + "_worker") is first
-assert getattr(sys.modules["adblab.presentation.workers"], leaf) is first
+assert getattr(sys.modules["gui.workers"], leaf) is first
 names = (["AppManagerWorker"] if leaf == "app_manager" else [
     "ADBWorker", "DirectoryListWorker", "TextReadWorker", "TextSaveWorker",
     "LocalTextSaveWorker", "TransferWorker",
@@ -84,20 +84,22 @@ import importlib
 import importlib.abc
 import sys
 
-blocked = ("models", "controllers", "gui", "qfluentwidgets")
+blocked = ("models", "controllers", "qfluentwidgets", "adblab")
+leaf = sys.argv[1]
+package = "gui.workers"
+allowed_gui = {"gui", package, package + "." + leaf}
 def forbidden(name):
-    return any(name == prefix or name.startswith(prefix + ".") for prefix in blocked)
+    return (any(name == prefix or name.startswith(prefix + ".") for prefix in blocked)
+            or (name.startswith("gui.") and name not in allowed_gui))
 assert not any(forbidden(name) for name in sys.modules)
 class Blocker(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if forbidden(fullname):
             raise AssertionError("forbidden import: " + fullname)
 sys.meta_path.insert(0, Blocker())
-leaf = sys.argv[1]
-package = "adblab.presentation.workers"
 importlib.import_module(package if leaf == "package-only" else package + "." + leaf)
 assert not any(forbidden(name) for name in sys.modules)
-for other in ("app_manager", "file_explorer"):
+for other in ("app_manager", "file_explorer", "device_discovery"):
     if leaf != other:
         assert package + "." + other not in sys.modules
 ''', tmp_path, leaf)
@@ -117,7 +119,7 @@ from PySide6.QtCore import QCoreApplication
 
 application = QCoreApplication([])
 leaf, alias, timing = sys.argv[1:]
-new = importlib.import_module("adblab.presentation.workers." + leaf)
+new = importlib.import_module("gui.workers." + leaf)
 old = importlib.import_module("models." + leaf + "_worker")
 target = old if alias == "old" else new
 calls, received = [], []

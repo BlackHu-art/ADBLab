@@ -8,13 +8,13 @@ import re
 import time
 import uuid
 
-from adblab.application.cancellation import CancellationToken
-from adblab.application.monkey_batch import MonkeyRunSnapshot, MonkeyTargetCompletion
 from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
+from core.tasks.cancellation import CancellationToken
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
+from services.monkey_batch import MonkeyRunSnapshot, MonkeyTargetCompletion
 from utils.adb_values import normalize_android_package
 
 

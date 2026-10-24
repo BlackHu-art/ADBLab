@@ -17,7 +17,7 @@ from services.adb_pairing import PairingOutcome
 
 @pytest.fixture
 def lifecycle_case():
-    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+    from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 
     outcome = PairingOutcome(
         request_id=4, context_revision=7, paired=True, connected=True,
@@ -35,7 +35,7 @@ def lifecycle_case():
 def test_lifecycle_protocol_import_is_isolated():
     result = subprocess.run(
         [sys.executable, "-c", "import sys; "
-         "import adblab.application.device_connection_lifecycle; "
+         "import services.devices.device_connection_lifecycle; "
          "assert not any(n == 'controllers' or n == 'services.adb_pairing' "
          "or n.startswith('PySide6') for n in sys.modules)"],
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
@@ -45,7 +45,7 @@ def test_lifecycle_protocol_import_is_isolated():
 
 
 def test_adapter_is_lazy_and_tracks_late_owner(lifecycle_case):
-    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+    from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 
     _adapter, _current, owner, _pairing, outcome = lifecycle_case
     provider = Mock(return_value=None)
@@ -154,7 +154,7 @@ def test_callbacks_keep_optional_behavior(lifecycle_case, value):
 
 @pytest.mark.parametrize("failure", ["provider", "accepts", "invalidate", "notify"])
 def test_callbacks_preserve_exception_behavior(lifecycle_case, failure):
-    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+    from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 
     adapter, _current, owner, pairing, outcome = lifecycle_case
     error = RuntimeError("synthetic failure")

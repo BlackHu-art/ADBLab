@@ -7,11 +7,11 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtWidgets import QFileDialog, QWidget
 
-from adblab.application.action_results import ActionResults, ActionSpec, capture_action_job
-from adblab.application.apk_selection import ApkFilePicker
-from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
 from controllers import ADBController
+from gui.adapters.apk_file_picker import QtApkFilePicker
 from gui.close_controller import CloseController
+from services.apps.apk_selection import ApkFilePicker
+from services.tasks.action_results import ActionResults, ActionSpec, capture_action_job
 
 ENTRIES = ("install_apk", "batch_install_apk", "parse_apk_info")
 

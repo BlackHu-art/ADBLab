@@ -50,7 +50,7 @@ class ScreenshotViewerUI:
         self._frame.header_card.hide()
         layout = self._frame.layout()
         if layout is not None:
-            layout.setContentsMargins(32, 8, 32, 34)
+            layout.setContentsMargins(32, 8, 32, 8)
 
     def _init_shortcuts(self):
         frame = self._frame
@@ -113,8 +113,13 @@ class ScreenshotViewerUI:
             apply_focus_indicator(button, selector="QToolButton")
         bar.setFixedHeight(max(button.height() for button in (*bar.commandButtons, bar.moreButton)))
         bar.updateGeometry()
-        apply_focus_indicator(frame._view, selector="QListWidget")
-        apply_focus_indicator(frame._pager, selector="QListWidget")
+        apply_focus_indicator(frame._view, selector="QListWidget", keyboard_only=True)
+        apply_focus_indicator(frame._pager, selector="QListWidget", keyboard_only=True)
+        # 原生圆点固定高只包含内容；键盘焦点的预留边框不能裁掉分页圆点。
+        frame._pager.ensurePolished()
+        frame._pager.setFixedHeight(
+            frame._pager.gridSize().height() + 2 * frame._pager.frameWidth()
+        )
         self._refresh_metadata()
 
     def _init_ui(self):
@@ -149,7 +154,6 @@ class ScreenshotViewerUI:
         frame.dialog_subtitle.setWordWrap(True)
         header.addWidget(frame.dialog_subtitle)
         root.addWidget(frame.header_card)
-        root.addWidget(self._build_command_bar())
 
         frame._canvas_frame = QFrame(frame)
         frame._canvas_frame.setObjectName("canvasFrame")
@@ -173,6 +177,7 @@ class ScreenshotViewerUI:
         frame._image_stack.addWidget(frame._view)
         canvas.addWidget(frame._image_stack)
         root.addWidget(frame._canvas_frame, 1)
+        root.addWidget(self._build_command_bar())
 
         frame._pager_bar = QWidget(frame._canvas_frame)
         frame._pager_bar.setObjectName("screenshotPagerOverlay")

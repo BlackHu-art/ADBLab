@@ -1,6 +1,6 @@
 """ScreenRecordUseCase 的纯逻辑契约测试（ADR-0003 Phase 3）。"""
 
-from adblab.application.screen_record import ScreenRecordUseCase
+from services.screen_record import ScreenRecordUseCase
 
 
 def _use_case() -> ScreenRecordUseCase:

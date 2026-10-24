@@ -7850,5 +7850,21 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>正在启动日志采集…</source>
             <translation>正在啟動日誌擷取…</translation>
         </message>
+        <message>
+            <source>文本输入</source>
+            <translation>文字輸入</translation>
+        </message>
+        <message>
+            <source>截图与录屏</source>
+            <translation>截圖與錄影</translation>
+        </message>
+        <message>
+            <source>应用包操作、文本输入、Monkey 测试与诊断报告</source>
+            <translation>應用程式套件操作、文字輸入、Monkey 測試與診斷報告</translation>
+        </message>
+        <message>
+            <source>截图录屏，查看并保存截图</source>
+            <translation>截圖錄影，檢視並儲存截圖</translation>
+        </message>
     </context>
 </TS>

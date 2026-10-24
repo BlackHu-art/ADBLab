@@ -7850,5 +7850,21 @@ Android device management, apps and diagnostics</translation>
             <source>正在启动日志采集…</source>
             <translation>Starting log capture…</translation>
         </message>
+        <message>
+            <source>文本输入</source>
+            <translation>Text Input</translation>
+        </message>
+        <message>
+            <source>截图与录屏</source>
+            <translation>Screenshots &amp; Recording</translation>
+        </message>
+        <message>
+            <source>应用包操作、文本输入、Monkey 测试与诊断报告</source>
+            <translation>Package actions, text input, Monkey tests and diagnostic reports</translation>
+        </message>
+        <message>
+            <source>截图录屏，查看并保存截图</source>
+            <translation>Capture or record screens, and view or save screenshots</translation>
+        </message>
     </context>
 </TS>

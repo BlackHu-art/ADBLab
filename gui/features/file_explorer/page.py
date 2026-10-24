@@ -32,7 +32,6 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 
-from adblab.presentation.workers.file_explorer import ADBWorker, TransferWorker
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
     alive_callback,
@@ -52,6 +51,7 @@ from gui.styles.fluent import (
 )
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
+from gui.workers.file_explorer import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
 
 from .image import FileExplorerImagePreview
@@ -201,8 +201,14 @@ class FileExplorerPage(QWidget):
         self.header_card.setVisible(not embedded)
         layout = self.layout()
         assert layout is not None
-        margins = (32, 6, 32, 30) if embedded else (8, 6, 8, 6)
+        margins = (32, 8, 0, 8) if embedded else (8, 6, 8, 6)
         layout.setContentsMargins(*margins)
+        # 列表内容与工具行共用阅读边界，滚条仍贴住宿主右侧。
+        right_inset = 32 if embedded else 0
+        for row in (self._path_layout, self._command_layout, self._status_layout):
+            row.setContentsMargins(0, 0, right_inset, 0)
+        self.preview_panel.setContentsMargins(0, 0, right_inset, 0)
+        self._apply_table_style()
         self._reflow_top_controls()
         self._sync_preview_layout()
 
@@ -245,6 +251,7 @@ class FileExplorerPage(QWidget):
         layout.addWidget(self.header_card)
 
         self._path_layout = QGridLayout()
+        self._path_layout.setContentsMargins(0, 0, 0, 0)
         self._path_layout.setSpacing(4)
         self._path_label = apply_label_role(BodyLabel(tr("Path:")), FontRole.UI)
         self.path_field = LineEdit()
@@ -329,12 +336,12 @@ class FileExplorerPage(QWidget):
         self.root_cb.setAccessibleName(tr("Use root access"))
         self.root_cb.toggled.connect(self._list_controller.cancel_link_requests)
         self.root_cb.toggled.connect(self._view_controller.invalidate_cache)
-        command_layout = QHBoxLayout()
-        command_layout.setContentsMargins(0, 0, 0, 0)
-        command_layout.setSpacing(8)
-        command_layout.addWidget(self.command_bar, 1)
-        command_layout.addWidget(self.root_cb)
-        layout.addLayout(command_layout)
+        self._command_layout = QHBoxLayout()
+        self._command_layout.setContentsMargins(0, 0, 0, 0)
+        self._command_layout.setSpacing(8)
+        self._command_layout.addWidget(self.command_bar, 1)
+        self._command_layout.addWidget(self.root_cb)
+        layout.addLayout(self._command_layout)
         self._reflow_top_controls()
 
         self.browser_panel = QWidget(self)
@@ -344,6 +351,7 @@ class FileExplorerPage(QWidget):
         browser_layout.setSpacing(4)
 
         self.table = use_smooth_scroll(TableWidget(self.browser_panel))
+        self.table.setObjectName("fileExplorerTable")
         self.table.setItemDelegate(FileExplorerItemDelegate(self.table))
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setIconSize(QSize(16, 16))
@@ -378,7 +386,10 @@ class FileExplorerPage(QWidget):
             _FileExplorerStatusLabel(tr("Ready")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self.status_bar.setAccessibleName(tr("File explorer status"))
-        browser_layout.addWidget(self.status_bar)
+        self._status_layout = QHBoxLayout()
+        self._status_layout.setContentsMargins(0, 0, 0, 0)
+        self._status_layout.addWidget(self.status_bar)
+        browser_layout.addLayout(self._status_layout)
 
         self.preview_panel = self._build_preview_panel()
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
@@ -683,7 +694,11 @@ class FileExplorerPage(QWidget):
         layout = self.layout()
         assert layout is not None
         margins = layout.contentsMargins()
-        available_width = max(1, self.contentsRect().width() - margins.left() - margins.right())
+        path_margins = self._path_layout.contentsMargins()
+        available_width = max(
+            1, self.contentsRect().width() - margins.left() - margins.right()
+            - path_margins.left() - path_margins.right(),
+        )
         for widget in (self._path_navigation, self._path_label, self.path_field, self.search_field):
             self._path_layout.removeWidget(widget)
         for column in range(4):
@@ -732,12 +747,23 @@ class FileExplorerPage(QWidget):
             if item is not None:
                 item.setIcon(self._file_type_icon(self._file_name_at(row), self._file_type_at(row)))
 
+    def _apply_table_style(self) -> None:
+        """保留焦点边框，将嵌入列表的内容右边界与工具行对齐。"""
+        # 透明焦点边框已占 2px；补足到 32px，且选择器不作用于子表头。
+        content_qss = (
+            "QTableView#fileExplorerTable { padding-right: 30px; }"
+            if self.property("workspace_embedded") else ""
+        )
+        apply_focus_indicator(
+            self.table, selector="QTableView", keyboard_only=True, content_qss=content_qss,
+        )
+
     def _apply_theme(self, _value=None):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         mono_font = bs.font_for_role(FontRole.MONO)
         # 公共入口随强调色刷新，仅键盘导航显示外框且始终预留相同边宽。
-        apply_focus_indicator(self.table, selector="QTableView", keyboard_only=True)
+        self._apply_table_style()
         self.setFont(ui_font)
         # 页头由 CardWidget 绘制，主题变化仍需保留设备连接与操作选择的区分。
         if hasattr(self, "header_card"):

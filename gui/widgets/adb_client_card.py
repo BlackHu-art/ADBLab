@@ -879,7 +879,11 @@ class AdbEnvironmentSettingCard(_ContinuousExpandGroupSettingCard):
     def set_status(self, text: str) -> None:
         """更新折叠态状态行；不改变当前执行模式。"""
 
-        self.card.contentLabel.setText(text)
+        label = self.card.contentLabel
+        label.setText(text)
+        # sizeHint 会受旧最小高度约束；先解除它，字形行高增减后都能恢复自然高度。
+        label.setMinimumHeight(0)
+        label.setMinimumHeight(label.sizeHint().height())
 
     def set_recheck_enabled(self, enabled: bool) -> None:
         self._recheck_button.setEnabled(enabled)

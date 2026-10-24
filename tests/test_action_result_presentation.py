@@ -4,18 +4,18 @@ import pytest
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 
-from adblab.application.action_results import (
+from core.settings_manager import AppSettings
+from gui.i18n import install_translators
+from gui.pages.tasks_page import TaskCenterPage
+from gui.styles import BaseStyles
+from gui.widgets.report_artifacts import ReportArtifactsView
+from services.tasks.action_results import (
     ActionItem,
     ActionResult,
     ActionResults,
     ActionSpec,
     capture_action_job,
 )
-from core.settings_manager import AppSettings
-from gui.i18n import install_translators
-from gui.pages.tasks_page import TaskCenterPage
-from gui.styles import BaseStyles
-from gui.widgets.report_artifacts import ReportArtifactsView
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     wait_for_stable_geometry,

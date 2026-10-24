@@ -8,9 +8,9 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import QObject, Signal
 
-from adblab.application.action_results import ActionEnvelope, ActionSpec, capture_action_job
 from controllers import ADBController
 from controllers.model_dependencies import ControllerModels
+from services.tasks.action_results import ActionEnvelope, ActionSpec, capture_action_job
 
 pytestmark = pytest.mark.ui
 

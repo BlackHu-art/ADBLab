@@ -10,9 +10,9 @@ from uuid import uuid4
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from core.exec import require_adb_program
 from core.native_process import NativeCommandScope
+from core.tasks.qt_supervisor import QtTaskSupervisor
 from services.adb_pairing import (
     PairingContext,
     PairingOutcome,

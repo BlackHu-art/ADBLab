@@ -12,7 +12,7 @@ def test_query_services_execute_with_fake_dependencies_without_qt():
         import sys
         from types import SimpleNamespace
 
-        blocked = ('PySide6', 'qfluentwidgets', 'gui', 'models', 'adblab.presentation')
+        blocked = ('PySide6', 'qfluentwidgets', 'gui', 'models', 'adblab')
 
         class Block(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):

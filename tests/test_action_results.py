@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from adblab.application.action_results import (
+from services.tasks.action_results import (
     ActionEnvelope,
     ActionResults,
     ActionSpec,
@@ -98,7 +98,7 @@ def test_progress_is_not_success_and_multiple_targets_finish_once():
 
 
 def test_result_history_byte_budget_evicts_old_records_without_truncating_latest(monkeypatch):
-    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    monkeypatch.setattr("services.tasks.action_results.time.time", lambda: 1.0)
     store = ActionResults(lambda _result: None, capacity=80, text_budget=2048)
     spec = ActionSpec("query", "system.shell", "查询", "text")
     bodies = [f"result-{index}:" + "正文" * 1000 for index in range(3)]
@@ -138,7 +138,7 @@ def test_result_history_byte_budget_keeps_inflight_results_and_the_latest_comple
 def test_result_history_evicts_in_completion_order_with_equal_timestamps(
     monkeypatch, capacity, text_budget,
 ):
-    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    monkeypatch.setattr("services.tasks.action_results.time.time", lambda: 1.0)
     store = ActionResults(lambda _result: None, capacity=capacity, text_budget=text_budget)
 
     def start(name):
@@ -309,9 +309,9 @@ def test_native_screenshot_partial_batch_keeps_last_successful_unit_successful(
     from types import SimpleNamespace
     from unittest.mock import Mock
 
-    from adblab.application.envelope import attach_operation_metadata
     from controllers.action_catalog import ACTION_SIGNALS
     from models.adb_model import ADBModelCore, async_command
+    from services.tasks.envelope import attach_operation_metadata
     from tests.test_phase2_screenshot_gate import _controller, _write_png
 
     class Model(ADBModelCore):
@@ -394,9 +394,9 @@ def test_shutdown_during_modal_submission_does_not_access_cleared_request():
 def test_automatic_recording_pull_creates_one_media_result_per_device(qt_application, tmp_path):
     from types import SimpleNamespace
 
-    from adblab.application.screen_record import ScreenRecordUseCase
     from controllers._media import ADBMediaMixin
     from models.adb_model import ADBModelCore, async_command
+    from services.screen_record import ScreenRecordUseCase
 
     class Model(ADBModelCore):
         @async_command

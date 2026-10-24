@@ -12,10 +12,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
-from adblab.application.action_results import ActionResults
-from adblab.application.device_batch import DeviceBatchUseCase
-from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
-from adblab.application.operations import OperationManager
 from controllers._app import ADBAppMixin
 from core.exec import CommandResult
 from gui.features.app_manager import AppDetailsPage, AppManagerPage
@@ -23,6 +19,10 @@ from gui.styles import BaseStyles
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 from models.base.focus_detector import detect_current_package, extract_package_name
+from services.apps.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
+from services.devices.device_batch import DeviceBatchUseCase
+from services.tasks.action_results import ActionResults
+from services.tasks.operations import OperationManager
 
 
 @pytest.fixture(autouse=True)

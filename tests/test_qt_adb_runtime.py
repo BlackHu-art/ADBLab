@@ -11,11 +11,11 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QObject, QPoint
 from PySide6.QtWidgets import QWidget
 
-from adblab.presentation.qt_adb_runtime import QtAdbRuntime
 from core import adb_transport
 from core import exec as execution
 from core.adb_runtime import AdbRuntime, RuntimeSnapshot
 from core.settings_manager import DEFAULTS, AppSettings
+from gui.adapters.adb_runtime import QtAdbRuntime
 from gui.i18n import install_translators
 from gui.main_frame import MainFrame, _ScanThread
 from gui.pages.fluent_pages import SettingsPage
@@ -28,7 +28,7 @@ from utils.adb_resolver import AdbCandidate
 
 def test_adapter_defers_resolution_and_cancels_before_event_loop(monkeypatch):
     resolver = Mock(return_value=None)
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", resolver)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", resolver)
     owner = QObject()
     adapter = QtAdbRuntime(owner)
     adapter.schedule()
@@ -41,7 +41,7 @@ def test_adapter_defers_resolution_and_cancels_before_event_loop(monkeypatch):
 
 
 def test_adapter_publishes_ready_on_gui_thread_and_releases_runtime(monkeypatch):
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", lambda: None)
     adapter = QtAdbRuntime()
     delivered = []
     adapter.ready.connect(lambda: delivered.append(threading.get_ident()))
@@ -97,7 +97,7 @@ def test_adapter_discards_queued_notification_after_shutdown(shutdown):
 
 
 def test_adapter_recheck_explicitly_requests_automatic_reselection(monkeypatch):
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", lambda: None)
     adapter = QtAdbRuntime()
     recheck = Mock(return_value=True)
     monkeypatch.setattr(adapter.runtime, "recheck", recheck)
@@ -111,7 +111,7 @@ def test_adapter_recheck_explicitly_requests_automatic_reselection(monkeypatch):
 def test_adapter_selection_mode_is_forwarded_without_touching_requests(monkeypatch):
     """执行模式切换只影响后续命令：透传给运行实例并刷新快照。"""
 
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", lambda: None)
     adapter = QtAdbRuntime()
     published: list[object] = []
     adapter.changed.connect(published.append)
@@ -131,13 +131,13 @@ def test_adapter_recheck_invalidates_path_caches_before_reselection(monkeypatch)
     """重新检测必须先清解析缓存，否则安装或移除 platform-tools 后仍用旧路径。"""
 
     calls: list[str] = []
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", lambda: None)
     monkeypatch.setattr(
-        "adblab.presentation.qt_adb_runtime.invalidate_adb_path_cache",
+        "gui.adapters.adb_runtime.invalidate_adb_path_cache",
         lambda: calls.append("resolver"),
     )
     monkeypatch.setattr(
-        "adblab.presentation.qt_adb_runtime.reset_adb_program_cache",
+        "gui.adapters.adb_runtime.reset_adb_program_cache",
         lambda: calls.append("program"),
     )
     adapter = QtAdbRuntime()
@@ -190,7 +190,7 @@ def test_adapter_recheck_discovers_new_macos_tool_through_both_path_caches(
 
 
 def test_main_frame_projects_initial_native_scope_without_selecting_manual_native(monkeypatch):
-    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr("gui.adapters.adb_runtime.resolve_adb_path", lambda: None)
     frame = QWidget()
     frame._closing = False
     frame._always_on_top = False
@@ -273,7 +273,7 @@ def test_fast_scan_runs_while_other_commands_are_busy(monkeypatch):
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
     runtime.wait_for_device_check.return_value = None
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
     monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 1)
     thread = _ScanThread()
     snapshots = []
@@ -282,7 +282,7 @@ def test_fast_scan_runs_while_other_commands_are_busy(monkeypatch):
     monkeypatch.setattr(execution.CommandRunner, "run", run)
     monkeypatch.setattr(thread, "_sleep_interruptibly", lambda _: True)
     native = Mock()
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.ProcessRunner", native)
+    monkeypatch.setattr("gui.workers.device_discovery.ProcessRunner", native)
     thread.run()
     assert snapshots == [["fake"]]
     assert run.call_args.args[0] == ["adb", "devices", "-l"]
@@ -309,12 +309,12 @@ def test_scan_waits_for_host_without_opening_another_native_client(monkeypatch, 
         return original_wait(timeout)
 
     monkeypatch.setattr(runtime._condition, "wait", wait)
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
     monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 0)
     fast = Mock(return_value=execution.CommandResult(True, "List of devices attached"))
     monkeypatch.setattr(execution.CommandRunner, "run", fast)
     native = Mock(return_value="List of devices attached")
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.ProcessRunner", Mock())
+    monkeypatch.setattr("gui.workers.device_discovery.ProcessRunner", Mock())
     scan = _ScanThread()
     monkeypatch.setattr(scan, "_run_devices_scan", native)
     monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _: True)
@@ -358,7 +358,7 @@ def test_scan_waits_for_host_without_opening_another_native_client(monkeypatch, 
 def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_seconds):
     clock = [100.0]
     timer = SimpleNamespace(monotonic=lambda: clock[0])
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.time", timer)
+    monkeypatch.setattr("gui.workers.device_discovery.time", timer)
     monkeypatch.setattr("core.adb_transport.time", timer)
     runtime = Mock()
     runtime.can_scan_fast.return_value = False
@@ -370,7 +370,7 @@ def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_
         return None
 
     runtime.wait_for_device_check.side_effect = wait_for_device_check
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
     monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 0)
     proc = Mock()
     proc.poll.return_value = None
@@ -385,7 +385,7 @@ def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_
     proc.kill.side_effect = lambda: setattr(proc.poll, "return_value", -1)
     runner = Mock()
     runner.start.return_value = proc
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.ProcessRunner", lambda: runner)
+    monkeypatch.setattr("gui.workers.device_discovery.ProcessRunner", lambda: runner)
     scan = _ScanThread()
     monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _: True)
     scan.run()
@@ -406,7 +406,7 @@ def test_scan_requests_recovery_before_busy_gate_or_failed_native_scan(monkeypat
     runtime.wait_for_device_check.return_value = None
     events = []
     runtime.request_device_check.side_effect = lambda: events.append("check")
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
 
     def active_count():
         events.append("busy")
@@ -818,12 +818,47 @@ def test_settings_translated_runtime_status_fits_narrow_large_font_page(
             translator.deleteLater()
 
 
+def test_settings_runtime_status_remeasures_height_when_text_grows_and_shrinks(
+    monkeypatch, qt_application,
+):
+    """连续状态切换不能沿用旧字形高度，也不能把临时增长永久留在表头。"""
+    values = dict(DEFAULTS, ui_font_size=22, language="zh_CN")
+    settings = SimpleNamespace(get=values.get)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    BaseStyles.reload_from_settings()
+    frame = Mock()
+    frame._always_on_top = False
+    page = SettingsPage(frame)
+    card = page.adb_check_card
+    label = card.contentLabel
+    try:
+        page.resize(420, 640)
+        page.show()
+        card.set_mode("native")
+        heights = []
+        for text in ("正在检查执行环境", "正在启动本机 ADB 服务", "正在检查执行环境"):
+            card.set_status(text)
+            page._reflow_settings()
+            wait_for_stable_geometry(qt_application, (page, card, label))
+            assert label.text() == text
+            assert label.height() >= label.heightForWidth(label.width())
+            assert card.mode() == "native"
+            point = label.mapTo(card, QPoint())
+            assert 0 <= point.y() and point.y() + label.height() <= card.height()
+            heights.append(label.height())
+        assert heights[1] > heights[0]
+        assert heights[2] == heights[0]
+        frame.set_adb_selection_mode.assert_not_called()
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("kind", ["timeout", "protocol"])
 def test_fast_scan_failure_preserves_last_snapshot(monkeypatch, kind):
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
     runtime.wait_for_device_check.return_value = None
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
     results = iter(
         [
             execution.CommandResult(True, "List of devices attached\nfake\tdevice"),
@@ -846,7 +881,7 @@ def test_superseded_scan_keeps_snapshot_and_state_and_waits_normally(monkeypatch
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
     runtime.wait_for_device_check.return_value = None
-    monkeypatch.setattr("adblab.presentation.qt_device_discovery.adb_runtime", lambda: runtime)
+    monkeypatch.setattr("gui.workers.device_discovery.adb_runtime", lambda: runtime)
     results = iter([
         execution.CommandResult(True, "List of devices attached\ncurrent\tdevice"),
         execution.CommandResult(False, stale=True),

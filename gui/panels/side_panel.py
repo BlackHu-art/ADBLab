@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import HeaderCardWidget, PushButton, SmoothScrollArea
 
-from adblab.application.device_context import DeviceContext, DeviceContextSnapshot
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
@@ -25,6 +24,7 @@ from gui.widgets.responsive_controller import (
     ResponsiveCoordinator,
 )
 from gui.widgets.responsive_layout import prepare_responsive_content
+from services.devices.device_context import DeviceContext, DeviceContextSnapshot
 
 
 class SidePanel(QWidget):

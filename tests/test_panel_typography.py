@@ -219,11 +219,11 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
                 measured_titles.add(group.title)
 
             assert "设备与连接" in measured_titles
-            # “文本与屏幕”已收敛为 Card，改为验证其标题标签高度随字号缩放。
+            # “截图与录屏”已收敛为 Card，改为验证其标题标签高度随字号缩放。
             ts_card = next(
                 card
                 for card in panel._apps_tab._apps_section_groups
-                if card.title == "文本与屏幕"
+                if card.title == "截图与录屏"
             )
             first_offsets[font_size] = _effective_size(ts_card.headerLabel.font())
             device_control_heights[font_size] = panel._devices_tab.btn_refresh.minimumHeight()

@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import InfoBadge
 
-from adblab.application.device_context import DeviceContext
 from gui.i18n import tr
 from gui.notifications import show_toast
 from gui.panels.base_panel import BasePanel
@@ -31,6 +30,7 @@ from gui.panels.device_manager_view import DeviceManagerView, _DeviceCardRow
 from gui.styles import FontRole
 from gui.widgets.responsive_controller import ReflowReason
 from models.device_store import DeviceStore  # noqa: F401  供测试通过本模块命名空间补丁。
+from services.devices.device_context import DeviceContext
 from utils.adb_targets import normalize_adb_connect_target
 
 

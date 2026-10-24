@@ -496,7 +496,7 @@ def test_file_explorer_icon_types_preserve_string_sort_and_accessibility(qt_appl
         assert _paint_option(page, row, page.TYPE_COL).text == ""
         assert _paint_option(page, row, page.NAME_COL).text == page._file_name_at(row)
         assert not item.icon().isNull()
-        assert item.toolTip() == file_type
+        assert not item.toolTip()
         assert item.data(Qt.ItemDataRole.AccessibleTextRole) == file_type
     page.close()
 

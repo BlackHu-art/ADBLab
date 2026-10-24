@@ -52,7 +52,7 @@ def test_controller_fixed_command_uses_svc_method_and_rejects_extra_tokens():
 
 @pytest.mark.parametrize("success", [False, True])
 def test_svc_async_dispatch_retains_action_identity_and_feedback(qt_application, success):
-    from adblab.application.action_results import ActionResults
+    from services.tasks.action_results import ActionResults
 
     controller = ADBInputMixin.__new__(ADBInputMixin)
     controller.signals = ADBControllerSignals()

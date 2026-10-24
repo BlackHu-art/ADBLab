@@ -16,6 +16,12 @@ related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_I
 ADBLab 通过 Qt Signal/Slot 连接桌面界面与异步设备操作。普通面板走 Controller/model；
 应用管理、文件、Logcat、性能和 Remote 等复杂功能也直接使用专用 worker/service，并非严格 MVC。
 
+应用用例按业务归入 `services`：`tasks/` 管理操作身份和结果，`devices/` 管理设备上下文与批次，
+`apps/` 承载安装及文件选择接口。`core/tasks/` 管理取消和资源监督，Qt 监督器是显式叶子，纯包根不加载 Qt。
+运行时 Qt 适配在 `gui/adapters/`，线程适配在 `gui/workers/`；窗口和页面仍负责实例、接线与关闭。
+旧内部 `adblab.*` 导入路径退役，源码按新路径导入；数据与原 models/GUI 兼容入口保持。
+目录合并依据见 [ADR-0007](../architecture/adr/0007-responsibility-directory-consolidation.md)。
+
 设置规则位于 `core/settings/schema.py`，历史字典变换位于 `core/settings/migrations.py`，后者显式接收诊断回调。
 `core/settings_manager.py` 仍是唯一持久化与线程资源owner；`gui/i18n.py` 直接消费纯语言规则，无需加载该owner。
 
@@ -180,10 +186,10 @@ flowchart LR
   同步值/日志回调由原Qt worker注入。命令/字节协议仍在`file_explorer.py`，安全下载仍在`file_download.py`。
   worker保留构造期marker/命令、Signal及decoded标志；事务拥有局部暂存和远端清理列表，清理按原逆序执行。
   `ADBWorker`和`TransferWorker`保持原短命令/进程生命周期，不引入新的线程或传输监督器。
-- 应用与文件 Qt worker 的真实实现位于 `adblab/presentation/workers/app_manager.py` 和
+- 应用与文件 Qt worker 的真实实现位于 `gui/workers/app_manager.py` 和
   `file_explorer.py`；旧 `models/*_worker.py` 指向同一模块对象，保留类身份和实际全局依赖替换。
   GUI 从新路径导入，但页面本地工厂、QObject 父对象、信号接线和关闭监督仍由原页面拥有。
-  新包入口不聚合 worker；新实现不反向加载 models 或 GUI。旧入口仍经过 models 的聚合导入，
+  新包入口不聚合 worker；新实现不反向加载 models 或其它 GUI 模块。旧入口仍经过 models 的聚合导入，
   模块位置与类的 `__module__` 反映真实新目录，不伪装旧位置，也不宣称测得启动提速。
 - `services/performance/config.py` 保存运行配置及序列化，`results.py` 保存冻结结果与文件发现。
   两者不加载进程运行器；`services/mobileperf_runner.py` 保留旧公开对象导出、worker 启动位置和
@@ -263,7 +269,7 @@ flowchart LR
   重检或重启提交前撤销在途回调与续连资格，普通设备发现和执行模式变化不作废配对。
   `finished` 信号或 `isRunning() == False` 不替代 `QThread.wait()` 成功；尚未 join 时保留资源，
   由后台继续等待，不能提前销毁线程或开放下一轮。
-- `adblab/application/monkey_batch.py::MonkeyBatchCoordinator` 集中保存 Monkey 业务批次、参数
+- `services/monkey_batch.py::MonkeyBatchCoordinator` 集中保存 Monkey 业务批次、参数
   快照、运行终态与停止确认，校验代次并只交付一次归档。Controller 保留参数校验、模型调用和
   信号投递；模型继续拥有取消条件、进程与资源锁，业务协调器不启动或等待外部进程。
   独立 Monkey 与性能采集的 Monkey 共用 `MonkeyProcessLease`，远端以本次随机目录中的
@@ -278,7 +284,7 @@ flowchart LR
 | StartupTask / 启动显示子进程 | 设置回写和连接历史各用一个单次 QThread，先后执行；协调器等待线程退出后继续阶段或取消。独立 Qt 进程承担启动图标绘制，交接后异步回收，退出时有界兜底 |
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
 | `ADBAdvanced._record_pool` | 双槽池等待录屏完成并保存，超过槽位的保存请求排队；模型关闭同时等待运行与排队任务收口 |
-| `qt_device_discovery._ScanThread` | 实现在 `adblab/presentation`，主窗口拥有实例并接线、停止与等待；快速查询走可取消的 CommandRunner，原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；旧 MainFrame 模块导出同一类对象，快照和防抖契约不变 |
+| `gui.workers.device_discovery._ScanThread` | 主窗口拥有实例并接线、停止与等待；快速查询走可取消的 CommandRunner，原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；旧 MainFrame 模块导出同一类对象，快照和防抖契约不变 |
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；后台通知抵达 GUI 后读取最新快照，模式与实际能力分别投影；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
 | FileTransferCoordinator / 文件预览线程 | 页面串行调度传输，预览优先排队但不抢占运行中的普通传输；动态监督 worker、子进程及准备前登记的清理义务，后台等待实际 join 和进程退出；图片线程交付 QImage，GUI 拥有有界像素缓存；文本读取保留原始字节，保存和另存为也由受监督的后台任务执行 |

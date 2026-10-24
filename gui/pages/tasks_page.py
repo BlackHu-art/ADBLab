@@ -42,8 +42,6 @@ from qfluentwidgets import (
     SmoothScrollArea,
 )
 
-from adblab.application.action_results import ActionResult
-from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
@@ -52,6 +50,8 @@ from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.content_section import ContentSection
 from gui.widgets.run_results import RunResultsWidget
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
+from services.tasks.action_results import ActionResult
+from services.tasks.operations import OperationManager, OperationSnapshot, OperationState
 
 # 在途视图轮询间隔（毫秒）。
 POLL_INTERVAL_MS = 1000

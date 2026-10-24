@@ -9,12 +9,12 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QFileDialog, QScrollArea
 
-from adblab.application.action_results import ActionResult, ActionResults, ActionSpec
 from controllers.action_catalog import ACTION_SIGNALS
 from core.diagnostics import redact_diagnostic
 from gui.i18n import tr
 from gui.notifications import ToastLevel, show_toast
 from gui.pages.device_hub import _device_name
+from services.tasks.action_results import ActionResult, ActionResults, ActionSpec
 
 
 class ActionFeedbackPresenter(QObject):

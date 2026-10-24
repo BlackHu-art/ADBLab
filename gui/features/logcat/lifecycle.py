@@ -4,7 +4,7 @@ import weakref
 
 from PySide6.QtCore import QTimer
 
-from adblab.application.supervision import StopDisposition, TaskStopResult
+from core.tasks.supervision import StopDisposition, TaskStopResult
 from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
 from gui.i18n import tr
 

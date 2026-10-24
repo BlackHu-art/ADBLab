@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from threading import RLock
 
-from .cancellation import CancellationToken
+from core.tasks.cancellation import CancellationToken
 
 
 class OperationState(str, Enum):

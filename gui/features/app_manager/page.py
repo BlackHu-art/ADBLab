@@ -6,9 +6,6 @@ from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer, Signal
 from PySide6.QtWidgets import QSizePolicy, QSplitter, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel
 
-from adblab.presentation.workers.app_manager import (
-    AppManagerWorker,  # noqa: F401  供测试通过本模块命名空间补丁。
-)
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
     is_qobject_alive,
@@ -18,6 +15,9 @@ from gui.feedback import report_feedback
 from gui.i18n import tr
 from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
+from gui.workers.app_manager import (
+    AppManagerWorker,  # noqa: F401  供测试通过本模块命名空间补丁。
+)
 
 from .batch import AppManagerBatch
 from .details import AppDetailsPage
@@ -407,9 +407,16 @@ class AppManagerPage(QWidget):
     def _update_master_detail_layout(self) -> None:
         margins = self._page_layout.contentsMargins()
         width = self.width() - margins.left() - margins.right()
+        embedded = getattr(self, "_workspace_prepared", False)
+        # 嵌入时右侧 24px 阅读留白已移入详情；分栏仍按原来的有效宽度决定。
+        if embedded:
+            width -= 24
         wide = width >= self.MASTER_DETAIL_BREAKPOINT
         mode = "split" if wide else "stack"
         self.setProperty("masterDetailMode", mode)
+        if embedded:
+            # 详情的局部阅读边距不随主列表右侧贴边而取消。
+            self.details_page.setContentsMargins(0, 0, 24, 0)
         if not self._details_open:
             self._master_panel.show()
             self.details_page.hide()

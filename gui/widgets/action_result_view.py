@@ -17,12 +17,6 @@ from qfluentwidgets import (
     SearchLineEdit,
 )
 
-from adblab.application.action_results import (
-    ActionResult,
-    ActionResults,
-    artifact_name,
-    expired_action_results,
-)
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
@@ -33,6 +27,12 @@ from gui.styles.fluent import (
     set_function_tooltip,
 )
 from gui.widgets.eliding_combo_box import ElidingComboBox
+from services.tasks.action_results import (
+    ActionResult,
+    ActionResults,
+    artifact_name,
+    expired_action_results,
+)
 
 STATE_LABELS = {
     "running": "执行中",

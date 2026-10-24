@@ -27,8 +27,8 @@ from qfluentwidgets import (
     PushButton,
 )
 
-from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
+from core.tasks.supervision import ThreadedShutdownTask
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,

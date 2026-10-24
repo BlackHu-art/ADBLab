@@ -6,11 +6,11 @@ from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, PushButton
 
-from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_font_role, configure_fluent_control, set_function_tooltip
 from gui.widgets.eliding_combo_box import ElidingComboBox
+from services.tasks.action_results import ActionResult, ActionResults, artifact_name
 
 
 class ReportArtifactsView(QWidget):

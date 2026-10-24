@@ -17,7 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.tasks.qt_supervisor import QtTaskSupervisor
 from gui.dialogs.live_logcat import LogcatWorker as RealLogcatWorker
 from gui.features.base import FeatureSessionKey, FeatureSessionRegistry
 from gui.features.logcat import LiveLogcatPage

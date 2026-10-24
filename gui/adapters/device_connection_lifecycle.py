@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from adblab.application.device_connection_lifecycle import WirelessHistoryGuard
+from services.devices.device_connection_lifecycle import WirelessHistoryGuard
 
 if TYPE_CHECKING:
     from services.adb_pairing import PairingOutcome

@@ -2,11 +2,11 @@
 
 from PySide6.QtCore import QCoreApplication, QEvent
 
-from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
-from adblab.application.operations import OperationManager
 from gui.pages.tasks_page import TaskCenterPage
 from gui.run_library import RunLibraryController
 from services.run_library import RunLibrary, RunRecord
+from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
+from services.tasks.operations import OperationManager
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     wait_for_stable_geometry,

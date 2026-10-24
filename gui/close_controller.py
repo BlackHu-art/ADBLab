@@ -5,12 +5,12 @@ from datetime import datetime
 
 from PySide6.QtCore import QTimer
 
-from adblab.application.supervision import (
+from core.exec import CommandRunner, ProcessRunner
+from core.tasks.supervision import (
     StopDisposition,
     TaskStopResult,
     ThreadedShutdownTask,
 )
-from core.exec import CommandRunner, ProcessRunner
 from gui.i18n import tr
 from gui.widgets.settings_scroll import SettingsWheelScroll
 

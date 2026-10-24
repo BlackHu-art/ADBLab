@@ -9,9 +9,9 @@ import shlex
 
 from PySide6.QtCore import QCoreApplication
 
-from adblab.application.cancellation import CancellationError, CancellationToken
 from core.adb_query import query_timeout
 from core.exec import CommandRunner
+from core.tasks.cancellation import CancellationError, CancellationToken
 from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from utils.adb_values import normalize_android_package
 from utils.apk_tools import resolve_apk_tool

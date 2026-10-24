@@ -9,15 +9,15 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import SearchLineEdit
 
-from adblab.application.action_results import (
+from controllers.action_catalog import ACTION_SIGNALS
+from controllers.signals import ADBControllerSignals
+from gui.widgets.action_result_view import ActionResultView
+from services.tasks.action_results import (
     ActionEnvelope,
     ActionResults,
     ActionSpec,
     capture_action_job,
 )
-from controllers.action_catalog import ACTION_SIGNALS
-from controllers.signals import ADBControllerSignals
-from gui.widgets.action_result_view import ActionResultView
 from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
 from tests.test_main_window_layout import build_main_frame
 
@@ -47,9 +47,9 @@ def result_frame(qt_application, monkeypatch):
 def apk_actions(result_frame, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
 
-    from adblab.application.apk_selection import ApkFilePicker
     from controllers._app import ADBAppMixin
     from controllers._base import _ADBControllerBase
+    from services.apps.apk_selection import ApkFilePicker
 
     frame = result_frame
     controller = frame.adb_controller
@@ -351,7 +351,7 @@ def test_notice_compaction_keeps_running_completion_and_does_not_rearm_timer(
 
 
 def test_result_view_retains_recent_completions_when_wall_clock_ties(qt_application, monkeypatch):
-    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    monkeypatch.setattr("services.tasks.action_results.time.time", lambda: 1.0)
     view = ActionResultView()
     view.TEXT_BUDGET = 4500
     store = ActionResults(view.present)
@@ -576,7 +576,7 @@ def test_diagnostic_history_receives_old_terminal_without_reviving_running_recor
     from itertools import count
 
     ticks = count(1.0)
-    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: next(ticks))
+    monkeypatch.setattr("services.tasks.action_results.time.time", lambda: next(ticks))
     view = ActionResultView(diagnostic=True)
     store = ActionResults(view.present)
     try:
@@ -887,7 +887,7 @@ def test_intent_signal_uses_result_routing_duplicate_guard_and_close_boundary(
 
 
 def test_request_level_failure_does_not_claim_all_devices_succeeded(result_frame, monkeypatch):
-    from adblab.application.action_results import report_action_message
+    from services.tasks.action_results import report_action_message
 
     store = result_frame.adb_controller.action_results
     notices = []

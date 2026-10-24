@@ -3,18 +3,18 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from adblab.application.action_results import ActionResults
-from adblab.application.apk_selection import ApkFilePicker
-from adblab.application.device_batch import DeviceBatchUseCase
-from adblab.application.envelope import OperationMetadata
-from adblab.application.install_batch import InstallBatchUseCase, InstallRequest
-from adblab.application.operations import (
+from controllers import ADBController
+from controllers._app import ADBAppMixin
+from services.apps.apk_selection import ApkFilePicker
+from services.apps.install_batch import InstallBatchUseCase, InstallRequest
+from services.devices.device_batch import DeviceBatchUseCase
+from services.tasks.action_results import ActionResults
+from services.tasks.envelope import OperationMetadata
+from services.tasks.operations import (
     OperationManager,
     OperationState,
     OperationTransitionError,
 )
-from controllers import ADBController
-from controllers._app import ADBAppMixin
 
 
 class _BlockingRunningManager(OperationManager):

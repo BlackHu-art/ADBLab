@@ -1,5 +1,7 @@
 # 无线 ADB 扫码配对实施设计
 
+源码链接已随职责目录合并更新；正文的目录描述与决策保留当时语义。
+
 日期：2026-09-25。状态：方案，尚未实现。代码基线：`11db202a9d7006dee9586c079fb3fd0714b2384c`。
 
 本文回答如何在 ADBLab 中实现 Android 无线调试扫码连接，包括现有代码接入点、协议、生命周期、
@@ -31,8 +33,8 @@ ADBLab 完成配对并确认对应无线设备在线。连接成功后设备进�
 | [连接结果处理](../../../controllers/_device.py) | 以输出包含 connected 等文本判定成功，然后保存历史和刷新 | 新会话必须先确认精确目标处于 `device` 状态，再发布完成事件 |
 | [CommandRunner.run](../../../core/exec.py) | 有取消、原生执行和结果分类，无 stdin/env 参数 | 增加兼容的可选参数，沿用现有命令基础设施 |
 | [native_capture](../../../core/adb_runtime.py) | stdin 为 DEVNULL；短周期检查取消；有界客户端清理 | 补匿名 stdin、环境快照和会话级进程归属 |
-| [QtAdbRuntime](../../../adblab/presentation/qt_adb_runtime.py) | 重检会清解析缓存；状态快照没有客户端会话代次 | 新配对协调器自己维护代次，不能复用运行时内部 generation |
-| [TaskSupervisor](../../../adblab/application/supervision.py) 与 [关闭控制器](../../../gui/close_controller.py) | 已有 stop/wait/is_running 与应用异步关闭机制 | 新会话必须显式注册，不能只依赖对话框销毁 |
+| [QtAdbRuntime](../../../gui/adapters/adb_runtime.py) | 重检会清解析缓存；状态快照没有客户端会话代次 | 新配对协调器自己维护代次，不能复用运行时内部 generation |
+| [TaskSupervisor](../../../core/tasks/supervision.py) 与 [关闭控制器](../../../gui/close_controller.py) | 已有 stop/wait/is_running 与应用异步关闭机制 | 新会话必须显式注册，不能只依赖对话框销毁 |
 | [DeviceStore](../../../models/device_store.py) | 历史持久化围绕 IP 地址记录 | 区分无线 transport ID 与连接 IP，不把配对端口存进历史 |
 
 另有两个需要明确处理的边界：
@@ -268,7 +270,7 @@ communicate。原执行方负责排空；工作线程交还残留句柄后，清
 让它不断创建重叠 worker。QObject/控件/图片加载在主线程，网络等待和进程清理在后台。
 
 对话框关闭、Escape、刷新、切页和应用退出共用取消路径。普通窗口关闭复用
-[QtTaskSupervisor](../../../adblab/presentation/qt_task_supervisor.py) 的 owner 异步停止；应用关闭
+[QtTaskSupervisor](../../../core/tasks/qt_supervisor.py) 的 owner 异步停止；应用关闭
 由 `gui/close_controller.py` 显式注册协调器任务并停止准入。应用 shutdown 已开始时 owner stop
 可能返回 false，此时跟随 application shutdown，不等待一个不会发出的 owner 完成信号。
 worker 等待可复用 [QThreadGroupShutdownTask](../../../gui/dialogs/lifecycle.py)，但还须合并上述

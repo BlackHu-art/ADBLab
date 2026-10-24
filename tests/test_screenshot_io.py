@@ -6,7 +6,7 @@ from collections import Counter
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
 
-from adblab.application.supervision import TaskSupervisor
+from core.tasks.supervision import TaskSupervisor
 from gui.features.media import ScreenshotPage
 from tests.ui_geometry_helpers import wait_until
 

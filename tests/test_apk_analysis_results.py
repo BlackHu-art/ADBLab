@@ -5,14 +5,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from adblab.application.action_results import (
+from controllers._app import ADBAppMixin
+from controllers._base import _ADBControllerBase
+from controllers.action_catalog import ACTION_SIGNALS
+from services.tasks.action_results import (
     ActionEnvelope,
     ActionResults,
     capture_action_job,
 )
-from controllers._app import ADBAppMixin
-from controllers._base import _ADBControllerBase
-from controllers.action_catalog import ACTION_SIGNALS
 
 
 class _APKResultController(ADBAppMixin, _ADBControllerBase):

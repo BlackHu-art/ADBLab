@@ -4,8 +4,8 @@ import threading
 
 import pytest
 
-from adblab.application.install_batch import InstallBatchUseCase, InstallRequest
-from adblab.application.operations import (
+from services.apps.install_batch import InstallBatchUseCase, InstallRequest
+from services.tasks.operations import (
     OperationManager,
     OperationState,
     OperationTransitionError,

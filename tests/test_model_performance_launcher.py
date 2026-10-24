@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication, QLabel
 
-from adblab.application.supervision import StopDisposition, TaskSupervisor
+from core.tasks.supervision import StopDisposition, TaskSupervisor
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles, theme
 from gui.styles.typography import FontRole

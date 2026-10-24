@@ -13,7 +13,7 @@ from .rows import refresh_row_description
 from .views import _visible_row_indexes
 
 if TYPE_CHECKING:
-    from adblab.presentation.workers.app_manager import AppManagerWorker
+    from gui.workers.app_manager import AppManagerWorker
 
 
 def _safe_failure_reason(error: str) -> str:

@@ -15,13 +15,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow
 
-from adblab.application.supervision import (
+from core.exec import CommandResult, ProcessRunner
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from core.tasks.supervision import (
     StopDisposition,
     TaskStopResult,
     TaskSupervisor,
 )
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
-from core.exec import CommandResult, ProcessRunner
 from gui.dialogs.live_logcat import (
     CurrentPackageWorker,
     LogcatBatch,

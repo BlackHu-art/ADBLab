@@ -6,12 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from adblab.application.device_batch import DeviceBatchUseCase
-from adblab.application.operations import OperationManager
 from controllers._app_install import ADBAppInstallMixin
 from controllers._device import ADBDeviceMixin
 from models.adb_app import ADBApp
 from models.adb_device import ADBDevice
+from services.devices.device_batch import DeviceBatchUseCase
+from services.tasks.operations import OperationManager
 from utils import adb_resolver
 from utils.adb_targets import normalize_adb_connect_target
 
@@ -212,7 +212,7 @@ def test_batch_mixed_outcomes_reverse_order_and_duplicate_finish_once(entry, kin
 def test_action_batch_summary_does_not_fail_last_successful_device(
     entry, kind, method, args, failure,
 ):
-    from adblab.application.action_results import ActionResults, ActionSpec
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     controller = _controller(ADBAppInstallMixin)
     del controller._emit_operation
@@ -253,7 +253,7 @@ def test_action_batch_summary_does_not_fail_last_successful_device(
 def test_action_cancelled_batch_and_successful_retry_keep_independent_states(
     entry, kind, method, args,
 ):
-    from adblab.application.action_results import ActionResults, ActionSpec
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     controller = _controller(ADBAppInstallMixin)
     del controller._emit_operation
@@ -297,7 +297,7 @@ def test_action_cancelled_batch_and_successful_retry_keep_independent_states(
 
 @pytest.mark.ui
 def test_obsolete_discovery_action_is_cancelled_without_republishing_devices():
-    from adblab.application.action_results import ActionResults, ActionSpec
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     controller = _controller(ADBDeviceMixin)
     model = controller.device_model = ADBDevice()
@@ -358,9 +358,9 @@ def test_reordered_discovery_restores_panel_state_and_refresh_button(monkeypatch
 @pytest.mark.ui
 @pytest.mark.parametrize("phase", ["submission", "queued-cancel", "closed-admission"])
 def test_result_context_preserves_action_and_operation_envelopes_on_failure(phase):
-    from adblab.application.action_results import ActionEnvelope, ActionResults, ActionSpec
-    from adblab.application.envelope import split_operation_metadata
     from core.perf_trace import split_perf
+    from services.tasks.action_results import ActionEnvelope, ActionResults, ActionSpec
+    from services.tasks.envelope import split_operation_metadata
 
     model = ADBApp()
     tasks, responses = [], []

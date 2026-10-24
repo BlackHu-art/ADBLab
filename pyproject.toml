@@ -11,7 +11,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["adblab", "services", "core", "controllers", "models", "gui", "utils"]
+source = ["services", "core", "controllers", "models", "gui", "utils"]
 omit = ["mobileperf/extlib/*"]
 
 [tool.coverage.report]

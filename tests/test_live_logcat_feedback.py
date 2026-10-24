@@ -8,7 +8,7 @@ from PySide6.QtGui import QFont, QIcon, QTextCursor
 from PySide6.QtTest import QSignalSpy, QTest
 from qfluentwidgets import themeColor
 
-from adblab.application.supervision import StopDisposition, TaskStopResult
+from core.tasks.supervision import StopDisposition, TaskStopResult
 from gui.dialogs.live_logcat import LiveLogcatPage, LogcatBatch, LogcatWorker
 from gui.dialogs.live_logcat_worker import LogcatTermination, LogcatTerminationKind
 from gui.styles import BaseStyles, FontRole

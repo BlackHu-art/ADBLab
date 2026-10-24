@@ -10,9 +10,9 @@ from PySide6.QtCore import SIGNAL, Qt, QThread
 from PySide6.QtTest import QTest
 from qfluentwidgets import InfoLevel
 
-from adblab.application.supervision import StopDisposition, TaskSupervisor
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult, ProcessRunner
+from core.tasks.supervision import StopDisposition, TaskSupervisor
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from services.remote import (

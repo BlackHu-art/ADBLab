@@ -6,19 +6,6 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
-from adblab.application.action_results import (
-    ActionEnvelope,
-    ActionResults,
-    report_action_message,
-)
-from adblab.application.apk_selection import ApkFilePicker
-from adblab.application.device_batch import DeviceBatchUseCase
-from adblab.application.device_connection_lifecycle import DeviceConnectionLifecycle
-from adblab.application.envelope import OperationMetadata, split_operation_metadata
-from adblab.application.install_batch import InstallBatchUseCase
-from adblab.application.monkey_batch import MonkeyBatchCoordinator
-from adblab.application.operations import OperationManager, OperationState
-from adblab.application.screen_record import ScreenRecordUseCase
 from controllers.model_dependencies import ControllerModelFactory
 from controllers.signals import ADBControllerSignals
 from core.exec import ProcessRunner
@@ -33,6 +20,19 @@ from core.perf_trace import (
 )
 from core.settings_manager import AppSettings
 from models.device_store import DeviceStore
+from services.apps.apk_selection import ApkFilePicker
+from services.apps.install_batch import InstallBatchUseCase
+from services.devices.device_batch import DeviceBatchUseCase
+from services.devices.device_connection_lifecycle import DeviceConnectionLifecycle
+from services.monkey_batch import MonkeyBatchCoordinator
+from services.screen_record import ScreenRecordUseCase
+from services.tasks.action_results import (
+    ActionEnvelope,
+    ActionResults,
+    report_action_message,
+)
+from services.tasks.envelope import OperationMetadata, split_operation_metadata
+from services.tasks.operations import OperationManager, OperationState
 
 
 class _ADBControllerBase:

@@ -102,7 +102,7 @@ def test_category_alias_rejects_ambiguous_or_missing_targets(qt_application, ali
         (
             AppPanel,
             {
-                "daily": ("应用包管理", "Monkey", "报告与日志", "性能诊断"),
+                "daily": ("应用包管理", "文本输入", "Monkey", "报告与日志", "性能诊断"),
             },
             {"packages": "daily", "diagnostics": "daily", "monkey": "daily"},
         ),
@@ -169,7 +169,7 @@ def test_merged_panels_keep_every_card_and_responsive_control(
     assert all(widget.parentWidget() is parent for widget, parent in ownership.items())
     visual_roots = [stack.page(key) for key in expected]
     if isinstance(panel, AppPanel):
-        assert panel.text_screen_tools.headerLabel.text() == "文本与屏幕"
+        assert panel.text_screen_tools.headerLabel.text() == "截图与录屏"
         assert panel.text_screen_tools.parentWidget() is panel.text_screen_tools_parking
         assert panel.text_screen_tools_parking.parentWidget() is panel
         assert panel.text_screen_tools.isHidden()
@@ -245,7 +245,6 @@ def test_screen_action_rows_align_with_preview_in_real_workspace(
         canvas = page.findChild(QFrame, "canvasFrame")
         assert canvas is not None
         groups = (
-            (apps.email_text_sender, apps.btn_send_text),
             (
                 apps.btn_screenshot, apps.record_duration,
                 apps.btn_screen_record, apps.btn_stop_record,
@@ -253,7 +252,7 @@ def test_screen_action_rows_align_with_preview_in_real_workspace(
         )
         coordinator = frame.left_panel._responsive_coordinator
         wait_until(qt_application, lambda: coordinator.diagnostics.stable)
-        wait_for_stable_geometry(qt_application, (page, canvas, *groups[0], *groups[1]))
+        wait_for_stable_geometry(qt_application, (page, canvas, *groups[0]))
         assert canvas.isVisibleTo(frame)
         canvas_rect = mapped_rect(canvas, page)
         for controls in groups:

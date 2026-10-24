@@ -188,7 +188,7 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
 类和函数的文档字符串，避免把普通字符串误判为注释。检查器还会独立识别 Unicode 替换符和 `锛`、
 `銆`、`鈥` 等常见误解码片段，含乱码的中文不会被当作合规内容。
 
-当前受控范围：`adblab/`、`controllers/`、`core/`、`gui/`、`models/`、`services/`、`utils/`、`main.py`、
+当前受控范围：`controllers/`、`core/`、`gui/`、`models/`、`services/`、`utils/`、`main.py`、
 `mobileperf/common/`、`mobileperf/android/`（包括其中一方 Python 适配代码）。以上一方源码已经
 完成人工治理并进入默认门禁。第三方、生成文件、缓存、资源、二进制工具、`mobileperf/extlib/` 和
 平台二进制工具始终排除；新增一方源码必须同步纳入受控目录，不得通过扩大排除表规避检查。

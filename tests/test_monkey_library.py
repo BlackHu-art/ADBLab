@@ -10,7 +10,6 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtTest import QSignalSpy
 
-from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
 from gui.panels.side_panel import SidePanel
@@ -18,6 +17,7 @@ from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager
 from models.adb_testing import ADBTesting
+from services.monkey_batch import MonkeyBatchCoordinator
 from services.run_library import RunLibrary
 from tests.test_monkey_preparation import _success
 from tests.test_responsive_panels import (

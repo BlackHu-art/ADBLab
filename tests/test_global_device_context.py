@@ -60,7 +60,7 @@ def frame(monkeypatch, qt_application):
         pairing.setParent(parent)
         return pairing
 
-    monkeypatch.setattr("adblab.presentation.qt_adb_pairing.QtAdbPairing", create_pairing)
+    monkeypatch.setattr("gui.adapters.adb_pairing.QtAdbPairing", create_pairing)
     monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
     monkeypatch.setattr(DeviceStore, "get_basic_devices_info", lambda: [])
     monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda devices: [])
@@ -1026,8 +1026,8 @@ def test_connection_panel_forwards_only_validated_target(frame, qt_application):
 
 
 def test_connection_panel_rejected_submission_does_not_stay_busy(frame, qt_application):
-    from adblab.application.action_results import capture_action_job
     from controllers.action_catalog import ACTION_SIGNALS
+    from services.tasks.action_results import capture_action_job
 
     frame.show()
     frame._on_devices_updated([])
@@ -1059,8 +1059,8 @@ def test_connection_panel_rejected_submission_does_not_stay_busy(frame, qt_appli
 def test_connection_panel_synchronous_failure_result_is_delivered(
     frame, qt_application, raises_after_result,
 ):
-    from adblab.application.action_results import report_action_message
     from controllers.signals import ADBControllerSignals
+    from services.tasks.action_results import report_action_message
 
     controller = frame.adb_controller
     signals = ADBControllerSignals()

@@ -16,8 +16,8 @@ from qfluentwidgets import (
     TransparentPushButton,
 )
 
-from adblab.application.supervision import TaskStopResult
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from core.tasks.supervision import TaskStopResult
 from gui.dialogs.lifecycle import safe_disconnect
 from gui.i18n import tr
 from gui.styles import BaseStyles

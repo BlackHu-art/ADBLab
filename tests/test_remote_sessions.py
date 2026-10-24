@@ -570,7 +570,7 @@ def test_preflight_failure_has_retry_without_stopping_successful_device(
 
 
 def test_stop_cancels_warmup_and_shutdown_waits_for_preparation(remote_session, qt_application):
-    from adblab.application.supervision import StopDisposition, TaskSupervisor
+    from core.tasks.supervision import StopDisposition, TaskSupervisor
 
     remote, service = remote_session
     entered = threading.Event()
@@ -598,7 +598,7 @@ def test_stop_cancels_warmup_and_shutdown_waits_for_preparation(remote_session, 
 
 
 def test_shutdown_keeps_probe_residual_after_launch_worker_finished(remote_session):
-    from adblab.application.supervision import StopDisposition, TaskSupervisor
+    from core.tasks.supervision import StopDisposition, TaskSupervisor
 
     remote, service = remote_session
     residual = [True]

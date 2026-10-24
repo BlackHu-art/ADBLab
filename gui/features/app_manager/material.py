@@ -28,7 +28,7 @@ class AppManagerMaterial(QObject):
         self._owner_ref = weakref.ref(owner)
         self._views = tuple(views)
         self._window_ref: weakref.ReferenceType[QWidget] | None = None
-        self._signature: tuple[int, bool, str, tuple[str, ...]] | None = None
+        self._signature: tuple[int, bool, bool, str, tuple[str, ...]] | None = None
         self._applying = False
         self._stopped = False
         owner.installEventFilter(self)
@@ -51,8 +51,9 @@ class AppManagerMaterial(QObject):
                 window.installEventFilter(self)
         mica_query = getattr(window, "isMicaEffectEnabled", None)
         mica = bool(mica_query()) if callable(mica_query) else False
+        embedded = bool(getattr(owner, "_workspace_prepared", False))
         signature = (
-            id(window), mica, BaseStyles.resolved_theme(),
+            id(window), mica, embedded, BaseStyles.resolved_theme(),
             tuple(view.font().toString() for view in self._views),
         )
         if not force and signature == self._signature:
@@ -61,7 +62,7 @@ class AppManagerMaterial(QObject):
         self._applying = True
         try:
             for view in self._views:
-                self._apply_view(view, mica)
+                self._apply_view(view, mica, embedded=embedded)
         finally:
             self._applying = False
 
@@ -94,9 +95,13 @@ class AppManagerMaterial(QObject):
         return False
 
     @staticmethod
-    def _apply_view(view: QAbstractItemView, mica: bool) -> None:
+    def _apply_view(view: QAbstractItemView, mica: bool, *, embedded: bool) -> None:
         """普通行与空白共用底板；交替行只叠轻量中性色，交互绘制仍由 Fluent 负责。"""
         selector = "QTreeView" if isinstance(view, QTreeView) else "QListView"
+        # 只收窄视口和表头，覆盖式滚条仍使用整个控件的右边界。
+        content_inset = (
+            f"{selector}#{view.objectName()} {{ padding-right: 32px; }}" if embedded else ""
+        )
         font = view.font()
         font_size = f"{font.pointSizeF()}pt" if font.pointSizeF() > 0 else f"{font.pixelSize()}px"
         styles = []
@@ -119,7 +124,7 @@ class AppManagerMaterial(QObject):
                 f"color: {BaseStyles.color_for(theme, 'TEXT_SECONDARY')}; "
                 f"border-color: {border}; font-size: {font_size}; }} "
                 "QTreeView#appManagerIconList QHeaderView::section { "
-                "padding-left: 12px; padding-right: 12px; }"
+                "padding-left: 12px; padding-right: 12px; }" + content_inset
             )
         setCustomStyleSheet(view, styles[0], styles[1])
         palette = QPalette(view.palette())

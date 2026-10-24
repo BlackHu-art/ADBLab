@@ -5,7 +5,8 @@
 - ADBLab 是 Python 3.11 + PySide6 桌面应用，入口为 `main.py`，主要面向 Windows，使用
   `requirements*.txt` 管理依赖并通过 PyInstaller 打包。
 - `gui/` 负责界面；`controllers/` 负责信号路由和协调；`models/`、`services/` 负责业务与设备
-  适配；`core/` 提供命令、进程、设置和日志基础设施；`adblab/` 放置应用用例与 Qt 适配；
+  适配与应用用例；`core/` 提供命令、进程、设置、日志及任务资源监督基础设施；Qt 适配与 worker
+  位于 `gui/adapters/`、`gui/workers/`；
   `tests/` 和 `docs/` 分别保存测试与知识库。
 - 短命令使用 `core.exec.CommandRunner`，受控长进程使用 `ProcessRunner`。设备 shell 动态值必须
   经过现有校验/quote 边界，不在 UI 中直接拼接复杂命令。

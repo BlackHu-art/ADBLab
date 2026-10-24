@@ -9,12 +9,12 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QPushButton
 from shiboken6 import isValid
 
-from adblab.application.action_results import ActionResults
 from controllers.signals import ADBControllerSignals
 from gui.features.app_manager import AppManagerPage
 from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
+from services.tasks.action_results import ActionResults
 from tests.screenshot_helpers import wait_for_screenshot
 from tests.test_main_window_layout import (
     _FakeScreen,
@@ -235,8 +235,8 @@ def test_manager_contains_its_session_and_diagnostics_owns_package_controls(fram
     assert apps.program_edit.isVisible()
     daily = apps.category_stack.page("daily")
     assert not daily.findChildren(CollapsibleTools)
-    titles = [daily.layout().itemAt(i).widget().headerLabel.text() for i in range(4)]
-    assert titles == ["应用包管理", "Monkey", "报告与日志", "性能诊断"]
+    titles = [daily.layout().itemAt(i).widget().headerLabel.text() for i in range(5)]
+    assert titles == ["应用包管理", "文本输入", "Monkey", "报告与日志", "性能诊断"]
 
 
 def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tmp_path):
@@ -261,6 +261,43 @@ def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tm
     for button in (apps.btn_send_text, apps.btn_screenshot, apps.btn_screen_record):
         assert not button.isEnabled()
     assert not apps.btn_stop_record.isEnabled()
+
+
+def test_text_input_stays_in_diagnostics_across_screenshot_recreation(frame, qt_application):
+    """发送文本留在应用诊断页；截图页清除和重开不丢输入、不重复发送。"""
+    apps = frame.left_panel._apps_tab
+    daily = apps.category_stack.page("daily")
+    frame._on_devices_updated(["device-a"])
+    frame._global_device_bar.selection_requested.emit(["device-a"])
+    frame.navigationInterface.widget("appsPage").click()
+    requests = QSignalSpy(apps.signals.send_text_requested)
+    assert daily.isAncestorOf(apps.email_text_sender)
+    assert daily.isAncestorOf(apps.btn_send_text)
+    apps.email_text_sender.setText("hello input")
+    apps.btn_send_text.click()
+    assert requests.count() == 1
+    assert requests.at(0) == [["device-a"], "hello input"]
+
+    for _ in range(2):
+        frame.navigationInterface.widget("screenshotsPage").click()
+        host = frame._workspace_feature_hosts["apps"]
+        page = host.stack.currentWidget()
+        assert isinstance(page, ScreenshotPage)
+        assert not page.isAncestorOf(apps.email_text_sender)
+        assert not page.isAncestorOf(apps.btn_send_text)
+        assert page.isAncestorOf(apps.btn_screenshot)
+        host.close_current_session()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert isValid(apps.email_text_sender)
+        assert apps.email_text_sender.text() == "hello input"
+    frame.navigationInterface.widget("appsPage").click()
+    assert apps.email_text_sender.isVisibleTo(frame)
+    apps.email_text_sender.returnPressed.emit()
+    assert requests.count() == 2
+    frame._global_device_bar.selection_requested.emit([])
+    assert not apps.btn_send_text.isEnabled()
+    apps.email_text_sender.returnPressed.emit()
+    assert requests.count() == 2
 
 
 @pytest.fixture
@@ -339,8 +376,7 @@ def test_screen_tools_follow_batch_selection_and_preserve_recording_targets_afte
     host = frame._workspace_feature_hosts["apps"]
     apps = frame.left_panel._apps_tab
     controls = (
-        apps.email_text_sender, apps.btn_send_text, apps.btn_screenshot,
-        apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
+        apps.btn_screenshot, apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
     )
     text_requests = QSignalSpy(apps.signals.send_text_requested)
     starts = QSignalSpy(apps.signals.screen_record_batch_requested)
@@ -376,6 +412,8 @@ def test_screen_tools_follow_batch_selection_and_preserve_recording_targets_afte
     assert isinstance(page, ScreenshotPage)
     assert page.image_paths == ()
     assert all(page.isAncestorOf(widget) for widget in controls)
+    assert apps.category_stack.page("daily").isAncestorOf(apps.email_text_sender)
+    assert not page.isAncestorOf(apps.btn_send_text)
     assert apps.text_screen_tools.headerView.isHidden()
     assert apps.email_text_sender.text() == "hello screen"
     assert apps.record_duration.currentText() == "60s"
@@ -447,8 +485,7 @@ def test_screen_tools_reflow_and_refresh_fonts_after_transfer(
     assert portrait.save(str(image_path))
     page.receive_payload([str(image_path)])
     controls = (
-        apps.email_text_sender, apps.btn_send_text, apps.btn_screenshot,
-        apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
+        apps.btn_screenshot, apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
     )
     wait_for_stable_geometry(qt_application, (frame, page, apps.text_screen_tools, *controls))
     assert frame.width() == width
@@ -457,7 +494,7 @@ def test_screen_tools_reflow_and_refresh_fonts_after_transfer(
         assert_contained(control, apps.text_screen_tools)
         assert_scroll_target_reachable(host.content_scroll, control)
     for button in (
-        apps.btn_send_text, apps.btn_screenshot, apps.btn_screen_record, apps.btn_stop_record,
+        apps.btn_screenshot, apps.btn_screen_record, apps.btn_stop_record,
     ):
         assert_text_fits(button)
     assert mapped_rect(apps.text_screen_tools, page).bottom() < mapped_rect(page._view, page).top()
@@ -713,9 +750,9 @@ def test_english_task_states_and_cancel_preserve_operation_identity(
 ):
     from qfluentwidgets import BodyLabel
 
-    from adblab.application.operations import OperationManager
     from gui.pages.tasks_page import _StatusBadge
     from services.task_history import TaskHistoryEntry
+    from services.tasks.operations import OperationManager
 
     window, _settings = localized_tools
     manager = OperationManager()

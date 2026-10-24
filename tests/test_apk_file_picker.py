@@ -13,14 +13,14 @@ pytestmark = pytest.mark.ui
 
 
 def make_picker(provider):
-    from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
+    from gui.adapters.apk_file_picker import QtApkFilePicker
 
     return QtApkFilePicker(provider)
 
 
 def test_selection_protocol_import_does_not_load_qt_or_controllers():
     result = subprocess.run(
-        [sys.executable, "-c", "import sys; import adblab.application.apk_selection; "
+        [sys.executable, "-c", "import sys; import services.apps.apk_selection; "
          "assert not any(n == 'controllers' or n.startswith('PySide6') for n in sys.modules)"],
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=15,
     )

@@ -10,9 +10,9 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
-from adblab.application.action_results import ActionResults
 from core.settings_manager import AppSettings
 from gui.main_frame import MainFrame
+from services.tasks.action_results import ActionResults
 from tests.test_main_window_layout import _MainFrameSettings
 from tests.ui_geometry_helpers import wait_until
 
@@ -78,7 +78,7 @@ def test_mainframe_injects_one_picker_without_opening_dialog(
 ):
     from PySide6.QtWidgets import QFileDialog
 
-    from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
+    from gui.adapters.apk_file_picker import QtApkFilePicker
 
     single = Mock(return_value=("", ""))
     multiple = Mock(return_value=([], ""))
@@ -123,7 +123,7 @@ def test_preloaded_history_is_visible_without_requesting_another_load(startup, m
 def test_mainframe_injects_distinct_lazy_device_lifecycles(
     startup, monkeypatch, deferred, preloaded,
 ):
-    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+    from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
     from services.adb_pairing import PairingOutcome
 
     invalidate = Mock()

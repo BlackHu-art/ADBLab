@@ -463,11 +463,23 @@ class AppManagerForm:
         if getattr(self._frame, "_workspace_prepared", False):
             return
         self._frame._workspace_prepared = True
-        # 窗口留白移入整组主从内容，保留列表和详情原有的内部边距。
-        self._frame._page_layout.setContentsMargins(24, 0, 24, 24)
+        # 列表左侧保持正文对齐，右滚条贴宿主边界，上下各留 8px 呼吸空间。
+        self._frame._page_layout.setContentsMargins(24, 0, 0, 0)
+        master_layout = self._frame._master_panel.layout()
+        master_layout.setContentsMargins(8, 8, 0, 8)
+        self._frame._top_layout.setContentsMargins(0, 0, 32, 0)
+        self._frame.load_error_panel.layout().setContentsMargins(8, 4, 40, 4)
+        command_row = QWidget(self._frame._master_panel)
+        command_layout = QHBoxLayout(command_row)
+        command_layout.setContentsMargins(0, 0, 32, 0)
+        command_layout.setSpacing(0)
+        master_layout.removeWidget(self._frame._command_bar)
+        command_layout.addWidget(self._frame._command_bar)
+        master_layout.addWidget(command_row)
         self._frame.header_card.hide()
         self._frame.status_badge.hide()
-        self._frame._reflow_top_controls()
+        self._material.refresh()
+        self._frame._update_master_detail_layout()
         self._frame._master_panel.updateGeometry()
         self._frame.updateGeometry()
 
@@ -630,7 +642,11 @@ class AppManagerForm:
             )
         else:
             surface_width = surface.contentsRect().width()
-        return max(1, surface_width - margins.left() - margins.right())
+        reading_margins = self._frame._top_layout.contentsMargins()
+        return max(
+            1, surface_width - margins.left() - margins.right()
+            - reading_margins.left() - reading_margins.right(),
+        )
 
     def _reflow_action_buttons(self) -> None:
         """按当前字体更新原生命令按钮尺寸，宽度不足由命令栏提供溢出菜单。"""

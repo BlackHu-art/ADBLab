@@ -18,7 +18,6 @@ RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
 PYINSTALLER_SPEC = Path("ADBLab.spec")
 ICON_DIR = Path("resources/icons")
 FIRST_PARTY_PYTHON_PATHS = (
-    Path("adblab"),
     Path("controllers"),
     Path("core"),
     Path("gui"),

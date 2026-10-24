@@ -351,8 +351,8 @@ def test_system_package_android_is_a_valid_explicit_component(command_calls):
 def test_intent_jobs_keep_target_identity_and_settle_partial_results(
     controller, monkeypatch, qt_application,
 ):
-    from adblab.application.action_results import ActionResults, ActionSpec
     from services.intent_request import IntentRequest
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     class IntentModel(ADBSystemMixin, ADBModelCore):
         pass
@@ -385,7 +385,7 @@ def test_intent_jobs_keep_target_identity_and_settle_partial_results(
 
 
 def test_queued_intent_cancels_on_model_shutdown_without_adb(qt_application, command_calls):
-    from adblab.application.action_results import ActionResults, ActionSpec
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     class IntentModel(ADBSystemMixin, ADBModelCore):
         pass

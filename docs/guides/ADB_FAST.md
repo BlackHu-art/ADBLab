@@ -40,7 +40,7 @@ IPv4 监听的标准模拟器 ADB 端口（5555、5557……5585），只对列�
 ADB Server；需要重启服务时使用设置页的“重启 ADB”。
 
 正式实现位于 [协议模块](../../core/adb_transport.py)、[本机模拟器发现](../../core/adb_discovery.py)、
-[运行实例](../../core/adb_runtime.py)、[Qt 适配器](../../adblab/presentation/qt_adb_runtime.py) 和负责
+[运行实例](../../core/adb_runtime.py)、[Qt 适配器](../../gui/adapters/adb_runtime.py) 和负责
 开发控制台诊断的 [utils/adb_debug.py](../../utils/adb_debug.py)。
 业务短命令仍通过 [CommandRunner](../../core/exec.py) 返回原有 `CommandResult`。直连为每次请求
 建立独立短连接，并关闭 Nagle（TCP_NODELAY），避免小请求—小响应被合并写放大延迟。

@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from shiboken6 import isValid
 
-from adblab.application.supervision import StopDisposition, TaskSupervisor
+from core.tasks.supervision import StopDisposition, TaskSupervisor
 from gui.dialogs import performance_launcher
 from tests.ui_geometry_helpers import wait_until
 

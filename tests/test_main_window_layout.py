@@ -191,7 +191,7 @@ def build_main_frame(
     if controller is None:
         controller = Mock()
         controller.signals = Mock()
-    from adblab.application.action_results import ActionResults
+    from services.tasks.action_results import ActionResults
 
     if not isinstance(controller.action_results, ActionResults):
         controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
@@ -1509,11 +1509,11 @@ def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
 
     from PySide6.QtGui import QPixmap
 
-    from adblab.application.action_results import capture_action_job
     from controllers.action_catalog import ACTION_SIGNALS
     from controllers.signals import ADBControllerSignals
     from gui import main_frame as main_frame_module
     from gui.features.media import ScreenshotPage
+    from services.tasks.action_results import capture_action_job
 
     notices, page_notices = [], []
     monkeypatch.setattr(
@@ -3418,7 +3418,7 @@ def test_minimum_window_keeps_task_result_reachable_with_large_font(
         frame.resize(860, 500)
         frame.show()
         frame._on_nav_requested("tasks")
-        from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
+        from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
         result = ActionResult(
             "synthetic", ActionSpec("query", "apps.diagnostics", "内存", "text"), ("demo",), 1,
             state="succeeded",

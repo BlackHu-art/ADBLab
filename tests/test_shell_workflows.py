@@ -86,7 +86,7 @@ def test_device_bar_visibility_follows_page_without_retargeting(
 
 
 def test_action_results_belong_to_section_and_survive_navigation(frame, qt_application):
-    from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
+    from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
 
     assert "logsPage" not in frame.navigationInterface.panel.items
     assert not hasattr(frame, "log_panel")

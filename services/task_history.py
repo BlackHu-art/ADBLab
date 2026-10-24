@@ -3,7 +3,7 @@
 本模块属于纯服务层（ADR-0004）：不依赖 Qt，可独立单测。历史 store 把两类终态
 来源归一为不可变的 :class:`TaskHistoryEntry`：
 
-* vNext 终态快照（:class:`~adblab.application.operations.OperationSnapshot`），
+* vNext 终态快照（:class:`~services.tasks.operations.OperationSnapshot`），
   经 :meth:`TaskHistoryStore.record` 记录；
 * 旧版 ``operation_completed(operation, success, message)`` 信号，经
   :meth:`TaskHistoryStore.record_completed` 记录；
@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
 
-from adblab.application.operations import OperationSnapshot, OperationState
+from services.tasks.operations import OperationSnapshot, OperationState
 
 DEFAULT_CAPACITY = 200
 

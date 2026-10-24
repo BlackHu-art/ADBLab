@@ -8,11 +8,11 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 
-from adblab.application.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
+from services.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
 
 
 def _restart_adb_controller(events):
@@ -971,10 +971,10 @@ def test_stale_manual_refresh_finishes_action_as_cancelled():
 
     from PySide6.QtTest import QSignalSpy
 
-    from adblab.application.action_results import ActionResults, ActionSpec
     from controllers.signals import ADBControllerSignals
     from core.exec import CommandResult
     from models.adb_device import ADBDevice
+    from services.tasks.action_results import ActionResults, ActionSpec
 
     controller = _connected_devices_controller()
     controller.signals = ADBControllerSignals()

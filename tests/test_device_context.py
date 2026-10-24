@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from adblab.application.device_context import DeviceContext, DeviceContextSnapshot
+from services.devices.device_context import DeviceContext, DeviceContextSnapshot
 
 
 def test_initial_and_new_devices_are_not_selected():
@@ -129,13 +129,15 @@ def test_device_context_imports_without_gui_or_services():
 
         class RejectDependencies(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
+                if fullname in {'services', 'services.devices', 'services.devices.device_context'}:
+                    return None
                 if fullname.split('.')[0] in {
                     'PySide6', 'qfluentwidgets', 'gui', 'core', 'models', 'services',
                 }:
                     raise AssertionError('Unexpected dependency: ' + fullname)
 
         sys.meta_path.insert(0, RejectDependencies())
-        from adblab.application.device_context import DeviceContext
+        from services.devices.device_context import DeviceContext
         context = DeviceContext()
         context.replace_connected_devices(['a'])
         context.set_selected_devices(['a'])

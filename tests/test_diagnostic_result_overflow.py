@@ -7,9 +7,9 @@ from PySide6.QtCore import QPoint, QSize
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication
 
-from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
 from core.settings_manager import AppSettings
 from gui.styles import BaseStyles
+from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
 from tests.test_main_window_layout import (
     _FakeScreen,
     _FakeScreenAdapter,

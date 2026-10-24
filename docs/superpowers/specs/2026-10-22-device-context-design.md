@@ -1,5 +1,7 @@
 # 设备上下文独立化设计
 
+源码链接已随职责目录合并更新；正文的目录描述与决策保留当时语义。
+
 日期：2026-10-22。状态：用户已确认，2026-10-23 完成代码迁移、自动回归与独立审阅。核对基线：`e0c0d04`。
 
 用户已同意按功能渐进推进全项目重构，第一阶段独立设备上下文，并保持现有功能和数据兼容。
@@ -24,7 +26,7 @@ ADB 命令、扫描代次或任务资源归属。保留现有界面、信号签�
 | [DeviceManager.selected_devices](../../../gui/panels/device_manager.py) | 从列表行复选状态和 UserRole 读取目标 | 从共享上下文读取保留的勾选；列表点击成为状态提交入口 |
 | [DeviceManagerView.update_device_list](../../../gui/panels/device_manager_view.py) | 增量增删列表、保留存续行勾选、写 SidePanel 缓存 | 先提交上下文，再按状态更新行；保留控件复用和布局刷新 |
 | [SidePanel](../../../gui/panels/side_panel.py) | 缓存发现列表/状态，过滤公开目标，处理手动刷新恢复 | 拥有上下文并桥接 Qt 信号，公开查询和提交入口保持兼容 |
-| [DeviceContextSnapshot](../../../adblab/application/device_context.py) | 只有三个不可变字段 | 保留字段及其现有语义；同模块增加状态对象 |
+| [DeviceContextSnapshot](../../../services/devices/device_context.py) | 只有三个不可变字段 | 保留字段及其现有语义；同模块增加状态对象 |
 | [MainFrame](../../../gui/main_frame.py) | 消费快照并向功能页投影，关闭时拒绝晚到设备列表 | 继续消费同一快照接口；业务准入和关闭保护不迁入控件或新状态对象 |
 
 现状依据另见[设备数据流](../../project-knowledge/DATA_FLOW.md#设备发现与元数据流)和

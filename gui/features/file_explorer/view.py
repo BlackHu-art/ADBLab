@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache
 
-from adblab.presentation.workers.file_explorer import TextReadWorker
 from core.log_service import LogService
 from gui.i18n import tr
 from gui.styles.fluent import add_menu_action
+from gui.workers.file_explorer import TextReadWorker
 from services import file_explorer as explorer_service
 from utils.raster_image import raster_image_reader
 

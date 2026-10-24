@@ -57,9 +57,9 @@ def test_pairing_invalidation_preserves_optional_and_closing_behavior(closing, c
 
 @pytest.mark.parametrize("result", ["accepted", "copied", "old_request", "old_revision"])
 def test_wireless_forwarding_and_history_guard_preserve_window_close_boundary(monkeypatch, result):
-    from adblab.presentation.qt_adb_pairing import QtAdbPairing
-    from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
     from controllers._device import ADBDeviceMixin
+    from gui.adapters.adb_pairing import QtAdbPairing
+    from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
     from models.device_store import DeviceStore
     from services.adb_pairing import PairingOutcome
 

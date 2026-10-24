@@ -10,13 +10,13 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from adblab.application.device_context import DeviceContextSnapshot
 from core.exec import ProcessRunner
 from gui.main_frame import MainFrame
 from gui.main_frame_actions import MainFrameActions
 from gui.panels.remote_panel import RemotePanel
 from mobileperf.common import log as mobileperf_log
 from mobileperf.common.utils import FileUtils
+from services.devices.device_context import DeviceContextSnapshot
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 

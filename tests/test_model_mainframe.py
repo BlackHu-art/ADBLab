@@ -12,11 +12,11 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import SmoothScrollArea
 
-from adblab.application.device_context import DeviceContextSnapshot
 from core.exec import CREATE_NEW_CONSOLE
 from gui.close_controller import CloseController
 from gui.main_frame import MainFrame, _ScanThread
 from gui.pages.workspace_features import WorkspaceRoute
+from services.devices.device_context import DeviceContextSnapshot
 
 
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():
@@ -83,7 +83,7 @@ def test_scan_thread_uses_command_runner_for_device_polling():
     runner = _FakeScanRunner(["List of devices attached\ndevice-1\tdevice\n"])
 
     with (
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
         patch.object(
             _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
         ),
@@ -99,8 +99,8 @@ def test_scan_thread_skips_polling_while_command_runner_is_busy():
     thread = _ScanThread(interval_ms=3000)
 
     with (
-        patch("adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=1),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner") as runner_cls,
+        patch("gui.workers.device_discovery.CommandRunner.active_count", return_value=1),
+        patch("gui.workers.device_discovery.ProcessRunner") as runner_cls,
         patch.object(
             _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
         ),
@@ -125,10 +125,10 @@ def test_scan_thread_rechecks_shortly_after_command_runner_becomes_idle():
 
     with (
         patch(
-            "adblab.presentation.qt_device_discovery.CommandRunner.active_count",
+            "gui.workers.device_discovery.CommandRunner.active_count",
             side_effect=[1, 0],
         ),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=stop_after_first_normal_wait),
     ):
         thread.run()
@@ -156,8 +156,8 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
             thread._stop_flag = True
 
     with (
-        patch("adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.CommandRunner.active_count", return_value=0),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=stop_after_two_polls),
     ):
         thread.run()
@@ -187,8 +187,8 @@ def test_scan_thread_republishes_same_snapshot_after_unavailable():
             thread._stop_flag = True
 
     with (
-        patch("adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.CommandRunner.active_count", return_value=0),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=stop_after_three_polls),
     ):
         thread.run()
@@ -220,8 +220,8 @@ def test_scan_thread_republishes_same_snapshot_after_external_invalidation():
             thread._stop_flag = True
 
     with (
-        patch("adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.CommandRunner.active_count", return_value=0),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=invalidate_before_second_poll),
     ):
         thread.run()
@@ -276,8 +276,8 @@ def test_scan_thread_stop_terminates_inflight_scan():
     runner = _RunningRunner()
 
     with (
-        patch("adblab.presentation.qt_device_discovery.CommandRunner.active_count", return_value=0),
-        patch("adblab.presentation.qt_device_discovery.ProcessRunner", return_value=runner),
+        patch("gui.workers.device_discovery.CommandRunner.active_count", return_value=0),
+        patch("gui.workers.device_discovery.ProcessRunner", return_value=runner),
     ):
         thread.run()
 
@@ -368,7 +368,7 @@ def test_adb_bootstrap_schedules_environment_without_blocking():
         _start_device_discovery=Mock(), _update_adb_environment=Mock(),
         _log_adb_environment=Mock(),
     )
-    with patch("adblab.presentation.qt_adb_runtime.QtAdbRuntime") as adapter:
+    with patch("gui.adapters.adb_runtime.QtAdbRuntime") as adapter:
         MainFrame._bootstrap_adb_async(frame)
     adapter.assert_called_once_with(frame)
     adapter.return_value.schedule.assert_called_once_with()
@@ -472,8 +472,8 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
 
     try:
         assert created == {"central_widget_ready": True, "scan_thread": None}
-        from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
-        from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
+        from gui.adapters.apk_file_picker import QtApkFilePicker
+        from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 
         assert isinstance(controller_cls.call_args.kwargs["apk_picker"], QtApkFilePicker)
         assert isinstance(

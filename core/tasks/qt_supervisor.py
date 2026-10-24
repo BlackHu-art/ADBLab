@@ -7,7 +7,7 @@ from threading import Lock, Thread
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from adblab.application.supervision import TaskSupervisor
+from core.tasks.supervision import TaskSupervisor
 
 
 class QtTaskSupervisor(QObject):

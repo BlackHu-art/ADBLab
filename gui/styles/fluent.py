@@ -230,12 +230,18 @@ class _KeyboardFocusObserver(QObject):
 
 def apply_focus_indicator(
     widget: QWidget, *, selector: str | None = None, keyboard_only: bool = False,
+    content_qss: str | None = None,
 ) -> None:
-    """补充焦点提示；显式选择 keyboard_only 时鼠标不绘制外框，其他调用保持原行为。"""
+    """合成焦点和局部内容样式；内容规则在主题、强调色和字体刷新后保留。
+
+    ``content_qss=None`` 沿用原规则，空字符串清除规则；keyboard_only 仅显示键盘焦点。
+    """
 
     name = selector or type(widget).__name__
     widget.setProperty("adblabFocusSelector", name)
     widget.setProperty("adblabKeyboardFocusOnly", keyboard_only)
+    if content_qss is not None:
+        widget.setProperty("adblabContentQss", content_qss)
     if widget.property("adblabReadingSurface") and isinstance(widget, (QPlainTextEdit, QTextEdit)):
         from gui.styles.reading_surface import ensure_reading_surface
 
@@ -259,9 +265,11 @@ def apply_focus_indicator(
     setCustomStyleSheet(
         widget,
         base + f"{focus_selector}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}"
-        + str(widget.property("adblabFontQss") or ""),
+        + str(widget.property("adblabFontQss") or "")
+        + str(widget.property("adblabContentQss") or ""),
         base + f"{focus_selector}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}"
-        + str(widget.property("adblabFontQss") or ""),
+        + str(widget.property("adblabFontQss") or "")
+        + str(widget.property("adblabContentQss") or ""),
     )
 
 

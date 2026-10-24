@@ -8,20 +8,20 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any, cast
 
-from adblab.application.device_batch import DeviceBatchStart, DeviceBatchUseCase
-from adblab.application.envelope import OperationMetadata
-from adblab.application.install_batch import (
+from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
+from core.log_service import LogService
+from models.adb_app import ADBApp
+from services.apps.install_batch import (
     InstallBatchOutcome,
     InstallBatchStart,
     InstallBatchUseCase,
     InstallRequest,
     InstallUnit,
 )
-from adblab.application.operations import OperationState, OperationTransitionError
-from controllers._base import _ADBControllerBase
-from controllers.signals import ADBControllerSignals
-from core.log_service import LogService
-from models.adb_app import ADBApp
+from services.devices.device_batch import DeviceBatchStart, DeviceBatchUseCase
+from services.tasks.envelope import OperationMetadata
+from services.tasks.operations import OperationState, OperationTransitionError
 
 
 class _InstallOperationOwner:

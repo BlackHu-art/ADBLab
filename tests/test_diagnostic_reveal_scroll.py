@@ -7,10 +7,10 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
-from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
 from controllers.signals import ADBControllerSignals
 from gui.action_feedback import ActionFeedbackPresenter
 from gui.widgets.action_result_view import ActionResultView
+from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
 from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 pytestmark = pytest.mark.ui

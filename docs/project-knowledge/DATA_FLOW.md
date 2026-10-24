@@ -35,7 +35,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 
 ## 设备发现与元数据流
 
-连续扫描线程及带代次的列表/状态载荷实现在 `adblab/presentation/qt_device_discovery.py`。
+连续扫描线程及带代次的列表/状态载荷实现在 `gui/workers/device_discovery.py`。
 `gui/main_frame.py` 保留同一类对象的旧导出；MainFrame 继续拥有线程、连接信号、防抖和关闭，
 适配器不反向导入主窗口，不新增状态存储或设备查询。
 
@@ -114,7 +114,7 @@ DeviceContextBar 在进程内分配固定显示编号，组合根向 Monkey、�
 恢复每次安装前复核原用户，已安装数量不回滚；备份仍先在目标目录暂存，再经取消检查后原子替换ZIP。
 文件目录/正文读写事务由`services/file_operations.py`持有暂存文件和远端清理列表，原始字节、marker与
 发布/清理顺序保持。服务不新增持久化状态、格式或迁移；Qt 适配实现归于
-`adblab/presentation/workers/`，页面实例归属、Signal与关闭监督仍沿原worker链路。
+`gui/workers/`，页面实例归属、Signal与关闭监督仍沿原worker链路。
 
 ## 设置与设备存储生命周期
 

@@ -10,10 +10,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QPushButton
 
-from adblab.application.operations import OperationManager
 from gui.pages.tasks_page import TaskCenterPage
 from gui.styles import BaseStyles
 from services.task_history import TaskHistoryStore
+from services.tasks.operations import OperationManager
 
 
 def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
@@ -75,9 +75,9 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
 def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
     qt_application, monkeypatch, width, language,
 ):
-    from adblab.application.action_results import ActionResults, ActionSpec, capture_action_job
     from core.settings_manager import AppSettings
     from gui.i18n import install_translators, tr
+    from services.tasks.action_results import ActionResults, ActionSpec, capture_action_job
     from tests.test_main_window_layout import (
         _FakeScreen,
         _FakeScreenAdapter,

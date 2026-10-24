@@ -10,17 +10,17 @@ from typing import Any, cast
 
 from PySide6.QtCore import QTimer
 
-from adblab.application.envelope import OperationMetadata
-from adblab.application.operations import (
+from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
+from core.log_service import LogService
+from models.adb_testing import ADBTesting
+from services.tasks.envelope import OperationMetadata
+from services.tasks.operations import (
     OperationArtifact,
     OperationSnapshot,
     OperationState,
     OperationUnitResult,
 )
-from controllers._base import _ADBControllerBase
-from controllers.signals import ADBControllerSignals
-from core.log_service import LogService
-from models.adb_testing import ADBTesting
 
 
 class ADBScreenshotMixin(_ADBControllerBase):

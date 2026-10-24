@@ -1,5 +1,7 @@
 # AppSettings 保存生命周期设计
 
+源码链接已随职责目录合并更新；正文的目录描述与决策保留当时语义。
+
 日期：2026-10-24。状态：已完成实施、独立任务审阅与最终综合审阅。用户已授权自主持续重构与并行工作，不重复请求批准。
 
 ## 目标与边界
@@ -12,7 +14,7 @@
 
 - [manager](../../../core/settings_manager.py) 的 `_schedule_save()` 只持有 `_save_timer`，在锁外启动；`cancel()` 不等待已进入回调。`_save_atomic()` 的写锁后快照规则有效，必须保留。
 - [关闭协调器](../../../gui/close_controller.py) 的 `_flush_shutdown_state()` 当前直接访问上述私有字段，finalizer 看不到旧 Timer。
-- [ThreadedShutdownTask](../../../adblab/application/supervision.py) 的 `_run()` 忽略回调返回值，只记录异常。真实代码在 `adblab/application/`，没有 `adblab/tasking/` 目录。
+- [ThreadedShutdownTask](../../../core/tasks/supervision.py) 的 `_run()` 忽略回调返回值，只记录异常。真实代码在 `adblab/application/`，没有 `adblab/tasking/` 目录。
 - [共享 fixture](../../../tests/conftest.py) 已取消并 join 最新 Timer，且先销毁主题订阅者、投递 DeferredDelete，再恢复主题；不能描述为所有 fixture 都没有 join。缺口是被替换的旧 Timer 和局部 fixture。
 - [MainFrame](../../../gui/main_frame.py) 将 `BaseStyles.theme_changed` 长连接到 `_on_theme_changed()`；该槽当前无 `_closing` guard，关闭协调器也未断开它。实际关闭先保存布局，再设置 `_closing=True`，停止 UI 生产者，最后后台保存。系统主题信号在窗口销毁前仍有到达机会。
 - SettingsPage `prepare_shutdown()` 停止强调色 Timer 并在 finalizer 前保存最后 pending 值；不能把 owner 关闭提前到 UI 准备前。启动 writeback 由 [StartupTask](../../../gui/startup_task.py) 持有，取消不等于 I/O 退出。

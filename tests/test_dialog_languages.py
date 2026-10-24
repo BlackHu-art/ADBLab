@@ -31,9 +31,9 @@ def test_apk_choosers_translate_titles_and_filters_without_submitting_on_cancel(
     qt_application, monkeypatch, dialog_language, language, single_title, batch_title,
     file_filter, operation,
 ):
-    from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
     from controllers._app import ADBAppMixin
     from controllers._app_install import ADBAppInstallMixin
+    from gui.adapters.apk_file_picker import QtApkFilePicker
 
     dialog_language(language)
     owner = QWidget()

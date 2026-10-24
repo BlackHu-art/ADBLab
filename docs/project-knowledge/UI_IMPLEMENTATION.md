@@ -49,7 +49,7 @@ flowchart TD
 | 应用管理、文件管理 | [AppManagerPage](../../gui/features/app_manager/page.py)、[FileExplorerPage](../../gui/features/file_explorer/page.py) | 工具栏与主列表；列表保留自身滚动、选择、右键和传输/批次反馈 |
 | 实时 Logcat | [LiveLogcatPage](../../gui/dialogs/live_logcat.py)、[表单与日志视口](../../gui/dialogs/live_logcat_form.py) | 筛选及命令栏与日志阅读区分开；换行、跟随、空态和横向滚条由日志视口管理 |
 | 性能采集 | [PerformancePage](../../gui/features/performance/page.py)、[采集状态](../../gui/widgets/performance_sessions.py) | 配置、当前设备会话、指标/输出与归档入口分别组织；多选目标不等于自动批量启动 |
-| 截图与屏幕 | [ScreenshotPage](../../gui/features/media/__init__.py)、[查看器](../../gui/features/media/ui.py) | 概览媒体工具重挂到页面，画布保留缩放/翻页语义；释放时归还共用工具 |
+| 截图与屏幕 | [ScreenshotPage](../../gui/features/media/__init__.py)、[查看器](../../gui/features/media/ui.py) | 顶部复用截图/录屏工具，图片操作栏位于伸展画布下方；释放时归还共用工具及其原内距。文本输入位于应用与诊断页 |
 | 任务中心 | [TaskCenterPage](../../gui/pages/tasks_page.py)、[操作结果](../../gui/widgets/action_result_view.py)、[测试结果](../../gui/widgets/run_results.py) | 以状态快照增量更新任务行，普通操作正文与跨运行测试记录分开 |
 | 设置与关于 | [SettingsPage](../../gui/pages/fluent_pages.py)、[About](../../gui/features/about.py)、[ADB 设置卡](../../gui/widgets/adb_client_card.py) | 设置卡组置于页面滚动区；字体、主题和运行时探测各走自己的更新入口 |
 
@@ -150,6 +150,20 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 [WorkspaceSectionPage / GalleryPage](../../gui/pages/workspace_containers.py) 将滚动容器铺到内容区边界，
 阅读留白由内部 wrapper 承担。主列表、日志和图片画布保留专用滚动边界；不能为对齐文字同时把
 滚动轨道向内缩，也不能把横向溢出简单统一为始终隐藏。
+
+应用管理和文件管理嵌入工作区时，主列表的右边界与主窗口内容区对齐；筛选、路径、命令和状态
+行单独保留阅读留白。两页主列表左侧与正文的 32px 阅读起点对齐；视口和表头右侧同样保留
+32px，右侧轨道继续贴边。局部样式由应用列表材质、文件列表焦点入口合成，主题和字体刷新
+不覆盖内容留白。两页嵌入内容的上下外距统一为 8px，底部保留适度留白，其余高度交还列表。
+独立页面沿用原有边距，详情或预览打开后，列表滚动条仍归属自身分栏。
+可见 Fluent 覆盖轨道保留组件自身的边缘间隔，不能用隐藏的原生滚动条几何替代对齐检查。
+文件列表不再为类型、名称和修改时间弹出重复内容提示；类型的无障碍描述、排序以及工具按钮、
+预览按钮和目录读取错误提示仍保留。
+
+截图页同样使用左右 32px、上下 8px 阅读留白。借入截图/录屏卡时暂时清除卡片内距和标题分隔，
+避免顶部重复留白；画布使用剩余高度，添加图片等操作位于底部。画布和圆点分页仅在键盘操作时
+显示焦点边框，分页高度包含边框以保持圆点完整。侧栏收起重挂控件前，主窗口按导航实际输入来源
+移交焦点，避免鼠标切页被 Qt 的自动 Tab 焦点误画为键盘操作；正常 Tab/反向 Tab 提示保留。
 
 响应式表单沿用三层实现：
 
@@ -263,7 +277,7 @@ Logcat 空态由采集状态和缓冲区共同决定，在视口内绘制提示�
 | 表单错误与原因翻译 | `test_responsive_panels.py`、`test_global_device_context.py`、`test_i18n.py` |
 | 设备选择与连接 | `test_inline_device_selector.py`、`test_device_selector_animation.py`、`test_connection_expansion_animation.py`、`test_wireless_pairing_layout.py` |
 | 详情与设置展开 | `test_device_details_animation.py`、`test_settings_expand_animation.py` |
-| 响应式与滚动 | `test_responsive_layout_controller.py`、`test_page_scroll_integration.py`、`test_page_scroll_edges.py`、`test_scroll_reflow_efficiency.py` |
+| 响应式与滚动 | `test_responsive_layout_controller.py`、`test_page_scroll_integration.py`、`test_page_scroll_edges.py`、`test_app_manager_scroll_edge.py`、`test_file_explorer_scroll_edge.py`、`test_scroll_reflow_efficiency.py` |
 | 动画与缓存 | `test_frame_animation.py`、`test_settings_scroll.py`、`test_cached_icons.py`、`test_ui_incremental_updates.py` |
 | 会话与空态 | `test_feature_contracts.py`、`test_workspace_feature_host.py`、`test_live_logcat_empty_state.py` |
 | 分批交付与取消 | `test_app_manager_population.py`、`test_live_logcat_render_batches.py` |

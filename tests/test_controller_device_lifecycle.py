@@ -7,8 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
 from controllers import ADBController
+from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 from models.device_store import DeviceStore
 from services.adb_pairing import PairingOutcome
 
@@ -54,7 +54,7 @@ def test_explicit_falsey_lifecycle_is_preserved(controller_factory, monkeypatch)
 
     lifecycle = FalseyLifecycle(**vars(make_lifecycle()))
     monkeypatch.setattr(
-        "adblab.presentation.qt_device_connection_lifecycle.QtDeviceConnectionLifecycle",
+        "gui.adapters.device_connection_lifecycle.QtDeviceConnectionLifecycle",
         Mock(side_effect=AssertionError("不应构造默认适配器")),
     )
     controller = controller_factory(device_lifecycle=lifecycle)

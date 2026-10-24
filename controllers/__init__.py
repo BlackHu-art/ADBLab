@@ -5,8 +5,6 @@
     from controllers import ADBController
 """
 
-from adblab.application.apk_selection import ApkFilePicker
-from adblab.application.device_connection_lifecycle import DeviceConnectionLifecycle
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
@@ -16,6 +14,8 @@ from controllers._media import ADBMediaMixin
 from controllers._system import ADBSystemControllerMixin
 from controllers.model_dependencies import ControllerModelFactory, create_controller_models
 from core.log_service import LogService
+from services.apps.apk_selection import ApkFilePicker
+from services.devices.device_connection_lifecycle import DeviceConnectionLifecycle
 
 
 class ADBController(
@@ -48,12 +48,12 @@ class ADBController(
         工厂在 GUI 线程加载设置后同步调用一次，异常原样传播；返回的未启动模型归本实例所有。
         """
         if apk_picker is None:
-            from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
+            from gui.adapters.apk_file_picker import QtApkFilePicker
 
             # 父窗口可在构造后设置，必须到选择时才读取。
             apk_picker = QtApkFilePicker(lambda: self.window_owner)
         if device_lifecycle is None:
-            from adblab.presentation.qt_device_connection_lifecycle import (
+            from gui.adapters.device_connection_lifecycle import (
                 QtDeviceConnectionLifecycle,
             )
 

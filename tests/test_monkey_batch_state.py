@@ -6,7 +6,7 @@ pytestmark = pytest.mark.unit
 
 
 def _batch(*devices, batch_id="batch-a"):
-    from adblab.application.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
+    from services.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
 
     coordinator = MonkeyBatchCoordinator()
     snapshots = {

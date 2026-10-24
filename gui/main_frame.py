@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCloseEvent, QIcon, QRegion, QResizeEvent
+from PySide6.QtGui import QCloseEvent, QFocusEvent, QIcon, QRegion, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -38,14 +38,6 @@ from qfluentwidgets import (
 )
 from shiboken6 import isValid
 
-from adblab.application.supervision import TaskStopResult
-from adblab.presentation.qt_apk_file_picker import QtApkFilePicker
-from adblab.presentation.qt_app_update import QtAppUpdate
-from adblab.presentation.qt_device_connection_lifecycle import QtDeviceConnectionLifecycle
-from adblab.presentation.qt_device_discovery import _ScanDiscoveryState as _ScanDiscoveryState
-from adblab.presentation.qt_device_discovery import _ScannedDevices as _ScannedDevices
-from adblab.presentation.qt_device_discovery import _ScanThread as _ScanThread
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from controllers.action_catalog import ACTION_SIGNALS
 from core.exec import (
@@ -55,7 +47,12 @@ from core.exec import (
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from core.startup_diagnostics import StartupDiagnostics
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from core.tasks.supervision import TaskStopResult
 from gui.action_feedback import ActionFeedbackPresenter
+from gui.adapters.apk_file_picker import QtApkFilePicker
+from gui.adapters.app_update import QtAppUpdate
+from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 from gui.close_controller import CloseController
 from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
@@ -87,6 +84,9 @@ from gui.window_layout import (
     compute_workspace_constraints,
     normalize_window_size,
 )
+from gui.workers.device_discovery import _ScanDiscoveryState as _ScanDiscoveryState
+from gui.workers.device_discovery import _ScannedDevices as _ScannedDevices
+from gui.workers.device_discovery import _ScanThread as _ScanThread
 from models.device_store import DeviceStore
 from services.run_library import RunLibrary, RunRecord
 from services.task_history import TaskHistoryStore
@@ -371,7 +371,7 @@ class MainFrame(FluentWindow):
 
     def _bootstrap_adb_async(self):
         """安排后台环境检查；服务可用即开始发现，不等待原生性能基准。"""
-        from adblab.presentation.qt_adb_runtime import QtAdbRuntime
+        from gui.adapters.adb_runtime import QtAdbRuntime
 
         self._adb_environment = QtAdbRuntime(self)
         self._adb_environment.ready.connect(self._start_device_discovery)
@@ -1262,9 +1262,9 @@ class MainFrame(FluentWindow):
             ("apps", "manager", "appManagerPage", FluentIcon.APPLICATION, tr("应用管理"),
              tr("查看已安装应用，管理列表中的应用")),
             ("apps", "overview", "appsPage", FluentIcon.CODE, tr("应用与诊断"),
-             tr("应用包操作、Monkey 测试与诊断报告")),
+             tr("应用包操作、文本输入、Monkey 测试与诊断报告")),
             ("apps", "media", "screenshotsPage", FluentIcon.CAMERA, tr("截图与屏幕"),
-             tr("发送文本、截图录屏，查看并保存截图")),
+             tr("截图录屏，查看并保存截图")),
             ("system", "overview", "systemPage", FluentIcon.DEVELOPER_TOOLS, tr("系统工具"),
              tr("系统命令、设备配置、网络与模拟器操作")),
             ("system", "logcat", "logcatPage", FluentIcon.SCROLL, tr("实时 Logcat"),
@@ -1316,6 +1316,11 @@ class MainFrame(FluentWindow):
         })
         self._sync_navigation_typography()
         panel = self.navigationInterface.panel
+        self._navigation_focus_scroll = panel.scrollArea
+        self._navigation_focus_viewport = panel.scrollArea.viewport()
+        self._navigation_keyboard_focus = False
+        panel.scrollArea.installEventFilter(self)
+        panel.scrollArea.viewport().installEventFilter(self)
         try:
             panel.menuButton.clicked.disconnect(panel.toggle)
         except (RuntimeError, TypeError):
@@ -1566,6 +1571,17 @@ class MainFrame(FluentWindow):
         panel = self.navigationInterface.panel
         if panel.displayMode != NavigationDisplayMode.MENU:
             return
+        focus = QApplication.focusWidget()
+        target = self._global_device_bar.targets_button
+        if (focus is not None and (focus is panel or panel.isAncestorOf(focus))
+                and target.isVisible() and target.isEnabled()):
+            # Fluent 收起后重挂导航面板会把鼠标焦点自动标成 Tab；先按真实输入
+            # 来源交回页头，保留键盘提示，也避免点击切页凭空出现蓝色焦点框。
+            target.setFocus(
+                Qt.FocusReason.TabFocusReason
+                if self._navigation_keyboard_focus
+                else Qt.FocusReason.OtherFocusReason,
+            )
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             # NavigationPanel.collapse() 会忽略运行中的动画；若当前已在收起，
@@ -2030,7 +2046,7 @@ class MainFrame(FluentWindow):
         if panel is not None and panel.is_expanded:
             panel.collapse()
             return
-        from adblab.presentation.qt_adb_pairing import QtAdbPairing
+        from gui.adapters.adb_pairing import QtAdbPairing
         from gui.widgets.device_connection import DeviceConnectionPanel
 
         if self._adb_pairing is None:
@@ -3089,6 +3105,20 @@ class MainFrame(FluentWindow):
 
     def eventFilter(self, watched, event):
         """同步内容边界裁剪，并在原生调色板事件后恢复云母明暗。"""
+        if watched in (
+            getattr(self, "_navigation_focus_scroll", None),
+            getattr(self, "_navigation_focus_viewport", None),
+        ):
+            # 导航项的鼠标事件会传播到视口；即使焦点未移动也要更新输入来源。
+            if event.type() == QEvent.Type.FocusIn and isinstance(event, QFocusEvent):
+                self._navigation_keyboard_focus = event.reason() in (
+                    Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                    Qt.FocusReason.ShortcutFocusReason,
+                )
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                self._navigation_keyboard_focus = False
+            elif event.type() == QEvent.Type.KeyPress:
+                self._navigation_keyboard_focus = True
         if (
             watched is getattr(self, "_content_surface", None)
             and event.type() == QEvent.Type.Resize

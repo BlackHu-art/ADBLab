@@ -7,9 +7,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from adblab.application.screen_record import ScreenRecordUseCase
 from controllers._media import ADBMediaMixin
 from models.adb_advanced import ADBAdvanced
+from services.screen_record import ScreenRecordUseCase
 
 
 def _recording(tmp_path):

@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 forbidden = ("PySide6", "PyQt5", "PyQt6", "qfluentwidgets", "gui", "models",
-             "adblab.presentation", "core.log_service")
+             "adblab", "core.log_service")
 def blocked(name):
     return any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
 assert not any(blocked(name) for name in sys.modules)

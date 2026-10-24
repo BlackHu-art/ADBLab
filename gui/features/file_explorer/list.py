@@ -10,10 +10,10 @@ from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import QTableWidgetItem, QWidget
 from qfluentwidgets import TableItemDelegate
 
-from adblab.presentation.workers.file_explorer import ADBWorker, DirectoryListWorker
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from gui.i18n import tr
 from gui.styles.icon_loader import get_fluent_icon
+from gui.workers.file_explorer import ADBWorker, DirectoryListWorker
 from services import file_explorer as explorer_service
 
 
@@ -81,10 +81,6 @@ class FileModifiedItem(QTableWidgetItem):
         super().__init__(text)
         self._group = group
         self._key = explorer_service.modified_sort_key(text)
-        if self._key[0] == 1:
-            self.setToolTip(tr(
-                "Year unavailable; sorted by month, day and time after dated entries",
-            ))
 
     def __lt__(self, other: QTableWidgetItem) -> bool:
         if not isinstance(other, FileModifiedItem):
@@ -467,10 +463,8 @@ class FileExplorerList:
         # 类型文字可随语言变化；目录导航和图标选择始终读取原始业务类型。
         type_item.setData(Qt.ItemDataRole.UserRole, file_type)
         type_item.setIcon(self._file_type_icon(name, file_type))
-        type_item.setToolTip(display_type)
         type_item.setData(Qt.ItemDataRole.AccessibleTextRole, display_type)
         name_item = QTableWidgetItem(name)
-        name_item.setToolTip(name)
         self._frame.table.setItem(row, self._frame.TYPE_COL, type_item)
         self._frame.table.setItem(row, self._frame.NAME_COL, name_item)
         group = 0 if name == ".." else 1 if file_type == "Folder" else 2

@@ -77,6 +77,8 @@ class ScreenshotPage(QWidget):
         self._device_tools: QWidget | None = None
         self._device_tools_parking: QWidget | None = None
         self._device_tools_header_was_hidden = False
+        self._device_tools_separator_was_hidden = False
+        self._device_tools_content_margins: tuple[int, int, int, int] | None = None
 
         self._init_page()
         self._init_shortcuts()
@@ -171,7 +173,15 @@ class ScreenshotPage(QWidget):
         self._device_tools_parking = parking
         if isinstance(tools, HeaderCardWidget):
             self._device_tools_header_was_hidden = tools.headerView.isHidden()
+            self._device_tools_separator_was_hidden = tools.separator.isHidden()
+            margins = tools.viewLayout.contentsMargins()
+            self._device_tools_content_margins = (
+                margins.left(), margins.top(), margins.right(), margins.bottom(),
+            )
             tools.headerView.hide()
+            tools.separator.hide()
+            # 页外边距统一负责阅读留白；归还卡片时恢复自身的独立排版。
+            tools.viewLayout.setContentsMargins(0, 0, 0, 0)
         layout = self.layout()
         assert isinstance(layout, QBoxLayout)
         layout.insertWidget(1, tools)
@@ -196,7 +206,11 @@ class ScreenshotPage(QWidget):
             tools.hide()
             if isinstance(tools, HeaderCardWidget):
                 tools.headerView.setVisible(not self._device_tools_header_was_hidden)
+                tools.separator.setVisible(not self._device_tools_separator_was_hidden)
+                if self._device_tools_content_margins is not None:
+                    tools.viewLayout.setContentsMargins(*self._device_tools_content_margins)
             tools.setParent(parking)
+        self._device_tools_content_margins = None
 
     def receive_payload(self, payload=None) -> None:
         """接收后台完成的截图批次，不要求页面当前位于前台。"""

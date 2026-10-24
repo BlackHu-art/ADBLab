@@ -12,10 +12,10 @@ from typing import Any, TypeVar, overload
 
 from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 
-from adblab.application.action_results import ActionEnvelope, capture_action_job
-from adblab.application.envelope import OperationMetadata, attach_operation_metadata
 from core.exec import CommandRunner, command_outcome
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
+from services.tasks.action_results import ActionEnvelope, capture_action_job
+from services.tasks.envelope import OperationMetadata, attach_operation_metadata
 
 
 def _model_is_shutting_down(model) -> bool:

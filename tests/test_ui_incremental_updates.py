@@ -12,8 +12,8 @@ from PySide6.QtWidgets import QPushButton, QWidget
 from qfluentwidgets import RoundMenu
 from shiboken6 import isValid
 
-from adblab.application.operations import OperationManager, OperationState
 from gui.pages.tasks_page import TaskCenterPage
+from services.tasks.operations import OperationManager, OperationState
 
 
 def test_progress_refresh_preserves_pressed_cancel_and_unaffected_rows(qt_application):

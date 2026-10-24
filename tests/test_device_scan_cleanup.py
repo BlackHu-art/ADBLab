@@ -23,8 +23,8 @@ def scan_cleanup_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
     from PySide6.QtCore import Qt
 
-    from adblab.presentation import qt_device_discovery as discovery
     from gui import main_frame
+    from gui.workers import device_discovery as discovery
 
     monkeypatch.setattr(execution, "resolve_command", lambda command: list(command))
     monkeypatch.setattr(adb_debug, "command", lambda *_args, **_kwargs: None)
@@ -100,8 +100,8 @@ def test_scan_protocol_fault_preserves_custom_server(scan_cleanup_boundary, monk
 
 @pytest.mark.parametrize("stop_kind", ["timeout", "cancel"])
 def test_scan_waiting_for_client_can_stop(scan_cleanup_boundary, monkeypatch, stop_kind):
-    from adblab.presentation import qt_device_discovery as discovery
     from core import adb_transport
+    from gui.workers import device_discovery as discovery
     from tests.test_adb_client_admission import _ObservedLock, _while_client_busy
 
     lock = _ObservedLock()

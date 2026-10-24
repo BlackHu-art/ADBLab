@@ -98,7 +98,9 @@ def test_checker_requires_module_documentation(tmp_path):
 @pytest.mark.parametrize(
     "relative_path",
     [
-        "adblab/sample.py",
+        "services/tasks/sample.py",
+        "core/tasks/sample.py",
+        "gui/workers/sample.py",
         "controllers/sample.py",
         "core/sample.py",
         "gui/sample.py",

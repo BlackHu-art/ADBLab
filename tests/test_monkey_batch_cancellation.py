@@ -7,10 +7,10 @@ import pytest
 from PySide6.QtCore import QRunnable
 from PySide6.QtTest import QSignalSpy
 
-from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
 from models.adb_testing import ADBTesting
+from services.monkey_batch import MonkeyBatchCoordinator
 from tests.ui_geometry_helpers import wait_until
 
 

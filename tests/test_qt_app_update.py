@@ -70,7 +70,7 @@ class Manager(QNetworkAccessManager):
 
 @pytest.fixture
 def checker(qt_application):
-    from adblab.presentation.qt_app_update import QtAppUpdate
+    from gui.adapters.app_update import QtAppUpdate
 
     manager = Manager()
     instance = QtAppUpdate(manager=manager)
@@ -168,7 +168,7 @@ def test_oversized_stream_is_aborted_before_finished(checker):
 def test_rate_limit_uses_server_retry_after_instead_of_short_cooldown(checker, monkeypatch):
     instance, manager, _updates = checker
     clock = [100.0]
-    monkeypatch.setattr("adblab.presentation.qt_app_update.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("gui.adapters.app_update.time.monotonic", lambda: clock[0])
     instance.check()
     manager.replies[-1].complete(status=403, headers=(
         (b"X-RateLimit-Remaining", b"0"), (b"Retry-After", b"120"),
@@ -328,8 +328,8 @@ def test_secondary_rate_limit_respects_retry_after(checker):
 def test_main_window_wires_settings_to_manual_check_without_startup_request(
     qt_application, monkeypatch,
 ):
-    from adblab.presentation.qt_app_update import QtAppUpdate
     from core.settings_manager import DEFAULTS, AppSettings
+    from gui.adapters.app_update import QtAppUpdate
     from models.device_store import DeviceStore
     from tests.test_main_window_layout import _MainFrameSettings, build_main_frame
 
@@ -375,8 +375,8 @@ def test_update_check_keeps_focus_and_theme_independent(
 ):
     """检查入口禁用时焦点留在更新卡片，不能跳到侧栏后误操作主题。"""
 
-    from adblab.presentation.qt_app_update import QtAppUpdate
     from core.settings_manager import DEFAULTS, AppSettings
+    from gui.adapters.app_update import QtAppUpdate
     from gui.styles import BaseStyles
     from models.device_store import DeviceStore
     from tests.test_main_window_layout import (

@@ -12,8 +12,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-这不是全仓库的严格导入层级：Controller 还组合 `adblab/application` 的纯 Python 用例与结果
-状态，`adblab/presentation` 为运行时服务提供 Qt 适配。`gui/features` 的页面实现和
+这不是全仓库的严格导入层级：Controller 还组合 `services` 的纯 Python 用例与结果
+状态，`gui/adapters` 为运行时服务提供 Qt 适配。`gui/features` 的页面实现和
 `gui/panels/remote_panel.py` 会直接依赖专用 Qt 适配器或 `services`；主窗口也
 负责组装存储、执行与关闭服务。AppManager、FileExplorer、Logcat、Performance、Media 的实际页面和
 协作者位于各自的 `gui/features/` 功能包，旧 `gui/dialogs` 模块保留兼容入口；页面由 Workspace
@@ -22,13 +22,14 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 `services/apps/`，由现有 Qt worker 注入执行/取消及同步通知，worker保留线程、用户准入和翻译。
 文件四种读写事务在`services/file_operations.py`，复用原命令/字节协议与注入执行器；Qt worker
 只适配信号和取消，TransferWorker继续拥有原长进程生命周期。新事务服务不反向导入worker或GUI。
-应用与文件页面直接导入 `adblab/presentation/workers/` 的两个实现；旧 models worker 路径
-通过同模块别名兼容。新 worker 不导入 models/controllers/gui/qfluentwidgets，仍依赖 PySide6、
-执行基础设施及业务服务；其父 presentation/application 包原有聚合保持，不能视为完全懒加载。
-连续发现的 `_ScanThread` 与载荷位于 `adblab/presentation/qt_device_discovery.py`，依赖执行基础设施，
-不反向导入 GUI；MainFrame 保留实例生命周期与同对象旧导出。媒体 Controller 按截图、录屏和诊断
+应用与文件页面直接导入 `gui/workers/` 的两个实现；旧 models worker 路径
+通过同模块别名兼容。worker 不导入 models/controllers/qfluentwidgets 或其它 GUI 模块，仍依赖
+PySide6、执行基础设施及业务服务；gui/workers 和 gui/adapters 包根不聚合叶子。
+连续发现的 `_ScanThread` 与载荷位于 `gui/workers/device_discovery.py`，依赖执行基础设施，
+不导入其它 GUI 模块；MainFrame 保留实例生命周期与同对象旧导出。媒体 Controller 按截图、录屏和诊断
 归入 `controllers/media/`，旧 `_media` 保留组合入口，模型与执行资源归属不变。
-`core` 仅 `log_service.py` 直接导入 Qt；设置层错误日志经
+`core` 的 `log_service.py` 和 `tasks/qt_supervisor.py` 显式叶子直接导入 Qt；`core` 与 `core.tasks`
+包根和纯取消/监督契约不导入 Qt。设置层错误日志经
 `set_error_sink` 注入。`CommandRunner`/`ProcessRunner` 位于 `core/exec.py`，`core` 不反向依赖
 `models`。
 
@@ -43,7 +44,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 依赖 | 实际用途 | 证据/备注 |
 | --- | --- | --- |
-| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`core/log_service.py`、`adblab/presentation/qt_app_update.py` |
+| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`core/log_service.py`、`gui/adapters/app_update.py` |
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
 | Segno | 内存生成无线 ADB 配对 PNG；固定整数模块尺寸与白色静区，不读写二维码文件 | `services/adb_pairing.py`；版本见运行依赖与约束，BSD-3-Clause 原文随包收集 |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
@@ -79,7 +80,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
 | Android `app_process` + `resources/app-icon-helper.jar` | 在设备端批量读取应用名称、版本或图标 | `services/app_metadata.py`、`services/app_icons.py`、`tools/app_icons/Main.java` | 图标保留占位；元数据仅在明确不支持时执行有限兼容查询；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
 | Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |
-| GitHub 公共 Releases API | 用户触发的应用更新检查 | `services/app_update.py`、`adblab/presentation/qt_app_update.py` | 检查报告网络或服务错误，不影响已有设备功能 |
+| GitHub 公共 Releases API | 用户触发的应用更新检查 | `services/app_update.py`、`gui/adapters/app_update.py` | 检查报告网络或服务错误，不影响已有设备功能 |
 | GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 影响 CI/CD |
 
 ## 外部边界与命令接口

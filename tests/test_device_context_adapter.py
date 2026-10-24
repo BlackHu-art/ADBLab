@@ -7,10 +7,10 @@ from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 
-from adblab.application.device_context import DeviceContext, DeviceContextSnapshot
 from gui.panels.device_manager import DeviceManager
 from gui.panels.side_panel import SidePanel
 from models.device_store import DeviceStore
+from services.devices.device_context import DeviceContext, DeviceContextSnapshot
 
 pytestmark = pytest.mark.ui
 

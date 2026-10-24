@@ -47,14 +47,18 @@
 - [0004 Services 与 MobilePerf 隔离](architecture/adr/0004-services-package.md)
 - [0005 命令/进程执行接口](architecture/adr/0005-exec-interface.md)
 - [0006 设置 schema](architecture/adr/0006-appsettings-schema.md)
+- [0007 按职责统一目录](architecture/adr/0007-responsibility-directory-consolidation.md)
 
 历史阶段与验收索引见 [archive/README](archive/README.md)。
 
 ## 重构设计与验收索引
 
+- adblab 按职责合并到现有目录：[逐模块设计](superpowers/specs/2026-10-24-adblab-responsibility-merge-design.md)、
+  [实施与验证记录](superpowers/plans/2026-10-24-adblab-responsibility-merge.md)。业务、基础设施和 Qt 实现分别归入
+  services/core/gui，不新增顶层目录；旧内部命名空间在验证后退役，原 models/GUI 兼容入口与数据保持。
 - [重构后目录、架构与兼容性复审](superpowers/plans/2026-10-24-post-refactor-audit.md)：记录现有入口与调用链复核、APK 关闭取消反馈及测试清理协议修复。
 - [字体、布局与 Qt 退出验证记录](superpowers/plans/2026-10-24-ui-stability.md)：记录重构后遗留失败的根因、兼容修复和独立审阅。
-- [全项目持续重构路线图](superpowers/plans/2026-10-23-project-refactor-roadmap.md)记录整体范围、保留依据与阶段验收；必要架构及目录改造已完成并通过独立终审。
+- [全项目持续重构路线图](superpowers/plans/2026-10-23-project-refactor-roadmap.md)记录前期整体范围、保留依据与阶段验收；后续顶层目录统一由上述职责合并计划单独记录。
   Controller 模型创建与装配已完成并行实施与独立审阅：[设计](superpowers/specs/2026-10-23-controller-model-composition-design.md)、
   [计划与验收](superpowers/plans/2026-10-23-controller-model-composition.md)；相关项目目录与功能模块归位亦已完成。
 - 服务与 Logcat 功能目录归位：[设计](superpowers/specs/2026-10-24-feature-directory-boundaries-design.md)、

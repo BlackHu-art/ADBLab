@@ -8,7 +8,7 @@ from concurrent.futures import CancelledError
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 
-from adblab.application.supervision import ThreadedShutdownTask
+from core.tasks.supervision import ThreadedShutdownTask
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import alive_signal_emitter
 from gui.i18n import tr

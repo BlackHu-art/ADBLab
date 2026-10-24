@@ -4,9 +4,9 @@ from unittest.mock import Mock, patch
 
 from PySide6.QtGui import QImage
 
-from adblab.application.envelope import OperationMetadata
-from adblab.application.operations import OperationManager, OperationState
 from controllers._media import ADBMediaMixin
+from services.tasks.envelope import OperationMetadata
+from services.tasks.operations import OperationManager, OperationState
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 

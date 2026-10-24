@@ -8,9 +8,9 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtTest import QSignalSpy
 
-from adblab.application.cancellation import CancellationToken
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
+from core.tasks.cancellation import CancellationToken
 from gui.panels.side_panel import SidePanel
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager

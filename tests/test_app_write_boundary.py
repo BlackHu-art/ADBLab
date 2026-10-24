@@ -13,7 +13,7 @@ def test_write_services_import_and_execute_without_qt_or_models(tmp_path):
         from pathlib import Path
         from types import SimpleNamespace
 
-        forbidden = ('PySide6', 'qfluentwidgets', 'gui', 'models', 'adblab.presentation')
+        forbidden = ('PySide6', 'qfluentwidgets', 'gui', 'models', 'adblab')
 
         class Blocker(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):

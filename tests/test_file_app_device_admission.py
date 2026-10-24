@@ -488,6 +488,8 @@ def test_app_manager_large_font_selection_keeps_rows_at_fit_boundary(
     margins = page._master_panel.layout().contentsMargins()
     page_margins = page._page_layout.contentsMargins()
     outer_width = page_margins.left() + page_margins.right()
+    control_margins = page._top_layout.contentsMargins()
+    outer_width += control_margins.left() + control_margins.right()
     page.resize(required_width + margins.left() + margins.right() + outer_width - 1, 900)
     page.show()
     initial = None

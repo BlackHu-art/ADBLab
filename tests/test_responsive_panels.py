@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import FluentSystemColor, HeaderCardWidget
 
-from adblab.application.supervision import StopDisposition, TaskSupervisor
+from core.tasks.supervision import StopDisposition, TaskSupervisor
 from gui.features.media import ScreenshotPage
 from gui.panels.app_panel import AppPanel
 from gui.panels.remote_panel import RemotePanel
@@ -512,7 +512,7 @@ def _feature_category_slices(feature_panel, content: QWidget) -> tuple:
             if any(membership):
                 assert all(membership), widgets
                 screen_bindings.append(binding)
-        # 两行已迁往截图页；真实几何由下列专用测试覆盖：
+        # 截图录屏行由截图页承载，文本输入仍在应用诊断页；真实几何由专用测试覆盖：
         # test_screen_tools_reflow_and_refresh_fonts_after_transfer。
         assert {
             feature_panel.monkey_target_header_binding,
@@ -523,11 +523,10 @@ def _feature_category_slices(feature_panel, content: QWidget) -> tuple:
             feature_panel.monkey_percentage_binding,
             feature_panel.monkey_footer_binding,
         }.issubset(assigned)
-        assert len(screen_bindings) == 2
+        assert len(screen_bindings) == 1
         assert {
             frozenset(id(widget) for widget in binding.widgets()) for binding in screen_bindings
         } == {
-            frozenset((id(feature_panel.email_text_sender), id(feature_panel.btn_send_text))),
             frozenset((
                 id(feature_panel.btn_screenshot), id(feature_panel.record_duration),
                 id(feature_panel.btn_screen_record), id(feature_panel.btn_stop_record),

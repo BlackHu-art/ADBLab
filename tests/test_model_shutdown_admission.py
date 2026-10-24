@@ -4,14 +4,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from adblab.application.action_results import ActionResults
-from adblab.application.envelope import split_operation_metadata
 from controllers._base import _ADBControllerBase
 from core.perf_trace import split_perf
 from models.adb_advanced import ADBAdvanced
 from models.adb_device import ADBDevice
 from models.adb_model import ADBModelCore, async_command
 from models.adb_testing import ADBTesting
+from services.tasks.action_results import ActionResults
+from services.tasks.envelope import split_operation_metadata
 
 
 @pytest.mark.parametrize("operation", ["connect", "disconnect"])

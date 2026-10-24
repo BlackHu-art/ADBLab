@@ -24,7 +24,6 @@ from qfluentwidgets import (
     TextEdit,
 )
 
-from adblab.presentation.workers.app_manager import AppManagerWorker
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
@@ -40,6 +39,7 @@ from gui.styles.fluent import apply_label_role, apply_reading_surface, use_smoot
 from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
+from gui.workers.app_manager import AppManagerWorker
 
 from .form import _apply_adaptive_text_heights
 

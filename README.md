@@ -60,12 +60,11 @@ macOS 使用系统安装的工具，发现顺序见同一指南。
 | 路径 | 职责 |
 | --- | --- |
 | `main.py` | GUI、打包自检和 MobilePerf worker 入口 |
-| `gui/` | 页面、工作区宿主、主题和 Qt 控件 |
+| `gui/` | 页面、工作区宿主、主题、Qt 控件、适配器及 worker |
 | `controllers/` | 信号路由与用例协调 |
-| `models/` | ADB 模型、设备存储及专用 worker |
-| `services/` | 文件、Remote、MobilePerf 等服务边界 |
-| `core/` | 命令、进程、设置和日志基础设施 |
-| `adblab/` | 应用用例、任务状态及 Qt 适配 |
+| `models/` | ADB 模型、设备存储及原 worker 兼容入口 |
+| `services/` | 应用用例、业务操作状态、文件、Remote、MobilePerf 等服务 |
+| `core/` | 命令、进程、设置、日志和任务资源监督基础设施 |
 | `mobileperf/` | 随项目移植的 MobilePerf 内核 |
 | `resources/` | 运行所需配置、图标及辅助工具 |
 | `tests/` | 单元、UI、集成及生命周期回归测试 |

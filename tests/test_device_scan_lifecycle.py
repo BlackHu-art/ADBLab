@@ -27,8 +27,8 @@ def scan_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_manager.AppSettings, "_instance", None)
     from PySide6.QtCore import Qt
 
-    from adblab.presentation import qt_device_discovery as discovery
     from gui import main_frame
+    from gui.workers import device_discovery as discovery
 
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "resolve_command", lambda command: list(command))

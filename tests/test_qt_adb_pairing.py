@@ -7,8 +7,8 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt, QThread, QTimer
 from PySide6.QtTest import QSignalSpy
 from shiboken6 import isValid
 
-from adblab.presentation.qt_adb_pairing import QtAdbPairing, _PairingResources
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from gui.adapters.adb_pairing import QtAdbPairing, _PairingResources
 from services.adb_pairing import (
     PairingContext,
     PairingContinuation,
@@ -274,7 +274,7 @@ def test_thread_start_failure_releases_registration_without_secret(
     qt_application,
     monkeypatch,
 ):
-    from adblab.presentation.qt_adb_pairing import _PairingWorker
+    from gui.adapters.adb_pairing import _PairingWorker
 
     coordinator, _services, _scopes, supervisor = pairing
     workers = []
@@ -365,7 +365,7 @@ def test_application_waiter_retains_worker_until_application_completed(
     from PySide6.QtCore import QCoreApplication, QEvent
     from shiboken6 import isValid
 
-    from adblab.presentation.qt_adb_pairing import _PairingResources
+    from gui.adapters.adb_pairing import _PairingResources
 
     coordinator, services, _scopes, supervisor = pairing
     service_release = threading.Event()

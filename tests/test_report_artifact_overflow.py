@@ -3,10 +3,10 @@
 import pytest
 from PySide6.QtTest import QSignalSpy
 
-from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
 from core.settings_manager import AppSettings
 from gui.styles import BaseStyles
 from gui.widgets.report_artifacts import ReportArtifactsView
+from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
 from tests.test_responsive_panels import (
     _close_feature_panel,
     _resize_feature_viewport,

@@ -13,13 +13,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QRunnable, Qt, QThread, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
-from adblab.application.action_results import ActionResults
-from adblab.application.supervision import StopDisposition, TaskSupervisor
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from core.tasks.supervision import StopDisposition, TaskSupervisor
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.features.logcat import LiveLogcatPage
 from gui.features.performance import PerformancePage
 from gui.main_frame import MainFrame
+from services.tasks.action_results import ActionResults
 
 
 class CloseEvent:

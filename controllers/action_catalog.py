@@ -1,6 +1,6 @@
 """维护通用操作的结果归属；每个接线入口必须有显式的功能分区。"""
 
-from adblab.application.action_results import ActionSpec
+from services.tasks.action_results import ActionSpec
 
 
 def _spec(key: str, section: str, title: str, presentation: str = "status") -> ActionSpec:

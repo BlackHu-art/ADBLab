@@ -1761,8 +1761,8 @@ def test_recording_shutdown_interrupts_completion_wait():
 
 
 def test_recording_start_submits_background_save_once_without_duration_timer():
-    from adblab.application.screen_record import ScreenRecordUseCase
     from controllers._media import ADBMediaMixin
+    from services.screen_record import ScreenRecordUseCase
 
     records = ScreenRecordUseCase()
     records.start("device-1", "b1", "C:/tmp", 10)

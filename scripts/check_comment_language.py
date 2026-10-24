@@ -15,7 +15,6 @@ from pathlib import Path
 
 # 只纳入已经完成人工治理的目录，后续按批次扩展，避免历史债务阻断现有开发。
 MANAGED_PATHS = (
-    Path("adblab"),
     Path("controllers"),
     Path("core"),
     Path("gui"),

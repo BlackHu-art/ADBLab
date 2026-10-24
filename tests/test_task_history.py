@@ -6,8 +6,8 @@ import threading
 
 import pytest
 
-from adblab.application.operations import OperationManager, OperationState
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
+from services.tasks.operations import OperationManager, OperationState
 
 
 def test_record_and_recent_orders_newest_first():

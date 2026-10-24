@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from adblab.application.device_batch import DeviceBatchUseCase
-from adblab.application.operations import (
+from services.devices.device_batch import DeviceBatchUseCase
+from services.tasks.operations import (
     IncompleteOperationError,
     OperationManager,
     OperationTransitionError,

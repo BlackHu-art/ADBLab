@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
-from adblab.presentation.workers.file_explorer import LocalTextSaveWorker, TextSaveWorker
 from core.log_service import LogService
 from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen, safe_disconnect
@@ -21,6 +20,7 @@ from gui.i18n import tr
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
+from gui.workers.file_explorer import LocalTextSaveWorker, TextSaveWorker
 from services import file_explorer as explorer_service
 from services.file_download import default_save_path, local_child_path
 

@@ -6,12 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from adblab.application.envelope import OperationMetadata
-from adblab.application.operations import OperationManager, OperationState
-from adblab.application.screen_record import ScreenRecordUseCase
 from controllers import ADBController
 from controllers._base import _ADBControllerBase
 from controllers._media import ADBMediaMixin
+from services.screen_record import ScreenRecordUseCase
+from services.tasks.envelope import OperationMetadata
+from services.tasks.operations import OperationManager, OperationState
 
 MEDIA_HANDLERS = {
     "start_screen_record": "_process_start_screen_record_result",

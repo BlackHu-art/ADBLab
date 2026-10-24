@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Protocol
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
-from adblab.presentation.workers.file_explorer import ADBWorker, TransferWorker
 from core.log_service import LogService
+from core.tasks.qt_supervisor import QtTaskSupervisor
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from gui.i18n import tr
+from gui.workers.file_explorer import ADBWorker, TransferWorker
 
 if TYPE_CHECKING:
     from .page import FileExplorerPage

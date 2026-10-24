@@ -112,7 +112,7 @@ def test_runtime_mode_and_completion_reach_info_event_when_debug_disabled(monkey
 def test_qt_pending_reset_publishes_auto_and_preserves_later_manual_choice(
     monkeypatch, qt_application,
 ):
-    from adblab.presentation.qt_adb_runtime import QtAdbRuntime
+    from gui.adapters.adb_runtime import QtAdbRuntime
 
     entered, release = threading.Event(), threading.Event()
     resolutions = []
@@ -128,10 +128,10 @@ def test_qt_pending_reset_publishes_auto_and_preserves_later_manual_choice(
     snapshots = []
     adapter.changed.connect(snapshots.append)
     monkeypatch.setattr(
-        "adblab.presentation.qt_adb_runtime.invalidate_adb_path_cache", lambda: None
+        "gui.adapters.adb_runtime.invalidate_adb_path_cache", lambda: None
     )
     monkeypatch.setattr(
-        "adblab.presentation.qt_adb_runtime.reset_adb_program_cache", lambda: None
+        "gui.adapters.adb_runtime.reset_adb_program_cache", lambda: None
     )
     try:
         assert adapter.runtime.start()

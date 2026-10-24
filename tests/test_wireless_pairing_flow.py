@@ -12,11 +12,11 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import SmoothScrollArea
 from shiboken6 import isValid
 
-from adblab.presentation.qt_adb_pairing import QtAdbPairing
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from core import settings_manager
 from core.exec import CommandResult
 from core.native_process import NativeCommandScope
+from core.tasks.qt_supervisor import QtTaskSupervisor
+from gui.adapters.adb_pairing import QtAdbPairing
 from gui.widgets.device_connection import DeviceConnectionPanel
 from models.device_store import DeviceStore
 from services.adb_pairing import PairingContext, PairingService
