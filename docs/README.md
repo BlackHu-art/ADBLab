@@ -60,7 +60,8 @@
   标准用户、官方旧应用载荷升级、18 个故障阶段及默认位置/快捷方式验收也已通过，详见
   [补充验收记录](superpowers/plans/2026-10-24-windows-installer-extended-acceptance.md)。产物可从
   记录中的 Actions 链接下载，尚未正式发布；人工向导/设备、物理断电等边界仍保留。
-  [应用内安装包升级](superpowers/plans/2026-10-24-windows-installer-update.md)目前仅规划，未实现。
+  [应用内安装包升级](superpowers/plans/2026-10-24-windows-installer-update.md)已实现并通过本地关联及冻结验证，
+  使用方式及正式资产验收边界见[构建指南](guides/BUILD_AND_RUN.md#应用内安装包升级)。
 - adblab 按职责合并到现有目录：[逐模块设计](superpowers/specs/2026-10-24-adblab-responsibility-merge-design.md)、
   [实施与验证记录](superpowers/plans/2026-10-24-adblab-responsibility-merge.md)。业务、基础设施和 Qt 实现分别归入
   services/core/gui，不新增顶层目录；旧内部命名空间在验证后退役，原 models/GUI 兼容入口与数据保持。

@@ -12,7 +12,13 @@ from email.utils import parsedate_to_datetime
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-from services.app_update import UpdateError, UpdateSnapshot, parse_release, release_status
+from services.app_update import (
+    UpdateError,
+    UpdateSnapshot,
+    parse_installer_asset,
+    parse_release,
+    release_status,
+)
 from utils.app_metadata import APP_UPDATE_API_URL, APP_VERSION
 
 
@@ -73,7 +79,9 @@ class QtAppUpdate(QObject):
         reply.readyRead.connect(self._read_response)
         reply.finished.connect(self._finished)
         self._deadline.start(self.TIMEOUT_MS)
-        self.snapshot = replace(self.snapshot, status="checking", error="", can_check=False)
+        self.snapshot = replace(
+            self.snapshot, status="checking", error="", can_check=False, installer_asset=None,
+        )
         self.changed.emit(self.snapshot)
 
     @Slot()
@@ -114,7 +122,8 @@ class QtAppUpdate(QObject):
             self._fail("unavailable")
         else:
             try:
-                release = parse_release(json.loads(self._body))
+                payload = json.loads(self._body)
+                release = parse_release(payload)
                 snapshot = UpdateSnapshot(
                     status=release_status(release, APP_VERSION), release=release,
                     checked_at=datetime.now(timezone.utc), can_check=False,
@@ -122,6 +131,13 @@ class QtAppUpdate(QObject):
             except (ValueError, UnicodeError, RecursionError):
                 self._fail("invalid_response")
                 return
+            if snapshot.status == "available":
+                try:
+                    asset = parse_installer_asset(payload, release)
+                except ValueError:
+                    # 安装资产是可选能力；不合格时仍保留已验证的浏览器发布入口。
+                    asset = None
+                snapshot = replace(snapshot, installer_asset=asset)
             self._complete(snapshot)
 
     @staticmethod
@@ -157,7 +173,9 @@ class QtAppUpdate(QObject):
 
     def _fail(self, error: UpdateError, *, retry_seconds: float = 0.0) -> None:
         self._complete(
-            replace(self.snapshot, status="error", error=error, can_check=False),
+            replace(
+                self.snapshot, status="error", error=error, can_check=False, installer_asset=None,
+            ),
             retry_seconds=retry_seconds,
         )
 

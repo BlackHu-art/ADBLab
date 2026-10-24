@@ -55,12 +55,38 @@ def _run_entry(argv: list[str]) -> int:
         })
         _report_installation_unavailable(error, cli=cli)
         return 73
+    handoff = None
     try:
-        exit_code = _dispatch_cli(argv)
-        return _run_gui() if exit_code is None else exit_code
-    finally:
-        if guard is not None:
-            guard.close()
+        try:
+            exit_code = _dispatch_cli(argv)
+            if exit_code is None:
+                handoff = _create_installer_handoff(guard)
+                exit_code = _run_gui(handoff=handoff) if handoff is not None else _run_gui()
+        finally:
+            if guard is not None:
+                guard.close()
+    except BaseException:
+        if handoff is not None:
+            handoff.abort()
+        raise
+    if handoff is not None:
+        if exit_code == 0:
+            handoff.commit()
+        else:
+            handoff.abort()
+    return exit_code
+
+
+def _create_installer_handoff(guard):
+    """仅真实安装准入成功的冻结 Windows x64 GUI 获得升级能力。"""
+    import platform
+
+    if (guard is None or sys.platform != "win32" or not getattr(sys, "frozen", False)
+            or platform.machine().lower() not in {"amd64", "x86_64"}):
+        return None
+    from core.installer_handoff import InstallerHandoff
+
+    return InstallerHandoff()
 
 
 def _dispatch_cli(argv: list[str]) -> int | None:
@@ -294,6 +320,27 @@ def _self_check_packaging() -> int:
         except (OSError, subprocess.TimeoutExpired):
             check("runtime:scrcpy-adb-bridge", False, "CLI self-check failed")
 
+    if sys.platform == "win32":
+        import subprocess
+
+        from utils.installer_update_helper import resolve_installer_update_helper
+
+        helper = resolve_installer_update_helper()
+        check("resource:installer-update-handoff", helper is not None)
+        if helper is not None:
+            try:
+                result = subprocess.run(
+                    [str(helper), "--self-check"], capture_output=True, timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+                )
+                check(
+                    "runtime:installer-update-handoff",
+                    result.returncode == 0
+                    and result.stdout.strip() == b"installer-update-handoff: ready",
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                check("runtime:installer-update-handoff", False, "CLI self-check failed")
+
     try:
         root = user_data_root()
         root.mkdir(parents=True, exist_ok=True)
@@ -362,14 +409,15 @@ def _configure_console_logging(settings) -> None:
     logging.getLogger().setLevel(stdlib_level(applied))
 
 
-def _run_gui() -> int:
+def _run_gui(*, handoff=None) -> int:
     """覆盖设置与 Qt 尚未就绪的失败，原始异常优先于清理及诊断落盘异常。"""
     from core.startup_diagnostics import StartupDiagnostics
 
     trace = StartupDiagnostics(started_at=_ENTRY_STARTED_AT)
     trace.record("entry", detail="frozen" if getattr(sys, "frozen", False) else "source")
     try:
-        return _run_gui_session(trace)
+        return (_run_gui_session(trace, handoff=handoff) if handoff is not None
+                else _run_gui_session(trace))
     except BaseException as error:
         trace.record("failed", detail=type(error).__name__)
         try:
@@ -379,7 +427,7 @@ def _run_gui() -> int:
         raise
 
 
-def _run_gui_session(trace) -> int:
+def _run_gui_session(trace, *, handoff=None) -> int:
     """创建 QApplication、加载主题并进入主界面事件循环。"""
     automatic_platform = configure_gui_platform(sys.argv)
     if sys.platform == "win32":
@@ -481,7 +529,8 @@ def _run_gui_session(trace) -> int:
         trace.record("window-import", elapsed_ms=(perf_counter() - started_at) * 1000)
 
         started_at = perf_counter()
-        window = MainFrame(deferred_startup=True, device_history_loaded=True)
+        options = {"handoff": handoff} if handoff is not None else {}
+        window = MainFrame(deferred_startup=True, device_history_loaded=True, **options)
         startup.set_window(window)
         window.startup_diagnostics = trace
         trace.record("window-shell", elapsed_ms=(perf_counter() - started_at) * 1000)

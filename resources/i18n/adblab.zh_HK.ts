@@ -7866,5 +7866,75 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>截图录屏，查看并保存截图</source>
             <translation>截圖錄影，檢視並儲存截圖</translation>
         </message>
+        <message>
+            <source>安装版更新</source>
+            <translation>安裝版更新</translation>
+        </message>
+        <message>
+            <source>检查到可用安装包后可在此下载</source>
+            <translation>檢查到可用安裝程式後可在此下載</translation>
+        </message>
+        <message>
+            <source>下载安装包</source>
+            <translation>下載安裝程式</translation>
+        </message>
+        <message>
+            <source>取消下载</source>
+            <translation>取消下載</translation>
+        </message>
+        <message>
+            <source>退出并安装</source>
+            <translation>結束並安裝</translation>
+        </message>
+        <message>
+            <source>下载安装包后，确认退出即可打开安装向导</source>
+            <translation>下載安裝程式後，確認結束即可開啟安裝精靈</translation>
+        </message>
+        <message>
+            <source>正在下载安装包：{percent}% · 可继续使用应用</source>
+            <translation>正在下載安裝程式：{percent}% · 可繼續使用應用程式</translation>
+        </message>
+        <message>
+            <source>安装包已校验。安装前将停止本实例任务并保存数据</source>
+            <translation>安裝程式已驗證。安裝前將停止本執行個體的工作並儲存資料</translation>
+        </message>
+        <message>
+            <source>下载已取消，可重新下载</source>
+            <translation>下載已取消，可重新下載</translation>
+        </message>
+        <message>
+            <source>下载或校验失败，请检查网络与可用空间后重试</source>
+            <translation>下載或驗證失敗，請檢查網絡與可用空間後重試</translation>
+        </message>
+        <message>
+            <source>正在准备安装交接，请稍候…</source>
+            <translation>正在準備安裝，請稍候…</translation>
+        </message>
+        <message>
+            <source>安装交接准备失败，可重新点击“退出并安装”</source>
+            <translation>安裝準備失敗，可重新點擊「結束並安裝」</translation>
+        </message>
+        <message>
+            <source>正在停止任务并保存数据；失败时保留安装包供下次重试</source>
+            <translation>正在停止工作並儲存資料；失敗時保留安裝程式供下次重試</translation>
+        </message>
+        <message>
+            <source>将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。
+若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。</source>
+            <translation>將停止本執行個體的裝置工作和背景擷取，儲存設定與結果後結束，並開啟安裝精靈。
+若關閉或儲存失敗，本次不會執行安裝程式；安裝程式將保留供下次啟動重試。</translation>
+        </message>
+        <message>
+            <source>当前任务：{tasks}</source>
+            <translation>目前工作：{tasks}</translation>
+        </message>
+        <message>
+            <source>退出并安装更新？</source>
+            <translation>結束並安裝更新？</translation>
+        </message>
+        <message>
+            <source>继续使用</source>
+            <translation>繼續使用</translation>
+        </message>
     </context>
 </TS>

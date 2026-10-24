@@ -340,6 +340,29 @@ def test_build_uploads_only_the_exact_artifacts_for_each_platform():
         assert resolved.splitlines() == expected[row["artifact"]]
 
 
+def test_windows_installer_handoff_verification_runs_after_build_before_publication():
+    """交接验收仅使用 Windows 临时夹具，失败必须阻断后续包验收与上传。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    index, step = next((i, item) for i, item in enumerate(steps)
+                       if item.get("name") == "Verify installer update handoff")
+    assert step["if"] == "runner.os == 'Windows'"
+    assert step["shell"] == "bash"
+    assert not step.get("continue-on-error", False)
+    assert shlex.split(step["run"].replace("\\\n", " ")) == [
+        "python", "scripts/check_installer_update_handoff.py",
+        "--helper", "build/runtime-helpers/adblab-update-handoff/adblab-update-handoff.exe",
+        "--workspace", "$RUNNER_TEMP/adblab-update-handoff",
+    ]
+    build = next(i for i, item in enumerate(steps)
+                 if item.get("name") == "Build with PyInstaller")
+    frozen = next(i for i, item in enumerate(steps)
+                  if item.get("name") == "Smoke test Windows package")
+    upload = min(i for i, item in enumerate(steps)
+                 if item.get("uses", "").startswith("actions/upload-artifact@"))
+    assert build < index < frozen < upload
+    assert "publish" not in step["run"]
+
+
 def test_windows_installer_build_and_smoke_gate_precede_zip_and_upload(tmp_path):
     """安装构建和真实验收的非零退出必须阻断随后的 ZIP 与上传。"""
     steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
@@ -778,11 +801,24 @@ def test_pairing_packaging_checks_png_writer_and_license_without_adb(
     monkeypatch.setattr("utils.tool_check.check_bundled_tools", lambda: [])
     monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
     monkeypatch.setattr(
-        subprocess, "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
-        ),
+        "utils.installer_update_helper.resolve_installer_update_helper",
+        lambda: "synthetic-installer-helper",
     )
+
+    def helper_self_check(command, **kwargs):
+        outputs = {
+            "synthetic-bridge": b"scrcpy-adb-bridge: ready\n",
+            "synthetic-installer-helper": b"installer-update-handoff: ready\n",
+        }
+        assert command[0] in outputs
+        assert command == [command[0], "--self-check"]
+        assert kwargs == {
+            "capture_output": True, "timeout": 10,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0), "check": False,
+        }
+        return SimpleNamespace(returncode=0, stdout=outputs[command[0]])
+
+    monkeypatch.setattr(subprocess, "run", helper_self_check)
     monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
     monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
     if missing == "writer":

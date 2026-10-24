@@ -33,6 +33,9 @@ class CloseController:
         self._frame._flush_pending_layout_state()
         self._frame._close_started = True
         self._frame._closing = True
+        handoff = getattr(self._frame, "_handoff", None)
+        if handoff is not None:
+            handoff.mark_shutdown_success(False)
         # 选框的嵌套事件循环可在后台关闭任务启动前返回；同步封结果准入，
         # 让 Controller 在选择返回后停止续发任务，不等待资源清理线程。
         self._frame.adb_controller.action_results.close()
@@ -74,6 +77,24 @@ class CloseController:
     def _register_application_shutdown_tasks(self):
         """按扫描、面板、内嵌会话和 Controller 顺序注册关闭资源。"""
         supervisor = self._frame.task_supervisor.supervisor
+        for attribute, kind in (
+            ("_installer_update", "installer_download"),
+            ("_installer_handoff", "installer_handoff_prepare"),
+        ):
+            owner = getattr(self._frame, attribute, None)
+            if owner is not None:
+                self._attempt_shutdown_registration(
+                    f"{kind}_registration",
+                    lambda owner=owner, kind=kind: supervisor.register(
+                        f"{self._frame._shutdown_owner_id}-{kind}",
+                        owner_id=self._frame._shutdown_owner_id,
+                        kind=kind,
+                        # Qt 取消由下方 GUI 准备阶段完成，后台通道只负责真实等待。
+                        request_stop=lambda: None,
+                        wait=owner.wait,
+                        is_running=owner.is_running,
+                    ),
+                )
         pairing = getattr(self._frame, "_adb_pairing", None)
         if pairing is not None:
             self._attempt_shutdown_registration(
@@ -222,6 +243,23 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        # 升级线程的停止只能在 GUI 发起，必须先于其他可失败的页面清理且逐项尝试。
+        installer_update = getattr(self._frame, "_installer_update", None)
+        if installer_update is not None:
+            try:
+                installer_update.prepare_shutdown()
+            except Exception as exc:
+                self._record_shutdown_failure("installer_download_preparation", exc)
+        installer_handoff = getattr(self._frame, "_installer_handoff", None)
+        if installer_handoff is not None:
+            try:
+                installer_handoff.prepare_shutdown(
+                    preserve_prepared=bool(
+                        getattr(self._frame, "_installer_close_requested", False)
+                    ),
+                )
+            except Exception as exc:
+                self._record_shutdown_failure("installer_handoff_preparation", exc)
         for scroll in self._frame.findChildren(SettingsWheelScroll):
             scroll.prepare_shutdown()
         device_bar = getattr(self._frame, "_global_device_bar", None)
@@ -305,6 +343,9 @@ class CloseController:
             *results,
         )
         self._frame._shutdown_residual = tuple(residual)
+        self._frame._shutdown_had_residual = (
+            getattr(self._frame, "_shutdown_had_residual", False) or bool(residual)
+        )
         environment = getattr(self._frame, "_adb_environment", None)
         if environment is not None:
             environment.close()
@@ -438,6 +479,9 @@ class CloseController:
         if result is not None:
             self._frame._shutdown_results = (*self._frame._shutdown_results, result)
         self._frame._shutdown_residual = tuple(residual)
+        self._frame._shutdown_had_residual = (
+            getattr(self._frame, "_shutdown_had_residual", False) or bool(residual)
+        )
         finalizer_failed = result is not None and result.disposition in {
             StopDisposition.FAILED,
             StopDisposition.TIMED_OUT,
@@ -456,5 +500,24 @@ class CloseController:
                     count=len(self._frame._shutdown_residual)
                 )
             )
+        handoff = getattr(self._frame, "_handoff", None)
+        if handoff is not None:
+            # 普通退出保持原契约；升级另需严格成功证据，不能把关闭事件被接受当授权。
+            successful = (
+                bool(getattr(self._frame, "_installer_close_requested", False))
+                and handoff.prepared
+                and result is not None
+                and result.task_id == f"{self._frame._shutdown_owner_id}-finalizer"
+                and not getattr(self._frame, "_shutdown_preparation_failures", ())
+                and not self._frame._shutdown_had_residual
+                and all(
+                    item.disposition in {StopDisposition.GRACEFUL, StopDisposition.ALREADY_STOPPED}
+                    and not item.error_type
+                    for item in self._frame._shutdown_results
+                )
+            )
+            handoff.mark_shutdown_success(successful)
+            if not successful:
+                handoff.abort()
         self._frame._close_ready = True
         QTimer.singleShot(0, self._frame.close)

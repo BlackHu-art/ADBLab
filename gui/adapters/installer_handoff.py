@@ -1,0 +1,105 @@
+"""在 GUI 之外准备独立升级 helper，明确持有准备线程直到真实退出。"""
+
+from __future__ import annotations
+
+from threading import Event, Thread
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QObject, QTimer, Signal
+
+if TYPE_CHECKING:
+    from core.installer_handoff import InstallerHandoff
+    from services.installer_update import VerifiedInstaller
+
+
+class QtInstallerHandoff(QObject):
+    """仅准备交接，不授权安装；主线程发布状态，关闭监督器在后台等待线程。"""
+
+    changed = Signal(str)
+    ready = Signal()
+
+    def __init__(self, handoff: InstallerHandoff, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._handoff = handoff
+        self._thread: Thread | None = None
+        self._cancel = Event()
+        self._closing = False
+        self._failed = False
+        self._poll = QTimer(self)
+        self._poll.setInterval(20)
+        self._poll.timeout.connect(self._finish)
+
+    def start(self, verified: VerifiedInstaller) -> bool:
+        """合并重复请求；READY 仅在准备线程已 join 且未取消时交付一次。"""
+        if self._closing or self.is_running() or self._poll.isActive():
+            return False
+        try:
+            self._handoff.reset_attempt()
+        except (OSError, RuntimeError):
+            self.changed.emit("error")
+            return False
+        self._cancel.clear()
+        self._failed = False
+
+        def prepare() -> None:
+            try:
+                self._handoff.prepare(verified)
+                self._failed = not self._handoff.prepared
+            except Exception:
+                # 只向 UI 发布固定失败分类，异常正文可能包含本机缓存路径。
+                self._failed = True
+            finally:
+                if self._cancel.is_set():
+                    self._handoff.abort()
+
+        self._thread = Thread(target=prepare, name="adblab-installer-prepare", daemon=True)
+        try:
+            self._thread.start()
+        except RuntimeError:
+            self._thread = None
+            self._handoff.abort()
+            self.changed.emit("error")
+            return False
+        # 先登记并启动再发布；同步信号槽可立即关闭或重复点击，不能漏掉等待义务。
+        self._poll.start()
+        self.changed.emit("preparing")
+        return True
+
+    def _finish(self) -> None:
+        """GUI 轮询只观察已结束线程，不把线程中的结果直接投递给可销毁控件。"""
+        if self.is_running():
+            return
+        self.wait(0)
+        self._poll.stop()
+        if self._closing:
+            return
+        if self._cancel.is_set():
+            self.changed.emit("cancelled")
+        elif self._failed:
+            self.changed.emit("error")
+        else:
+            self.changed.emit("ready")
+            self.ready.emit()
+
+    def cancel(self) -> None:
+        """撤销本次准备；不终止 helper 或其他进程，线程仍保留到实际退出。"""
+        self._cancel.set()
+        self._handoff.abort()
+
+    def prepare_shutdown(self, *, preserve_prepared: bool = False) -> None:
+        """主线程封闭回调；仅用户确认且 READY 后的升级关闭保留待授权 helper。"""
+        self._closing = True
+        self._poll.stop()
+        if not preserve_prepared or self.is_running() or not self._handoff.prepared:
+            self.cancel()
+
+    def is_running(self) -> bool:
+        """供关闭监督器读取实际线程状态，不访问 Qt 对象。"""
+        return self._thread is not None and self._thread.is_alive()
+
+    def wait(self, timeout: float) -> bool:
+        """由后台关闭通道等待；超时不撤销线程归属或假装准备结束。"""
+        thread = self._thread
+        if thread is not None:
+            thread.join(max(0.0, timeout))
+        return not self.is_running()

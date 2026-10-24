@@ -195,6 +195,55 @@ def test_about_support_toggle_translates_both_states(
         panel.close()
 
 
+@pytest.mark.parametrize("language,buttons,progress,confirmation,tasks", [
+    ("en_US", ("Download installer", "Cancel download", "Exit and install"),
+     "Downloading installer: 75% · You can keep using the app",
+     "Device tasks and background capture in this instance will stop. Settings and results "
+     "will be saved before the app exits and opens the installation wizard.\n"
+     "If shutdown or saving fails, the installer will not run. The downloaded installer "
+     "will be kept so you can retry the next time you start the app.",
+     "Current tasks: Monkey"),
+    ("zh_HK", ("下載安裝程式", "取消下載", "結束並安裝"),
+     "正在下載安裝程式：75% · 可繼續使用應用程式",
+     "將停止本執行個體的裝置工作和背景擷取，儲存設定與結果後結束，並開啟安裝精靈。\n"
+     "若關閉或儲存失敗，本次不會執行安裝程式；安裝程式將保留供下次啟動重試。",
+     "目前工作：Monkey"),
+    ("zh_CN", ("下载安装包", "取消下载", "退出并安装"),
+     "正在下载安装包：75% · 可继续使用应用",
+     "将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。\n"
+     "若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。",
+     "当前任务：Monkey"),
+], ids=["en_US", "zh_HK", "zh_CN"])
+def test_installer_actions_progress_and_exit_confirmation_use_bundled_translations(
+    installed_translators, language, buttons, progress, confirmation, tasks,
+):
+    """实际卡片与退出说明保留翻译、格式参数及失败时不执行安装器的含义。"""
+    from gui.adapters.installer_update import InstallerSnapshot
+    from gui.features.about import AboutPanel
+
+    installed_translators(language)
+    panel = AboutPanel()
+    try:
+        panel.set_installer_enabled(True)
+        panel.show()
+        assert panel.installer_card.isVisible()
+        assert tuple(button.text() for button in (
+            panel.installer_download_button, panel.installer_cancel_button,
+            panel.installer_install_button,
+        )) == buttons
+        panel.set_installer_snapshot(InstallerSnapshot("downloading", received=3, total=4))
+        assert panel.installer_card.contentLabel.text() == progress
+        assert panel.installer_actions.accessibleDescription() == progress
+        assert i18n.tr(
+            "将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。"
+            "\n若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。"
+        ) == confirmation
+        assert i18n.tr("当前任务：{tasks}").format(tasks="Monkey") == tasks
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
 @pytest.mark.parametrize("language,single,current,collapse,unknown", [
     ("zh_CN", "单选", "当前", "收起设备", "Android 版本未知"),
     ("zh_HK", "單選", "目前", "收起裝置", "Android 版本未知"),

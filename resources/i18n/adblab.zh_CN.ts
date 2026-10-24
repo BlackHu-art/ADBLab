@@ -7866,5 +7866,75 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>截图录屏，查看并保存截图</source>
             <translation>截图录屏，查看并保存截图</translation>
         </message>
+        <message>
+            <source>安装版更新</source>
+            <translation>安装版更新</translation>
+        </message>
+        <message>
+            <source>检查到可用安装包后可在此下载</source>
+            <translation>检查到可用安装包后可在此下载</translation>
+        </message>
+        <message>
+            <source>下载安装包</source>
+            <translation>下载安装包</translation>
+        </message>
+        <message>
+            <source>取消下载</source>
+            <translation>取消下载</translation>
+        </message>
+        <message>
+            <source>退出并安装</source>
+            <translation>退出并安装</translation>
+        </message>
+        <message>
+            <source>下载安装包后，确认退出即可打开安装向导</source>
+            <translation>下载安装包后，确认退出即可打开安装向导</translation>
+        </message>
+        <message>
+            <source>正在下载安装包：{percent}% · 可继续使用应用</source>
+            <translation>正在下载安装包：{percent}% · 可继续使用应用</translation>
+        </message>
+        <message>
+            <source>安装包已校验。安装前将停止本实例任务并保存数据</source>
+            <translation>安装包已校验。安装前将停止本实例任务并保存数据</translation>
+        </message>
+        <message>
+            <source>下载已取消，可重新下载</source>
+            <translation>下载已取消，可重新下载</translation>
+        </message>
+        <message>
+            <source>下载或校验失败，请检查网络与可用空间后重试</source>
+            <translation>下载或校验失败，请检查网络与可用空间后重试</translation>
+        </message>
+        <message>
+            <source>正在准备安装交接，请稍候…</source>
+            <translation>正在准备安装交接，请稍候…</translation>
+        </message>
+        <message>
+            <source>安装交接准备失败，可重新点击“退出并安装”</source>
+            <translation>安装交接准备失败，可重新点击“退出并安装”</translation>
+        </message>
+        <message>
+            <source>正在停止任务并保存数据；失败时保留安装包供下次重试</source>
+            <translation>正在停止任务并保存数据；失败时保留安装包供下次重试</translation>
+        </message>
+        <message>
+            <source>将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。
+若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。</source>
+            <translation>将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。
+若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。</translation>
+        </message>
+        <message>
+            <source>当前任务：{tasks}</source>
+            <translation>当前任务：{tasks}</translation>
+        </message>
+        <message>
+            <source>退出并安装更新？</source>
+            <translation>退出并安装更新？</translation>
+        </message>
+        <message>
+            <source>继续使用</source>
+            <translation>继续使用</translation>
+        </message>
     </context>
 </TS>

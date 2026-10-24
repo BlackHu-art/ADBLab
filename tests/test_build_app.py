@@ -97,6 +97,10 @@ expected_preparations = [
     [sys.executable, str(Path(sys.argv[2]) / "scripts" / script)]
     for script in ("prepare_runtime_tools.py", "build_scrcpy_adb_bridge.py")
 ]
+if sys.platform == "win32":
+    expected_preparations.append([
+        sys.executable, str(Path(sys.argv[2]) / "scripts/build_installer_update_handoff.py"),
+    ])
 preparation_calls = []
 def prepare(command, **kwargs):
     assert command in expected_preparations, command
@@ -125,32 +129,40 @@ print(json.dumps(captured["hiddenimports"]))
     assert json.loads(result.stdout) == ["mobileperf.included", "qfluentwidgets.included"]
 
 
-@pytest.mark.parametrize("failed_stage,code", [(None, 0), ("tools", 5), ("helper", 7), ("app", 9)])
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+@pytest.mark.parametrize("failed_stage,code", [
+    (None, 0), ("tools", 5), ("helper", 7), ("handoff", 8), ("app", 9),
+])
 def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
-    monkeypatch, failed_stage, code,
+    monkeypatch, failed_stage, code, platform,
 ):
     from scripts import build_app
 
     calls = []
+    stages = ["tools", "helper", *(["handoff"] if platform == "win32" else []), "app"]
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        stage = ("tools", "helper", "app")[len(calls) - 1]
+        stage = stages[len(calls) - 1]
         return SimpleNamespace(returncode=code if stage == failed_stage else 0)
 
     monkeypatch.setattr(build_app.subprocess, "run", run)
+    monkeypatch.setattr(build_app.sys, "platform", platform)
     result = build_app.main(["--name", "example", "--onefile", "--windowed", "--icon", "icon.ico"])
-    assert result == code
-    assert len(calls) == {"tools": 1, "helper": 2, "app": 3, None: 3}[failed_stage]
+    assert result == (code if failed_stage in stages else 0)
+    expected_calls = stages.index(failed_stage) + 1 if failed_stage in stages else len(stages)
+    assert len(calls) == expected_calls
     assert Path(calls[0][0][-1]).name == "prepare_runtime_tools.py"
     if len(calls) > 1:
         assert Path(calls[1][0][-1]).name == "build_scrcpy_adb_bridge.py"
-    if len(calls) > 2:
-        command = calls[2][0]
+    if platform == "win32" and len(calls) > 2:
+        assert Path(calls[2][0][-1]).name == "build_installer_update_handoff.py"
+    if len(calls) == len(stages):
+        command = calls[-1][0]
         assert command[:3] == [sys.executable, "-m", "PyInstaller"]
         assert "--onefile" in command and "--windowed" in command
         assert command[-1] == str(ROOT / "main.py")
-        assert calls[2][1]["cwd"] == ROOT
+        assert calls[-1][1]["cwd"] == ROOT
 
 
 def test_build_dry_run_does_not_import_qt_or_invoke_packager(tmp_path):
@@ -176,9 +188,11 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     )
     assert result.returncode == 0, result.stderr
     commands = json.loads(result.stdout)
-    assert len(commands) == 3
-    assert commands[2][:3] == [sys.executable, "-m", "PyInstaller"]
-    assert commands[2][commands[2].index("--name") + 1] == "dry run"
+    assert len(commands) == (4 if sys.platform == "win32" else 3)
+    if sys.platform == "win32":
+        assert Path(commands[2][-1]).name == "build_installer_update_handoff.py"
+    assert commands[-1][:3] == [sys.executable, "-m", "PyInstaller"]
+    assert commands[-1][commands[-1].index("--name") + 1] == "dry run"
     assert not (tmp_path / "build").exists()
 
 

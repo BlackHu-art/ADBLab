@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QVBoxLayout, QWidget
@@ -24,17 +26,27 @@ from services.app_update import UpdateSnapshot
 from utils.app_metadata import APP_PROJECT_URL, APP_VERSION
 from utils.resource_path import resource_path
 
+if TYPE_CHECKING:
+    from gui.adapters.installer_update import InstallerSnapshot
+
 
 class AboutPanel(SettingCardGroup):
     """按 Gallery 的关于分组展示项目与支持信息，不主动访问网络。"""
 
     updateRequested = Signal()
+    installerDownloadRequested = Signal()
+    installerCancelRequested = Signal()
+    installerInstallRequested = Signal()
     layoutChanged = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(tr("关于"), parent)
         self.setObjectName("aboutPanel")
         self._download_url: str | None = None
+        self._installer_enabled = False
+        self._update_snapshot = UpdateSnapshot()
+        self._installer_snapshot: InstallerSnapshot | None = None
+        self._handoff_state = "idle"
         self._app_description = tr(
             "当前版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台"
         ).format(version=APP_VERSION)
@@ -116,12 +128,34 @@ class AboutPanel(SettingCardGroup):
         self.support_action_layout.addWidget(self.support_button, 0, Qt.AlignmentFlag.AlignRight)
         self.support_action_layout.addWidget(self.support_qr, 0, Qt.AlignmentFlag.AlignRight)
         self.support_button.toggled.connect(self._set_support_expanded)
+        self.installer_card = SettingCard(
+            FluentIcon.DOWNLOAD, tr("安装版更新"), tr("检查到可用安装包后可在此下载"), self,
+        )
+        self.installer_actions = QWidget(self.installer_card)
+        self.installer_actions.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.installer_actions.setAccessibleName(tr("安装版更新"))
+        self.installer_action_layout = QHBoxLayout(self.installer_actions)
+        self.installer_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.installer_action_layout.setSpacing(8)
+        self.installer_download_button = PushButton(tr("下载安装包"), self.installer_actions)
+        self.installer_cancel_button = PushButton(tr("取消下载"), self.installer_actions)
+        self.installer_install_button = PrimaryPushButton(tr("退出并安装"), self.installer_actions)
+        for button, signal in (
+            (self.installer_download_button, self.installerDownloadRequested),
+            (self.installer_cancel_button, self.installerCancelRequested),
+            (self.installer_install_button, self.installerInstallRequested),
+        ):
+            self.installer_action_layout.addWidget(button)
+            button.clicked.connect(signal)
+            configure_button(button, text=button.text(), tooltip=button.text())
         self._presentations = (
             SettingsCardPresentation(self.project_card, self.update_actions),
+            SettingsCardPresentation(self.installer_card, self.installer_actions),
             SettingsCardPresentation(self.support_card, self.support_actions),
         )
         self.support_qr.setAccessibleName(tr("作者支持二维码"))
-        self.addSettingCards([self.project_card, self.support_card])
+        self.addSettingCards([self.project_card, self.installer_card, self.support_card])
+        self.installer_card.hide()
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)
         self.set_update_snapshot(UpdateSnapshot())
@@ -137,6 +171,8 @@ class AboutPanel(SettingCardGroup):
             apply_setting_text_style(presentation.card.contentLabel, FontRole.UI_SMALL)
         for button in (
             self.project_button, self.check_update_button, self.release_button, self.support_button,
+            self.installer_download_button, self.installer_cancel_button,
+            self.installer_install_button,
         ):
             self._style_action_button(button)
         self.reflow(self.width())
@@ -179,6 +215,7 @@ class AboutPanel(SettingCardGroup):
     def set_update_snapshot(self, snapshot: UpdateSnapshot) -> None:
         """只呈现检查器已校验的状态；改文案后重新测量卡片和设置页滚动范围。"""
 
+        self._update_snapshot = snapshot
         status = tr("更新状态：尚未检查")
         detail = tr("检查后，有新版本时可前往下载")
         if snapshot.status == "checking":
@@ -224,7 +261,10 @@ class AboutPanel(SettingCardGroup):
             text=tr("检查更新"),
             tooltip=tr("检查是否有新的正式版本") if snapshot.can_check else tr("请稍后再检查"),
         )
-        can_check = snapshot.can_check and snapshot.status != "checking"
+        can_check = (
+            snapshot.can_check and snapshot.status != "checking"
+            and self._handoff_state not in {"preparing", "ready"}
+        )
         # 重查及失败快照会保留历史发布信息；只有本次确认新版才能开放下载。
         self._download_url = (
             snapshot.release.url
@@ -247,7 +287,69 @@ class AboutPanel(SettingCardGroup):
                 else tr("检查到新版本后可前往下载")
             ),
         )
+        self._refresh_installer_state()
         self._refresh_typography()
+
+    def set_installer_enabled(self, enabled: bool) -> None:
+        """仅组合根确认安装身份后开放卡片；免安装入口保持原浏览器行为。"""
+        self._installer_enabled = enabled
+        self.installer_card.setVisible(enabled)
+        self._refresh_installer_state()
+        self._refresh_typography()
+
+    @Slot(object)  # type: ignore[reportArgumentType]  # PySide6 的 Slot stub 未计入方法 self。
+    def set_installer_snapshot(self, snapshot: InstallerSnapshot) -> None:
+        """呈现下载器的进度与已校验结果，历史发布不能恢复安装准入。"""
+        self._installer_snapshot = snapshot
+        self._refresh_installer_state()
+        self._refresh_typography()
+
+    @Slot(str)  # type: ignore[reportArgumentType]  # PySide6 的 Slot stub 未计入方法 self。
+    def set_handoff_state(self, status: str) -> None:
+        """准备期间合并点击并保持焦点；准备失败仍可重新请求退出安装。"""
+        self._handoff_state = status
+        self.set_update_snapshot(self._update_snapshot)
+
+    def _refresh_installer_state(self) -> None:
+        """按钮只由当前发布、下载状态和交接准备共同授予可操作性。"""
+        release = self._update_snapshot
+        asset = getattr(release, "installer_asset", None)
+        fresh = self._installer_enabled and release.status == "available" and asset is not None
+        snapshot = self._installer_snapshot
+        state = snapshot.status if snapshot is not None else "idle"
+        verified = snapshot.verified if snapshot is not None else None
+        busy = self._handoff_state in {"preparing", "ready"}
+        ready = fresh and state == "ready" and verified is not None and verified.asset == asset
+        content = tr("检查到可用安装包后可在此下载")
+        if fresh:
+            content = tr("下载安装包后，确认退出即可打开安装向导")
+        if state == "downloading" and snapshot is not None:
+            percent = min(100, max(0, snapshot.received * 100 // max(1, snapshot.total)))
+            content = tr("正在下载安装包：{percent}% · 可继续使用应用").format(percent=percent)
+        elif ready:
+            content = tr("安装包已校验。安装前将停止本实例任务并保存数据")
+        elif state == "cancelled":
+            content = tr("下载已取消，可重新下载")
+        elif state == "error":
+            content = tr("下载或校验失败，请检查网络与可用空间后重试")
+        if self._handoff_state == "preparing":
+            content = tr("正在准备安装交接，请稍候…")
+        elif self._handoff_state == "error":
+            content = tr("安装交接准备失败，可重新点击“退出并安装”")
+        elif self._handoff_state == "ready":
+            content = tr("正在停止任务并保存数据；失败时保留安装包供下次重试")
+        states = (
+            (self.installer_download_button,
+             fresh and state != "downloading" and not ready and not busy),
+            (self.installer_cancel_button, state == "downloading" and not busy),
+            (self.installer_install_button, ready and not busy),
+        )
+        if any(button.hasFocus() and not enabled for button, enabled in states):
+            self.installer_actions.setFocus(Qt.FocusReason.OtherFocusReason)
+        for button, enabled in states:
+            button.setEnabled(bool(enabled))
+        self.installer_card.setContent(content)
+        self.installer_actions.setAccessibleDescription(content)
 
     def _open_release(self) -> None:
         """显式点击才打开本次确认的新版页面，历史结果不提供下载准入。"""
@@ -268,13 +370,23 @@ class AboutPanel(SettingCardGroup):
             else QBoxLayout.Direction.LeftToRight
         )
         self.update_action_layout.invalidate()
+        installer_width = sum(button.width() for button in (
+            self.installer_download_button, self.installer_cancel_button,
+            self.installer_install_button,
+        )) + 2 * self.installer_action_layout.spacing()
+        self.installer_action_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if installer_width > max(1, width - 64)
+            else QBoxLayout.Direction.LeftToRight
+        )
+        self.installer_action_layout.invalidate()
         # 隐藏图片后重新测量容器，避免沿用展开时的 sizeHint 留下空白。
         self.support_action_layout.invalidate()
         for presentation in self._presentations:
             presentation.reflow(width)
-        cards_height = sum(item.card.height() for item in self._presentations)
+        visible = [item for item in self._presentations if not item.card.isHidden()]
+        cards_height = sum(item.card.height() for item in visible)
         self.setFixedHeight(
-            cards_height + max(0, len(self._presentations) - 1) * 2 + self.titleLabel.height() + 12
+            cards_height + max(0, len(visible) - 1) * 2 + self.titleLabel.height() + 12
         )
         self.updateGeometry()
 

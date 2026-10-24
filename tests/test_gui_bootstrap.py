@@ -163,16 +163,104 @@ def isolated_packaging_tools(monkeypatch):
     """界面能力用例不依赖本机工具准备状态；工具完整性由专项测试覆盖。"""
     monkeypatch.setattr("utils.tool_check.check_bundled_tools", lambda: [])
     monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+    monkeypatch.setattr(
+        "utils.installer_update_helper.resolve_installer_update_helper",
+        lambda: "synthetic-installer-helper",
+    )
 
-    def bridge_self_check(command, **kwargs):
-        assert command == ["synthetic-bridge", "--self-check"]
+    def helper_self_check(command, **kwargs):
+        outputs = {
+            "synthetic-bridge": b"scrcpy-adb-bridge: ready\n",
+            "synthetic-installer-helper": b"installer-update-handoff: ready\n",
+        }
+        assert command[0] in outputs
+        assert command == [command[0], "--self-check"]
         assert kwargs == {
             "capture_output": True, "timeout": 10,
             "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0), "check": False,
         }
-        return subprocess.CompletedProcess(command, 0, b"scrcpy-adb-bridge: ready\n", b"")
+        return subprocess.CompletedProcess(command, 0, outputs[command[0]], b"")
 
-    monkeypatch.setattr(subprocess, "run", bridge_self_check)
+    monkeypatch.setattr(subprocess, "run", helper_self_check)
+
+
+@pytest.mark.parametrize(
+    "result", ["ready", "missing", "timeout", "wrong_output", "nonzero", "oserror"],
+)
+def test_packaging_checks_windows_installer_helper_offline(
+    qt_application, isolated_app_settings, isolated_packaging_tools,
+    tmp_path, monkeypatch, capsys, result,
+):
+    from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
+    from qfluentwidgets.components.widgets import acrylic_label
+
+    monkeypatch.setattr(main, "sys", SimpleNamespace(platform="win32", modules=sys.modules))
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
+    monkeypatch.setattr(
+        QNetworkAccessManager, "get",
+        lambda *_args: pytest.fail("Packaging self-check must stay offline"),
+    )
+    if result == "missing":
+        monkeypatch.setattr(
+            "utils.installer_update_helper.resolve_installer_update_helper", lambda: None,
+        )
+    original_run = subprocess.run
+    calls = []
+
+    def probe(command, **kwargs):
+        completed = original_run(command, **kwargs)
+        calls.append(command)
+        if command[0] != "synthetic-installer-helper":
+            return completed
+        if result == "timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        if result == "oserror":
+            raise OSError("synthetic executable unavailable")
+        return subprocess.CompletedProcess(
+            command, 5 if result == "nonzero" else 0,
+            b"wrong helper" if result == "wrong_output" else b"installer-update-handoff: ready\r\n",
+            b"",
+        )
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    assert main._self_check_packaging() == (0 if result == "ready" else 1)
+    output = capsys.readouterr().out
+    assert "OK runtime:scrcpy-adb-bridge" in output
+    assert ["synthetic-bridge", "--self-check"] in calls
+    if result == "missing":
+        assert "FAIL resource:installer-update-handoff" in output
+        assert ["synthetic-installer-helper", "--self-check"] not in calls
+    else:
+        assert "OK resource:installer-update-handoff" in output
+        status = "OK" if result == "ready" else "FAIL"
+        assert f"{status} runtime:installer-update-handoff" in output
+        assert ["synthetic-installer-helper", "--self-check"] in calls
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_packaging_does_not_resolve_windows_installer_helper_on_other_platforms(
+    qt_application, isolated_app_settings, isolated_packaging_tools,
+    tmp_path, monkeypatch, capsys, platform,
+):
+    from PySide6.QtNetwork import QSslSocket
+    from qfluentwidgets.components.widgets import acrylic_label
+
+    monkeypatch.setattr(main, "sys", SimpleNamespace(platform=platform, modules=sys.modules))
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr(acrylic_label, "isAcrylicAvailable", True)
+    monkeypatch.setattr(
+        "utils.installer_update_helper.resolve_installer_update_helper",
+        lambda: pytest.fail("Non-Windows packaging must not resolve Windows updater"),
+    )
+    assert main._self_check_packaging() == 0
+    output = capsys.readouterr().out
+    assert "OK runtime:scrcpy-adb-bridge" in output
+    assert "installer-update-handoff" not in output
 
 
 @pytest.mark.parametrize("available", [False, True])

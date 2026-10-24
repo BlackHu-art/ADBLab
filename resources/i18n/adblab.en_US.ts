@@ -7866,5 +7866,75 @@ Android device management, apps and diagnostics</translation>
             <source>截图录屏，查看并保存截图</source>
             <translation>Capture or record screens, and view or save screenshots</translation>
         </message>
+        <message>
+            <source>安装版更新</source>
+            <translation>Update installed app</translation>
+        </message>
+        <message>
+            <source>检查到可用安装包后可在此下载</source>
+            <translation>Check for an available installer, then download it here</translation>
+        </message>
+        <message>
+            <source>下载安装包</source>
+            <translation>Download installer</translation>
+        </message>
+        <message>
+            <source>取消下载</source>
+            <translation>Cancel download</translation>
+        </message>
+        <message>
+            <source>退出并安装</source>
+            <translation>Exit and install</translation>
+        </message>
+        <message>
+            <source>下载安装包后，确认退出即可打开安装向导</source>
+            <translation>After downloading the installer, confirm that you want to exit to open the installation wizard</translation>
+        </message>
+        <message>
+            <source>正在下载安装包：{percent}% · 可继续使用应用</source>
+            <translation>Downloading installer: {percent}% · You can keep using the app</translation>
+        </message>
+        <message>
+            <source>安装包已校验。安装前将停止本实例任务并保存数据</source>
+            <translation>Installer verified. This instance will stop its tasks and save data before installation</translation>
+        </message>
+        <message>
+            <source>下载已取消，可重新下载</source>
+            <translation>Download cancelled. You can download again</translation>
+        </message>
+        <message>
+            <source>下载或校验失败，请检查网络与可用空间后重试</source>
+            <translation>Download or verification failed. Check your network and free disk space, then retry</translation>
+        </message>
+        <message>
+            <source>正在准备安装交接，请稍候…</source>
+            <translation>Preparing to install. Please wait…</translation>
+        </message>
+        <message>
+            <source>安装交接准备失败，可重新点击“退出并安装”</source>
+            <translation>Could not prepare installation. Click “Exit and install” to retry</translation>
+        </message>
+        <message>
+            <source>正在停止任务并保存数据；失败时保留安装包供下次重试</source>
+            <translation>Stopping tasks and saving data. If this fails, the installer will be kept for the next attempt</translation>
+        </message>
+        <message>
+            <source>将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。
+若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。</source>
+            <translation>Device tasks and background capture in this instance will stop. Settings and results will be saved before the app exits and opens the installation wizard.
+If shutdown or saving fails, the installer will not run. The downloaded installer will be kept so you can retry the next time you start the app.</translation>
+        </message>
+        <message>
+            <source>当前任务：{tasks}</source>
+            <translation>Current tasks: {tasks}</translation>
+        </message>
+        <message>
+            <source>退出并安装更新？</source>
+            <translation>Exit and install the update?</translation>
+        </message>
+        <message>
+            <source>继续使用</source>
+            <translation>Keep using the app</translation>
+        </message>
     </context>
 </TS>

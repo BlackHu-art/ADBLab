@@ -15,6 +15,34 @@ from tests.test_app_update import release_payload
 from tests.ui_geometry_helpers import wait_until
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_installer_download_is_rejected_on_unsupported_platform(
+    qt_application, monkeypatch, platform,
+):
+    from datetime import datetime, timezone
+
+    from gui.adapters import installer_update
+    from services.app_update import ReleaseInfo, UpdateSnapshot
+    from tests.test_installer_update import make_asset
+    from utils.app_metadata import APP_RELEASES_URL
+
+    asset = make_asset()
+    owner = installer_update.QtInstallerUpdate()
+    owner.set_release(UpdateSnapshot(
+        status="available", installer_asset=asset,
+        release=ReleaseInfo(asset.version, f"{APP_RELEASES_URL}/tag/{asset.tag}",
+                            datetime.now(timezone.utc)),
+    ))
+    monkeypatch.setattr(installer_update, "sys", SimpleNamespace(platform=platform), raising=False)
+    try:
+        assert not owner.start(asset)
+        assert not owner.is_running()
+    finally:
+        owner.prepare_shutdown()
+        assert owner.wait(5)
+        owner.deleteLater()
+
+
 class Reply(QNetworkReply):
     """只替换网络传输，保留 Qt 信号、同步 abort 和延迟销毁行为。"""
 
@@ -323,6 +351,61 @@ def test_secondary_rate_limit_respects_retry_after(checker):
     instance.check()
     manager.replies[-1].complete(status=403, headers=((b"Retry-After", b"120"),))
     assert instance.snapshot.error == "rate_limited"
+
+
+def installer_payload(tag="v999.0.0", **asset_changes):
+    version = tag.removeprefix("v")
+    name = f"ADBLab-win-x64-v{version}-setup.exe"
+    return release_payload(tag, id=42, assets=[{
+        "id": 51, "name": name, "state": "uploaded", "size": 5,
+        "digest": "sha256:" + "a" * 64,
+        "browser_download_url": (
+            f"https://github.com/BlackHu-art/ADBLab/releases/download/{tag}/{name}"
+        ),
+        **asset_changes,
+    }])
+
+
+def test_available_installer_is_bound_to_same_successful_response(checker):
+    instance, manager, _updates = checker
+    instance.check()
+    manager.replies[-1].complete(json.dumps(installer_payload()).encode())
+    assert instance.snapshot.status == "available"
+    asset = getattr(instance.snapshot, "installer_asset", None)
+    assert asset is not None
+    assert (asset.release_id, asset.asset_id, asset.version) == (42, 51, "999.0.0")
+
+
+@pytest.mark.parametrize("next_result", ["current", "ahead", "error"])
+def test_new_check_and_non_available_results_revoke_installer(
+    checker, qt_application, monkeypatch, next_result,
+):
+    from utils.app_metadata import APP_VERSION
+
+    instance, manager, _updates = checker
+    monkeypatch.setattr(instance, "COOLDOWN_SECONDS", 0.01)
+    instance.check()
+    manager.replies[-1].complete(json.dumps(installer_payload()).encode())
+    assert getattr(instance.snapshot, "installer_asset", None) is not None
+    wait_until(qt_application, lambda: instance.snapshot.can_check)
+    instance.check()
+    assert instance.snapshot.installer_asset is None
+    if next_result == "error":
+        manager.replies[-1].complete(b"invalid")
+    else:
+        tag = f"v{APP_VERSION}" if next_result == "current" else "v0.0.0"
+        manager.replies[-1].complete(json.dumps(installer_payload(tag)).encode())
+    assert instance.snapshot.status == next_result
+    assert instance.snapshot.installer_asset is None
+
+
+def test_invalid_optional_installer_preserves_browser_release(checker):
+    instance, manager, _updates = checker
+    instance.check()
+    manager.replies[-1].complete(json.dumps(installer_payload(digest="invalid")).encode())
+    assert instance.snapshot.status == "available"
+    assert instance.snapshot.release.version == "999.0.0"
+    assert getattr(instance.snapshot, "installer_asset", None) is None
 
 
 def test_main_window_wires_settings_to_manual_check_without_startup_request(

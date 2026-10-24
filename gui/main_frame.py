@@ -5,7 +5,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable, Iterator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -30,6 +30,7 @@ from qfluentwidgets import (
     FluentStyleSheet,
     FluentTitleBar,
     FluentWindow,
+    MessageBox,
     NavigationDisplayMode,
     NavigationItemPosition,
     NavigationPanel,
@@ -53,7 +54,9 @@ from gui.action_feedback import ActionFeedbackPresenter
 from gui.adapters.apk_file_picker import QtApkFilePicker
 from gui.adapters.app_update import QtAppUpdate
 from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
+from gui.adapters.installer_handoff import QtInstallerHandoff
 from gui.close_controller import CloseController
+from gui.dialogs.fluent_dialog import _apply_role_font as apply_dialog_font_role
 from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
 from gui.notifications import show_toast
@@ -65,7 +68,7 @@ from gui.pages.fluent_pages import (
     WorkspaceAreaPage,
     WorkspaceSectionPage,
 )
-from gui.pages.tasks_page import TaskCenterPage
+from gui.pages.tasks_page import TaskCenterPage, _operation_label
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.panels.side_panel import SidePanel
 from gui.run_library import RunLibraryController
@@ -102,6 +105,11 @@ from .styles.fluent import (
 )
 from .styles.theme import apply_dark_title_bar
 
+if TYPE_CHECKING:
+    from core.installer_handoff import InstallerHandoff
+    from gui.adapters.installer_update import QtInstallerUpdate
+    from services.app_update import InstallerAsset
+
 
 def _debug_log(owner, event: str, **fields) -> None:
     """输出不含敏感业务值的结构化开发诊断。"""
@@ -132,12 +140,20 @@ class MainFrame(FluentWindow):
         mouse_buttons_provider: Callable[[], Qt.MouseButton] | None = None,
         deferred_startup: bool = False,
         device_history_loaded: bool = False,
+        handoff: "InstallerHandoff | None" = None,
     ):
         super().__init__()
         self._deferred_startup = deferred_startup
         self.startup_diagnostics: StartupDiagnostics | None = None
         # 仅 GUI 启动门禁完成后跳过重复读取；直接构造保留原有同步初始化契约。
         self._device_history_loaded = device_history_loaded
+        # 安装资格仅由根入口注入；源码和便携版不能通过页面状态自行授予资格。
+        self._handoff = handoff
+        self._installer_update: QtInstallerUpdate | None = None
+        self._installer_handoff: QtInstallerHandoff | None = None
+        self._installer_close_requested = False
+        self._installer_confirmation_pending = False
+        self._installer_requested_asset: InstallerAsset | None = None
         self._startup_complete = False
         self._startup_aborting = False
         self._startup_abort_reported = False
@@ -207,6 +223,7 @@ class MainFrame(FluentWindow):
         self._shutdown_handles = []
         self._shutdown_results = ()
         self._shutdown_residual = ()
+        self._shutdown_had_residual = False
         self._shutdown_deadline_at = 0.0
         self._shutdown_finalizer_started = False
         self._close_started = False
@@ -1240,6 +1257,7 @@ class MainFrame(FluentWindow):
         self._app_update = QtAppUpdate(self)
         self._settings_page.about_panel.updateRequested.connect(self._app_update.check)
         self._app_update.changed.connect(self._settings_page.about_panel.set_update_snapshot)
+        self._wire_installer_update()
         yield WindowStartupStage.SETTINGS_PAGE
 
         self._home_page = HomePage(self, self)
@@ -3133,6 +3151,143 @@ class MainFrame(FluentWindow):
             # 会清除无边框窗口的 DWM 深色属性；云母也使用它，必须在此处重申。
             apply_dark_title_bar(self)
         return super().eventFilter(watched, event)
+
+    def _wire_installer_update(self) -> None:
+        """安装版组合根连接显式下载与交接；缺省不创建下载或准备线程。"""
+        if self._handoff is None:
+            return
+        from gui.adapters.installer_update import QtInstallerUpdate
+
+        about = self._settings_page.about_panel
+        self._installer_update = QtInstallerUpdate(self)
+        self._installer_handoff = QtInstallerHandoff(self._handoff, self)
+        about.set_installer_enabled(True)
+        self._app_update.changed.connect(self._on_installer_release_changed)
+        self._installer_update.changed.connect(about.set_installer_snapshot)
+        self._installer_handoff.changed.connect(about.set_handoff_state)
+        self._installer_handoff.ready.connect(self._on_installer_handoff_ready)
+        about.installerDownloadRequested.connect(self._request_installer_download)
+        about.installerCancelRequested.connect(self._installer_update.cancel)
+        about.installerInstallRequested.connect(self._request_installer_install)
+        self._installer_update.set_release(self._app_update.snapshot)
+        about.set_installer_snapshot(self._installer_update.snapshot)
+
+    def _on_installer_release_changed(self, snapshot) -> None:
+        """重查立即作废旧安装意图，helper 的晚到 READY 不能触发退出。"""
+        if self._closing or self._installer_update is None:
+            return
+        if self._installer_requested_asset is not None and (
+            snapshot.status != "available"
+            or snapshot.installer_asset != self._installer_requested_asset
+        ):
+            self._installer_requested_asset = None
+            assert self._installer_handoff is not None
+            self._installer_handoff.cancel()
+            self._settings_page.about_panel.set_handoff_state("cancelled")
+        self._installer_update.set_release(snapshot)
+
+    def _request_installer_download(self) -> None:
+        """下载准入复核当前正式发布，按钮可见性不作为信任依据。"""
+        if self._closing or self._installer_update is None:
+            return
+        snapshot = self._app_update.snapshot
+        if snapshot.status == "available" and snapshot.installer_asset is not None:
+            self._settings_page.about_panel.set_handoff_state("idle")
+            self._installer_update.start(snapshot.installer_asset)
+
+    def _request_installer_install(self) -> None:
+        """确认结束本实例任务后才异步准备；准备失败时尚未进入不可逆关闭。"""
+        if (
+            self._closing or self._installer_confirmation_pending
+            or self._installer_update is None or self._installer_handoff is None
+            or self._installer_handoff.is_running()
+        ):
+            return
+        snapshot = self._installer_update.snapshot
+        release = self._app_update.snapshot
+        verified = snapshot.verified
+        if (
+            snapshot.status != "ready" or verified is None or release.status != "available"
+            or release.installer_asset != verified.asset
+        ):
+            return
+        self._installer_confirmation_pending = True
+        try:
+            confirmed = self._confirm_installer_exit()
+        finally:
+            self._installer_confirmation_pending = False
+        # 确认框的嵌套事件循环可能交付重查或普通关闭，确认返回后再次核对准入。
+        current = self._app_update.snapshot
+        if (
+            not confirmed or self._closing or current.status != "available"
+            or current.installer_asset != verified.asset
+            or self._installer_update.snapshot.verified is not verified
+        ):
+            return
+        self._installer_requested_asset = verified.asset
+        self._installer_handoff.start(verified)
+
+    def _confirm_installer_exit(self) -> bool:
+        """使用现有 Fluent 确认外壳，仅展示任务类型，不输出设备身份和缓存路径。"""
+        names = sorted({
+            _operation_label(item.kind)
+            for item in self.adb_controller.operation_manager.active_snapshot()
+        })
+        content = tr(
+            "将停止本实例的设备任务和后台采集，保存设置与结果后退出，并打开安装向导。"
+            "\n若关闭或保存失败，本次不会运行安装器；安装包将保留供下次启动重试。"
+        )
+        if names:
+            content += "\n" + tr("当前任务：{tasks}").format(tasks="、".join(names))
+        dialog = MessageBox(tr("退出并安装更新？"), content, self)
+        dialog.contentLabel.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.yesButton.setText(tr("退出并安装"))
+        dialog.cancelButton.setText(tr("继续使用"))
+        for widget in (
+            dialog.titleLabel, dialog.contentLabel, dialog.yesButton, dialog.cancelButton,
+        ):
+            apply_dialog_font_role(widget, FontRole.UI)
+            widget.ensurePolished()
+        # 第三方 MessageBox 在构造时固定尺寸；按最终项目字号重新度量正文和操作区。
+        width = max(300, min(560, self.width() - 64))
+        dialog.contentLabel.setText(content)
+        for label in (dialog.titleLabel, dialog.contentLabel):
+            label.setWordWrap(True)
+            label.setFixedWidth(width - 48)
+            label.setFixedHeight(max(
+                label.fontMetrics().height(), label.heightForWidth(width - 48),
+            ))
+        for button in (dialog.yesButton, dialog.cancelButton):
+            button.setFixedHeight(max(32, button.fontMetrics().height() + 16))
+        dialog.buttonGroup.setFixedHeight(dialog.yesButton.height() + 48)
+        dialog.widget.setFixedSize(
+            width,
+            dialog.titleLabel.height() + dialog.contentLabel.height()
+            + dialog.buttonGroup.height() + 60,
+        )
+        dialog.cancelButton.setFocus(Qt.FocusReason.OtherFocusReason)
+        try:
+            return bool(dialog.exec())
+        finally:
+            dialog.deleteLater()
+
+    def _on_installer_handoff_ready(self) -> None:
+        """只接受当前意图的 READY；真正执行授权由关闭结果与根入口共同控制。"""
+        if self._installer_update is None or self._installer_handoff is None:
+            return
+        release = self._app_update.snapshot
+        verified = self._installer_update.snapshot.verified
+        valid = (
+            not self._closing and self._handoff is not None and self._handoff.prepared
+            and release.status == "available" and verified is not None
+            and release.installer_asset == self._installer_requested_asset == verified.asset
+        )
+        if not valid:
+            self._installer_handoff.cancel()
+            self._settings_page.about_panel.set_handoff_state("cancelled")
+            return
+        self._installer_close_requested = True
+        self.close()
 
     def closeEvent(self, event):
         if not getattr(self, "_startup_complete", True) and not self._startup_aborting:

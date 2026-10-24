@@ -251,6 +251,14 @@ jobs:
             ${{ matrix.package_mode }} ${{ matrix.windowed }} \
             ${{ matrix.icon }}
 
+      - name: Verify installer update handoff
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python scripts/check_installer_update_handoff.py \
+            --helper build/runtime-helpers/adblab-update-handoff/adblab-update-handoff.exe \
+            --workspace "$RUNNER_TEMP/adblab-update-handoff"
+
       - name: Smoke test Windows package
         if: runner.os == 'Windows'
         shell: bash

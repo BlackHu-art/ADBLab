@@ -36,7 +36,7 @@ def build_command(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """先准备平台工具并构建桥接工具；任一子进程失败均保留其退出码。"""
+    """先准备平台工具与独立 helper；任一子进程失败均保留其退出码。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="ADBLab")
     modes = parser.add_mutually_exclusive_group()
@@ -49,10 +49,14 @@ def main(argv: list[str] | None = None) -> int:
     commands = [
         [sys.executable, str(ROOT / "scripts/prepare_runtime_tools.py")],
         [sys.executable, str(ROOT / "scripts/build_scrcpy_adb_bridge.py")],
+    ]
+    if sys.platform == "win32":
+        commands.append([sys.executable, str(ROOT / "scripts/build_installer_update_handoff.py")])
+    commands.append(
         build_command(
             name=args.name, onefile=args.onefile, windowed=args.windowed, icon=args.icon,
-        ),
-    ]
+        )
+    )
     if args.dry_run:
         print(json.dumps(commands, ensure_ascii=True))
         return 0

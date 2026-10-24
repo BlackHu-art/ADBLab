@@ -431,8 +431,36 @@ schema；卸载不清除此目录、`~/ADBLab`、自定义导出或设备数据�
 这些自动结果不覆盖物理断电、所有交互取消或实际设备操作。结果与四平台产物下载入口见
 [首轮实施记录](../superpowers/plans/2026-10-24-windows-installer.md#验收记录)和
 [补充验收记录](../superpowers/plans/2026-10-24-windows-installer-extended-acceptance.md)；本轮使用
-`publish=false`，尚未正式发布。应用内下载、校验、关闭和启动安装器交接见[后续计划](../superpowers/plans/2026-10-24-windows-installer-update.md)，
-目前仅规划，未实现。
+`publish=false`，尚未正式发布。应用内交接的实现与本轮验证记录见
+[升级实施计划](../superpowers/plans/2026-10-24-windows-installer-update.md)。
+
+### 应用内安装包升级
+
+Windows x64 安装版在“设置 → 关于”中显式检查更新，只有本次正式发布包含匹配版本的
+`ADBLab-win-x64-v{version}-setup.exe`，且官方 API 提供有效大小和 SHA-256 时，才开放
+“下载安装包”。源码、免安装 ZIP、其他平台及缺少可信安装资产时继续使用“前往下载”。
+下载不会阻止使用应用，可以取消；重新检查会撤销旧下载及安装授权。文件位于
+`%LOCALAPPDATA%\ADBLab\updates` 的独占任务目录，不改变配置和用户数据 schema。
+
+下载并校验完成后，点击“退出并安装”，确认停止当前实例任务并保存数据。交接准备失败时
+窗口仍可继续使用；真正开始关闭后沿用原关闭语义，若任务、设置或结果保存失败，不运行安装器。
+关闭失败后的缓存供下次启动、重新检查同一发布并重新校验后复用，不把缓存文件视为永久授权。
+其他实例或工具造成的占用仍由安装器拒绝，应用不会为升级结束其他进程。
+
+独立冻结 helper 复制到缓存后运行，先绑定父进程身份，只有收到根入口在清理与释放安装锁后
+发送的授权、并看到该进程正常退出，才在文件锁保护下复核大小和 SHA-256，打开交互安装向导。
+“已交接”不代表安装完成；安装、取消、修复和维护失败遵守上一节边界。摘要来自同一官方
+GitHub 发布响应，提供该信任源下的完整性，当前没有发布者代码签名。
+
+源码与冻结 packaging 自检会检查 Windows helper。下列隔离探针已本地运行，不安装产品，
+只在指定目录生成测试 EXE、独立用户缓存及诊断记录：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/check_installer_update_handoff.py --helper build/runtime-helpers/adblab-update-handoff/adblab-update-handoff.exe --workspace build/installer-handoff-probe
+```
+
+本轮真实正式发布源尚无 setup 资产，未完成真实正式安装器版本之间的在线升级；已验证范围
+及后续发布验收项集中在[风险账本](../project-knowledge/RISKS_AND_DEBT.md)。
 
 ## CI/CD
 
