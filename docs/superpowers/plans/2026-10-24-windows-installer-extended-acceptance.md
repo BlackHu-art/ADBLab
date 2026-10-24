@@ -44,8 +44,8 @@
 
 基线：既有验收器、升级夹具、CI 契约集合 **108 passed**（12.58 秒），一个既有 SciPy 弃用警告。
 修改按各自直接测试验证，集成后再运行安装器关联集合、静态/文档门禁；真实构建与生命周期
-由隔离 CI 执行。当前状态：首次远程功能场景通过，但 PowerShell 收尾失败；已修复并准备复验，
-不能将首次作业记为成功。
+由隔离 CI 执行。当前状态：实现、独立审阅和完整远程复验已完成；首次失败保留在下方记录，
+最终成功以运行 `40084141603` 的 attempt 2 为准。
 
 ## 本地预检记录
 
@@ -81,3 +81,56 @@
 - 新增真实 `MemoryStream.CopyToAsync` 的成功/失败退出码回归，先 **2 failed** 后通过；
   标准账户、扩展入口与 CI 契约组合 **110 passed**，一个既有 SciPy 弃用警告。独立复审确认
   修复和新回归通过，额外故障 Task 探针确认异步错误仍会抛出。四项本地静态/文档门禁通过。
+
+## 收尾修复后的远程复验
+
+修复提交 `7381bdc2a23b1d454dcb69f33b1a2929eb02bc83` 通过同一专用分支启动
+[运行 40084141603](https://github.com/BlackHu-art/ADBLab/actions/runs/40084141603)。首次 attempt 的
+非 Windows 构建成功，Windows 非 UI 测试 **3988 passed、72 skipped、4487 deselected**。
+随后在 ADB helper 候选目录发布处遇到 `PermissionError [WinError 5]`，未进入安装验收。
+
+独立诊断确认相关构建、自检、协议调用链相对此前成功提交未修改；同步子进程退出和日志关闭
+路径正常。关联 **78 tests passed**，临时副本连续 20 次真实 frozen 自检后立即发布成功；
+受控“不共享 DELETE”句柄能复现同样错误，既有回滚保留旧产物和候选。这不能确认 CI 的持锁者，
+也不足以认定权限或进程生命周期根因。没有添加宽泛重试、修改权限或放宽门禁；通过 GitHub
+接口只重跑同提交的 Windows 作业；attempt 2 的 helper 构建及后续完整流程成功，未复现该拒绝。
+
+### 最终通过证据
+
+运行 `40084141603` 的 attempt 2 状态为 **completed / success**，代码 SHA 为
+`7381bdc2a23b1d454dcb69f33b1a2929eb02bc83`。Windows job `120845023092` 成功；另外三个平台
+沿用同 SHA 已成功的构建，version 成功，release 跳过。通过 Git 推送触发、GitHub 接口重跑
+单作业、读取状态/日志/产物完成验收，没有操作桌面触发按钮或执行正式发布。
+
+| 验收范围 | 实际结果 |
+| --- | --- |
+| Windows 门禁与双产物构建 | Ruff、Pyright、非 UI 测试 **3988 passed、72 skipped、4487 deselected、36 warnings**（327.57 秒）；PyInstaller、冻结三探针、Inno setup 均通过 |
+| 真标准用户 | 预期 SID 一致、令牌不含 Administrators 组、未提升、独立 profile 与 HKU 已加载；子进程完整成功、账户按 SID 清理，启动器正确返回退出码 |
+| 基础生命周期 | 管理员 runner 和标准账户分别执行 A/B/C fixture 与正式产品安装、修复、卸载、重装、未知文件和数据保留 |
+| 首装故障 3 项 | preflight、pending、installing 的实际进程中断及严格恢复/保留旧目录后空目录重装通过 |
+| 升级故障 9 项 | preflight、pending、installing、payload、retired、previous、manifest、ready、pending-cleaned 均通过；适用阶段拒绝同版本不同载荷和更高版本，只允许原目标修复 |
+| 共享冲突 2 项 | 预检之后实际占用工具文件、current manifest，复制/替换失败后的状态和原目标修复通过 |
+| 卸载故障 4 项 | removing、uninstall-file、uninstall-payload、uninstall-post；受管文件修改拒绝、未知文件保留、重试或保留目录恢复均通过 |
+| 真实旧应用载荷 | 固定官方 3.3.1 ZIP 校验、旧/新 frozen 三探针、正式 3.3.2 setup 升级、清单完整性、未知文件/合成配置/历史/导出保留及卸载通过；真实差集仍为 0，不计退役删除覆盖 |
+| 默认位置和实际启动竞争 | 无 `/DIR` 的安装、桌面与菜单快捷方式目标/工作目录、HKCU/HKU 登记及 HKLM 无本产品登记通过；真实 Inno installing 阶段启动应用返回 73，ready 后正常；正式 setup 修复替换测试卸载器后卸载通过 |
+
+日志逐项核对得到 **18 个故障阶段 PASS，缺项 0**；标准用户扩展步骤于 10:22:42–10:46:46 UTC
+执行成功，随后压缩和上传成功。四平台共 4 个 Actions artifact，均绑定同一代码 SHA。
+[Windows artifact 12558080506](https://github.com/BlackHu-art/ADBLab/actions/runs/40084141603/artifacts/12558080506)
+精确包含 `ADBLab-win-x64-v3.3.2.zip` 与 `ADBLab-win-x64-v3.3.2-setup.exe` 两个文件；
+**Actions 外层归档**为 264926509 bytes，SHA256
+`e38755b99221ef8ed3f7471444eab7dd074d98cfcb177903954bb26c07e7d253`，不是内部 setup 单文件摘要。
+应用版本仍为 3.3.2，公共业务接口、配置与数据格式未改变。
+最终 5 份文档经独立复核，与远程日志及产物信息一致；文档链接/frontmatter（97 份）、
+源码文本完整性（876 文件）和 `git diff --check` 通过。最终记录提交仅含文档，未再次改动已验收代码。
+
+### 保留的验证边界
+
+- 官方 3.3.1 没有历史 setup，因此验收的是官方旧应用字节配合当前维护协议的测试封装，
+  不宣称历史安装程序之间升级。CI 真实包没有退役路径，退役清理由独立 fixture 实际覆盖。
+- 阶段进程退出和 Win32 文件共享冲突不等同物理断电、磁盘损坏、所有向导交互取消，也不证明
+  任意时刻原子回滚。早期身份不完整或晚期卸载失败仍可能需要保留目录后空目录重装。
+- 人工向导/取消、从开始菜单和系统卸载入口手动操作、真实 Android 的 ADB/scrcpy 仍未执行。
+  源码与冻结探针、合成数据保留不代替这些场景；本机没有创建标准账户或安装产品。
+- 本轮 build-only，没有执行正式 Release 下载后的五产物集合验收；应用内下载及启动安装器
+  的升级交接仍属于既有后续计划。一次 helper 重命名拒绝的具体原因未确认，保留上述诊断。
