@@ -423,9 +423,13 @@ schema；卸载不清除此目录、`~/ADBLab`、自定义导出或设备数据�
 
 真实安装/修复/升级/卸载只能在一次性 Windows 环境验收。仅修改 `LOCALAPPDATA` 不能隔离
 真实 HKCU 和 Windows known folders；本机编译、冻结探针与不安装产品的原生协议 probe
-也不能替代注册表、快捷方式、卸载自删除、标准用户或实机设备验收。当前远程 CI 尚未执行，
-实际验证与未完成项由[本期实施记录](../superpowers/plans/2026-10-24-windows-installer.md#验收记录)
-集中维护。应用内下载、校验、关闭和启动安装器交接见[后续计划](../superpowers/plans/2026-10-24-windows-installer-update.md)，
+也不能替代系统集成或实机验收。四平台 CI 构建、Windows 独立 A/B/C 升级 fixture 与正式
+产品自动安装验收已通过；后者检查稳定入口、开始菜单快捷方式文件、卸载登记位置/版本、
+安装后 frozen 三探针、维护互斥、修复、卸载/重装与数据哨兵。它不单独证明注册项所在 hive，
+也不替代标准用户、旧真实应用跨版本、人工向导/设备及各阶段故障注入验收。
+结果、未执行项与四平台 Actions 产物下载入口统一见
+[本期实施记录](../superpowers/plans/2026-10-24-windows-installer.md#验收记录)；本轮使用
+`publish=false`，尚未正式发布。应用内下载、校验、关闭和启动安装器交接见[后续计划](../superpowers/plans/2026-10-24-windows-installer-update.md)，
 目前仅规划，未实现。
 
 ## CI/CD

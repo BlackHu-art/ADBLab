@@ -11,8 +11,11 @@
 
 **Spec:** [Windows 安装版设计](../specs/2026-10-24-windows-installer-design.md)。
 
-状态：用户已批准并已实施；本地构建、直接/关联测试和独立审阅已完成。
-一次性 Windows 完整安装生命周期尚未执行，相关复选框保留未勾选，不以编译或单测替代。
+状态：用户已批准并已实施；原实施阶段的本地构建、直接/关联测试和独立审阅已完成。
+随后用户授权提交、推送和运行真实安装/升级/卸载 CI，并允许直接修复发现的问题。首次 CI
+在 fixture 首装失败；修复推送后的第二次 CI 已通过四个平台构建，以及 Windows 独立升级
+fixture 和正式产品自动安装验收。下方按实际证据勾选已通过项；标准用户、旧真实应用跨版本、
+故障注入和人工设备验收等未执行项仍保持未勾选。
 
 应用内下载、校验、关闭及启动安装器交接属于[独立后续计划](2026-10-24-windows-installer-update.md)，
 本期不改变“检查更新 → 浏览器 → 用户手动运行安装器”的交互。后续计划目前仅规划，未实现。
@@ -24,7 +27,9 @@
 - 用户目录、配置 schema、更新交互、原多实例能力及 macOS/Linux 打包模式保持。
 - 新代码归现有 `core/`、`services/`、`scripts/`、`tests/`、`docs/`，不新增顶层目录。
 - 禁止全局结束 ADB、递归清空安装目录、清除用户数据、自动迁移便携目录。
-- 不添加生产依赖；版本仅来自 `utils/app_metadata.py`，本轮不升版本、不提交、不推送、不发布。
+- 不添加生产依赖；版本仅来自 `utils/app_metadata.py`，本期保持 `3.3.2`，不正式发布。
+- 原实施阶段不提交、不推送、不触发远程 CI；后续用户已明确授权提交、推送当前
+  `ui-redesign` 并以 `publish=false` 运行安装验收，详见下方远程 CI 记录。
 - 使用 `.venv`；编译器采用固定官方版本便携部署，不修改系统软件配置。
 - 未得到实际结果不能勾选“通过”；安装测试只在一次性环境运行，失败传播不得放宽。
 
@@ -117,19 +122,23 @@
 - [x] 写 ISS 当前用户安装、稳定身份、快捷方式/卸载项；禁止自动关闭/重启其他进程。
 - [x] 实现新目录安全检查、既有身份/数值版本校验、维护锁和全目标文件预检；同版本修复、
   升级允许，降级拒绝。预检失败不修改既有 payload。
-- [ ] 在载荷复制前发布 installing/pending 清单；首次也先建立标识，避免被误判为便携模式。
-  载荷与清单成功且摘要一致后发布 ready，最后清理同内容 pending；在各阶段注入失败，验证
-  残留状态拒绝业务启动。installing 仅原版本且目标清单摘要完全相同的安装器可修复，不能
-  直接用下一版或同号不同载荷覆盖 pending；removing 仅继续卸载。加入 A→B 中断→C 拒绝→
-  原 B 修复→C 升级用例；无法证明身份的损坏目录拒绝自动接管，提示保留目录后空目录重装。
+- [x] 实现载荷复制前发布 installing/pending 清单，首次也先建立标识；成功后发布 ready 并
+  清理同内容 pending。installing 仅原版本且相同清单可修复，removing 仅继续卸载；损坏身份
+  不自动接管，恢复指引保留在指南。实现、helper 回归与已执行安装事件分别提供对应证据。
+- [x] 在 fixture 构造“A 已完成、B 部分写入”的指定中断状态，再用真实 Inno 事件验证
+  C 被拒绝、原 B 修复、随后 C 升级；这不是终止正在运行的安装进程或任意阶段断电测试。
+- [ ] 对安装/删除各阶段注入失败或断电，验证所有残留状态；用完整安装事件验证 installing
+  中断恢复时同版本但不同载荷的安装器被拒绝，并验证真实安装过程中启动应用的竞争。
+  现有 helper 不替代这些验收。
 - [x] 实现精确旧文件清理和元数据成功发布；路径越界/重解析点/待删文件改动阻断，未知文件保留。
 - [x] 载荷统一 `uninsneveruninstall`，由 usUninstall 按当前/pending 清单、路径和摘要精确删除，
   失败 Abort；Inno 只清理自身系统集成。升级中已退役路径新放入的用户文件必须保留。
 - [x] 删除前写 removing；usPostUninstall 实际核对载荷、快捷方式、注册项后才清理控制文件。
-  测 Inno 退出码 0 但残留仍失败；失败/取消只放锁，不清用户数据；成功后的可选运行先放锁。
-- [ ] 旧卸载器验证自身登记目录与现注册位置/磁盘身份；模拟旧目录改名后原位置重新安装，
+  残留误报回归及真实成功卸载已通过；失败/取消释放锁、可选运行先放锁仍为实现与限定
+  helper/静态证据，交互取消和安装完成后可选运行未作真实验收。
+- [x] 旧卸载器验证自身登记目录与现注册位置/磁盘身份；模拟旧目录改名后原位置重新安装，
   旧卸载器不得影响新安装。损坏信息不自动接管，人工保留目录恢复流程写入指南。
-- [ ] 编译最小 fixture，用真实 Inno 引擎验证代码可编译和安装事件行为；不能只搜索 ISS 文本作为行为验证。
+- [x] 编译最小 fixture，用真实 Inno 引擎验证代码可编译和已列出的安装事件行为。
 
 ## Task 4：双产物发布校验与 CI 集成
 
@@ -147,7 +156,8 @@ Release 仍调用 `check_build_artifacts.py release --directory ... --version vX
 - [x] 在 Windows 冻结探针后、压缩删除 onedir 前插入准备/编译/真实验收；任何失败禁止压缩
   上传。保留 macOS/Linux 的 frozen 检查及精确归档路径。
 - [x] Windows 精确上传两条文件路径，其余平台继续一条；不能上传 `dist/*` 或 staging。
-- [x] 保留 publish=false、正式发布校验、权限和 tag 不变；本轮不触发远程 workflow 或发布。
+- [x] 保留 publish=false、正式发布校验、权限和 tag 不变；原实施阶段未触发远程 workflow
+  或发布。后续授权验收使用 publish=false，不创建 Release 或修改 tag。
 - [x] 跑两份直接测试并核对最终 YAML 顺序与路径；安装器工具不进入生产 requirements。
 
 ## Task 5：隔离验收、文档与独立终审
@@ -162,14 +172,18 @@ Release 仍调用 `check_build_artifacts.py release --directory ... --version vX
 
 - [x] 为验收器补环境拒绝、已安装拒绝、子进程超时/非零、清理失败传播测试；创建路径先验证
   绝对目标严格位于本次临时根，清理只针对本次创建资源，不使用通配递归删除。
-- [ ] 编译/运行 fixture 版本 A→B→旧 A，覆盖升级、修复、降级拒绝、旧文件删除、未知/改动
-  文件保留、退役路径再放新文件、坏清单、共享锁/工具占用和安装中启动竞争；每次失败核对
-  payload、状态与数据哨兵；删除开始后的失败不冒充旧安装完好或原子回滚。
+- [x] 编译/运行 fixture，验证 A→B 升级、旧 A 降级拒绝、B 同版本修复、B→C 升级、退役文件
+  清理、未知文件和退役路径新用户文件保留、坏清单、独立工具占用及指定中断状态恢复。
+  fixture 的拒绝场景逐次核对安装树全文件摘要和卸载登记；外部数据哨兵由正式产品验收末尾检查。
+- [ ] 用真实完整事件验证修改过的受管文件阻止卸载、删除各阶段失败/取消，以及安装中启动
+  应用的竞争；已有 helper、指定状态构造或成功事件不替代这些场景，也不证明原子回滚。
 - [x] 构建实际应用：`.\.venv\Scripts\python.exe scripts/build_app.py --name ADBLab --onedir --windowed --icon icon.ico`。
 - [x] 跑源码 `main.py --self-check packaging` 和实际 `check_build_artifacts.py frozen` 三项；
   用已确认编译器构建 setup，保留具体产物路径、摘要、版本及编译退出码。
-- [ ] 在一次性 runner/VM 真实安装，验证稳定入口、快捷方式、HKCU 卸载项、安装后 frozen
-  三探针、同版本修复、卸载/重装及数据/额外文件哨兵；不发 ADB 设备命令。
+- [x] 在一次性 Windows runner 真实安装，验证稳定入口、开始菜单快捷方式文件存在、卸载
+  登记位置/版本、安装后 frozen 三探针、共享运行锁/独立工具占用拒绝、同版本修复、
+  卸载/重装及数据/额外文件哨兵；未发送 ADB 设备命令。自动断言不单独证明登记所在 hive。
+- [x] 在含中文与空格的路径执行 fixture 和正式产品自动安装事件；这不替代向导中的人工交互检查。
 - [ ] 单独执行标准用户和真实应用跨版本升级验收；若没有干净 VM 或上一版安装包，明确列为
   未完成，不能用管理员 runner、同版本重装或 fixture 代替这一结论。
 - [ ] 人工检查安装向导、取消、中文/空格路径、开始菜单、卸载入口，以及实机 ADB/scrcpy；
@@ -190,7 +204,8 @@ Release 仍调用 `check_build_artifacts.py release --directory ... --version vX
   `git diff --check` 通过，两份新增文档也通过 `git diff --no-index --check -- NUL <file>`。
 - 2026-10-24 实施完成：性能输出路径快照、安装入口共享锁、安装器 staging/清单/维护状态、
   编译器准备、双产物 CI、静态产物门禁、一次性环境验收脚本及独立升级 fixture 均已落地。
-- 当前版本保持 `3.3.2`；未新增生产依赖、提交、推送、触发远程 workflow 或正式发布。
+- 原实施阶段版本保持 `3.3.2`；当时未新增生产依赖、提交、推送、触发远程 workflow 或
+  正式发布。后续授权提交与 CI 结果单列于下方记录，版本与生产依赖保持不变。
 - 运行时和安装主体分别独立审阅，确认的问题以原生/隔离子进程回归修复：stderr-only 维护
   错误提示、ready 残留 pending 进入 removing 后恢复、真实 Shell 数据哨兵，以及前置冻结
   自检创建数据目录与验收器过严拒绝之间的 CI 衔接。
@@ -201,7 +216,9 @@ Release 仍调用 `check_build_artifacts.py release --directory ... --version vX
   生产 setup 及 A/B/C 三份独立升级 fixture 实际编译成功。原生协议探针只执行
   InitializeSetup 的隔离 helper 验证后返回 False，不进行产品安装。
 - 安装器输入含 1978 个文件；staging/ZIP 创建前后核对源载荷摘要一致。实际 ZIP 完整 CRC
-  和入口验证通过，实际 setup PE 结构验证通过。产物为本地验证包，未签名、未发布：
+  和入口验证通过，实际 setup PE 结构验证通过。下表是首次 CI 发现问题前的历史本地编译
+  产物，未签名、未发布；旧 setup 已由修复后的本地重建产物替代，新摘要见下方记录。
+  ZIP 源载荷未变，下表 ZIP 摘要仍有效；远程 CI 产物独立构建，不混用本地文件摘要。
 
 | 产物 | 字节数 | SHA256 |
 | --- | ---: | --- |
@@ -218,7 +235,7 @@ Release 仍调用 `check_build_artifacts.py release --directory ... --version vX
 .\.venv\Scripts\python.exe scripts/build_windows_installer.py --source-dir build/installer-final-dist/ADBLab-win-x64-v3.3.2 --entry-name ADBLab-win-x64-v3.3.2.exe --output-dir dist --iscc build/tools/inno-6.7.3/ISCC.exe
 ```
 
-最终直接测试集合 **342 passed、1 skipped**（18.09 秒）；启动/worker、性能用例关联集合
+原实施阶段最终直接测试集合 **342 passed、1 skipped**（18.09 秒）；启动/worker、性能用例关联集合
 **209 passed、1 skipped**（37.29 秒）。独立收口审阅的验收/fixture/CI 集合另为 94 passed，
 与直接集合重叠，不重复计入总数。独立审阅未发现剩余代码阻断。
 
@@ -241,11 +258,79 @@ SIGTERM 忽略探针；唯一类型的 warning 来自已安装 qfluentwidgets �
 系统工具。main 的定向 Pyright 使用原规则与当前解释器实际 sys.path 的临时配置，解决
 本机 system-site-packages 的发现差异，未修改仓库类型标准或生产依赖。
 
+### 2026-10-24 授权提交与远程 CI 验收
+
+用户明确授权提交并推送当前 `ui-redesign` 分支、运行安装/升级/卸载 CI，并直接修复验收
+发现的问题。该授权更新了原实施阶段“不提交、不推送、不触发 CI”的范围；本轮仍使用
+`publish=false`，不正式发布、不更改版本，也不在本机执行真实产品安装。
+
+| 提交 | 内容与状态 |
+| --- | --- |
+| [`b955795`](https://github.com/BlackHu-art/ADBLab/commit/b955795638a626a831c9bf7c0b3ffda6fd31c8f9) | Windows 安装版、免安装双产物及升级保护；已推送 `ui-redesign` |
+| [`5c79f96`](https://github.com/BlackHu-art/ADBLab/commit/5c79f96f22c1d1d611a084f615347f4616e44615) | Windows 失败时输出限定安装日志的有界尾部；不新增 artifact，不改变成功构建与发布集合；已推送 |
+| [`2b1a2f9`](https://github.com/BlackHu-art/ADBLab/commit/2b1a2f930228ee1564d41c44181ec9e83f9ace72) | 修复安装目录准入与卸载验收等待竞态；已推送 |
+
+首次真实运行 [40074841221](https://github.com/BlackHu-art/ADBLab/actions/runs/40074841221)
+以 `publish=false` 执行。Windows job `120815904245` 在独立 fixture A 首次安装时失败，
+日志报告 `Unknown constant "userprofile"`：Inno Setup 6.7.3 不支持该常量；编译不能验证
+运行期常量，原 InitializeSetup 协议探针又仅检查危险目录并把任意异常当作拒绝，掩盖了
+目录预检始终报错的问题。新增普通目录正向准入后原生复现同一错误，再修复通过。此次
+失败不能视为升级/卸载或正式产品安装验收通过。
+
+本轮修复了两项已确认问题：
+
+1. 安装目录预检改用 Windows Shell profile API 获取实际用户目录，并同时保护进程环境
+   指向的用户目录；补充对应原生目录边界探针，避免只靠编译验证运行期常量。
+2. 两个验收器的卸载等待原先只观察 marker 与卸载器消失，会在维护锁等后续清理尚未完成时
+   提前退出并误报失败。等待与最终断言现共用完整后置条件，覆盖载荷、控制文件、卸载器、
+   登记及正式产品快捷方式；保留 20 秒期限、残留失败和状态读取异常传播。回归先出现
+   **9 failed、2 passed**，修复后两个直接文件 **37 passed**，独立审阅重跑亦为 **37 passed**。
+
+主任务集成命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests/test_windows_installer_manifest.py tests/test_windows_installer_validation.py tests/test_windows_installer_upgrade_fixture.py
+```
+
+结果为 **83 passed**（12.30 秒）。随后 `scripts/check_source_text.py`（867 文件）、
+`ruff check .`、`scripts/check_comment_language.py`、`scripts/check_doc_links.py`（96 份文档）
+及 `git diff --check` 均通过；定向 `pyright scripts/check_windows_installer.py` 为
+**0 errors、0 warnings**。修复经独立审阅，未发现剩余可行动问题；这些结果仅证明本地修复
+与回归通过，不能代替完整安装生命周期的远程结果。
+
+第二次真实运行 [40075896897](https://github.com/BlackHu-art/ADBLab/actions/runs/40075896897)
+使用修复提交 `2b1a2f930228ee1564d41c44181ec9e83f9ace72`，目标分支 `ui-redesign`，
+`publish=false`；于 **2026-10-24 07:53:16Z 至 08:07:23Z** 执行并最终 **SUCCESS**。
+version、Windows x64、macOS Intel、macOS ARM64、Linux x64 均成功，release job 为
+**skipped**，没有正式发布。四个平台的 Actions artifacts 均可从该运行页面下载。
+
+Windows job [120819075499](https://github.com/BlackHu-art/ADBLab/actions/runs/40075896897/job/120819075499)
+的 `not ui` 集合为 **3897 passed、55 skipped、4487 deselected、36 warnings**（269.18 秒），
+这不是全量 GUI 套件。原 onedir 冻结三探针通过；08:06:57Z 的两段验收日志分别报告：
+
+- 独立 fixture 完整事件通过：A→B 升级、降级拒绝、同版本修复、退役路径及未知文件保留、
+  工具占用拒绝、损坏清单拒绝、指定 pending B 状态恢复，以及移动旧卸载器拒绝。
+- 正式产品自动验收通过：安装清单、安装后冻结三探针、维护互斥、同版本修复、卸载与
+  数据保留；实际调用还完成重装再卸载，并检查开始菜单快捷方式文件和卸载登记位置/版本。
+
+Windows artifact `12553557405` 精确上传 `ADBLab-win-x64-v3.3.2.zip` 和
+`ADBLab-win-x64-v3.3.2-setup.exe` 两个文件，上传成功。该 **Actions artifact 归档**为
+264916448 字节，SHA256
+`db655f4db6c9a60062a3e696115c2d5e038ed9e5807538923a1ae85df3df68da`；它不是内部 setup
+单文件的摘要。另外三个平台 artifact 也均来自本次同一提交；本轮没有执行 release job 的
+下载后五产物集合校验，也没有创建 GitHub Release。
+
+修复后的本地生产安装器已重新编译并通过构建器的 PE 结构检查（编译退出 0），替换了
+`dist/ADBLab-win-x64-v3.3.2-setup.exe`：107292239 字节，SHA256
+`0c76117cfadb95cbb82d6b59f00c2b86e674074f18060eada37d4fdedca6a5ba`。
+ZIP 源载荷未改动，上方 ZIP 摘要仍有效；这些本地产物未执行真实安装，远程产物独立构建。
+
 **未完成的验收**：本机明确拒绝运行正式安装验收；未伪造 hosted runner 环境。
-CI 已接入独立 A/B/C 完整事件验收和正式产品安装验收，但远程 workflow 尚未运行。
-旧真实应用版本的跨版本升级、标准用户/向导/取消/快捷方式人工验收、真实 ADB/scrcpy
-设备验证仍未执行。fixture 构造中断状态只证明协议与事件处理，不代表任意断电点的
-原子回滚。晚期卸载失败仍可能需要保留旧目录后在原位置空目录重装。
+远程已配置的自动验收通过，但旧真实应用版本的跨版本升级、标准用户、向导/取消、桌面
+快捷方式创建、开始菜单实际启动与卸载入口人工验收、真实 ADB/scrcpy 设备验证仍未执行。
+各阶段失败/断电注入、installing 中断恢复时同版本不同载荷的完整事件拒绝、修改过受管
+文件的完整卸载拒绝与真实安装中启动应用竞争也未执行。fixture 只构造一个中断状态，不代表任意断电点的
+原子回滚；晚期卸载失败仍可能需要保留旧目录后在原位置空目录重装。
 
 附：早期编译器版本探针生成的空 `Output/` 清理被自动审批返回 `blocked by policy`；
 已保留该空目录，后续探针改在自身临时目录内运行，不影响受控源文件。
