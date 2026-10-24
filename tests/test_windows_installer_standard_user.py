@@ -332,3 +332,47 @@ try {
                              "-Source", str(source), "-Directory", str(tmp_path)],
                             capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("child_code", [0, 37])
+def test_powershell_completed_async_copy_returns_only_child_exit_code(tmp_path, child_code):
+    """实际 CopyToAsync 可能返回 Task[VoidTaskResult]，不能让结果对象混入退出码。"""
+    import shutil
+    executable = shutil.which("pwsh")
+    if executable is None or os.name != "nt":
+        pytest.skip("Windows PowerShell 异步输出归集契约")
+    source = Path(__file__).resolve().parents[1] / "scripts/run_windows_installer_standard_user.ps1"
+    fixture = tmp_path / "completed-copy.ps1"
+    fixture.write_text(r'''
+param($Source, $Directory, [int]$ChildCode)
+$ErrorActionPreference = 'Stop'
+. $Source
+function New-ValidationProcess {
+    $fake = [pscustomobject]@{
+        StartInfo=$null; HasExited=$true; ExitCode=$ChildCode;
+        StandardOutput=[pscustomobject]@{BaseStream=[IO.MemoryStream]::new(
+            [Text.Encoding]::UTF8.GetBytes('PASS safe fixture'))};
+        StandardError=[pscustomobject]@{BaseStream=[IO.MemoryStream]::new()}
+    }
+    $fake | Add-Member ScriptMethod Start { return $true }
+    $fake | Add-Member ScriptMethod WaitForExit { param($timeout) return $true }
+    $fake | Add-Member ScriptMethod Kill { param($tree) throw '已退出进程不应再终止' }
+    $fake | Add-Member ScriptMethod Dispose {}
+    return $fake
+}
+$secret = ConvertTo-SecureString 'test-only-not-real' -AsPlainText -Force
+$credential = [Management.Automation.PSCredential]::new('fake-account', $secret)
+try {
+    $values = @(Start-ValidationProcess @{python='fixture.exe';workspace=$Directory} $credential)
+    if ($values.Count -ne 1 -or $values[0] -isnot [int] -or $values[0] -ne $ChildCode) {
+        throw '异步日志收集污染了原始退出码'
+    }
+} finally { $secret.Dispose() }
+''', encoding="utf-8")
+    result = subprocess.run(
+        [executable, "-NoProfile", "-NonInteractive", "-File", str(fixture),
+         "-Source", str(source), "-Directory", str(tmp_path), "-ChildCode", str(child_code)],
+        capture_output=True, text=True, encoding="utf-8", timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "stdout.log").read_text(encoding="utf-8") == "PASS safe fixture"

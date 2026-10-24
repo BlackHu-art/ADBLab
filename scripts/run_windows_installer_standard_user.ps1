@@ -125,8 +125,9 @@ function Start-ValidationProcess {
                 [Threading.Tasks.Task[]]@($copyOutput, $copyError), 10000)) {
             throw '标准用户进程退出后输出管道仍未关闭'
         }
-        $copyOutput.GetAwaiter().GetResult()
-        $copyError.GetAwaiter().GetResult()
+        # 实际任务可能是 Task[VoidTaskResult]；仍检查异常，但不让结果对象混入退出码。
+        [void]$copyOutput.GetAwaiter().GetResult()
+        [void]$copyError.GetAwaiter().GetResult()
         return $process.ExitCode
     } finally {
         if ($started -and -not $process.HasExited) {
