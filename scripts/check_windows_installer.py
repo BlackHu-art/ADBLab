@@ -117,8 +117,8 @@ def _data_sentinels() -> dict[Path, bytes]:
     return sentinels
 
 
-def assert_uninstalled(app: Path, managed: set[str]) -> None:
-    """卸载器第一阶段退出 0 不代表完成，必须独立检查文件和注册状态。"""
+def _uninstall_problem(app: Path, managed: set[str]) -> str:
+    """轮询与最终断言共用完整后置条件；读取状态失败直接向上传播。"""
     from core.windows_installation import (
         INSTALL_LOCK,
         INSTALL_MANIFEST,
@@ -133,7 +133,17 @@ def assert_uninstalled(app: Path, managed: set[str]) -> None:
     }
     remaining = [name for name in managed | controls if (app / name).exists()]
     if remaining or registered_installations():
-        raise RuntimeError("卸载未完成：仍有受管理文件或安装登记")
+        return "卸载未完成：仍有受管理文件或安装登记"
+    if list(app.glob("unins*")) or any(path.exists() for path in _shortcuts()):
+        return "卸载仍有卸载器文件或快捷方式残留"
+    return ""
+
+
+def assert_uninstalled(app: Path, managed: set[str]) -> None:
+    """卸载器第一阶段退出 0 不代表完成，必须独立检查文件和系统集成状态。"""
+    problem = _uninstall_problem(app, managed)
+    if problem:
+        raise RuntimeError(problem)
 
 
 def _assert_ready(app: Path, version: str) -> set[str]:
@@ -183,15 +193,13 @@ def _uninstall(
         [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
          f"/LOG={workspace / (name + '-inno.log')}"], workspace / (name + ".log"), env=env,
     )
-    # Inno 的外层卸载器可能先退出；给其第二阶段清理有限的完成窗口，再检查实际后置状态。
+    # marker 删除后仍会释放并删除维护锁，必须等完整后置状态，不能提前结束第二阶段等待。
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if not uninstaller.exists() and not (app / ".adblab-install.ini").exists():
+        if not _uninstall_problem(app, managed):
             break
         time.sleep(0.2)
     assert_uninstalled(app, managed)
-    if list(app.glob("unins*")) or any(path.exists() for path in _shortcuts()):
-        raise RuntimeError("卸载仍有卸载器文件或快捷方式残留")
 
 
 def smoke(installer: Path, version: str, workspace: Path) -> None:

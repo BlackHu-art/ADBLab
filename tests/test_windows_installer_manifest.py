@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -163,9 +164,22 @@ def test_windows_alternate_stream_rejected(payload: Path) -> None:
         validate_payload(payload, "versioned.exe")
 
 
-def test_native_inno_protocol_probe(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "home_mode",
+    [
+        "default",
+        "userprofile_override",
+        "homepath_fallback",
+        "forward_slashes",
+        "empty_userprofile",
+        "relative_home",
+        "incomplete_unc",
+    ],
+)
+def test_native_inno_protocol_probe(tmp_path: Path, home_mode: str) -> None:
     """只运行安装前终止的独立协议探针，不安装产品或写入注册表。"""
     from core import windows_installation as protocol
+    from scripts.check_windows_installer import _known_folder
 
     repository = Path(__file__).resolve().parents[1]
     compiler = repository / "build/tools/inno-6.7.3/ISCC.exe"
@@ -187,6 +201,24 @@ def test_native_inno_protocol_probe(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     report = tmp_path / "result.txt"
+    shell_profile = _known_folder(40)
+    process_env = dict(os.environ)
+    expected_home = Path.home()
+    invalid_home = home_mode in {"empty_userprofile", "relative_home", "incomplete_unc"}
+    if home_mode != "default":
+        expected_home = tmp_path / "process-home"
+        if home_mode == "homepath_fallback":
+            process_env.pop("USERPROFILE", None)
+            process_env["HOMEDRIVE"] = expected_home.drive
+            process_env["HOMEPATH"] = str(expected_home)[len(expected_home.drive) :]
+        else:
+            process_env["USERPROFILE"] = {
+                "userprofile_override": str(expected_home),
+                "forward_slashes": expected_home.as_posix(),
+                "empty_userprofile": "",
+                "relative_home": "relative-home",
+                "incomplete_unc": "\\\\server",
+            }[home_mode]
     compilation = subprocess.run(
         [
             str(compiler),
@@ -194,6 +226,9 @@ def test_native_inno_protocol_probe(tmp_path: Path) -> None:
             f"/DProtocolInclude={include}",
             f"/DProbeOutput={report}",
             f"/DProbeRoot={tmp_path / 'scratch'}",
+            f"/DProbeExpectedProfile={shell_profile}",
+            f"/DProbeExpectedHome={expected_home}",
+            f"/DProbeInvalidHome={int(invalid_home)}",
             f"/O{tmp_path}",
             str(repository / "tests/fixtures/windows_installer/protocol_probe.iss"),
         ],
@@ -208,6 +243,7 @@ def test_native_inno_protocol_probe(tmp_path: Path) -> None:
         capture_output=True,
         timeout=60,
         check=False,
+        env=process_env,
     )
     assert run.returncode == 1  # InitializeSetup 返回 False，阻断任何真实安装事件。
     assert report.read_text(encoding="utf-8").strip() == "PASS"

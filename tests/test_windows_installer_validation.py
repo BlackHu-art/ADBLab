@@ -116,8 +116,58 @@ def test_uninstall_success_code_with_shortcut_left_still_fails(tmp_path, monkeyp
     monkeypatch.setattr(module, "run_checked", lambda *a, **k: None)
     monkeypatch.setattr(module, "registered_installations", lambda: [])
     monkeypatch.setattr(module, "_shortcuts", lambda: [link])
+    clock = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    ))
     with pytest.raises(RuntimeError, match="快捷方式残留"):
         module._uninstall(app, tmp_path, "test", {}, set())
+    assert 20 <= clock[0] < 21
+
+
+@pytest.mark.parametrize("remaining", ["lock", "registration", "shortcut", "payload"])
+def test_uninstall_waits_for_complete_second_phase(tmp_path, monkeypatch, remaining):
+    """marker 与外层卸载器已消失时，仍须等待最后的锁、登记、快捷方式或载荷清理。"""
+    module = _module()
+    app = tmp_path / "app"
+    app.mkdir()
+    paths = {"lock": app / ".adblab-maintenance.lock", "shortcut": tmp_path / "app.lnk",
+             "payload": app / "ADBLab.exe"}
+    if remaining in paths:
+        paths[remaining].write_bytes(b"pending second phase")
+    entries = [{"path": str(app)}] if remaining == "registration" else []
+    monkeypatch.setattr(module, "run_checked", lambda *a, **k: None)
+    monkeypatch.setattr(module, "registered_installations", lambda: entries)
+    monkeypatch.setattr(module, "_shortcuts", lambda: [paths["shortcut"]])
+    clock = [0.0]
+
+    def finish_second_phase(seconds):
+        clock[0] += seconds
+        if remaining in paths:
+            paths[remaining].unlink()
+        entries.clear()
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=finish_second_phase,
+    ))
+    module._uninstall(app, tmp_path, "test", {}, {"ADBLab.exe"})
+    assert clock[0] > 0
+    assert not entries and not any(path.exists() for path in paths.values())
+
+
+def test_uninstall_does_not_retry_registry_access_errors(tmp_path, monkeypatch):
+    module = _module()
+    monkeypatch.setattr(module, "run_checked", lambda *a, **k: None)
+
+    def inaccessible():
+        raise PermissionError("registry access denied")
+
+    monkeypatch.setattr(module, "registered_installations", inaccessible)
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        monotonic=lambda: 0.0, sleep=lambda seconds: pytest.fail("retried access failure"),
+    ))
+    with pytest.raises(PermissionError, match="registry access"):
+        module._uninstall(tmp_path / "app", tmp_path, "test", {}, set())
 
 
 def test_static_bad_package_is_clean_cli_failure(tmp_path, monkeypatch, capsys):

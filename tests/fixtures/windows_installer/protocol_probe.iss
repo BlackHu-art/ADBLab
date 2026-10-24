@@ -36,6 +36,21 @@ begin
   Require(SaveStringsToUTF8FileWithoutBOM(Path, Lines, False), 'cannot write probe result');
 end;
 
+procedure ExpectProtectedRoot(Path: String);
+var OriginalRoot, Failure: String;
+begin
+  OriginalRoot := RootDir;
+  RootDir := Path;
+  Failure := '';
+  try
+    try CheckRootDirectory; except Failure := GetExceptionMessage; end;
+    Require(Failure = '安装目录不能覆盖系统目录、用户数据或导出目录。',
+      'protected path did not reach the intended containment check: ' + Failure);
+  finally
+    RootDir := OriginalRoot;
+  end;
+end;
+
 procedure ExerciseUpgradeOwnership;
 var
   OriginalRoot, AHash, BHash: String;
@@ -119,7 +134,7 @@ end;
 
 function InitializeSetup: Boolean;
 var
-  Output, AHash, BHash, OriginalRoot: String;
+  Output, AHash, BHash, Failure: String;
   Failed: Boolean;
   Files: TManagedFiles;
   Handle: LongWord;
@@ -137,6 +152,26 @@ begin
     Require(CompareVersions('1.0.0', '1.0.0') = 0, 'repair version');
     Require(CompareVersions('1.0.0', '2.0.0') = -1, 'downgrade ordering');
     RootDir := '{#ProbeRoot}';
+    if {#ProbeInvalidHome} = 1 then begin
+      Failure := '';
+      try ProcessHomeDirectory; except Failure := GetExceptionMessage; end;
+      Require(Failure = '进程用户目录不是完整绝对路径，请检查用户环境。', 'invalid process home accepted: ' + Failure);
+      WriteProbeReport(Output, 'PASS');
+      Exit;
+    end;
+    // 普通临时子目录必须通过完整准入，不能把任意 API 异常当成危险目录拒绝。
+    CheckRootDirectory;
+    Require(NormalPath(CurrentProfileDirectory) = NormalPath('{#ProbeExpectedProfile}'), 'Shell profile mismatch');
+    Require(NormalPath(ProcessHomeDirectory) = NormalPath('{#ProbeExpectedHome}'), 'Python home boundary mismatch');
+    ExpectProtectedRoot(ExpandConstant('{localappdata}\ADBLab'));
+    ExpectProtectedRoot(AddBackslash(CurrentProfileDirectory) + 'ADBLab');
+    ExpectProtectedRoot(CurrentProfileDirectory);
+    ExpectProtectedRoot(AddBackslash(CurrentProfileDirectory) + 'ADBLab\child');
+    ExpectProtectedRoot(AddBackslash(ProcessHomeDirectory) + 'ADBLab');
+    ExpectProtectedRoot(ExpandConstant('{win}'));
+    ExpectProtectedRoot(ExpandConstant('{pf}'));
+    Require(ExpandConstant('{userprograms}') <> '', 'userprograms constant unavailable');
+    Require(ExpandConstant('{userdesktop}') <> '', 'userdesktop constant unavailable');
     Require(ForceDirectories(RootDir), 'fixture root');
     AcquireMaintenanceLock(True);
     Handle := WinCreateFile(ControlPath(LockName), GenericRead, 1, 0, OpenExisting, FileNormal, 0);
@@ -201,12 +236,6 @@ begin
     Failed := False;
     try ReadManifest(ControlPath(ManifestName), AHash, Files); except Failed := True; end;
     Require(Failed, 'bad manifest digest accepted');
-    OriginalRoot := RootDir;
-    RootDir := ExpandConstant('{localappdata}\ADBLab');
-    Failed := False;
-    try CheckRootDirectory; except Failed := True; end;
-    Require(Failed, 'user data directory accepted');
-    RootDir := OriginalRoot;
     ReleaseMaintenanceLock;
     ExerciseUpgradeOwnership;
     WriteProbeReport(Output, 'PASS');

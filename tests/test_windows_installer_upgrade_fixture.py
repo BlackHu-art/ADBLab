@@ -93,6 +93,64 @@ def test_fake_zero_uninstall_with_remaining_files_fails(tmp_path, monkeypatch):
         fixture._assert_absent(app, {"ADBLab.exe"})
 
 
+@pytest.mark.parametrize("remaining", ["lock", "registration", "payload"])
+def test_fixture_uninstall_waits_for_complete_second_phase(tmp_path, monkeypatch, remaining):
+    """外层卸载器及 marker 消失，不代表剩余控制文件和注册状态已经清理完毕。"""
+    app = tmp_path / "app"
+    app.mkdir()
+    paths = {"lock": app / fixture.protocol.INSTALL_LOCK, "payload": app / "ADBLab.exe"}
+    if remaining in paths:
+        paths[remaining].write_bytes(b"pending second phase")
+    entries = [(str(app), "1.2.0")] if remaining == "registration" else []
+    monkeypatch.setattr(fixture, "_run", lambda *a, **k: None)
+    monkeypatch.setattr(fixture, "_registrations", lambda app_id: entries)
+    clock = [0.0]
+
+    def finish_second_phase(seconds):
+        clock[0] += seconds
+        if remaining in paths:
+            paths[remaining].unlink()
+        entries.clear()
+
+    monkeypatch.setattr(fixture, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=finish_second_phase,
+    ))
+    fixture._uninstall(app, tmp_path, "test", {"ADBLab.exe"})
+    assert clock[0] > 0
+    assert not entries and not any(path.exists() for path in paths.values())
+
+
+def test_fixture_uninstall_timeout_keeps_final_residual_failure(tmp_path, monkeypatch):
+    app = tmp_path / "app"
+    app.mkdir()
+    lock = app / fixture.protocol.INSTALL_LOCK
+    lock.write_bytes(b"still owned")
+    monkeypatch.setattr(fixture, "_run", lambda *a, **k: None)
+    monkeypatch.setattr(fixture, "_registrations", lambda app_id: [])
+    clock = [0.0]
+    monkeypatch.setattr(fixture, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    ))
+    with pytest.raises(RuntimeError, match="残留"):
+        fixture._uninstall(app, tmp_path, "test", set())
+    assert 20 <= clock[0] < 21
+    assert lock.read_bytes() == b"still owned"
+
+
+def test_fixture_uninstall_does_not_retry_registry_access_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(fixture, "_run", lambda *a, **k: None)
+
+    def inaccessible(app_id):
+        raise PermissionError("registry access denied")
+
+    monkeypatch.setattr(fixture, "_registrations", inaccessible)
+    monkeypatch.setattr(fixture, "time", SimpleNamespace(
+        monotonic=lambda: 0.0, sleep=lambda seconds: pytest.fail("retried access failure"),
+    ))
+    with pytest.raises(PermissionError, match="registry access"):
+        fixture._uninstall(tmp_path / "app", tmp_path, "test", set())
+
+
 def test_preserve_installation_moves_only_within_owned_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     app = workspace / "app"

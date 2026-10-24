@@ -190,12 +190,17 @@ def _expect_rejected(command: list[str], app: Path, log: Path) -> None:
         raise RuntimeError("fixture 拒绝操作修改了原安装目录或登记")
 
 
-def _assert_absent(app: Path, managed: set[str]) -> None:
-    if (
+def _uninstall_complete(app: Path, managed: set[str]) -> bool:
+    """第二阶段必须清除完整后置状态；权限等读取异常不能当作暂时残留。"""
+    return not (
         any((app / name).exists() for name in managed | CONTROLS)
         or list(app.glob("unins*"))
         or _registrations(FIXTURE_APP_ID)
-    ):
+    )
+
+
+def _assert_absent(app: Path, managed: set[str]) -> None:
+    if not _uninstall_complete(app, managed):
         raise RuntimeError("fixture 卸载仍有载荷、控制文件、卸载器或登记残留")
 
 
@@ -237,7 +242,7 @@ def _uninstall(app: Path, workspace: Path, label: str, managed: set[str]) -> Non
     )
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if not (app / protocol.INSTALL_MARKER).exists() and not list(app.glob("unins*")):
+        if _uninstall_complete(app, managed):
             break
         time.sleep(0.2)
     _assert_absent(app, managed)

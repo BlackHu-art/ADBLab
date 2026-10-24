@@ -43,6 +43,13 @@ function WinGetAttributes(Name: String): LongWord;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 function WinMoveFile(OldName, NewName: String; Flags: LongWord): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall';
+function WinGetFolderPath(Window: LongWord; Folder: Integer; Token, Flags: LongWord;
+  Path: String): Integer;
+  external 'SHGetFolderPathW@shell32.dll stdcall';
+function WinGetEnvironmentVariable(Name, Buffer: String; Size: LongWord): LongWord;
+  external 'GetEnvironmentVariableW@kernel32.dll stdcall';
+procedure WinSetLastError(Error: LongWord);
+  external 'SetLastError@kernel32.dll stdcall';
 procedure WinExitProcess(ExitCode: LongWord);
   external 'ExitProcess@kernel32.dll stdcall';
 
@@ -268,8 +275,56 @@ begin
     Require(RegQueryStringValue(HKCU64, UninstallKey, 'InstallLocation', Result) and (Result <> ''), '安装登记损坏，请保留目录后重新安装。');
 end;
 
+function AbsoluteHomePath(Path: String): Boolean;
+var Rest, Server, Share: String; Separator: Integer;
+begin
+  Result := (Length(Path) >= 3) and (Copy(Path, 2, 2) = ':\') and
+    (Pos(UpperCase(Copy(Path, 1, 1)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') > 0);
+  if Result or (Copy(Path, 1, 2) <> '\\') then Exit;
+  Rest := Copy(Path, 3, MaxInt);
+  Separator := Pos('\', Rest);
+  if Separator <= 1 then Exit;
+  Server := Copy(Rest, 1, Separator - 1);
+  Share := Copy(Rest, Separator + 1, MaxInt);
+  Separator := Pos('\', Share);
+  if Separator > 0 then Share := Copy(Share, 1, Separator - 1);
+  Result := (Server <> '.') and (Server <> '?') and (Share <> '') and
+    (Share <> '.') and (Share <> '..');
+end;
+
+function CurrentProfileDirectory: String;
+var Buffer: String; Terminator: Integer;
+begin
+  // Inno 6.7.3 无 userprofile 常量；CSIDL_PROFILE 读取实际 Shell 用户目录，不创建目录。
+  Buffer := StringOfChar(#0, 260);
+  Require(WinGetFolderPath(0, $0028, 0, 0, Buffer) = 0, '无法确认当前用户目录，请检查 Windows 用户配置。');
+  Terminator := Pos(#0, Buffer);
+  Require(Terminator > 1, 'Windows 返回的用户目录为空或不完整。');
+  Result := Copy(Buffer, 1, Terminator - 1);
+  Require(AbsoluteHomePath(Result) and DirExists(Result), 'Windows 返回的用户目录无效。');
+end;
+
+function ProcessHomeDirectory: String;
+var Buffer: String; Size, Error: LongWord;
+begin
+  // Python 3.11 Path.home/expanduser 使用进程环境；同时保护它与 Shell profile，避免重定向漏检。
+  // 空 USERPROFILE 与缺失不同：只有 ERROR_ENVVAR_NOT_FOUND 才进入 HOMEPATH 回退。
+  Buffer := StringOfChar(#0, 1);
+  WinSetLastError(0);
+  Size := WinGetEnvironmentVariable('USERPROFILE', Buffer, 1);
+  Error := DLLGetLastError;
+  if (Size = 0) and (Error = 203) then begin
+    Result := GetEnv('HOMEPATH');
+    if Result = '' then Exit;
+    StringChangeEx(Result, '/', '\', True);
+    if not AbsoluteHomePath(Result) then Result := GetEnv('HOMEDRIVE') + Result;
+  end else Result := GetEnv('USERPROFILE');
+  StringChangeEx(Result, '/', '\', True);
+  Require(AbsoluteHomePath(Result), '进程用户目录不是完整绝对路径，请检查用户环境。');
+end;
+
 procedure CheckRootDirectory;
-var Dangerous: TArrayOfString; I: Integer;
+var Dangerous: TArrayOfString; I: Integer; ProcessHome: String;
 begin
   Require((Length(RootDir) > 3) and (Copy(RootDir, 2, 2) = ':\'), '请选择本地磁盘中的独立安装目录。');
   CheckNoReparse(RootDir);
@@ -277,9 +332,14 @@ begin
   Dangerous[0] := ExpandConstant('{win}');
   Dangerous[1] := ExpandConstant('{sys}');
   Dangerous[2] := ExpandConstant('{localappdata}\ADBLab');
-  Dangerous[3] := ExpandConstant('{userprofile}\ADBLab');
+  Dangerous[3] := AddBackslash(CurrentProfileDirectory) + 'ADBLab';
   Dangerous[4] := ExpandConstant('{pf}');
   Dangerous[5] := ExpandConstant('{commonappdata}');
+  ProcessHome := ProcessHomeDirectory;
+  if ProcessHome <> '' then begin
+    SetArrayLength(Dangerous, 7);
+    Dangerous[6] := AddBackslash(ProcessHome) + 'ADBLab';
+  end;
   for I := 0 to GetArrayLength(Dangerous) - 1 do
     Require(not IsWithin(Dangerous[I], RootDir) and not IsWithin(RootDir, Dangerous[I]), '安装目录不能覆盖系统目录、用户数据或导出目录。');
 end;
