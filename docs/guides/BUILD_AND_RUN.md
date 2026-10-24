@@ -51,6 +51,10 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
+- MobilePerf 在每次启动时复制并规范化本次输出配置：空值使用 `~/ADBLab/mobileperf`，相对路径
+  以 `~/ADBLab` 为基准，绝对路径和完整 UNC 按平台规则保留。不接受 `C:results` 等盘符相对路径、
+  不完整根路径或安装资源内部目录；目录不可创建/写入时在 worker 启动前失败。不会改写历史配置
+  或调用方对象；临时 INI、结果预测与归档使用同一个绝对路径快照。
 - ADB 解析器按平台和架构门控：Windows x64 使用 `runtime-tools/windows-x86_64/adb.exe`，Linux x86_64 使用
   `runtime-tools/linux-x86_64/adb`；依次尝试当前平台内置工具、`ADB_PATH`
   环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
@@ -352,6 +356,78 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 packaging self-check；触及启动入口、依赖、资源或运行时路径时执行源码自检。修改 spec、资源
 收集或产物入口时，在已有打包授权范围内额外构建并验证实际产物。测试全量通过本身不触发构建。
 
+### Windows 安装版与免安装版
+
+Windows 继续生成原 onedir ZIP，同时增加 `ADBLab-win-x64-vX.Y.Z-setup.exe`。安装器使用
+已完成冻结检查的 onedir，在独立 staging 中映射稳定入口 `ADBLab.exe`、预置同内容的
+`adblab-adb.exe` 并生成载荷摘要清单，不修改原 ZIP 的来源目录。安装版默认面向当前用户，
+安装到 `%LOCALAPPDATA%\Programs\ADBLab`，创建开始菜单入口，桌面快捷方式默认不勾选。
+不修改 PATH、文件关联、开机启动或系统服务；交互安装完成后可选启动，静默安装不自动启动。
+
+在 Windows 项目虚拟环境内，以下为固定编译器准备和安装器构建接口。先完成上节 onedir
+构建与 `frozen` 三项检查；版本只从 `utils/app_metadata.py` 读取，不为打安装包额外升版本：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/prepare_inno_setup.py --destination build/tools/inno-6.7.3
+.\.venv\Scripts\python.exe scripts/build_windows_installer.py --source-dir dist/ADBLab --entry-name ADBLab.exe --output-dir dist --iscc build/tools/inno-6.7.3/ISCC.exe
+```
+
+CI 的输入名称带平台与发布标签，`--entry-name` 必须对应 onedir 内真实 EXE，输出仍统一为
+`ADBLab-win-x64-vX.Y.Z-setup.exe`。`build_windows_installer.py --dry-run` 只读校验输入并展示
+计划，不探测、执行或下载编译器，不生成 staging 和产物。`--iscc` 可显式指定，默认使用
+`INNO_SETUP_ISCC` 或 `build/tools/inno-6.7.3/ISCC.exe`；编译前仍要求签名和引擎版本通过校验。
+
+编译器准备固定官方 Inno Setup 6.7.3 的 URL、SHA256 与 Authenticode 发布者，核实后才执行
+官方便携开关；不使用系统任意同名 ISCC 或 latest，不新增 Python 生产依赖。目标仅允许项目
+`build/`、`.tmp/` 或显式 runner 临时区中的 `inno-6.7.3` 子目录，拒绝链接和重解析点。
+已有非空目录必须通过来源凭据、完整文件摘要、签名与实际编译引擎版本验证；验证失败保留
+诊断并要求换干净构建目录，不自动递归删除。准备脚本也支持只读 `--dry-run`。
+
+当前实现未接入应用安装器代码签名。编译器的签名验证不代表 ADBLab setup 已获得发布者认证，
+也不保证系统不会显示信誉提示。静态 PE 检查不验证 Inno 压缩载荷或安装效果。
+
+### Windows 安装、升级与恢复边界
+
+当前用户安装使用固定 AppId，主入口为安装根的 `ADBLab.exe`。新目标必须为空、可写且不经过
+重解析点，不能覆盖 ZIP 解压目录、系统目录、用户数据根或默认导出根及其危险祖先；既有安装
+必须与当前用户注册位置和磁盘身份一致。安装器不扫描、导入、迁移或删除旧便携目录。
+
+现有版本更新入口仍是“设置 → 关于 → 检查更新 → 前往下载”，在浏览器打开该版发布页。
+用户下载 setup 后，先正常关闭所有安装版实例及相关独立工具，再手动运行安装器覆盖已登记
+位置：较高版本升级、同版本修复、低版本拒绝。安装器不强杀应用、ADB 或 scrcpy，不安排
+重启后替换；仍有占用或权限不足时明确失败，按提示关闭相关程序后重试。
+
+安装期间通过稳定维护锁和安装身份阻止新的 GUI、CLI、worker、自检进入业务；正常 ready
+状态仍允许多个应用实例。锁不覆盖 PyInstaller bootloader 更早的装载或独立工具，文件预检
+与实际复制/删除之间仍有竞争窗口；中途失败不承诺完整回滚，不能仅凭退出码判断成功。
+
+恢复时按磁盘状态处理，不手工删除或伪造安装控制文件：
+
+| 状态或失败 | 处理边界 |
+| --- | --- |
+| `installing` 且身份/清单完整 | 仅重新运行原待完成版本、且载荷清单完全一致的安装器修复；先恢复 ready，再升级其他版本 |
+| `removing` | 禁止业务启动和直接覆盖安装；旧卸载器及其日志仍完整时可尝试继续卸载，但不能保证所有失败均可重跑 |
+| 身份、清单、维护锁损坏/缺失，或卸载器日志已被 Inno 删除 | 关闭相关程序，用户自行保留/改名旧安装目录，再在原登记位置建立空目录重新安装；不运行移走的旧卸载器、不自动接管未知文件 |
+
+卸载先检查受管文件的路径、摘要和占用，再标记 removing 并逐文件删除；仅删除清单中摘要匹配
+的载荷和空目录，不递归清空安装根。未知文件保留；升级已经退役的路径后来出现的用户文件
+也保留。已改动的受管文件会阻止自动删除。Inno 负责快捷方式、卸载项和自身文件，项目脚本
+必须检查载荷与系统集成的后置状态后才能清理控制文件。Inno 在后期失败时可能已删除卸载
+`.dat`、返回 0，且卸载器自删除是异步过程，所以验收必须有界等待并检查实际残留，不能承诺
+失败后一定保留可重试的完整旧安装或旧卸载器。
+
+同一 Windows 账号当前版本的 ZIP/安装版使用同一 `%LOCALAPPDATA%\ADBLab` 数据目录和配置
+schema；卸载不清除此目录、`~/ADBLab`、自定义导出或设备数据。不自动导入只存在于旧便携
+目录 `resources` 内的配置；已有自定义 ADB 绝对路径原样保留，目标缺失时通过现有设置重新
+选择有效路径。不同版本并存不构成同时写配置兼容性保证。
+
+真实安装/修复/升级/卸载只能在一次性 Windows 环境验收。仅修改 `LOCALAPPDATA` 不能隔离
+真实 HKCU 和 Windows known folders；本机编译、冻结探针与不安装产品的原生协议 probe
+也不能替代注册表、快捷方式、卸载自删除、标准用户或实机设备验收。当前远程 CI 尚未执行，
+实际验证与未完成项由[本期实施记录](../superpowers/plans/2026-10-24-windows-installer.md#验收记录)
+集中维护。应用内下载、校验、关闭和启动安装器交接见[后续计划](../superpowers/plans/2026-10-24-windows-installer-update.md)，
+目前仅规划，未实现。
+
 ## CI/CD
 
 ### Build 工作流
@@ -382,10 +458,18 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    清理未确认也判失败。随包工具检查文件、可执行权限及版本命令，系统工具不参与兜底。
    Linux 额外对源码和产物运行有超时保护的 Xvfb/xcb GUI 探针，启用 `QT_DEBUG_PLUGINS` 记录插件加载失败原因；
    macOS 架构检查继续保留。
-6. 压缩后只上传各任务的精确归档路径，包括 Windows x64、Linux x64、macOS x64 与 arm64。
+6. Windows 在冻结探针之后、原 ZIP 压缩删除 onedir 之前准备固定 Inno 编译器、构建 setup，
+   并执行安装验收。验收器的 `--iscc` 指向已准备的固定编译器；先编译独立身份的 A/B/C
+   测试安装包并验证升级、降级拒绝、中断修复和精确卸载，再安装正式 setup，验证稳定入口、
+   frozen 三探针、占用拒绝、同版本修复、卸载和重装。真实 Shell 用户数据目录、默认导出目录
+   及安装内未知文件均放置保留哨兵。验收器要求显式 `--disposable`、GitHub hosted Windows runner 和本产品
+   AppId 尚未安装；本机不能直接运行。任一步失败都阻断压缩与上传。Windows 精确上传 ZIP 和
+   setup 两条文件路径；Linux x64、macOS x64 与 arm64 仍各自只上传原归档，不使用目录通配。
 7. 仅发布模式进入 Release job，单独使用 `contents: write`。下载失败即停止；
-   `scripts/check_build_artifacts.py release` 要求恰好四个预期版本、路径的非空归档，并检查归档
-   可读且含主程序；缺包、多包、错误版本或损坏均阻止发布。现存同版本 Release 或远端 tag
+   `scripts/check_build_artifacts.py release` 要求恰好五个预期版本、路径的产物：原四归档和
+   Windows setup。四归档继续检查主入口、ZIP 完整 CRC 与完整 TAR/GZIP 流；setup 检查非空
+   普通非重解析文件、DOS/PE/COFF/可选头、节表和区段边界，只证明 PE 静态结构。缺包、多包、
+   错误版本或损坏均阻止发布。现存同版本 Release 或远端 tag
    仍会使发布失败，防止直接覆盖。Release 正文由 `gh release create --notes-file` 读取同版本说明，
    不再使用固定占位文案。发布完成后执行 "Retain latest 5 version tags"，仅统计去重后的
    `v主版本.次版本.修订号` tag，不把 annotated tag 的 peeled ref 重复计数，也不清理预发布或
@@ -417,7 +501,8 @@ CLI 与本地 spec 在构建前运行工具准备脚本，任一准备步骤失�
 资源收集只带入当前平台工具。应用运行时不联网下载；macOS 安装与发现方式见
 [macOS 工具发现](#macos-工具发现)。
 
-发布集合的目录结构由四个 Actions artifact 名称决定。下载后可在项目根目录离线核验：
+发布集合的目录结构由四个 Actions artifact 名称决定，其中 `ADBLab-win-x64/` 同时含 ZIP
+和 `ADBLab-win-x64-vX.Y.Z-setup.exe`；其余三个目录各含原归档。下载后可在项目根目录离线核验：
 
 ```bash
 python3 scripts/check_build_artifacts.py release --directory release_artifacts --version vX.Y.Z

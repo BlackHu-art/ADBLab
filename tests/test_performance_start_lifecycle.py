@@ -76,6 +76,7 @@ def start_page(qt_application, tmp_path):
 
 def test_slow_result_baseline_does_not_block_qt_heartbeat(monkeypatch, qt_application, tmp_path):
     page = PerformancePage("synthetic-device", "com.example.synthetic")
+    page.save_path_edit.setText(str(tmp_path / "output"))
     runner = MobilePerfRunner(process_runner=Mock(), project_root=tmp_path)
     page._runner = runner
     entered, finished, release = threading.Event(), threading.Event(), threading.Event()
@@ -197,6 +198,7 @@ def test_real_runner_cancellation_after_baseline_never_spawns(
     monkeypatch, qt_application, tmp_path,
 ):
     page = PerformancePage("synthetic-device", "com.example.synthetic")
+    page.save_path_edit.setText(str(tmp_path / "output"))
     processes = Mock()
     processes.start.side_effect = AssertionError("cancelled startup launched a process")
     runner = MobilePerfRunner(process_runner=processes, project_root=tmp_path)

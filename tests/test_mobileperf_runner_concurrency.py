@@ -19,6 +19,13 @@ from services import mobileperf_runner as runner_module
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 
+@pytest.fixture(autouse=True)
+def isolated_performance_output(tmp_path, monkeypatch):
+    """默认输出现在会预检写入，所有并发用例只使用临时用户目录。"""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(runner_module, "user_data_root", lambda: tmp_path / "ADBLab")
+
+
 def _wait_for_mode(path: Path, expected: str) -> None:
     deadline = time.monotonic() + 2
     while not path.exists() or path.read_text(encoding="utf-8") != expected:

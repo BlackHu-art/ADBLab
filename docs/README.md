@@ -53,6 +53,11 @@
 
 ## 重构设计与验收索引
 
+- Windows 安装版与免安装版并行交付：[设计](superpowers/specs/2026-10-24-windows-installer-design.md)、
+  [实施与验收记录](superpowers/plans/2026-10-24-windows-installer.md)。当前工作树已加入 PyInstaller
+  onedir + Inno Setup 双产物构建和维护协议；[构建与恢复指南](guides/BUILD_AND_RUN.md#windows-安装版与免安装版)
+  记录接口和兼容边界，真实安装/升级/卸载及远程 CI 仍待一次性环境验收。
+  [应用内安装包升级](superpowers/plans/2026-10-24-windows-installer-update.md)目前仅规划，未实现。
 - adblab 按职责合并到现有目录：[逐模块设计](superpowers/specs/2026-10-24-adblab-responsibility-merge-design.md)、
   [实施与验证记录](superpowers/plans/2026-10-24-adblab-responsibility-merge.md)。业务、基础设施和 Qt 实现分别归入
   services/core/gui，不新增顶层目录；旧内部命名空间在验证后退役，原 models/GUI 兼容入口与数据保持。

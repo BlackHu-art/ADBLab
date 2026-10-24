@@ -308,26 +308,78 @@ def test_release_requires_publish_mode_and_successful_builds():
     assert download["with"]["path"] == "release_artifacts"
 
 
-def test_build_uploads_only_the_exact_archive_for_each_platform():
+def test_build_uploads_only_the_exact_artifacts_for_each_platform():
     """上传路径不能包含同目录中残留的主程序、app、内部工具或额外档案。"""
     job = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]
-    upload = next(step for step in job["steps"]
-                  if step.get("uses", "").startswith("actions/upload-artifact@"))
-    assert upload["with"]["name"] == "${{ matrix.artifact }}"
-    assert upload["with"]["if-no-files-found"] == "error"
-    template = upload["with"]["path"]
-    assert "*" not in template and "?" not in template
+    uploads = [step for step in job["steps"]
+               if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert len(uploads) == 2
+    for upload in uploads:
+        assert upload["with"]["name"] == "${{ matrix.artifact }}"
+        assert upload["with"]["if-no-files-found"] == "error"
+        assert "*" not in upload["with"]["path"] and "?" not in upload["with"]["path"]
+    by_condition = {step["if"]: step["with"]["path"] for step in uploads}
+    assert set(by_condition) == {"runner.os == 'Windows'", "runner.os != 'Windows'"}
     expected = {
-        "ADBLab-win-x64": "dist/ADBLab-win-x64-v9.8.7.zip",
-        "ADBLab-macos-x64": "dist/ADBLab-macos-x64-v9.8.7.zip",
-        "ADBLab-macos-arm64": "dist/ADBLab-macos-arm64-v9.8.7.zip",
-        "ADBLab-linux-x64": "dist/ADBLab-linux-x64-v9.8.7.tar.gz",
+        "ADBLab-win-x64": ["dist/ADBLab-win-x64-v9.8.7.zip",
+                           "dist/ADBLab-win-x64-v9.8.7-setup.exe"],
+        "ADBLab-macos-x64": ["dist/ADBLab-macos-x64-v9.8.7.zip"],
+        "ADBLab-macos-arm64": ["dist/ADBLab-macos-arm64-v9.8.7.zip"],
+        "ADBLab-linux-x64": ["dist/ADBLab-linux-x64-v9.8.7.tar.gz"],
     }
     for row in job["strategy"]["matrix"]["include"]:
+        condition = "runner.os == 'Windows'" if row["artifact"] == "ADBLab-win-x64" else (
+            "runner.os != 'Windows'"
+        )
+        template = by_condition[condition]
         resolved = template.replace("${{ needs.version.outputs.version }}", "v9.8.7")
         for key, value in row.items():
             resolved = resolved.replace("${{ matrix." + key + " }}", value)
-        assert resolved == expected[row["artifact"]]
+        assert resolved.splitlines() == expected[row["artifact"]]
+
+
+def test_windows_installer_build_and_smoke_gate_precede_zip_and_upload(tmp_path):
+    """安装构建和真实验收的非零退出必须阻断随后的 ZIP 与上传。"""
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    commands = [step.get("run", "") for step in steps]
+    frozen = next(i for i, command in enumerate(commands)
+                  if 'frozen --executable "dist/$name/$name.exe"' in command)
+    archive = next(i for i, command in enumerate(commands) if "Compress-Archive" in command)
+    indices = []
+    expected = (
+        ("prepare_inno_setup.py", ["--destination", "$RUNNER_TEMP/inno-6.7.3"]),
+        ("build_windows_installer.py", ["--source-dir", "dist/$name", "--entry-name", "$name.exe",
+                                        "--output-dir", "dist", "--iscc",
+                                        "$RUNNER_TEMP/inno-6.7.3/ISCC.exe"]),
+        ("check_windows_installer.py", ["--installer", "dist/$name-setup.exe", "--version",
+                                        "${{ needs.version.outputs.version }}", "--workspace",
+                                        "$RUNNER_TEMP/adblab-installer-smoke", "--iscc",
+                                        "$RUNNER_TEMP/inno-6.7.3/ISCC.exe", "--disposable"]),
+    )
+    bash = shutil.which("bash")
+    assert bash
+    for script, arguments in expected:
+        index, step = next((i, step) for i, step in enumerate(steps)
+                           if f"scripts/{script}" in step.get("run", ""))
+        indices.append(index)
+        assert step["if"] == "runner.os == 'Windows'"
+        assert step["shell"] == "bash"
+        assert not step.get("continue-on-error", False)
+        assert "set -euo pipefail" in step["run"]
+        line = next(line for line in step["run"].replace("\\\n", " ").splitlines()
+                    if f"scripts/{script}" in line)
+        assert shlex.split(line) == ["python", f"scripts/{script}", *arguments]
+        # 替换 GitHub 表达式后执行原 shell 逻辑，失败不能被后续命令覆盖。
+        command = re.sub(r"\$\{\{.*?\}\}", "fixture", step["run"])
+        result = subprocess.run(
+            [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
+             'export RUNNER_TEMP="/tmp/fixture"\npython() { return 7; }\n' + command],
+            cwd=tmp_path, text=True, capture_output=True, check=False,
+        )
+        assert result.returncode == 7, result.stderr
+    assert frozen < indices[0] < indices[1] < indices[2] < archive
+    assert archive < min(i for i, step in enumerate(steps)
+                         if step.get("uses", "").startswith("actions/upload-artifact@"))
 
 
 @pytest.mark.parametrize("platform,executable,archive", [
@@ -359,8 +411,8 @@ def test_frozen_checks_use_waiting_validator_before_compression(platform, execut
     assert "--self-check packaging" not in step["run"]
 
 
-def test_release_validates_all_four_archives_before_creating_release():
-    """下载成功也须验证四包文件名、版本和归档内容，失败时不得创建 Release。"""
+def test_release_validates_all_five_artifacts_before_creating_release():
+    """下载成功仍须校验五产物，失败时不得创建 Release。"""
     steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["release"]["steps"]
     create = next(step for step in steps if "gh release create" in step.get("run", ""))
     command = create["run"]

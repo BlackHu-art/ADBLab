@@ -173,7 +173,6 @@ class MobilePerfRunner:
         """
         if cancelled is not None and cancelled():
             raise CancelledError
-        config = deepcopy(config)
         with self._state_lock:
             # 已退出进程的旧代写入可独立收尾；新运行使用不同路径，仍由监督接口保留旧资源。
             if self._residual_contexts:
@@ -188,6 +187,8 @@ class MobilePerfRunner:
                 and not current_proc.resources_released()
             ):
                 raise RuntimeError("Previous Monkey cleanup is not confirmed")
+            config = self._resolved_run_config(config)
+            self._prepare_result_root(Path(config.save_path))
             self._generation += 1
             generation = self._generation
             process_key = f"{self._process_key_prefix}_{generation}"
@@ -418,11 +419,45 @@ class MobilePerfRunner:
             timeout=max(0.0, float(timeout)),
         )
 
+    def _resolved_run_config(self, config: MobilePerfRunConfig) -> MobilePerfRunConfig:
+        """返回独立运行快照，固定用户目录基准，不改变原配置或序列化。
+
+        只做词法规范化，不访问文件系统；Windows 的隐含盘符或工作目录不能参与
+        输出归属。结果冻结也复用本规则，不能在 GUI 线程触发路径解析 I/O。
+        """
+        resolved = deepcopy(config)
+        value = resolved.result_root
+        root = Path(value) if value else Path.home() / "ADBLab" / "mobileperf"
+        if os.name == "nt" and (root.drive or root.root) and not root.is_absolute():
+            raise ValueError("输出目录须为完整绝对路径或不含盘符的相对路径")
+        if not root.is_absolute():
+            root = Path.home() / "ADBLab" / root
+        resolved.save_path = os.path.normpath(root)
+        return resolved
+
+    def _prepare_result_root(self, root: Path) -> None:
+        """后台预检安装目录边界和可写性，成功后才允许分配运行资源及创建 worker。"""
+        if self._is_frozen():
+            protected = [self._project_root]
+            executable = Path(self._python_executable)
+            if executable.is_absolute():
+                protected.append(executable.parent)
+            resources = getattr(sys, "_MEIPASS", None)
+            if resources:
+                protected.append(Path(resources))
+            target = root.resolve()
+            if any(target.is_relative_to(directory.resolve()) for directory in protected):
+                raise ValueError("输出目录不能位于应用安装或资源目录内，请选择用户目录")
+        root.mkdir(parents=True, exist_ok=True)
+        # 仅创建目录不能证明可写；探针由上下文清理，失败时尚未分配运行临时资源。
+        with tempfile.TemporaryFile(dir=root, prefix=".adblab_write_") as probe:
+            probe.write(b"1")
+            probe.flush()
+
     def expected_result_root(self, config: MobilePerfRunConfig | None = None) -> str:
-        cfg = config or self._last_config
-        if cfg and cfg.result_root:
-            return cfg.result_root
-        return str(self._project_root / "results")
+        """使用与 worker 配置相同的解析规则预测输出，查询本身不创建目录。"""
+        cfg = config or self._last_config or MobilePerfRunConfig()
+        return self._resolved_run_config(cfg).save_path
 
     def latest_result_dir(self, config: MobilePerfRunConfig | None = None) -> str:
         cfg = config or self._last_config

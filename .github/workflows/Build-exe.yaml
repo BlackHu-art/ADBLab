@@ -259,6 +259,29 @@ jobs:
           name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
           python scripts/check_build_artifacts.py frozen --executable "dist/$name/$name.exe" --timeout 60
 
+      - name: Prepare fixed Inno Setup compiler
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/prepare_inno_setup.py --destination "$RUNNER_TEMP/inno-6.7.3"
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          python scripts/build_windows_installer.py --source-dir "dist/$name" --entry-name "$name.exe" --output-dir dist --iscc "$RUNNER_TEMP/inno-6.7.3/ISCC.exe"
+
+      - name: Smoke test Windows installer in disposable runner
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          python scripts/check_windows_installer.py --installer "dist/$name-setup.exe" --version "${{ needs.version.outputs.version }}" --workspace "$RUNNER_TEMP/adblab-installer-smoke" --iscc "$RUNNER_TEMP/inno-6.7.3/ISCC.exe" --disposable
+
       - name: Zip Windows onedir artifact
         if: runner.os == 'Windows'
         shell: pwsh
@@ -327,7 +350,18 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -f "dist/$name"
 
-      - name: Upload artifact
+      - name: Upload Windows artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}-${{ needs.version.outputs.version }}.zip
+            dist/${{ matrix.artifact }}-${{ needs.version.outputs.version }}-setup.exe
+          if-no-files-found: error
+
+      - name: Upload non-Windows artifact
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{ matrix.artifact }}

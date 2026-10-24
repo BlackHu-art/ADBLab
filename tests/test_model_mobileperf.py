@@ -468,7 +468,7 @@ def test_mobileperf_runner_uses_worker_entry_when_frozen(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     runner = MobilePerfRunner(
         process_runner=runner_process,
-        project_root=tmp_path,
+        project_root=tmp_path / "resources",
         python_executable="ADBLab.exe",
     )
     cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))

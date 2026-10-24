@@ -1,4 +1,4 @@
-"""验证冻结入口和发布归档；发布检查仅依赖标准库且不解压产物。"""
+"""验证冻结入口和发布产物；发布检查仅依赖标准库且不解压产物。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -183,8 +184,105 @@ def _check_tar(path: Path, expected_entry: str) -> None:
         raise CheckError("expected exactly one nonempty regular main entry")
 
 
+def check_installer_file(path: Path) -> None:
+    """只读核对普通非重解析 PE 文件及头/节边界；不验证压缩载荷或安装成功。
+
+    允许 Inno 的文件尾 overlay；仅有 MZ 或 PE 签名不足以通过。仅按头部声明有界读取，
+    不把完整安装 EXE 载入内存；任一 I/O 或结构错误统一抛出 CheckError。
+    """
+    try:
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise CheckError("installer must be a regular non-reparse file")
+        with path.open("rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+
+            def read_at(offset: int, length: int) -> bytes:
+                if offset < 0 or length < 0 or offset + length > size:
+                    raise CheckError("installer PE header or section exceeds file bounds")
+                stream.seek(offset)
+                data = stream.read(length)
+                if len(data) != length:
+                    raise CheckError("installer PE file was truncated while reading")
+                return data
+
+            dos = read_at(0, 64)
+            if dos[:2] != b"MZ":
+                raise CheckError("installer DOS signature is missing")
+            pe_offset = struct.unpack_from("<I", dos, 0x3C)[0]
+            if pe_offset < 64:
+                raise CheckError("installer PE header overlaps the DOS header")
+            header = read_at(pe_offset, 24)
+            if header[:4] != b"PE\0\0":
+                raise CheckError("installer PE signature is missing")
+            machine, sections, _, _, _, optional_size, characteristics = struct.unpack_from(
+                "<HHIIIHH", header, 4,
+            )
+            if (machine not in (0x14C, 0x8664) or not 1 <= sections <= 96
+                    or not characteristics & 2 or characteristics & 0x2000):
+                raise CheckError("installer COFF header is not a supported executable image")
+            optional_offset = pe_offset + 24
+            optional = read_at(optional_offset, optional_size)
+            if optional_size < 2:
+                raise CheckError("installer optional header is missing")
+            magic = struct.unpack_from("<H", optional)[0]
+            fixed_size = {0x10B: 96, 0x20B: 112}.get(magic)
+            if fixed_size is None or optional_size < fixed_size:
+                raise CheckError("installer optional header is invalid or incomplete")
+            if (machine == 0x14C) != (magic == 0x10B):
+                raise CheckError("installer COFF machine and optional header disagree")
+            directories = struct.unpack_from("<I", optional, fixed_size - 4)[0]
+            if directories > (optional_size - fixed_size) // 8:
+                raise CheckError("installer data directories exceed the optional header")
+            entrypoint = struct.unpack_from("<I", optional, 16)[0]
+            section_alignment, file_alignment = struct.unpack_from("<II", optional, 32)
+            image_size, headers_size = struct.unpack_from("<II", optional, 56)
+            if (not file_alignment or file_alignment & (file_alignment - 1)
+                    or not section_alignment or section_alignment & (section_alignment - 1)
+                    or section_alignment < file_alignment
+                    or (section_alignment < 4096 and file_alignment != section_alignment)
+                    or (section_alignment >= 4096 and not 512 <= file_alignment <= 65536)):
+                raise CheckError("installer PE alignment is invalid")
+            section_offset = optional_offset + optional_size
+            table = read_at(section_offset, sections * 40)
+            if (headers_size < section_offset + len(table) or headers_size > size
+                    or headers_size % file_alignment or not image_size
+                    or image_size % section_alignment):
+                raise CheckError("installer PE image/header size is invalid")
+            raw_ranges = []
+            virtual_ranges = []
+            executable_entry = False
+            for index in range(sections):
+                offset = index * 40
+                virtual_size, address, raw_size, raw_pointer = struct.unpack_from(
+                    "<IIII", table, offset + 8,
+                )
+                flags = struct.unpack_from("<I", table, offset + 36)[0]
+                extent = max(virtual_size, raw_size)
+                if (not extent or address < headers_size or address % section_alignment
+                        or address + extent > image_size):
+                    raise CheckError("installer PE section exceeds virtual image bounds")
+                virtual_ranges.append((address, address + extent))
+                if raw_size:
+                    if (raw_pointer < headers_size or raw_pointer % file_alignment
+                            or raw_size % file_alignment or raw_pointer + raw_size > size):
+                        raise CheckError("installer PE section exceeds raw file bounds")
+                    raw_ranges.append((raw_pointer, raw_pointer + raw_size))
+                    if address <= entrypoint < address + raw_size and flags & 0x20000000:
+                        executable_entry = True
+            for ranges in (raw_ranges, virtual_ranges):
+                ranges.sort()
+                if any(left[1] > right[0] for left, right in zip(ranges, ranges[1:])):
+                    raise CheckError("installer PE sections overlap")
+            if not executable_entry:
+                raise CheckError("installer entry point is not in a backed executable section")
+    except (OSError, ValueError, struct.error) as error:
+        raise CheckError(f"installer PE file cannot be validated: {error}") from error
+
+
 def check_release(directory: Path, version: str) -> None:
-    """只读验证四份准确版本的非空归档及主程序条目，不展开到文件系统。"""
+    """只读验证五份准确版本产物；归档完整校验，setup 只验证 PE 结构。"""
     if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
         raise CheckError("version must match vX.Y.Z using decimal digits")
     if not directory.is_dir():
@@ -194,6 +292,8 @@ def check_release(directory: Path, version: str) -> None:
         name = f"{artifact}-{version}"
         suffix = ".tar.gz" if artifact == "ADBLab-linux-x64" else ".zip"
         expected[f"{artifact}/{name}{suffix}"] = (artifact, name)
+    installer = f"ADBLab-win-x64/ADBLab-win-x64-{version}-setup.exe"
+    expected[installer] = ("installer", "")
     actual = {
         path.relative_to(directory).as_posix(): path for path in directory.rglob("*")
         if not path.is_dir() or path.is_symlink()
@@ -204,9 +304,12 @@ def check_release(directory: Path, version: str) -> None:
         raise CheckError(f"artifact set mismatch: missing={missing}; extra={extra}")
     for relative, (artifact, name) in expected.items():
         path = actual[relative]
-        if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
-            raise CheckError(f"{relative}: expected a nonempty regular archive")
         try:
+            if artifact == "installer":
+                check_installer_file(path)
+                continue
+            if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+                raise CheckError("expected a nonempty regular archive")
             if artifact == "ADBLab-linux-x64":
                 _check_tar(path, name)
             else:
@@ -219,7 +322,7 @@ def check_release(directory: Path, version: str) -> None:
             zipfile.BadZipFile, tarfile.TarError, zlib.error,
         ) as error:
             raise CheckError(f"{relative}: {error}") from error
-    print(f"PASS release {version}: exactly four readable artifacts")
+    print(f"PASS release {version}: exactly five artifacts (setup PE structure only)")
 
 
 def _timeout(value: str) -> float:
@@ -239,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     frozen = commands.add_parser("frozen", help="wait for frozen executable smoke checks")
     frozen.add_argument("--executable", required=True, type=Path)
     frozen.add_argument("--timeout", required=True, type=_timeout)
-    release = commands.add_parser("release", help="validate the four downloaded release archives")
+    release = commands.add_parser("release", help="validate the five downloaded release artifacts")
     release.add_argument("--directory", required=True, type=Path)
     release.add_argument("--version", required=True)
     args = parser.parse_args(argv)

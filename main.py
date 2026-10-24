@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from time import perf_counter
 
+from core.windows_installation import InstallationUnavailable
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
 from utils.gui_platform import configure_gui_platform
 from utils.resource_path import resource_path, setup_qt_search_paths
@@ -20,6 +21,46 @@ _ENTRY_STARTED_AT = perf_counter()
 def windows_app_user_model_id() -> str:
     """生成随主次版本变化的 Windows AppUserModelID。"""
     return f"ADBLab.Frankie.{app_major_minor_version()}"
+
+
+def _report_installation_unavailable(error: InstallationUnavailable, *, cli: bool) -> None:
+    """Qt 和业务初始化前提供脱敏恢复提示；内部子模式不能弹出阻塞对话框。"""
+    if cli:
+        from core.worker_stdio import _open_windows_output
+
+        try:
+            if sys.stderr is None:
+                # 错误报告只需要 stderr；缺少 stdout 不能阻断有效错误管道恢复。
+                sys.stderr = _open_windows_output("stderr")
+            reconfigure = getattr(sys.stderr, "reconfigure", None)
+            if callable(reconfigure):
+                reconfigure(encoding="utf-8", line_buffering=True)
+            print(str(error), file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            # 父进程未提供错误管道时仍保留维护退出码，不弹阻塞窗口。
+            ctypes.windll.kernel32.OutputDebugStringW(str(error))
+    else:
+        ctypes.windll.user32.MessageBoxW(None, str(error), APP_NAME, 0x10)
+
+
+def _run_entry(argv: list[str]) -> int:
+    """所有入口共享安装准入，并在业务与关闭清理返回后释放本进程读锁。"""
+    from core.windows_installation import acquire_installation_guard
+
+    try:
+        guard = acquire_installation_guard()
+    except InstallationUnavailable as error:
+        cli = bool(argv and argv[0] in {
+            "--adblab-native-launch", "--mobileperf-worker", "--startup-splash", "--self-check",
+        })
+        _report_installation_unavailable(error, cli=cli)
+        return 73
+    try:
+        exit_code = _dispatch_cli(argv)
+        return _run_gui() if exit_code is None else exit_code
+    finally:
+        if guard is not None:
+            guard.close()
 
 
 def _dispatch_cli(argv: list[str]) -> int | None:
@@ -490,7 +531,4 @@ def _finish_gui(startup, splash, log_service, trace) -> None:
 
 
 if __name__ == "__main__":
-    exit_code = _dispatch_cli(sys.argv[1:])
-    if exit_code is None:
-        exit_code = _run_gui()
-    sys.exit(exit_code)
+    sys.exit(_run_entry(sys.argv[1:]))

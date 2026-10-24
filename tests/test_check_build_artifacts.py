@@ -15,6 +15,8 @@ from pathlib import Path
 import psutil
 import pytest
 
+from tests.test_windows_installer_pe import minimal_pe
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_build_artifacts.py"
 VERSION = "v1.2.3"
 ARTIFACTS = ("ADBLab-win-x64", "ADBLab-macos-x64", "ADBLab-macos-arm64", "ADBLab-linux-x64")
@@ -41,6 +43,9 @@ def _release_tree(directory: Path, *, mac_fallback: bool = False) -> list[Path]:
             with zipfile.ZipFile(archive, "w") as bundle:
                 bundle.writestr(entry, b"exe")
         paths.append(archive)
+    installer = directory / ARTIFACTS[0] / f"{ARTIFACTS[0]}-{VERSION}-setup.exe"
+    installer.write_bytes(minimal_pe())
+    paths.append(installer)
     return paths
 
 
@@ -83,6 +88,39 @@ def test_release_rejects_inexact_artifact_set(tmp_path, mutation):
 
     assert result.returncode != 0
     assert b"FAIL" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "wrong-version", "empty", "not-pe"])
+def test_release_rejects_missing_or_invalid_installer(tmp_path, mutation):
+    installer = _release_tree(tmp_path)[4]
+    if mutation == "missing":
+        installer.unlink()
+    elif mutation == "extra":
+        installer.with_name("extra-setup.exe").write_bytes(installer.read_bytes())
+    elif mutation == "wrong-version":
+        installer.rename(installer.with_name(installer.name.replace(VERSION, "v1.2.4")))
+    else:
+        installer.write_bytes(b"" if mutation == "empty" else b"MZ" + bytes(1024))
+
+    result = _release(tmp_path)
+
+    assert result.returncode != 0
+    assert b"FAIL" in result.stderr
+
+
+def test_release_routes_installer_through_regular_file_validator(tmp_path, monkeypatch):
+    checks = _checks()
+    installer = _release_tree(tmp_path)[4]
+    seen = []
+
+    def reject_file(path):
+        seen.append(path)
+        raise checks.CheckError("reparse installer rejected")
+
+    monkeypatch.setattr(checks, "check_installer_file", reject_file)
+    with pytest.raises(checks.CheckError, match="reparse"):
+        checks.check_release(tmp_path, VERSION)
+    assert seen == [installer]
 
 
 @pytest.mark.parametrize("version", ["1.2.3", "v1.2", "v1.2.3-rc1", "v1.2.3/../x", "v１.2.3"])
