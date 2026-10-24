@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import stat
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -18,7 +19,7 @@ def _module():
 
 def _archive(path, extra=()):
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("ADBLab-win-x64-v3.3.1.exe", b"old application")
+        archive.writestr("ADBLab-win-x64-v3.3.2.exe", b"old application")
         archive.writestr("_internal/adb.exe", b"old adb")
         archive.writestr("_internal/retired.dll", b"retired old dependency")
         for name, value in extra:
@@ -33,17 +34,45 @@ def _archive(path, extra=()):
 
 def test_legacy_origin_is_exact_official_release_not_latest():
     module = _module()
-    assert module.LEGACY_VERSION == "3.3.1"
-    assert module.LEGACY_TAG_SHA == "e8cb40537b9a8a9dcf27ae8e20c06e2feb319daa"
-    assert module.LEGACY_ASSET_ID == 640384908
-    assert module.LEGACY_SIZE == 158029557
+    assert module.LEGACY_VERSION == "3.3.2"
+    assert module.LEGACY_TAG_SHA == "e0c0d0487ee350c2ba8e3389a84ec998b616de33"
+    assert module.LEGACY_ASSET_ID == 653828320
+    assert module.LEGACY_SIZE == 157937553
     assert module.LEGACY_SHA256 == (
-        "fd2cd65e1c7f756eb926b52bcd0d3ba4a7f5cb16050dba8b2bfbe2b3cd661a36"
+        "10f7322a6d9189b36dba50097d9d9f4e6c51fbbc7426af989d7c55a56765e8bc"
     )
     assert module.LEGACY_URL == (
-        "https://github.com/BlackHu-art/ADBLab/releases/download/v3.3.1/"
-        "ADBLab-win-x64-v3.3.1.zip"
+        "https://github.com/BlackHu-art/ADBLab/releases/download/v3.3.2/"
+        "ADBLab-win-x64-v3.3.2.zip"
     )
+
+
+def test_legacy_wrapper_version_and_output_match_pinned_payload():
+    module = _module()
+    template = Path(module.__file__).with_name("legacy_fixture.iss").read_text(encoding="utf-8")
+    assert f'#define AppVersion "{module.LEGACY_VERSION}"' in template
+    assert f"AppVersion={module.LEGACY_VERSION}\n" in template
+    assert f"AppVerName=ADBLab {module.LEGACY_VERSION} legacy ZIP test wrapper\n" in template
+    assert f"OutputBaseFilename={Path(module.LEGACY_INSTALLER).stem}\n" in template
+    assert "#ifdef AppVersion" in template
+    assert "#error The legacy fixture version cannot be overridden" in template
+
+
+def test_missing_pinned_release_stops_without_fallback_or_output(tmp_path, monkeypatch):
+    module = _module()
+    requested = []
+
+    def missing(url, *, timeout):
+        requested.append(url)
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", missing)
+    target = tmp_path / "old.zip"
+    with pytest.raises(urllib.error.HTTPError) as error:
+        module._download_archive(target)
+    assert error.value.code == 404
+    assert requested == [module.LEGACY_URL]
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("body,size,digest", [
@@ -184,12 +213,12 @@ def test_run_is_rejected_on_desktop_before_download_or_install(tmp_path, monkeyp
     monkeypatch.setattr(module, "prepare_legacy_installer", lambda *a: pytest.fail("downloaded"))
     with pytest.raises(ValueError, match="一次性"):
         module.run_legacy_upgrade(
-            tmp_path / "iscc", tmp_path / "setup", "3.3.2", tmp_path / "fresh", disposable=True,
+            tmp_path / "iscc", tmp_path / "setup", "3.3.3", tmp_path / "fresh", disposable=True,
         )
     assert not (tmp_path / "fresh").exists()
 
 
-@pytest.mark.parametrize("version", ["3.3.1", "v3.2.29", "invalid"])
+@pytest.mark.parametrize("version", ["3.3.1", "3.3.2", "v3.3.2", "v3.2.29", "invalid"])
 def test_run_rejects_non_upgrade_target_before_workspace_writes(tmp_path, monkeypatch, version):
     module = _module()
     monkeypatch.setattr(module.product, "validate_environment", lambda path, disposable: path)
@@ -209,7 +238,7 @@ def test_existing_product_prevents_download_and_data_creation(tmp_path, monkeypa
     monkeypatch.setattr(module, "prepare_legacy_installer", lambda *a: pytest.fail("prepared"))
     with pytest.raises(ValueError, match="已有产品"):
         module.run_legacy_upgrade(
-            tmp_path / "iscc", tmp_path / "setup", "3.3.2", tmp_path / "fresh", disposable=True,
+            tmp_path / "iscc", tmp_path / "setup", "3.3.3", tmp_path / "fresh", disposable=True,
         )
     assert not (tmp_path / "fresh").exists()
 
@@ -317,8 +346,8 @@ def _scenario(tmp_path, monkeypatch):
 
 def test_real_payload_sequence_checks_old_new_frozen_and_retention(tmp_path, monkeypatch, capsys):
     module, workspace, setup, events, app = _scenario(tmp_path, monkeypatch)
-    module.run_legacy_upgrade(tmp_path / "iscc", setup, "v3.3.2", workspace, disposable=True)
-    assert events == ["old", "3.3.1", "frozen", "new", "3.3.2", "frozen", "uninstall"]
+    module.run_legacy_upgrade(tmp_path / "iscc", setup, "v3.3.3", workspace, disposable=True)
+    assert events == ["old", "3.3.2", "frozen", "new", "3.3.3", "frozen", "uninstall"]
     assert (app / "_internal/retired.dll").read_bytes() == b"new user data at retired legacy path\n"
     assert "not a historical installer" in capsys.readouterr().out
     evidence = json.loads((workspace / "legacy-upgrade-evidence.json").read_text(encoding="utf-8"))
@@ -337,7 +366,7 @@ def test_upgrade_corruption_of_external_synthetic_data_fails(tmp_path, monkeypat
 
     monkeypatch.setattr(module.product, "run_checked", corrupt)
     with pytest.raises(RuntimeError, match="合成数据"):
-        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.2", workspace, disposable=True)
+        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.3", workspace, disposable=True)
     assert "uninstall" not in events
 
 
@@ -352,7 +381,7 @@ def test_installed_payload_hash_mismatch_fails_before_frozen(tmp_path, monkeypat
 
     monkeypatch.setattr(module.product, "run_checked", corrupt)
     with pytest.raises(ValueError, match="摘要"):
-        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.2", workspace, disposable=True)
+        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.3", workspace, disposable=True)
     assert "frozen" not in events
 
 
@@ -367,7 +396,7 @@ def test_frozen_failure_stops_upgrade_without_success_evidence(tmp_path, monkeyp
 
     monkeypatch.setattr(module.product, "run_checked", fail_probe)
     with pytest.raises(RuntimeError, match="old frozen failed"):
-        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.2", workspace, disposable=True)
+        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.3", workspace, disposable=True)
     assert "new" not in events
     assert not (workspace / "legacy-upgrade-evidence.json").exists()
 
@@ -383,5 +412,5 @@ def test_frozen_must_not_change_current_managed_payload(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module.product, "run_checked", corrupt)
     with pytest.raises(ValueError, match="摘要"):
-        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.2", workspace, disposable=True)
+        module.run_legacy_upgrade(tmp_path / "iscc", setup, "3.3.3", workspace, disposable=True)
     assert "uninstall" not in events

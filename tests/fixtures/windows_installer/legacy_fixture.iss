@@ -2,20 +2,20 @@
 #ifdef AppVersion
   #error The legacy fixture version cannot be overridden
 #endif
-#define AppVersion "3.3.1"
+#define AppVersion "3.3.2"
 #include ProtocolInclude
 [Setup]
 AppId={{#InstallAppId}
 AppName=ADBLab
-AppVersion=3.3.1
-AppVerName=ADBLab 3.3.1 legacy ZIP test wrapper
+AppVersion=3.3.2
+AppVerName=ADBLab 3.3.2 legacy ZIP test wrapper
 DefaultDirName={localappdata}\Programs\ADBLab
 DefaultGroupName=ADBLab
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputBaseFilename=legacy-zip-v3.3.1-test-setup
+OutputBaseFilename=legacy-zip-v3.3.2-test-setup
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=no

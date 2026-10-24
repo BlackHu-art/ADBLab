@@ -112,3 +112,22 @@ def test_default_install_refuses_existing_location_before_writes(tmp_path, monke
                                         tmp_path / "work", {"local_appdata": str(local)})
     assert kept.read_bytes() == b"existing content"
     assert not (tmp_path / "work").exists()
+
+
+def test_missing_legacy_release_stops_default_installation(tmp_path, monkeypatch):
+    import urllib.error
+
+    module = _module()
+    monkeypatch.setattr(module.basic, "main", lambda args: 0)
+    monkeypatch.setattr(module, "run_fault_fixture", lambda *a, **k: None)
+
+    def missing(*args, **kwargs):
+        raise urllib.error.HTTPError("https://github.com/official-old.zip", 404,
+                                     "Not Found", None, None)
+
+    monkeypatch.setattr(module, "run_legacy_upgrade", missing)
+    monkeypatch.setattr(module, "run_default_installation",
+                        lambda *a: pytest.fail("continued after missing legacy payload"))
+    with pytest.raises(urllib.error.HTTPError) as error:
+        module.run_extended(Path("setup.exe"), "3.3.3", Path("ISCC.exe"), tmp_path / "work", {})
+    assert error.value.code == 404

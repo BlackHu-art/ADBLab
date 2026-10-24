@@ -26,17 +26,17 @@ from scripts.windows_installer.manifest import (
 )
 from utils.archive import safe_extract_zip
 
-LEGACY_VERSION = "3.3.1"
-LEGACY_TAG_SHA = "e8cb40537b9a8a9dcf27ae8e20c06e2feb319daa"
-LEGACY_ASSET_ID = 640384908
-LEGACY_SIZE = 158029557
-LEGACY_SHA256 = "fd2cd65e1c7f756eb926b52bcd0d3ba4a7f5cb16050dba8b2bfbe2b3cd661a36"
-LEGACY_ARCHIVE = "ADBLab-win-x64-v3.3.1.zip"
-LEGACY_ENTRY = "ADBLab-win-x64-v3.3.1.exe"
+LEGACY_VERSION = "3.3.2"
+LEGACY_TAG_SHA = "e0c0d0487ee350c2ba8e3389a84ec998b616de33"
+LEGACY_ASSET_ID = 653828320
+LEGACY_SIZE = 157937553
+LEGACY_SHA256 = "10f7322a6d9189b36dba50097d9d9f4e6c51fbbc7426af989d7c55a56765e8bc"
+LEGACY_ARCHIVE = "ADBLab-win-x64-v3.3.2.zip"
+LEGACY_ENTRY = "ADBLab-win-x64-v3.3.2.exe"
 LEGACY_URL = (
-    "https://github.com/BlackHu-art/ADBLab/releases/download/v3.3.1/" + LEGACY_ARCHIVE
+    "https://github.com/BlackHu-art/ADBLab/releases/download/v3.3.2/" + LEGACY_ARCHIVE
 )
-LEGACY_INSTALLER = "legacy-zip-v3.3.1-test-setup.exe"
+LEGACY_INSTALLER = "legacy-zip-v3.3.2-test-setup.exe"
 
 
 def _download_archive(destination: Path) -> None:
@@ -127,7 +127,7 @@ def prepare_legacy_installer(iscc: Path, workspace: Path) -> Path:
     (workspace / "legacy-origin.json").write_text(
         json.dumps(receipt, indent=2) + "\n", encoding="utf-8",
     )
-    print("Prepared official v3.3.1 ZIP payload with current test-only wrapper; "
+    print("Prepared official v3.3.2 ZIP payload with current test-only wrapper; "
           "not a historical installer", flush=True)
     return executable
 
@@ -142,7 +142,7 @@ def _create_sentinels() -> dict[Path, bytes]:
             b'{"version":1,"runs":[{"run_id":"installer-legacy-ci-run","kind":"monkey",'
             b'"package_name":"com.example.installer.fixture","started_at":1792800000,'
             b'"finished_at":1792800001,"state":"succeeded","parameters":{},'
-            b'"artifacts":[],"device_label":"CI synthetic data","app_version":"3.3.1",'
+            b'"artifacts":[],"device_label":"CI synthetic data","app_version":"3.3.2",'
             b'"message":"No device command executed"}],"presets":['
             b'{"preset_id":"installer-legacy-ci","name":"CI synthetic history",'
             b'"kind":"monkey","parameters":{},"updated_at":1792800000}]}\n'
@@ -180,7 +180,7 @@ def run_legacy_upgrade(
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None or (
         tuple(map(int, version.split("."))) <= tuple(map(int, LEGACY_VERSION.split(".")))
     ):
-        raise ValueError("旧载荷验收要求正式目标版本高于 3.3.1")
+        raise ValueError("旧载荷验收要求正式目标版本高于 3.3.2")
     check_installer_file(installer)
     if product.registered_installations() or any(path.exists() for path in product._shortcuts()):
         raise ValueError("一次性 runner 已有产品登记或快捷方式，拒绝接管")
