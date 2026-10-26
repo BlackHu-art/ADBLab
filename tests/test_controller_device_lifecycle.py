@@ -11,6 +11,7 @@ from controllers import ADBController
 from gui.adapters.device_connection_lifecycle import QtDeviceConnectionLifecycle
 from models.device_store import DeviceStore
 from services.adb_pairing import PairingOutcome
+from services.tasks.action_results import ActionResults
 
 
 def make_lifecycle(guard=None):
@@ -100,6 +101,7 @@ def windowless_controller(monkeypatch):
     controller = WindowlessController.__new__(WindowlessController)
     controller.device_lifecycle = make_lifecycle()
     controller._shutting_down = False
+    controller.action_results = ActionResults(lambda _result: None)
     controller._overview_store_lock = None
     controller._device_topology_lock = threading.Lock()
     controller.signals = Mock()
@@ -208,7 +210,9 @@ def test_shutdown_rejects_late_restart_result_and_delayed_refresh(
     monkeypatch.setattr("controllers._device.QTimer.singleShot", timer)
     controller._handle_async_response("restart_adb_async", {"success": True})
     controller.device_lifecycle.note_adb_server_restarted.assert_called_once_with()
-    timer.assert_called_once_with(3000, controller.signals, controller.refresh_devices)
+    timer.assert_called_once_with(
+        3000, controller.signals, controller._refresh_devices_background,
+    )
     delayed = timer.call_args.args[-1]
     controller.device_lifecycle.note_adb_server_restarted.reset_mock()
     controller.signals.operation_completed.emit.reset_mock()
@@ -230,5 +234,7 @@ def test_restart_without_owner_callbacks_keeps_success_refresh(windowless_contro
     controller.restart_adb()
     controller.device_model.restart_adb_async.assert_called_once_with()
     controller._process_restart_adb_result({"success": True})
-    timer.assert_called_once_with(3000, controller.signals, controller.refresh_devices)
+    timer.assert_called_once_with(
+        3000, controller.signals, controller._refresh_devices_background,
+    )
     assert controller.signals.operation_completed.emit.call_args.args[:2] == ("restart_adb", True)

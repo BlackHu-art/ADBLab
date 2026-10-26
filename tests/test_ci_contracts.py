@@ -882,9 +882,9 @@ def test_svg_reference_check_rejects_missing_assets_and_case_mismatches(
 def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():
     workflow = _read(BUILD_WORKFLOW)
 
-    # 同版本发布仍不可变：存在 Release/tag 即失败。
-    assert 'gh release view "$TAG"' in workflow
-    assert 'git ls-remote --exit-code --tags origin "refs/tags/$TAG"' in workflow
+    # 同版本发布仍不可变：存在 Release/tag 即失败，查询本身失败也必须阻断。
+    assert 'RELEASE_TAGS="$(gh release list' in workflow
+    assert 'git ls-remote --tags origin "refs/tags/$TAG"' in workflow
     assert workflow.count("published versions are immutable.") == 2
     assert 'gh release create "$TAG"' in workflow
     assert "gh run delete" not in workflow
@@ -1061,3 +1061,29 @@ def test_source_integrity_guard_runs_before_build_and_other_local_hooks():
     assert hooks[0]["entry"].endswith("scripts/check_source_text.py")
     assert hooks[0]["pass_filenames"] is False
     assert [hook["id"] for hook in hooks[1:]] == ["ruff-check", "comment-language", "doc-links"]
+
+
+def test_version_tag_lookup_failure_blocks_before_build(tmp_path):
+    """远端 tag 查询失败不能被 grep 的“未命中”状态掩盖。"""
+    bash = shutil.which("bash")
+    assert bash is not None
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    guard = next(
+        step for step in workflow["jobs"]["version"]["steps"]
+        if step.get("name") == "Verify version not already published"
+    )
+    script = re.sub(r"\$\{\{.*?\}\}", "v9.9.9", guard["run"])
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    git = fake_bin / "git"
+    git.write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+    git.chmod(0o755)
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0

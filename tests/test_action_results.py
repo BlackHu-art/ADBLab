@@ -446,3 +446,36 @@ def test_notes_are_bounded_by_source_and_rejected_after_close():
     count = len(events)
     assert store.record_note(spec, (), "late event", "error") is None
     assert len(events) == count
+
+
+def test_internal_refresh_does_not_register_a_user_action_job():
+    import threading
+
+    from controllers._device import ADBDeviceMixin
+
+    jobs = []
+
+    class Model:
+        def get_connected_devices_async(self, **_kwargs):
+            jobs.append(capture_action_job("get_connected_devices_async"))
+
+    controller = object.__new__(ADBDeviceMixin)
+    controller._shutting_down = False
+    controller._device_topology_lock = threading.Lock()
+    controller._discovery_generation = 0
+    controller._discovery_refresh_pending = 0
+    controller._discovery_requests = set()
+    controller.device_model = Model()
+    controller.action_results = ActionResults(lambda _result: None)
+
+    controller.action_results.run(
+        ActionSpec("refresh", "devices", "刷新"), (),
+        lambda: controller._refresh_devices_background(),
+    )
+    assert jobs == [None]
+
+    controller.action_results.run(
+        ActionSpec("manual-refresh", "devices", "手动刷新"), (),
+        lambda: controller.refresh_devices(),
+    )
+    assert len(jobs) == 2 and jobs[0] is None and jobs[1] is not None

@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
@@ -37,6 +38,9 @@ CURRENT_SCHEMA_VERSION = _migrations.CURRENT_SCHEMA_VERSION
 
 SETTINGS_FILE = user_config_path("app_settings.json")
 LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
+
+# 设置文件只允许有界读取，避免损坏/恶意文件在启动阶段拖垮进程。
+MAX_SETTINGS_BYTES = 4 * 1024 * 1024
 
 # 设置层错误日志的注入点：组合根先注入启动缓冲，再在 LogService 创建后注入正式实现，
 # 使 core 不依赖 Qt/LogService 即可单测；未注入时错误静默丢弃（ADR-0003 Phase 3）。
@@ -116,6 +120,9 @@ class AppSettings:
     _close_snapshot: dict | None
     _close_snapshot_error: str
     _close_saved: bool
+    _unreadable_settings: bool
+    _unreadable_path: str
+    _unreadable_is_parse: bool
 
     def __new__(cls, *, defer_migration_save: bool = False):
         if cls._instance is None:
@@ -134,6 +141,9 @@ class AppSettings:
                     instance._close_snapshot = None
                     instance._close_snapshot_error = ""
                     instance._close_saved = False
+                    instance._unreadable_settings = False
+                    instance._unreadable_path = ""
+                    instance._unreadable_is_parse = False
                     instance._seen_version = CURRENT_SCHEMA_VERSION
                     instance._future_extra = {}
                     instance._deferred_save_pending = False
@@ -173,8 +183,10 @@ class AppSettings:
         loaded_from = ""
         needs_immediate_save = False
         try:
+            if os.path.getsize(settings_path) > MAX_SETTINGS_BYTES:
+                raise ValueError("settings file is too large")
             with open(settings_path, encoding="utf-8") as file:
-                stored = json.load(file)
+                stored = json.loads(file.read(MAX_SETTINGS_BYTES + 1))
             if not isinstance(stored, dict):
                 raise ValueError("settings file is not a JSON object")
             stored_version = _stored_schema_version(stored)
@@ -198,8 +210,29 @@ class AppSettings:
                     if key in stored:
                         self._data[key] = _normalise_setting(key, stored[key])
             loaded_from = settings_path
-        except (json.JSONDecodeError, ValueError, OSError) as error:
-            _log_error("WARNING", f"Failed to load settings ({error}), using defaults")
+        except (json.JSONDecodeError, ValueError, RecursionError) as error:
+            backup = self._backup_corrupt_settings(settings_path)
+            self._unreadable_settings = not backup
+            self._unreadable_path = settings_path if not backup else ""
+            self._unreadable_is_parse = not backup
+            suffix = "; original preserved" if backup else ""
+            _log_error(
+                "WARNING",
+                f"Failed to load settings ({type(error).__name__}), using defaults{suffix}",
+            )
+        except OSError as error:
+            # 读取权限/占用属于 I/O 失败，不能把合法文件改名为损坏备份。
+            # legacy 输入不可读不应阻断主设置文件创建；主文件才需要保护。
+            is_main_file = os.path.normcase(settings_path) == os.path.normcase(
+                SETTINGS_FILE
+            )
+            self._unreadable_settings = is_main_file
+            self._unreadable_path = settings_path if is_main_file else ""
+            self._unreadable_is_parse = False
+            _log_error(
+                "WARNING",
+                f"Failed to read settings ({type(error).__name__}), using defaults",
+            )
 
         if loaded_from and (
             needs_immediate_save
@@ -210,6 +243,26 @@ class AppSettings:
                     self._deferred_save_pending = True
             else:
                 self._save_atomic()
+
+    @staticmethod
+    def _backup_corrupt_settings(settings_path: str) -> str:
+        """保留无法解析的设置原文；备份失败时调用方必须禁止覆盖。"""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        candidate = f"{settings_path}.corrupt-{stamp}"
+        index = 1
+        while os.path.exists(candidate):
+            candidate = f"{settings_path}.corrupt-{stamp}-{index}"
+            index += 1
+        try:
+            # 同目录原子改名即可完整保留原文，不复制任意大小文件。
+            os.replace(settings_path, candidate)
+        except OSError as error:
+            _log_error(
+                "ERROR",
+                f"Failed to preserve corrupt settings: {type(error).__name__}",
+            )
+            return ""
+        return candidate
 
     def flush_deferred_save(self) -> bool:
         """由启动后台任务回写待迁移设置；失败保留待写状态供后续重试。"""
@@ -255,6 +308,35 @@ class AppSettings:
             # 并在取得写锁后再生成快照，避免旧快照最后覆盖新设置。
             with self._write_lock:
                 with self._lock:
+                    if self._unreadable_settings:
+                        if not self._unreadable_is_parse:
+                            _log_error(
+                                "ERROR",
+                                "Settings file could not be read; preserving it and "
+                                "refusing to overwrite with defaults",
+                            )
+                            return False
+                        if os.path.normcase(self._unreadable_path) != os.path.normcase(
+                            SETTINGS_FILE
+                        ):
+                            # 损坏的是 legacy 输入；主设置文件仍可正常写入。
+                            self._unreadable_settings = False
+                            self._unreadable_is_parse = False
+                        else:
+                            backup = self._backup_corrupt_settings(
+                                self._unreadable_path,
+                            )
+                            if backup:
+                                self._unreadable_settings = False
+                                self._unreadable_path = ""
+                                self._unreadable_is_parse = False
+                            else:
+                                _log_error(
+                                    "ERROR",
+                                    "Settings are unreadable and no backup was created; "
+                                    "refusing to overwrite the original file",
+                                )
+                                return False
                     if deferred_only and not self._deferred_save_pending:
                         return True
                     if snapshot is None:

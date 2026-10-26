@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -130,6 +131,9 @@ class OperationManager:
     ) -> None:
         self._lock = RLock()
         self._active: dict[str, _OperationEntry] = {}
+        # 取消后晚到的命令结果仍需识别 operation 终态，保留有界终态摘要。
+        self._terminals: OrderedDict[str, OperationSnapshot] = OrderedDict()
+        self._terminal_limit = 64
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
         self._clock = clock or time.monotonic
 
@@ -196,6 +200,27 @@ class OperationManager:
                 expected_generation=expected_generation,
             )
             return entry.snapshot if entry else None
+
+    def terminal(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> OperationSnapshot | None:
+        """读取最近结束的操作快照，供取消后晚到结果判定真实终态。"""
+        with self._lock:
+            snapshot = self._terminals.get(operation_id)
+            if snapshot is None:
+                return None
+            if expected_kind is not None and snapshot.kind != expected_kind:
+                return None
+            if (
+                expected_generation is not None
+                and snapshot.generation_token is not expected_generation
+            ):
+                return None
+            return snapshot
 
     def active_snapshot(self) -> tuple[OperationSnapshot, ...]:
         with self._lock:
@@ -562,6 +587,10 @@ class OperationManager:
             finished_at=now,
         )
         del self._active[current.operation_id]
+        self._terminals[current.operation_id] = terminal
+        self._terminals.move_to_end(current.operation_id)
+        while len(self._terminals) > self._terminal_limit:
+            self._terminals.popitem(last=False)
         return terminal
 
     @staticmethod

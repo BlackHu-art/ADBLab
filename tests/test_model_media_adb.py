@@ -1801,7 +1801,11 @@ def test_reboot_mode_controller_reports_submission_or_unknown_and_refreshes(
 ):
     from controllers._device import ADBDeviceMixin
 
-    controller = SimpleNamespace(signals=QObject(), refresh_devices=Mock(), _emit_operation=Mock())
+    controller = SimpleNamespace(
+        signals=QObject(),
+        _refresh_devices_background=Mock(),
+        _emit_operation=Mock(),
+    )
     with patch("controllers._device.QTimer.singleShot") as timer:
         ADBDeviceMixin._process_reboot_mode_result(controller, {
             "success": success, "device_ip": "device-1", "mode": "recovery",
@@ -1809,11 +1813,13 @@ def test_reboot_mode_controller_reports_submission_or_unknown_and_refreshes(
         })
     assert timer.call_count == int(refresh)
     if refresh:
-        timer.assert_called_once_with(10_000, controller.signals, controller.refresh_devices)
+        timer.assert_called_once_with(
+            10_000, controller.signals, controller._refresh_devices_background,
+        )
     operation, reported_success, message = controller._emit_operation.call_args.args
     assert operation == "reboot_mode" and reported_success is success
     assert ("submitted" in message) if success else (error in message)
-    controller.refresh_devices.assert_not_called()
+    controller._refresh_devices_background.assert_not_called()
 
 
 def test_recording_failed_stop_prevents_pull_even_after_cleanup_exit_zero():

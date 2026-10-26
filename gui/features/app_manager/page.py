@@ -124,6 +124,7 @@ class AppManagerPage(QWidget):
         self._active_load_request = 0
         self._load_in_progress = False
         self._load_refresh_pending = False
+        self._load_waiting_for_target = False
         self._load_result_received = False
         self._last_load_error = ""
         self.load_state = "idle"
@@ -217,11 +218,19 @@ class AppManagerPage(QWidget):
         if not self._activated_once:
             self._activated_once = True
             self._load_apps()
-        elif self._load_refresh_pending and not self._load_in_progress:
-            self._load_refresh_pending = False
-            self._load_apps()
-        elif self._apps_data and self._has_unloaded_details():
-            self._schedule_visible_detail_load()
+        else:
+            # 首次激活可能因未选设备被拒绝；离开期间目标恢复时也要补加载。
+            self._retry_available_load()
+            if (
+                self._load_refresh_pending
+                and not self._load_in_progress
+                and self._can_operate()
+            ):
+                # 页面失活期间完成的排队刷新需要在重新进入时消费。
+                self._load_refresh_pending = False
+                self._load_apps()
+            if self._apps_data and self._has_unloaded_details():
+                self._schedule_visible_detail_load()
         package_name = self._package_from_payload(payload)
         if package_name:
             self.open_details(package_name)
@@ -256,11 +265,24 @@ class AppManagerPage(QWidget):
             self.status_bar.setText(tr("设备已重新连接，刷新可更新应用列表。"))
         if self._can_operate():
             self._icons_controller.schedule()
+            self._retry_available_load()
         else:
             self._icons_controller.pause()
         self._update_selection_ui()
         if changed:
             self.device_connected_changed.emit(connected)
+
+    def _retry_available_load(self) -> None:
+        """只补首次被准入拒绝的加载，设备扫描重复上报不能形成刷新循环。"""
+        if not self._active or not self._load_waiting_for_target:
+            return
+        if not self._can_operate():
+            return
+        if self._load_in_progress or self._views_controller.populating:
+            # 保留等待标记；当前加载结束不代表这次被拒绝的加载已经发生。
+            return
+        self._load_waiting_for_target = False
+        self._load_apps()
 
     def _can_operate(self) -> bool:
         """已选、在线且未关闭的固定设备才可接受新的应用操作。"""
@@ -319,6 +341,7 @@ class AppManagerPage(QWidget):
         else:
             self._schedule_visible_detail_load()
             self._icons_controller.schedule()
+            self._retry_available_load()
         self._update_selection_ui()
         if not self._device_selected:
             self.status_bar.setText(tr("请在顶部设备栏勾选当前设备后执行应用操作；已加载内容仍可查看。"))
@@ -492,7 +515,14 @@ class AppManagerPage(QWidget):
             )
             self._set_load_state("error", message)
             self.details_page.mark_load_cancelled(message)
-        if not self._closing and self._load_refresh_pending and self._active:
+        if (
+            not self._closing
+            and self._active
+            and self._load_waiting_for_target
+            and self._can_operate()
+        ):
+            QTimer.singleShot(0, self._retry_available_load)
+        elif not self._closing and self._load_refresh_pending and self._active:
             self._load_refresh_pending = False
             QTimer.singleShot(0, self._load_apps)
         else:

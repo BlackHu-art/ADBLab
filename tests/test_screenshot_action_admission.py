@@ -122,7 +122,8 @@ def test_cancelled_screenshot_rejected_retry_does_not_disable_future_capture(
     model.tasks[0].run()
     assert captures.count() == 0
     assert controller.operation_manager.active_count == 0
-    assert controller.action_results.recent()[0].state != "running"
+    # 取消后的晚到成功/取消结果都必须收口为 cancelled，不能变成“身份校验失败”。
+    assert controller.action_results.recent()[0].state == "cancelled"
     assert panel.btn_screenshot.isEnabled()
 
     panel.btn_screenshot.click()

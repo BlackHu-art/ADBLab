@@ -664,3 +664,97 @@ def test_runtime_unknown_keys_and_reset_preserve_future_metadata(isolated_settin
     assert stored["schema_version"] == 99
     assert stored["future"] == {"items": [1]}
     assert stored["theme"] == "System"
+
+
+def test_corrupt_settings_are_backed_up_before_defaults(isolated_settings):
+    isolated_settings.parent.mkdir(parents=True)
+    original = '{"theme": "Dark", "ui_font_size": '
+    isolated_settings.write_text(original, encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == settings_manager.DEFAULTS["theme"]
+    backups = list(isolated_settings.parent.glob("app_settings.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    assert settings.close() is True
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == (
+        settings_manager.DEFAULTS["theme"]
+    )
+
+
+def test_deeply_nested_settings_fall_back_without_recursion_error(isolated_settings):
+    isolated_settings.parent.mkdir(parents=True)
+    # 构造真正超过 json 解码递归上限的对象，而不是多个平铺空数组。
+    isolated_settings.write_text(
+        '{"theme":' + "[" * 1500 + "]" * 1500 + "}",
+        encoding="utf-8",
+    )
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == settings_manager.DEFAULTS["theme"]
+    assert list(isolated_settings.parent.glob("app_settings.json.corrupt-*"))
+
+
+def test_unbacked_corrupt_settings_are_never_overwritten(isolated_settings, monkeypatch):
+    isolated_settings.parent.mkdir(parents=True)
+    original = '{"theme": "Dark", '
+    isolated_settings.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        settings_manager.os,
+        "replace",
+        Mock(side_effect=PermissionError("locked")),
+    )
+
+    settings = settings_manager.AppSettings.instance()
+    settings.set("theme", "Light")
+
+    assert settings._unreadable_settings is True
+    assert settings.close() is False
+    assert isolated_settings.read_text(encoding="utf-8") == original
+
+
+def test_transient_settings_io_error_is_not_renamed_as_corrupt(
+    isolated_settings, monkeypatch,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    original = '{"theme": "Dark"}'
+    isolated_settings.write_text(original, encoding="utf-8")
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if str(path) == str(isolated_settings):
+            raise PermissionError("locked")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings._unreadable_settings is True
+    assert isolated_settings.read_text(encoding="utf-8") == original
+    assert not list(isolated_settings.parent.glob("app_settings.json.corrupt-*"))
+    assert settings.close() is False
+    assert isolated_settings.read_text(encoding="utf-8") == original
+
+
+def test_unreadable_legacy_settings_still_creates_main_file(
+    isolated_settings, monkeypatch,
+):
+    legacy = isolated_settings.parent.parent / "legacy" / "app_settings.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"theme": "Dark"}', encoding="utf-8")
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if str(path) == str(legacy):
+            raise PermissionError("locked")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    settings = settings_manager.AppSettings.instance()
+    settings.set("theme", "Light")
+    settings._save_timer.cancel()
+
+    assert settings.close() is True
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "Light"

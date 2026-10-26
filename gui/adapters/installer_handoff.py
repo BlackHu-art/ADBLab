@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from core.log_service import LogService
+
 if TYPE_CHECKING:
     from core.installer_handoff import InstallerHandoff
     from services.installer_update import VerifiedInstaller
@@ -25,6 +27,7 @@ class QtInstallerHandoff(QObject):
         self._cancel = Event()
         self._closing = False
         self._failed = False
+        self._failure_kind = ""
         self._poll = QTimer(self)
         self._poll.setInterval(20)
         self._poll.timeout.connect(self._finish)
@@ -35,18 +38,24 @@ class QtInstallerHandoff(QObject):
             return False
         try:
             self._handoff.reset_attempt()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError) as error:
+            LogService().log(
+                "WARNING",
+                f"installer handoff reset failed: {type(error).__name__}",
+            )
             self.changed.emit("error")
             return False
         self._cancel.clear()
         self._failed = False
+        self._failure_kind = ""
 
         def prepare() -> None:
             try:
                 self._handoff.prepare(verified)
                 self._failed = not self._handoff.prepared
-            except Exception:
-                # 只向 UI 发布固定失败分类，异常正文可能包含本机缓存路径。
+            except Exception as error:
+                # worker 不创建 QObject；仅记录类型，由 GUI 线程的 _finish 落日志。
+                self._failure_kind = type(error).__name__
                 self._failed = True
             finally:
                 if self._cancel.is_set():
@@ -76,6 +85,11 @@ class QtInstallerHandoff(QObject):
         if self._cancel.is_set():
             self.changed.emit("cancelled")
         elif self._failed:
+            LogService().log(
+                "WARNING",
+                "installer handoff preparation failed: "
+                f"{self._failure_kind or 'UnknownError'}",
+            )
             self.changed.emit("error")
         else:
             self.changed.emit("ready")

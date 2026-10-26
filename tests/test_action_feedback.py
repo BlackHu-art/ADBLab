@@ -698,7 +698,7 @@ def test_restart_signal_keeps_action_scope_and_reentry_guard(restart_actions, mo
     if success:
         ctx.notify.assert_called_once_with()
         ctx.timer.assert_called_once_with(
-            3000, ctx.controller.signals, ctx.controller.refresh_devices,
+            3000, ctx.controller.signals, ctx.controller._refresh_devices_background,
         )
     else:
         ctx.notify.assert_not_called()

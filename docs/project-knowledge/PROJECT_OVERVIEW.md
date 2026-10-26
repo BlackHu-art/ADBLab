@@ -42,7 +42,7 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
   `QLocalServer`/`QLocalSocket` 进行本机 IPC，ADB/scrcpy 另有本地协议与子进程边界，见
   [ARCHITECTURE](ARCHITECTURE.md#启动与组合根) 和 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
-- 主要外部边界：Android ADB server/device、scrcpy、APK 解析工具 AAPT2/aapt、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及应用更新检查对 GitHub 公共 Releases API 的匿名 HTTPS 只读请求。除该更新检查外，主应用没有其他出站 HTTP 客户端。
+- 主要外部边界：Android ADB server/device、scrcpy、APK 解析工具 AAPT2/aapt、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及两条匿名 HTTPS 只读流：应用更新检查访问 GitHub 公共 Releases API；Windows 安装版在用户显式下载安装包时访问 Releases 资产下载地址（/releases/download/...）和允许的 release-assets 重定向。
 - 主要平台：Windows 是主支持目标；Windows x64 与 Linux x64 发行包随当前平台工具清单提供 ADB/scrcpy，
   macOS 继续发现用户安装的兼容工具。仓库没有各桌面系统版本的完整兼容矩阵；完整功能状态仍待目标环境实机确认。
 

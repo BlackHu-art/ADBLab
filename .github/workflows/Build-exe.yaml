@@ -68,8 +68,11 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         shell: bash
         run: |
-          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.version }}" | grep -q .; then
-            echo "Tag ${{ steps.version.outputs.version }} already exists; bump utils/app_metadata.py APP_VERSION"
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.version }}"
+          TAG_REF="$(git ls-remote --tags origin "refs/tags/$TAG")"
+          if [ -n "$TAG_REF" ]; then
+            echo "Tag $TAG already exists; bump utils/app_metadata.py APP_VERSION"
             exit 1
           fi
 
@@ -474,12 +477,14 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          RELEASE_TAGS="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName')"
+          if grep -Fxq -- "$TAG" <<< "$RELEASE_TAGS"; then
             echo "Release $TAG already exists; published versions are immutable."
             exit 1
           fi
 
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+          TAG_REF="$(git ls-remote --tags origin "refs/tags/$TAG")"
+          if [ -n "$TAG_REF" ]; then
             echo "Tag $TAG already exists; published versions are immutable."
             exit 1
           fi

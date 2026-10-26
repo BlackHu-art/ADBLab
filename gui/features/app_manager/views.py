@@ -161,13 +161,16 @@ class AppManagerViews:
         if self._frame._closing:
             return False
         if not self._frame._can_operate():
-            # 未通过设备准入时没有执行加载，保留原加载结果及真实错误提示。
+            # 未通过设备准入时没有执行加载；记录等待目标，恢复后只补一次。
+            self._frame._load_waiting_for_target = True
             self._frame.status_bar.setText(tr("请在顶部设备栏勾选当前在线设备后刷新。"))
             return False
         if getattr(self._frame, "_load_in_progress", False) or self.populating:
             self._frame._load_refresh_pending = True
             self._frame.status_bar.setText(tr("刷新已排队，将在当前加载完成后执行。"))
             return False
+        self._frame._load_refresh_pending = False
+        self._frame._load_waiting_for_target = False
         self._frame._load_request_id += 1
         request_id = self._frame._load_request_id
         self._frame._active_load_request = request_id

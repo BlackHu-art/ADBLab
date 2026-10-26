@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,9 +224,21 @@ def find_cached(
     root = _cache_root(cache_root)
     if not root.exists():
         return None
-    for directory in root.iterdir():
+    for directory in tuple(root.iterdir()):
         _check_cancelled(cancelled)
-        if not directory.name.startswith("download-"):
+        if not directory.name.startswith("download-") or not directory.is_dir():
+            continue
+        try:
+            next(directory.iterdir())
+        except StopIteration:
+            # 只回收已存在一段时间的空任务目录，避开其他实例刚 mkdtemp 的窗口。
+            try:
+                if time.time() - directory.stat().st_mtime >= 300:
+                    directory.rmdir()
+            except OSError:
+                pass
+            continue
+        except OSError:
             continue
         try:
             return verify_download(directory / asset.name, asset, cancelled=cancelled)

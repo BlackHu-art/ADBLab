@@ -10,6 +10,16 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from core.tasks.supervision import TaskSupervisor
 
 
+def _is_live_qobject(value: object) -> bool:
+    """判断 Python 包装器背后的 C++ QObject 是否仍可安全访问。"""
+    try:
+        import shiboken6
+
+        return bool(shiboken6.isValid(value))
+    except Exception:
+        return False
+
+
 class QtTaskSupervisor(QObject):
     """在 GUI 线程之外执行有时限的资源停止和等待。"""
 
@@ -34,9 +44,39 @@ class QtTaskSupervisor(QObject):
     @classmethod
     def shared(cls) -> QtTaskSupervisor:
         with cls._shared_lock:
+            if cls._shared is not None and not _is_live_qobject(cls._shared):
+                cls._shared = None
             if cls._shared is None:
                 cls._shared = cls()
             return cls._shared
+
+    @classmethod
+    def bind_shared(cls, adapter: QtTaskSupervisor) -> None:
+        """让未显式注入监督器的页面共享窗口 owner，避免第二套关闭边界。
+
+        旧 shared 仍有活动资源时不替换；窗口销毁时清除类级引用，避免同进程
+        后续页面拿到已删除的 C++ 对象。正常组合根在创建页面之前调用。
+        """
+        with cls._shared_lock:
+            current = cls._shared
+            if current is adapter:
+                return
+            if (
+                current is not None
+                and _is_live_qobject(current)
+                and current.supervisor.active_count
+            ):
+                return
+            cls._shared = adapter
+        adapter.destroyed.connect(
+            lambda *_args, bound=adapter: cls._release_shared(bound),
+        )
+
+    @classmethod
+    def _release_shared(cls, adapter: QtTaskSupervisor) -> None:
+        with cls._shared_lock:
+            if cls._shared is adapter:
+                cls._shared = None
 
     def stop_async(
         self,

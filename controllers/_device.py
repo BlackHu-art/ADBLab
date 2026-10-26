@@ -127,7 +127,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         except RuntimeError:
             # 历史保存准入失败不能撤销已经由 ADB 确认的连接。
             self.log_service.log("WARNING", "设备已连接，但连接历史未能安排保存")
-        self.refresh_devices()
+        self._refresh_devices_background()
         self._emit_operation("connect", True, message)
 
     def accept_wireless_connection(self, outcome: PairingOutcome) -> None:
@@ -151,7 +151,7 @@ class ADBDeviceMixin(_ADBControllerBase):
 
         if not _is_current():
             return
-        self.refresh_devices()
+        self._refresh_devices_background()
         endpoint, error = normalize_adb_connect_target(outcome.connection_endpoint)
         if error:
             return
@@ -231,6 +231,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
+        """刷新设备拓扑；内部维护刷新应通过 _refresh_devices_background 提交。"""
         if getattr(self, "_shutting_down", False):
             return
         with self._device_topology_lock:
@@ -249,6 +250,15 @@ class ADBDeviceMixin(_ADBControllerBase):
             # async_command 可能先同步发出失败结果再抛出；同次提交只能收口一次。
             if self._finish_device_discovery(generation):
                 self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
+
+    def _refresh_devices_background(self) -> None:
+        """内部刷新不得继承当前用户动作；同步失败也不写入该动作结果。"""
+        suppress = getattr(getattr(self, "action_results", None), "suppressed", None)
+        if suppress is None:
+            self.refresh_devices()
+            return
+        with suppress():
+            self.refresh_devices()
 
     def is_device_overview_current(self, device: str, generation: int) -> bool:
         """接收排队概览时重新校验拓扑；代次仅用于传递，不进入设备存储。"""
@@ -423,7 +433,7 @@ class ADBDeviceMixin(_ADBControllerBase):
     def _process_disconnect_result(self, result: dict):
         ip = result.get("device_ip") or result.get("ip", "unknown")
         if result.get("success"):
-            self.refresh_devices()
+            self._refresh_devices_background()
             self._emit_operation("disconnect", True, f"Successfully disconnected {ip}")
         else:
             self._emit_operation(
@@ -440,7 +450,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         """报告重启命令的提交结果；延迟刷新只更新设备列表，不推断设备启动完成。"""
         ip = result.get("device_ip") or result.get("ip", "unknown device")
         if result.get("requires_refresh", result.get("success", False)):
-            QTimer.singleShot(10_000, self.signals, self.refresh_devices)
+            QTimer.singleShot(10_000, self.signals, self._refresh_devices_background)
         if result.get("success"):
             self._emit_operation(
                 "restart", True,
@@ -460,7 +470,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         if result.get("success"):
             # 重启后既有连接与能力状态都已失效，先通知运行时重测再安排刷新。
             self.device_lifecycle.note_adb_server_restarted()
-            QTimer.singleShot(3000, self.signals, self.refresh_devices)
+            QTimer.singleShot(3000, self.signals, self._refresh_devices_background)
             self._emit_operation(
                 "restart_adb",
                 True,
@@ -482,7 +492,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         mode = result.get("mode", "?")
         if result.get("requires_refresh", result.get("success", False)):
-            QTimer.singleShot(10_000, self.signals, self.refresh_devices)
+            QTimer.singleShot(10_000, self.signals, self._refresh_devices_background)
         if result.get("success"):
             self._emit_operation(
                 "reboot_mode", True,

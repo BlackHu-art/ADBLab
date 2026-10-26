@@ -26,6 +26,8 @@ class DeviceStore:
     """
 
     _lock = RLock()
+    # 状态锁只保护内存快照；持久化锁串行化慢 I/O，避免 GUI 读取等待 fsync。
+    _persist_lock = RLock()
     _devices = {}
     _file_path = user_config_path("connected_devices.yaml")
     _legacy_file_path = resource_path("resources/connected_devices.yaml")
@@ -38,6 +40,19 @@ class DeviceStore:
 
     @classmethod
     def load(cls, cancel_event: Event | None = None):
+        """串行化启动加载与保存，并保留启动取消的有界等待语义。"""
+        if cancel_event is None:
+            cls._persist_lock.acquire()
+        else:
+            while not cls._persist_lock.acquire(timeout=0.05):
+                cls._check_cancelled(cancel_event)
+        try:
+            cls._load(cancel_event)
+        finally:
+            cls._persist_lock.release()
+
+    @classmethod
+    def _load(cls, cancel_event: Event | None = None):
         """加载用户设备文件；加载失败保留内存快照并备份损坏文件。
 
         端点防护可能瞬时锁文件或在文件尾部附加扫描块，因此读取失败按瞬态
@@ -189,9 +204,11 @@ class DeviceStore:
 
     @classmethod
     def save(cls):
-        """在线程锁内保存 IP 连接历史，不清除当前进程的 USB 属性缓存。"""
-        with cls._lock:
-            cls._persist_snapshot(copy.deepcopy(cls._devices))
+        """保存 IP 连接历史；落盘期间不持有内存状态锁。"""
+        with cls._persist_lock:
+            with cls._lock:
+                snapshot = copy.deepcopy(cls._devices)
+            cls._persist_snapshot(snapshot)
 
     @classmethod
     def _persist_snapshot(cls, snapshot: dict, *, cancel_event: Event | None = None) -> None:
@@ -273,28 +290,32 @@ class DeviceStore:
     @classmethod
     def upsert_devices(cls, devices: list[dict]):
         """批量更新属性；涉及 IP 记录时落盘一次，USB 属性保留在内存。"""
-        with cls._lock:
-            changed = False
-            for device in devices:
-                if not isinstance(device, dict):
-                    continue
-                ip = str(device.get("ip", "")).strip()
-                if not ip:
-                    continue
-                alias = str(device.get("alias") or f"device_{ip}")
-                info = {
-                    "ip": ip,
-                    "Brand": device.get("Brand", "Unknown"),
-                    "Model": device.get("Model", "Unknown"),
-                    "Aversion": str(device.get("Aversion", "")),
-                }
-                previous = cls._devices.get(alias)
-                cls._devices[alias] = info
-                # 同一别名从 IP 改为 USB 时，也要删除磁盘中的旧连接地址。
-                if cls._connection_snapshot({"old": previous, "new": info}):
-                    changed = True
-            if changed:
-                cls._persist_snapshot(copy.deepcopy(cls._devices))
+        with cls._persist_lock:
+            with cls._lock:
+                changed = False
+                snapshot = None
+                for device in devices:
+                    if not isinstance(device, dict):
+                        continue
+                    ip = str(device.get("ip", "")).strip()
+                    if not ip:
+                        continue
+                    alias = str(device.get("alias") or f"device_{ip}")
+                    info = {
+                        "ip": ip,
+                        "Brand": device.get("Brand", "Unknown"),
+                        "Model": device.get("Model", "Unknown"),
+                        "Aversion": str(device.get("Aversion", "")),
+                    }
+                    previous = cls._devices.get(alias)
+                    cls._devices[alias] = info
+                    # 同一别名从 IP 改为 USB 时，也要删除磁盘中的旧连接地址。
+                    if cls._connection_snapshot({"old": previous, "new": info}):
+                        changed = True
+                if changed:
+                    snapshot = copy.deepcopy(cls._devices)
+            if snapshot is not None:
+                cls._persist_snapshot(snapshot)
 
     @classmethod
     def get_all(cls):

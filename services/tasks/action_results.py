@@ -174,6 +174,15 @@ class ActionResults:
         finally:
             _scope.reset(token)
 
+    @contextmanager
+    def suppressed(self) -> Iterator[None]:
+        """隔离内部维护请求，避免后台刷新被登记成用户动作的子任务。"""
+        token = _scope.set(None)
+        try:
+            yield
+        finally:
+            _scope.reset(token)
+
     def run(
         self,
         spec: ActionSpec,

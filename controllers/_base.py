@@ -235,21 +235,35 @@ class _ADBControllerBase:
                 snapshot = self.operation_manager.get(
                     _metadata.operation_id, expected_generation=_metadata.generation_token,
                 )
+            if snapshot is None:
+                # 取消会先移除活动操作；晚到结果仍要按取消前的终态收口，
+                # 不能把成功返回的单元误报成身份校验失败。
+                snapshot = self.operation_manager.terminal(
+                    _metadata.operation_id,
+                    expected_generation=_metadata.generation_token,
+                )
             unit = next((
                 item for item in (snapshot.unit_results if snapshot is not None else ())
                 if item.unit_id == _metadata.unit_id
             ), None)
             payload = dict(payload) if isinstance(payload, dict) else {}
+            terminal_cancelled = (
+                snapshot is not None and snapshot.state is OperationState.CANCELLED
+            )
             payload.update(
                 _validated_unit=True,
                 success=unit is not None and unit.state is OperationState.SUCCEEDED,
                 cancelled=(unit is not None and unit.state is OperationState.CANCELLED)
+                or terminal_cancelled
                 or bool(payload.get("cancelled")),
             )
             if not payload["success"]:
-                payload["error"] = (
-                    unit.message if unit else "操作结果未通过身份校验或任务已结束"
-                )
+                if unit is not None:
+                    payload["error"] = unit.message
+                elif terminal_cancelled and snapshot is not None:
+                    payload["error"] = snapshot.message or "操作已取消"
+                else:
+                    payload["error"] = "操作结果未通过身份校验或任务已结束"
         self.action_results.complete(job, payload)
 
     def _handle_async_response(self, method_name: str, result):

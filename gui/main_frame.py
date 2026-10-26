@@ -210,6 +210,7 @@ class MainFrame(FluentWindow):
         self._package_query_invalidated = False
         self.task_supervisor = QtTaskSupervisor()
         self.task_supervisor.setParent(self)
+        QtTaskSupervisor.bind_shared(self.task_supervisor)
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
         self._adb_pairing = None

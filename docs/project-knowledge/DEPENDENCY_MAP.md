@@ -89,9 +89,10 @@ ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 提供桌面 GUI、
 `--mobileperf-worker --config <path>`、`--self-check packaging`，以及隔离原生工具环境的
 内部 `--adblab-native-launch` 入口；后者由 `core/native_process.py` 调用，不是用户设备操作接口。
 
-主应用的出站 HTTP 仅限应用更新检查：匿名读取 `utils/app_metadata.py` 中的 GitHub 公共
-Releases API，复用 QtNetwork 与平台 TLS 后端且不携带令牌。About 的 GitHub 链接和 Perfetto
-链接仍只交给系统浏览器打开。
+主应用有两条出站 HTTPS 流，均复用 QtNetwork 与平台 TLS 后端且不携带令牌：应用更新检查匿名
+读取 `utils/app_metadata.py` 中的 GitHub 公共 Releases API；Windows 安装版用户显式下载安装包时，
+仅访问更新检查返回的 GitHub Releases 资产下载地址（`/releases/download/...`）及允许的
+`release-assets.githubusercontent.com` 重定向，下载大小和 SHA-256 在交接前再次校验。About 的 GitHub 链接和 Perfetto 链接仍只交给系统浏览器打开。
 
 ### ADB 命令接口地图
 

@@ -13,6 +13,7 @@ from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
 from services.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
+from services.tasks.action_results import ActionResults
 
 
 def _restart_adb_controller(events):
@@ -20,6 +21,7 @@ def _restart_adb_controller(events):
     controller.signals = Mock()
     controller.log_service = Mock()
     controller.refresh_devices = Mock()
+    controller.action_results = ActionResults(lambda _result: None)
     controller.device_lifecycle = SimpleNamespace(
         note_adb_server_restarted=lambda: events.append("notify"),
     )
@@ -41,7 +43,9 @@ def test_restart_adb_success_notifies_runtime_before_refresh():
         controller._process_restart_adb_result({"success": True, "raw_output": "ok"})
 
     assert events == ["notify", "timer", "feedback"]
-    timer.assert_called_once_with(3000, controller.signals, controller.refresh_devices)
+    timer.assert_called_once_with(
+        3000, controller.signals, controller._refresh_devices_background,
+    )
     controller.signals.operation_completed.emit.assert_called_once_with(
         "restart_adb", True, "ADB service has been restarted: ok",
     )
@@ -71,6 +75,7 @@ def test_restart_refresh_does_not_claim_unverified_reboot_completion(success):
     controller.signals = Mock()
     controller.log_service = Mock()
     controller.refresh_devices = Mock()
+    controller.action_results = ActionResults(lambda _result: None)
     result = {
         "device_ip": "device-1", "success": success, "requires_refresh": True,
         "error": "Reboot result unknown after timeout",
@@ -115,8 +120,8 @@ def test_cross_platform_builds_do_not_run_full_gui_test_suite():
 def test_release_job_keeps_same_version_immutable_and_prunes_old_tags():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 
-    assert 'gh release view "$TAG"' in workflow
-    assert "git ls-remote --exit-code --tags origin" in workflow
+    assert 'RELEASE_TAGS="$(gh release list' in workflow
+    assert 'git ls-remote --tags origin "refs/tags/$TAG"' in workflow
     assert "exit 1" in workflow
     assert 'gh release create "$TAG"' in workflow
     assert "softprops/action-gh-release" not in workflow
