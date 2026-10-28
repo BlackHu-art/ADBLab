@@ -349,6 +349,22 @@ class LiveLogcatPage(QWidget):
     def _export(self):
         return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._export()
 
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """向应用现有关闭屏障登记尚未完成的本地日志导出。"""
+        return self._stream_controller.register_shutdown_tasks(
+            supervisor, owner_id=owner_id, task_prefix=task_prefix,
+        )
+
+    @Slot(bool, str)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
+    def _on_export_completed(self, success: bool, message: str) -> None:
+        """在页面所属 GUI 线程消费导出结果。"""
+        self._stream_controller._on_export_completed(success, message)
+
+    @Slot()
+    def _on_export_finished(self) -> None:
+        """在页面所属 GUI 线程复核导出 join 并释放其归属。"""
+        self._stream_controller._on_export_finished()
+
     @Slot(object)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
     def _on_lines_signal(self, batch: LogcatBatch):
         return (
@@ -513,7 +529,7 @@ class LiveLogcatPage(QWidget):
     def closeEvent(self, event):
         """先隐藏并清理后台资源，完成后再释放页面会话。"""
         export_worker = getattr(self._stream_controller, "_export_worker", None)
-        export_pending = export_worker is not None and export_worker.isRunning()
+        export_pending = export_worker is not None
         if self._close_ready:
             if export_pending:
                 event.ignore()

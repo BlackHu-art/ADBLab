@@ -828,7 +828,7 @@ class PerformancePage(QWidget):
             self._shutdown_registered = True
             return tuple(task_ids)
         stop_thread = self._stop_thread
-        runner_active = self._runner.is_running()
+        runner_active = self._runner.has_active_resources()
         if runner_active or (stop_thread is not None and stop_thread.is_alive()):
             self._library_controller.request_cancel()
             runner_task_id = f"{task_prefix}-mobileperf"
@@ -838,11 +838,14 @@ class PerformancePage(QWidget):
                     self._runner.request_stop()
 
                 def wait_runner(timeout: float) -> bool:
-                    stop_thread.join(max(0.0, float(timeout)))
-                    return not stop_thread.is_alive() and not self._runner.is_running()
+                    deadline = time.monotonic() + max(0.0, float(timeout))
+                    stop_thread.join(max(0.0, deadline - time.monotonic()))
+                    return (not stop_thread.is_alive() and self._runner.wait(
+                        max(0.0, deadline - time.monotonic()),
+                    ))
 
                 def runner_running() -> bool:
-                    return stop_thread.is_alive() or self._runner.is_running()
+                    return stop_thread.is_alive() or self._runner.has_active_resources()
 
                 supervisor.register(
                     runner_task_id,
@@ -858,17 +861,20 @@ class PerformancePage(QWidget):
                     self._runner.stop,
                     name="adblab-mobileperf-stop",
                 )
+                def wait_stopped_runner(timeout: float) -> bool:
+                    deadline = time.monotonic() + max(0.0, float(timeout))
+                    return (runner_handle.wait(max(0.0, deadline - time.monotonic()))
+                            and self._runner.wait(max(0.0, deadline - time.monotonic())))
+
                 supervisor.register(
                     runner_task_id,
                     owner_id=owner_id,
                     kind="mobileperf_runner",
                     request_stop=runner_handle.request_stop,
-                    # stop 返回仍可能未能终止进程，线程结束不能代替资源归零。
-                    wait=lambda timeout: (
-                        runner_handle.wait(timeout) and not self._runner.is_running()
-                    ),
+                    # stop 返回仍可能有旧代管道，真实 join 后才允许资源归零。
+                    wait=wait_stopped_runner,
                     is_running=lambda: (
-                        runner_handle.is_running() or self._runner.is_running()
+                        runner_handle.is_running() or self._runner.has_active_resources()
                     ),
                     force_stop=self._runner.force_stop,
                     error_type=runner_handle.get_error_type,
@@ -890,7 +896,7 @@ class PerformancePage(QWidget):
         self._pending_log_rows = []
         if self._run_controller.starting:
             self._run_controller.cancel_start()
-        elif self._runner.is_running() and not self._stopping:
+        elif self._runner.has_active_resources() and not self._stopping:
             self._library_controller.request_cancel()
             if self._shutdown_registered:
                 # 应用关闭时 runner 已交给全局监督器；这里只发出轻量停止意图，
@@ -914,7 +920,8 @@ class PerformancePage(QWidget):
         """等待 runner、停止线程和包名查询线程全部真实退出。"""
 
         starting = self._run_controller.starting
-        if not starting and not self._runner.is_running() and not self._runner_finished_handled:
+        if (not starting and self._runner.is_current_run_complete()
+                and not self._runner_finished_handled):
             self._mark_runner_finished()
         for worker in tuple(self._disposing_package_workers):
             if not self._package_worker_active(worker):
@@ -924,7 +931,7 @@ class PerformancePage(QWidget):
             starting
             or self._disposing_package_workers
             or self._result_loader.is_running()
-            or self._runner.is_running()
+            or self._runner.has_active_resources()
             or (stop_thread is not None and stop_thread.is_alive())
         )
         if resources_running:

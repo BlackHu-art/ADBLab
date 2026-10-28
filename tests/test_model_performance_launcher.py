@@ -549,6 +549,9 @@ def test_performance_page_failed_stop_keeps_controls_active_for_retry():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="device-1")
     runner = Mock()
+    runner.has_active_resources.side_effect = lambda: runner.is_running()
+    runner.is_current_run_complete.side_effect = lambda: not runner.is_running()
+    runner.wait.side_effect = lambda _timeout: not runner.has_active_resources()
     runner.is_running.return_value = True
     runner.latest_result_dir.return_value = ""
     runner.latest_report_file.return_value = ""
@@ -602,6 +605,9 @@ def test_performance_shutdown_tracks_process_after_stop_worker_returns(
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="device-1")
     runner = Mock()
+    runner.has_active_resources.side_effect = lambda: runner.is_running()
+    runner.is_current_run_complete.side_effect = lambda: not runner.is_running()
+    runner.wait.side_effect = lambda _timeout: not runner.has_active_resources()
     runner.is_running.return_value = True
 
     def stop():

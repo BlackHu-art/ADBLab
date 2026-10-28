@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-24
+last_verified: 2026-10-29
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -134,7 +134,8 @@ AppSettings 以可重入锁保护读取、更新、计时器引用和写盘快�
 GUI 首次加载可选择延后旧版本/旧路径设置的迁移回写，内存规范化和缩放读取保持同步；图标
 首帧后的后台阶段使用相同写锁保存最新快照。普通调用仍立即回写；延后保存失败记录错误、
 保留待写状态，后续正常保存成功才清除，不改变 schema 或文件格式。
-DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用临时文件、`fsync` 和 `os.replace`。
+DeviceStore 使用持久化锁串行化加载与保存，内存状态由独立可重入锁保护；写盘使用临时文件、
+`fsync` 和 `os.replace`，慢写盘不持有内存状态锁。
 连接下拉框和磁盘记录仅保留通过 `normalize_adb_connect_target` 校验的 IPv4:port 或 [IPv6]:port，
 合法记录保留品牌、型号等元数据。USB 序列号、模拟器和其他非 IP 标识仅缓存在当前进程，
 不写入连接历史；旧文件加载时清理非 IP 条目并原子回写。清理写入失败时保留磁盘原文件，
@@ -142,6 +143,9 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 空 YAML 文档与空映射表示空快照；列表、布尔值、数值和字符串根节点属于损坏数据，加载失败时
 保留已有内存快照并尝试备份原文件，不能因为值为空或为零而清空设备信息。
 读取会重试瞬态 I/O 错误；尾部附加内容可恢复出合法映射文档时采用该快照并尝试规范化回写。
+原文件未读取且未成功备份时按来源路径保留写保护，后续保存抛出 OSError，不以旧或空内存
+覆盖原文件；成功加载发布快照或完整备份后解除。加载在发布前取消或异常退出会恢复保护，
+切换路径或清空内存不会解除另一来源的保护；不自动合并故障期间的编辑，也不改变 YAML 格式。
 进程首次加载时若没有历史内存快照且文件持续不可读，仍无法凭空恢复其中的元数据；在线设备
 发现由独立扫描链路提供。
 
@@ -165,7 +169,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | --- | --- | --- | --- | --- | --- |
 | 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；受支持版本的未知键加载时剔除并记录 WARNING；未来版本在加载时不立即改写，未知字段经 `_future_extra` 在保存时合并回写 |
 | 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；不含本机保存路径，但仍带字体、主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
-| IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<ip>` | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
+| IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<ip>` | `DeviceStore.load/save/upsert_devices` | 持久化锁串行加载／保存，独立内存锁；临时文件 + fsync + `os.replace`；未读未备份文件写保护 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |

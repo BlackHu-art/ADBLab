@@ -760,33 +760,19 @@ class ADB:
         return ret_dict
 
     def get_focus_activity(self):
-        """
-        通过dumpsys window windows获取activity名称  window名?
-        """
-        activity_name = ""
+        """提取焦点组件；兼容可选 Android 用户字段，缺失或畸形时返回空串。"""
         activity_line = ""
-        activity_line_split = ""
         dumpsys_result = self.run_shell_cmd("dumpsys window windows")
-        dumpsys_result_list = dumpsys_result.split("\n")
-        for line in dumpsys_result_list:
-            if line.find("mCurrentFocus") != -1:
+        for line in dumpsys_result.splitlines():
+            if "mCurrentFocus" in line:
                 activity_line = line.strip()
-        #      Android
-
-        if activity_line:
-            activity_line_split = activity_line.split(" ")
-        else:
-            return activity_name
-        logger.debug(
-            "foreground activity parsed: token_count=%s",
-            len(activity_line_split),
+        # 用户字段不是组件名；完整匹配可避免短行或损坏输出被当成有效窗口。
+        match = re.fullmatch(
+            r"mCurrentFocus\s*=\s*Window\{[^\s{}]+\s+"
+            r"(?:u[0-9]+\s+)?([^\s{}/]+/[^\s{}]+)\s*\}",
+            activity_line,
         )
-        if len(activity_line_split) > 1:
-            if activity_line_split[1] == "u0":
-                activity_name = activity_line_split[2].rstrip("}")
-            else:
-                activity_name = activity_line_split[1]
-        return activity_name
+        return match.group(1) if match else ""
 
     def get_foreground_process(self):
         """

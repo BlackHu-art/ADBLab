@@ -512,7 +512,66 @@ def test_run_cleanup_failure_is_reported_as_failure_not_timeout(monkeypatch, fai
     monkeypatch.setattr(execution, "resolve_command", lambda command: command)
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_args: None)
-    result = execution.CommandRunner.run(["synthetic"], timeout=0.1)
-    assert not result.success
-    assert result.outcome == "failed"
-    assert process.stdout.closed and process.stderr.closed
+    try:
+        result = execution.CommandRunner.run(["synthetic"], timeout=0.1)
+        assert not result.success
+        assert result.outcome == "failed"
+        assert process.stdout.closed and process.stderr.closed
+        assert execution.CommandRunner.active_count() == 1
+        assert not execution.CommandRunner.wait_for_idle(0)
+    finally:
+        process.poll.side_effect = None
+        process.poll.return_value = -9
+        assert execution.CommandRunner.wait_for_idle(0)
+
+
+@pytest.mark.parametrize("text_mode", [False, True])
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_run_finished_handle_keeps_stream_check_contract_without_residual(
+    monkeypatch, text_mode, returncode,
+):
+    from core import native_process
+    from tests.test_native_command_scope import ControlledProcess
+
+    process = ControlledProcess()
+    payload = "中文\n" if text_mode else b"INPUT\0\xff"
+    error_output = "ERR" if text_mode else b"ERR"
+    inputs = []
+
+    def communicate(input=None, timeout=None):
+        inputs.append(input)
+        process.returncode = returncode
+        return payload, error_output
+
+    process.communicate = communicate
+    process.wait = lambda timeout=None: process.returncode
+    monkeypatch.setattr(native_process, "popen_native", lambda *_args, **_kwargs: process)
+    command = ["synthetic-install"]
+    if returncode:
+        with pytest.raises(subprocess.CalledProcessError) as failure:
+            native_process.run_native(command, input=payload, capture_output=True, check=True)
+        result = failure.value
+        assert result.cmd == command
+        assert result.output == payload
+    else:
+        result = native_process.run_native(command, input=payload, capture_output=True, check=True)
+        assert result.args == command
+        assert result.stdout == payload
+    assert result.returncode == returncode
+    assert result.stderr == error_output
+    assert inputs == [payload]
+    assert process.kill_count == 0
+    assert native_process.native_cleanup_count() == 0
+    assert native_process.wait_for_native_cleanup(0)
+
+
+def test_run_spawn_failure_preserves_exception_without_cleanup_obligation(monkeypatch):
+    from core import native_process
+
+    def spawn(*_args, **_kwargs):
+        raise FileNotFoundError("synthetic spawn failure")
+
+    monkeypatch.setattr(native_process, "popen_native", spawn)
+    with pytest.raises(FileNotFoundError, match="synthetic spawn failure"):
+        native_process.run_native(["synthetic-install"])
+    assert native_process.native_cleanup_count() == 0

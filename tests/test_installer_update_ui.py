@@ -118,6 +118,12 @@ class Handoff:
     def mark_shutdown_success(self, success):
         self.results.append(success)
 
+    def has_pending_helper(self):
+        return False
+
+    def wait_pending_helper(self, timeout):
+        return True
+
 
 def _adapter(qt_application, owner):
     spec = importlib.util.find_spec("gui.adapters.installer_handoff")
@@ -229,6 +235,103 @@ def test_preparing_signal_cannot_start_second_attempt(qt_application):
         adapter.deleteLater()
 
 
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_failed_helper_stays_supervised_after_prepare_thread_exit(
+    qt_application, tmp_path, monkeypatch, cancelled,
+):
+    from core import installer_handoff as module
+    from tests.test_installer_handoff import fake_handoff_attempt
+
+    owner, verified, process = fake_handoff_attempt(tmp_path, monkeypatch)
+    entered, released = threading.Event(), threading.Event()
+
+    def read(*args, **kwargs):
+        entered.set()
+        assert released.wait(3)
+        if cancelled:
+            raise InterruptedError("controlled cancellation")
+        return b"INVALID"
+
+    monkeypatch.setattr(module, "read_pipe_line", read)
+    adapter = _adapter(qt_application, owner)
+    states = []
+    adapter.changed.connect(states.append)
+    ready = QSignalSpy(adapter.ready)
+    try:
+        assert adapter.start(verified)
+        assert entered.wait(1)
+        if cancelled:
+            adapter.cancel()
+            adapter.cancel()
+        released.set()
+        wait_until(qt_application, lambda: ("cancelled" if cancelled else "error") in states)
+        assert adapter.is_running()
+        assert not adapter.start(verified)
+        assert not adapter.wait(0)
+        assert process.wait_calls == [5], "GUI polling must never wait for the helper"
+        from gui.close_controller import CloseController
+        from tests.test_phase2_mainframe_shutdown_gate import _frame
+
+        frame = _frame(lambda: None)
+        frame._installer_handoff = adapter
+        CloseController(frame)._register_application_shutdown_tasks()
+        supervisor = frame.task_supervisor.supervisor
+        assert any(
+            item.kind == "installer_handoff_prepare" and item.running
+            for item in supervisor.active_snapshot()
+        )
+        adapter.prepare_shutdown(preserve_prepared=True)
+        assert not adapter.wait(0.01)
+        assert adapter.is_running()
+        assert owner._process is process
+        process.returncode = 1
+        assert adapter.wait(0)
+        assert not adapter.is_running()
+        assert process.stdout.closed
+        assert any(
+            item.kind == "installer_handoff_prepare" and not item.running
+            for item in supervisor.active_snapshot()
+        )
+        qt_application.processEvents()
+        assert ready.count() == 0
+    finally:
+        released.set()
+        process.returncode = 1
+        adapter.prepare_shutdown()
+        assert adapter.wait(3)
+        adapter.deleteLater()
+
+
+def test_ready_helper_is_preserved_without_wait_until_explicit_abort(
+    qt_application, tmp_path, monkeypatch,
+):
+    from tests.test_installer_handoff import fake_handoff_attempt
+
+    owner, verified, process = fake_handoff_attempt(tmp_path, monkeypatch, answer=b"READY")
+    adapter = _adapter(qt_application, owner)
+    ready = QSignalSpy(adapter.ready)
+    try:
+        assert adapter.start(verified)
+        wait_until(qt_application, lambda: ready.count() == 1)
+        assert not adapter.is_running()
+        adapter.prepare_shutdown(preserve_prepared=True)
+        assert adapter.wait(0.01)
+        assert process.wait_calls == []
+        assert owner.prepared
+        assert process.stdin is not None and not process.stdin.closed
+        owner.mark_shutdown_success(True)
+        # COMMIT 的单次发送与根入口顺序由 core 直接测试覆盖。
+        owner.abort()
+        assert adapter.is_running()
+        process.returncode = 0
+        assert adapter.wait(0)
+    finally:
+        process.returncode = 0
+        adapter.prepare_shutdown()
+        assert adapter.wait(3)
+        adapter.deleteLater()
+
+
 @pytest.mark.parametrize("case", [
     "success", "ordinary", "not_prepared", "preparation", "historical_residual",
     "residual", "forced", "error_type", "failed", "timed_out", "no_finalizer",
@@ -250,7 +353,7 @@ def test_handoff_requires_explicit_successful_shutdown(qt_application, monkeypat
         _shutdown_had_residual=case == "historical_residual", _shutdown_results=results,
         _shutdown_preparation_failures=(object(),) if case == "preparation" else (),
         _close_started=True, _close_ready=False, _shutdown_owner_id="app", close=Mock(),
-        setWindowTitle=Mock(), log_service=Mock(),
+        setWindowTitle=Mock(), log_service=Mock(), findChildren=Mock(return_value=[]),
     )
     monkeypatch.setattr("gui.close_controller.QTimer.singleShot", lambda _delay, cb: cb())
     CloseController(frame)._on_application_finalized(
@@ -389,7 +492,7 @@ def test_other_ui_cleanup_failure_cannot_skip_installer_cancellation(qt_applicat
 
 
 def test_installed_window_wires_explicit_download_prepare_and_real_close(
-    qt_application, monkeypatch,
+    qt_application, monkeypatch, isolated_settings_client_detection,
 ):
     from core.settings_manager import DEFAULTS, AppSettings
     from gui.main_frame import MainFrame

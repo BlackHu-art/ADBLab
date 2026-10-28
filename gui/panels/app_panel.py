@@ -1292,6 +1292,7 @@ class AppPanel(BasePanel):
             item for item in getattr(self, "_monkey_active_devices", ()) if item != device
         )
         if pending_devices:
+            self._update_monkey_presentation()
             return
         self._monkey_pending_count = 0
         self._monkey_pending_devices = set()

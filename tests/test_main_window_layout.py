@@ -50,9 +50,9 @@ from tests.ui_geometry_helpers import (
 
 
 @pytest.fixture(autouse=True)
-def isolate_settings_client_detection(monkeypatch):
+def isolate_settings_client_detection(isolated_settings_client_detection):
     """布局事件可能兑现 Settings 延迟检测；本模块不启动任何本地 ADB 探针。"""
-    monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
+    return isolated_settings_client_detection
 
 
 @pytest.fixture(autouse=True)

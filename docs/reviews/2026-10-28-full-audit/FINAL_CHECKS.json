@@ -1,0 +1,69 @@
+{
+  "fingerprints": 2488,
+  "differences": [],
+  "review_counts": {
+    "已实质审查": 817,
+    "未审": 1667,
+    "仅检索/粗读": 4
+  },
+  "owned_python": 766,
+  "unreviewed_owned_python": [],
+  "required_files_present": true,
+  "report_trailing_whitespace": [],
+  "commands": [
+    {
+      "command": [
+        "git",
+        "branch",
+        "--show-current"
+      ],
+      "exit_code": 0,
+      "output": "ui-design\n"
+    },
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "output": "574f0d2b39ae55ce126cb60db58cfefaa0d64a5e\n"
+    },
+    {
+      "command": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "exit_code": 0,
+      "output": "?? demo_a_20261026_233520.png\n?? demo_b_20261026_233520.png\n?? docs/design/\n?? docs/reviews/\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--stat"
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "S:\\CodeSpaces\\PyCharm\\ADBLab\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/check_doc_links.py"
+      ],
+      "exit_code": 0,
+      "output": "OK: 105 个项目知识文档的链接与 frontmatter 全部通过\n"
+    }
+  ]
+}

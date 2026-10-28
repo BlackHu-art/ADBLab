@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-24
+last_verified: 2026-10-29
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 ---
@@ -35,6 +35,11 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 | Low | ADB 客户端冷启动耗时缺少不同主机的验证矩阵 | 当前识别已有后台串行探测、逐项回填与动态等待预算，失败不入缓存；准确预算见 [客户端选择与执行模式](../guides/ADB_FAST.md#客户端选择与执行模式)。仍需测量不同主机和安全软件环境下的首次识别，不能把单机结果当作固定性能 | 待确认 |
 | Low | 历史 Qt 原生退出缺少当时的致命消息及线程堆栈，无法唯一归因 | 已用合成线程复现并修复布局测试销毁活动 QThread 的清理缺口；该机制与历史 fast-fail 一致，但不证明历史唯一触发。后续异常需同时保留 Qt 致命消息、测试阶段及真实进程退出码，不能由单次复跑通过宣布所有原生退出问题消失 | 历史证据边界，当前缺口已有回归 |
 
+本地修复及剩余平台验收另见[审查修复执行记录](../reviews/2026-10-28-full-audit/IMPLEMENTATION.md)。
+其中原生退出探针只覆盖受控 Windows 离屏场景，不证明历史退出异常的唯一原因，也不替代
+真实磁盘阻塞、Linux/macOS 窗口管理器和真实安装交接验收。已有 UI 断言及类型检查基线失败
+仍未闭环，准确节点与基线对照见[修复验证记录](../reviews/2026-10-28-full-audit/REMEDIATION_VALIDATION.md)。
+
 ## 应用内升级验收边界
 
 - 内置下载与独立交接已实现，尚未正式发布；当前官方 v3.3.2 只有 ZIP，缺少前后正式 setup
@@ -57,7 +62,7 @@ UI-10（设置卡首次字体度量）移出活动清单；当前机制与回归
 
 | 编号 / 优先级 | 差异与证据 | 最小优化方向及验收入口 | 状态 |
 | --- | --- | --- | --- |
-| UI-05 / 后续 | 文件大目录仍一次提交全部 UI 行。[FileExplorerList._on_ls_result](../../gui/features/file_explorer/list.py) 已暂停重绘与排序，但仍在 GUI 线程一次循环构造全部行，最后再排序和过滤；尚无当前硬件下的大目录响应耗时结论 | 用合成 1k/10k 条目录测量快照到可交互耗时，再决定是否分批或调整模型；不直接进行大规模重构。保持 request_id、路径归属、排序、最新过滤词与选择语义。关联 [排序](../../tests/test_file_explorer_ordering.py)、[搜索](../../tests/test_file_explorer_search.py)、[文件视图](../../tests/test_file_explorer_visual.py) | 规模影响待测量 |
+| UI-05 / 后续 | [FileExplorerList](../../gui/features/file_explorer/list.py) 在大目录（超过 128 条）中按每批最多 64 行或约 6 ms 构造行，并在大列表过滤时让出事件循环；最终 Qt 排序仍是一次原生调用，排序与绘制的规模影响尚无当前硬件测量结论 | 用合成 1k/10k 条目录测量首批显示、全部完成、事件循环最大间隔和峰值内存，再决定是否调整排序或模型；不直接进行大规模重构。保持 request_id、路径归属、排序、最新过滤词与选择语义。关联 [排序](../../tests/test_file_explorer_ordering.py)、[搜索](../../tests/test_file_explorer_search.py)、[文件视图](../../tests/test_file_explorer_visual.py) | 分批已实现，剩余规模影响待测量 |
 | UI-06 / 可选 | 局部动效没有统一减少动画偏好。设备选择和连接区有调用级动画参数，设备详情、滚轮和 [FrameAnimation](../../gui/widgets/frame_animation.py) 未共同消费系统/应用级减少动画决策。这不是已有设置失效，也不表示当前高刷时钟无效 | 先决定是否提供偏好，再统一决策入口；不能仅把时长归零而遗漏终帧、焦点、布局门禁和二维码显示确认。后续覆盖 [时钟](../../tests/test_frame_animation.py)、[滚轮](../../tests/test_settings_scroll.py)、三类设备展开测试 | 产品决策，待确认 |
 | UI-07 / 可选 | 表格列宽与排序分组规则尚未统一。文件/应用主列表支持手动列宽；[归档结果](../../gui/widgets/run_results.py) 和 [多设备采集状态](../../gui/widgets/performance_sessions.py) 仍采用自动列宽。文件列表大小/时间排序固定父目录及目录分组，名称/类型排序使用普通文本排序 | 先决定哪些表格需要手动调整以及目录置顶规则，不能仅为外观一致替换现有排序和宽度策略；按对应表格测试验证大字号、长文本、过滤与排序后选择 | 产品决策，待确认 |
 

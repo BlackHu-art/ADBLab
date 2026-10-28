@@ -741,3 +741,6 @@ def test_logcat_top_status_preserves_full_text_without_shrinking_output(qt_appli
         _assert_single_line_status(page)
     finally:
         page.close()
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")

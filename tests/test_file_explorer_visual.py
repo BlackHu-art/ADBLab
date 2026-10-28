@@ -824,3 +824,6 @@ def test_file_preview_closed_image_result_cleans_temporary_download(
         assert page.preview_image._source_pixmap.isNull()
     finally:
         page.close()
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")

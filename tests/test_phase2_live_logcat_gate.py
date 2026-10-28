@@ -828,7 +828,8 @@ def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():
     process = StreamingProcess()
     process_started = threading.Event()
     failed_probe = threading.Event()
-    recovered_probe = threading.Event()
+    recovery_commit_waiting = threading.Event()
+    release_recovery_commit = threading.Event()
     allow_recovery = threading.Event()
     commands = []
     emitted = []
@@ -843,8 +844,15 @@ def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():
         if not allow_recovery.is_set():
             failed_probe.set()
             return CommandResult(False, error="offline", returncode=1)
-        recovered_probe.set()
         return CommandResult(True, output="321\n", returncode=0)
+
+    real_commit = worker._commit_filter_pids
+
+    def commit_pids(package, generation, pids):
+        if pids == frozenset({321}):
+            recovery_commit_waiting.set()
+            assert release_recovery_commit.wait(1), "recovery commit was not released"
+        return real_commit(package, generation, pids)
 
     def collect(batch):
         emitted.extend(text for text, _level, _pid in batch.lines)
@@ -854,7 +862,10 @@ def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():
     worker.lines_ready.connect(collect, Qt.ConnectionType.DirectConnection)
     producer = threading.Thread(target=worker.run, name="logcat-probe-retry-producer")
 
-    with patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid):
+    with (
+        patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid),
+        patch.object(worker, "_commit_filter_pids", side_effect=commit_pids),
+    ):
         producer.start()
         try:
             assert process_started.wait(1)
@@ -866,10 +877,18 @@ def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():
 
             allow_recovery.set()
             assert worker.update_package("com.example.app") is True
-            assert recovered_probe.wait(1)
+            generation = worker.filter_generation
+            assert recovery_commit_waiting.wait(1)
+            assert worker._package_snapshot() == ("com.example.app", generation, frozenset())
+            release_recovery_commit.set()
+            assert _wait_until(
+                lambda: worker._package_snapshot()
+                == ("com.example.app", generation, frozenset({321}))
+            )
             process.stdout.feed("08-25 12:00:01.000 321 321 I App: recovered\n")
             assert _wait_until(lambda: any("App: recovered" in line for line in emitted))
         finally:
+            release_recovery_commit.set()
             worker.request_stop()
             producer.join(1)
 
@@ -958,6 +977,8 @@ def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids()
     }
     pid_probes = []
     probe_events = {package: threading.Event() for package in pid_answers}
+    beta_commit_waiting = threading.Event()
+    release_beta_commit = threading.Event()
     package_a_rotated = threading.Event()
     rotated_probe = threading.Event()
     worker = LogcatWorker("target", package=package_a)
@@ -975,6 +996,14 @@ def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids()
             rotated_probe.set()
         return pid_answers[package]
 
+    real_commit = worker._commit_filter_pids
+
+    def commit_pids(package, generation, pids):
+        if package == package_b:
+            beta_commit_waiting.set()
+            assert release_beta_commit.wait(1), "beta commit was not released"
+        return real_commit(package, generation, pids)
+
     def start_process(key, command, **_kwargs):
         worker._process_runner._procs[key] = process
         started_commands.append(tuple(command))
@@ -988,7 +1017,10 @@ def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids()
     worker._process_runner.start = Mock(side_effect=start_process)
     worker.lines_ready.connect(collect, Qt.ConnectionType.DirectConnection)
     producer = threading.Thread(target=worker.run, name="logcat-filter-producer")
-    with patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid):
+    with (
+        patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid),
+        patch.object(worker, "_commit_filter_pids", side_effect=commit_pids),
+    ):
         producer.start()
         try:
             assert process_started.wait(1)
@@ -1015,7 +1047,14 @@ def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids()
 
             worker.update_package(package_b)
             process.stdout.feed("08-25 12:00:01.000 999 999 I Other: wake probe\n")
+            generation = worker.filter_generation
             assert probe_events[package_b].wait(1)
+            assert beta_commit_waiting.wait(1)
+            assert worker._package_snapshot() == (package_b, generation, frozenset())
+            release_beta_commit.set()
+            assert _wait_until(
+                lambda: worker._package_snapshot() == (package_b, generation, frozenset({222}))
+            )
             process.stdout.feed("08-25 12:00:01.001 111 111 I Alpha: old-after-switch\n")
             process.stdout.feed("08-25 12:00:01.002 222 222 I Beta: new-after-switch\n")
             assert _wait_until(lambda: any("Beta: new-after-switch" in line for line in emitted))
@@ -1030,6 +1069,7 @@ def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids()
             time.sleep(worker.BATCH_INTERVAL_SECONDS * 2 + 0.05)
             assert emitted[before_failed_switch:] == []
         finally:
+            release_beta_commit.set()
             worker.request_stop()
             producer.join(1)
 

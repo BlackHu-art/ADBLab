@@ -3,7 +3,7 @@
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThread, QTimer
 
 from core.exec import CommandRunner, ProcessRunner
 from core.tasks.supervision import (
@@ -11,6 +11,7 @@ from core.tasks.supervision import (
     TaskStopResult,
     ThreadedShutdownTask,
 )
+from gui.dialogs.lifecycle import is_qobject_alive
 from gui.i18n import tr
 from gui.widgets.settings_scroll import SettingsWheelScroll
 
@@ -474,7 +475,10 @@ class CloseController:
         residual: tuple,
     ) -> None:
         """记录收尾结果并重新触发关闭事件，使 Qt 最终销毁窗口。"""
-        if not self._frame._close_started or self._frame._close_ready:
+        if (
+            not self._frame._close_started or self._frame._close_ready
+            or getattr(self._frame, "_shutdown_native_join_pending", False)
+        ):
             return
         if result is not None:
             self._frame._shutdown_results = (*self._frame._shutdown_results, result)
@@ -500,6 +504,21 @@ class CloseController:
                     count=len(self._frame._shutdown_residual)
                 )
             )
+        self._frame._shutdown_native_join_pending = True
+        self._finish_close_after_native_join(result)
+
+    def _finish_close_after_native_join(self, result: TaskStopResult | None) -> None:
+        """停止预算耗尽后仍保留原生子线程归属，确认 join 才销毁 Qt 父树。
+
+        普通残留沿用原有截止时间语义；只复核 QThread，不重跑停止、收尾或升级授权。
+        """
+        for worker in self._frame.findChildren(QThread):
+            if is_qobject_alive(worker) and not worker.wait(0):
+                QTimer.singleShot(
+                    50, self._frame, lambda: self._finish_close_after_native_join(result),
+                )
+                return
+        self._frame._shutdown_native_join_pending = False
         handoff = getattr(self._frame, "_handoff", None)
         if handoff is not None:
             # 普通退出保持原契约；升级另需严格成功证据，不能把关闭事件被接受当授权。

@@ -15,12 +15,14 @@ class _DeviceStoreState:
         self.file_path = DeviceStore._file_path
         self.legacy_path = DeviceStore._legacy_file_path
         self.devices = DeviceStore._devices
+        self.protected_paths = DeviceStore._protected_paths.copy()
         return self
 
     def __exit__(self, *_exc):
         DeviceStore._file_path = self.file_path
         DeviceStore._legacy_file_path = self.legacy_path
         DeviceStore._devices = self.devices
+        DeviceStore._protected_paths = self.protected_paths
 
 
 def test_cancelled_load_does_not_replace_memory_or_repair_disk(tmp_path, monkeypatch):
@@ -411,3 +413,187 @@ def test_load_failure_keeps_console_fallback_when_logging_service_fails(failure_
         level, message = log_service.write_developer_console.call_args.args
         assert level == "ERROR"
         assert "DeviceStore" in message and "PermissionError" in message
+
+@pytest.mark.parametrize("hot", [False, True])
+@pytest.mark.parametrize("entry", ["save", "add", "upsert"])
+def test_unread_unbacked_history_refuses_all_writes(tmp_path, monkeypatch, hot, entry):
+    with _DeviceStoreState(), patch("models.device_store.LogService"):
+        target = tmp_path / "history.yaml"
+        raw = b"original:\n  ip: 192.0.2.10:5555\n"
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        DeviceStore._devices = {"stale": {"ip": "192.0.2.11:5555"}} if hot else {}
+        monkeypatch.setattr(DeviceStore, "_LOAD_RETRIES", 0)
+        with patch("models.device_store.open", side_effect=OSError("locked"), create=True), patch(
+            "models.device_store.shutil.copy2", side_effect=OSError("backup locked")
+        ):
+            DeviceStore.load()
+        operations = {
+            "save": DeviceStore.save,
+            "add": lambda: DeviceStore.add_device("new", "192.0.2.12:5555"),
+            "upsert": lambda: DeviceStore.upsert_devices(
+                [{"alias": "new", "ip": "192.0.2.12:5555"}]
+            ),
+        }
+        with pytest.raises(OSError, match="未安全读取或备份"):
+            operations[entry]()
+        assert target.read_bytes() == raw
+        assert not list(tmp_path.glob(".connected_devices_*.yaml.tmp"))
+
+@pytest.mark.parametrize("recovery", ["reload", "backup"])
+def test_protected_history_unlocks_only_after_reload_or_backup(tmp_path, monkeypatch, recovery):
+    with _DeviceStoreState(), patch("models.device_store.LogService"):
+        target = tmp_path / "history.yaml"
+        original = {"original": {"ip": "192.0.2.10:5555", "custom": "retained"}}
+        raw = yaml.safe_dump(original).encode()
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        DeviceStore._devices = {"stale": {"ip": "192.0.2.11:5555"}}
+        monkeypatch.setattr(DeviceStore, "_LOAD_RETRIES", 0)
+        with patch("models.device_store.open", side_effect=OSError("locked"), create=True), patch(
+            "models.device_store.shutil.copy2", side_effect=OSError("backup locked")
+        ):
+            DeviceStore.load()
+        if recovery == "reload":
+            DeviceStore.load()
+            assert dict(DeviceStore.get_all()) == original
+        else:
+            with patch("models.device_store.open", side_effect=OSError("locked"), create=True):
+                DeviceStore.load()
+            backups = list(tmp_path.glob("history.yaml.corrupt-*"))
+            assert len(backups) == 1
+            assert backups[0].read_bytes() == raw
+        DeviceStore.add_device("new", "192.0.2.12:5555")
+        stored = yaml.safe_load(target.read_text("utf-8"))
+        assert "new" in stored
+        if recovery == "reload":
+            assert stored["original"] == original["original"]
+            assert "stale" not in stored
+        assert not list(tmp_path.glob(".connected_devices_*.yaml.tmp"))
+
+
+def test_protection_survives_path_switch_and_empty_memory_reset(tmp_path, monkeypatch):
+    with _DeviceStoreState(), patch("models.device_store.LogService"):
+        target = tmp_path / "protected.yaml"
+        raw = b"broken: ["
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        with patch("models.device_store.shutil.copy2", side_effect=OSError("backup locked")):
+            DeviceStore.load()
+        DeviceStore.initialize_empty()
+        other = tmp_path / "other.yaml"
+        DeviceStore._file_path = str(other)
+        DeviceStore.add_device("other", "192.0.2.12:5555")
+        assert "other" in yaml.safe_load(other.read_text("utf-8"))
+        DeviceStore._file_path = str(target.parent / "." / target.name)
+        with pytest.raises(OSError, match="未安全读取或备份"):
+            DeviceStore.save()
+        assert target.read_bytes() == raw
+
+
+def test_cancelled_unread_load_keeps_later_save_protected(tmp_path, monkeypatch):
+    from concurrent.futures import CancelledError
+
+    with _DeviceStoreState():
+        target = tmp_path / "history.yaml"
+        raw = b"original:\n  ip: 192.0.2.10:5555\n"
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        cancel = threading.Event()
+
+        def cancel_read(*_args, **_kwargs):
+            cancel.set()
+            raise OSError("locked")
+
+        with patch("models.device_store.open", side_effect=cancel_read, create=True):
+            with pytest.raises(CancelledError):
+                DeviceStore.load(cancel_event=cancel)
+        with pytest.raises(OSError, match="未安全读取或备份"):
+            DeviceStore.save()
+        assert target.read_bytes() == raw
+        assert not list(tmp_path.glob("*.corrupt-*"))
+        DeviceStore.load()
+        DeviceStore.save()
+        assert yaml.safe_load(target.read_text("utf-8")) == {"original": {"ip": "192.0.2.10:5555"}}
+
+
+def test_save_waiting_for_failed_load_cannot_overwrite_unread_history(tmp_path, monkeypatch):
+    with _DeviceStoreState(), patch("models.device_store.LogService"):
+        target = tmp_path / "history.yaml"
+        raw = b"original:\n  ip: 192.0.2.10:5555\n"
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        DeviceStore._devices = {"stale": {"ip": "192.0.2.11:5555"}}
+        monkeypatch.setattr(DeviceStore, "_LOAD_RETRIES", 0)
+        reading = threading.Event()
+        release = threading.Event()
+        saving = threading.Event()
+        outcomes = []
+
+        def locked_read(*_args, **_kwargs):
+            reading.set()
+            assert release.wait(3)
+            raise OSError("locked")
+
+        def save():
+            saving.set()
+            try:
+                DeviceStore.save()
+            except OSError as exc:
+                outcomes.append(str(exc))
+
+        loader = threading.Thread(target=DeviceStore.load)
+        saver = threading.Thread(target=save)
+        with patch("models.device_store.open", side_effect=locked_read, create=True), patch(
+            "models.device_store.shutil.copy2", side_effect=OSError("backup locked")
+        ):
+            try:
+                loader.start()
+                assert reading.wait(2)
+                saver.start()
+                assert saving.wait(2)
+            finally:
+                release.set()
+                loader.join(3)
+                if saver.ident is not None:
+                    saver.join(3)
+        assert not loader.is_alive() and not saver.is_alive()
+        assert len(outcomes) == 1 and "未安全读取或备份" in outcomes[0]
+        assert target.read_bytes() == raw
+
+@pytest.mark.parametrize("tolerant", [False, True])
+@pytest.mark.parametrize("hot", [False, True])
+def test_cancel_after_parsing_keeps_file_protected_until_snapshot_published(
+    tmp_path, monkeypatch, tolerant, hot
+):
+    from concurrent.futures import CancelledError
+
+    with _DeviceStoreState(), patch("models.device_store.LogService"):
+        target = tmp_path / "history.yaml"
+        raw = b"original:\n  ip: 192.0.2.10:5555\n" + (b"\x00scan" if tolerant else b"")
+        target.write_bytes(raw)
+        DeviceStore._file_path = str(target)
+        old = {"stale": {"ip": "192.0.2.11:5555"}} if hot else {}
+        DeviceStore._devices = old.copy()
+        cancel = threading.Event()
+        connection_snapshot = DeviceStore._connection_snapshot
+
+        def cancel_after_parse(snapshot):
+            result = connection_snapshot(snapshot)
+            cancel.set()
+            return result
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(DeviceStore, "_connection_snapshot", cancel_after_parse)
+            with pytest.raises(CancelledError):
+                DeviceStore.load(cancel_event=cancel)
+        assert dict(DeviceStore.get_all()) == old
+        cancel.clear()
+        with pytest.raises(OSError, match="未安全读取或备份"):
+            DeviceStore.save()
+        assert target.read_bytes() == raw
+        assert not list(tmp_path.glob("*.corrupt-*"))
+        assert not list(tmp_path.glob(".connected_devices_*.yaml.tmp"))
+        DeviceStore.load()
+        DeviceStore.save()
+        assert yaml.safe_load(target.read_text("utf-8")) == {"original": {"ip": "192.0.2.10:5555"}}

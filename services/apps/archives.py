@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from services.apps.actions import command_error
 from services.apps.package_details import is_safe_package
-from utils.archive import safe_extract_zip
+from utils.archive import safe_extract_zip, validate_zip_archive
 
 if TYPE_CHECKING:
     from services.apps.queries import QueryExecutor
@@ -90,7 +90,9 @@ def backup_app(
             with tempfile.TemporaryDirectory(prefix=".adblab_backup_", dir=save_dir) as archive_tmp:
                 archive_base = os.path.join(archive_tmp, f"backup_{package}")
                 staged_path = shutil.make_archive(archive_base, "zip", tmp)
-                # 压缩可能耗时较长；发布前再次核对取消，不能覆盖用户保留的旧备份。
+                with zipfile.ZipFile(staged_path, "r") as zf:
+                    validate_zip_archive(zf, tmp)
+                # 压缩与校验可能耗时较长；发布前再次核对取消，不能覆盖用户保留的旧备份。
                 if cancelled():
                     log(f"Backup aborted for {package}")
                     feedback("info", f"Backup aborted: {package}")

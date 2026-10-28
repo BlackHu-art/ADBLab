@@ -1062,3 +1062,6 @@ def test_wide_workspace_keeps_session_toolbar_inside_content(qt_application):
     assert host.close_session_button.geometry().right() <= (
         host.session_toolbar.contentsRect().right()
     )
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")

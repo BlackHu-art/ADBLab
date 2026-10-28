@@ -57,12 +57,17 @@ def build_helper(sdk: Path, java_home: Path, output: Path) -> None:
             raise ValueError("需要完整 JDK 与 Android SDK android-33/build-tools 33.0.2")
     with tempfile.TemporaryDirectory(prefix="adblab-icon-build-") as temporary:
         work = Path(temporary)
+        # 编译与归档摘要绑定同一份私有快照，避免原源码变化后又恢复时认可错配产物。
+        source_bytes = _SOURCE.read_bytes().replace(b"\r\n", b"\n")
+        source_digest = hashlib.sha256(source_bytes).hexdigest()
+        source_snapshot = work / _SOURCE.name
+        source_snapshot.write_bytes(source_bytes)
         classes = work / "classes"
         classes.mkdir()
         commands = [
             [
                 str(javac), "--release", "8", "-encoding", "UTF-8", "-g:none",
-                "-classpath", str(android), "-d", str(classes), str(_SOURCE),
+                "-classpath", str(android), "-d", str(classes), str(source_snapshot),
             ],
             [
                 str(java), "-cp", str(d8), "com.android.tools.r8.D8", "--release",
@@ -74,7 +79,7 @@ def build_helper(sdk: Path, java_home: Path, output: Path) -> None:
         subprocess.run(commands[1], check=True, timeout=60)
         entries = {
             "META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\r\n\r\n",
-            _SOURCE_ENTRY: (_source_digest() + "\n").encode(),
+            _SOURCE_ENTRY: (source_digest + "\n").encode(),
             "classes.dex": (work / "classes.dex").read_bytes(),
         }
         output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-24
+last_verified: 2026-10-29
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -243,8 +243,9 @@ flowchart LR
   显式允许快速执行、无输入且携带冻结环境的两种 mDNS 查询，边界见 [ADB 自动适配](../guides/ADB_FAST.md)。
   默认调用保持原路由。`NativeCommandScope` 在 spawn 前登记资源义务，只拥有本次客户端；停止请求
   不阻塞调用线程，后台等待覆盖启动竞态与未确认退出的句柄。输入只在首次 communicate 发送，
-  轮询、超时与取消不会重放。未传作用域的 `native_capture` 为每条命令建立独立归属，交还时仍
-  未释放的客户端转交应用级清理集合；`CommandRunner.active_count()` 和 `wait_for_idle()` 纳入
+  轮询、超时与取消不会重放。未传作用域的 `native_capture` 和默认 `run_native` 为每条命令建立
+  独立归属，交还时仍未释放的客户端转交 `core/native_process.py` 的应用级清理集合；
+  `CommandRunner.active_count()` 和 `wait_for_idle()` 纳入
   这些残留，只有确认退出才报告空闲。显式作用域仍由原 owner 监督，不被全局等待接管。
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
   `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
@@ -296,7 +297,17 @@ flowchart LR
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，自然退出按进程身份解除跟踪，reader 退出时关闭自有流；helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；结果库在后台有界等待跨进程锁并应用单次变更，协调范围见 [结果库数据流](DATA_FLOW.md#测试结果与方案)；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
 | PerformanceResultLoader / 结果读取 QThread | 按运行快照后台发现附件并单次解析 CSV；新图表代次不覆盖旧运行归档，线程退出、实际 join 和 GUI 归档交付均确认后才释放页面义务 |
-| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成；本机进程结束与远端清理义务分别确认 |
+| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，完成通知与线程实际退出分别确认；本机进程结束与远端清理义务分别确认 |
+
+MobilePerf 的 `has_active_resources()` 覆盖所有代次的进程、stdout/stderr reader、模式同步线程及
+远端清理义务，`wait()` 在同一预算内确认这些资源。业务用的 `is_running()` 保留原模式线程与
+进程判定；不能用它代替资源归零。`is_current_run_complete()` 只判断最近一次运行的完成通知、
+进程退出与全部本地线程实际退出；旧代次残留不阻塞新报告交付，但仍阻止页面释放。
+完成回调可能早于最后线程返回，页面继续轮询，确认后才解锁配置并交付报告。
+
+Logcat 的快照导出 QThread 在启动前登记到页面 owner；文件选择器返回后重新核对关闭和忙碌状态。
+导出结果由页面 QObject 槽在 GUI 线程处理，只有实际 `wait(0)` 成功才解除线程归属；
+业务完成信号不等于页面可以销毁。
 
 File Explorer 的传输协调器由页面持有，文件删除、复制和移动与传输共用单槽队列，排队项取消
 也交付生命周期终态。Root 单文件准备前调用 `hold_cleanup()` 登记归还义务，清理回调完成后
@@ -341,7 +352,10 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
    磁盘失败保留原文件及冻结快照供重试，冻结失败不重新读取关闭后的可变数据。阻塞 I/O 仍由
    finalizer 的存活状态受监督，不以内层超时提前撤销归属。关闭中的窗口忽略晚到主题通知。
    最后排空测试记录及诊断写入队列。某页归档或设置保存失败仍继续其他收尾，失败不能报告为成功。
-4. 汇总收尾结果并完成关闭；超时返回不表示资源全部退出。
+4. 汇总收尾结果；超时返回不表示资源全部退出。若主窗口 QObject 树仍持有未完成实际 join 的
+   QThread，使用 GUI 定时回调继续非阻塞等待，禁止销毁其父对象。不可合作的原生线程可能让
+   窗口持续处于关闭状态；不强杀线程，也不抹掉此前失败或残留。普通 Python 线程和进程残留
+   保留既有截止时间处理；升级交接仍须通过原失败／残留门禁才可授权。
 
 验证入口：`tests/test_phase2_mainframe_shutdown_gate.py`、`tests/test_window_lifecycle.py`、
 `tests/test_model_shutdown_admission.py`、`tests/test_run_library_integration.py`。

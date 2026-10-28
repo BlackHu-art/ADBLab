@@ -19,29 +19,19 @@ from core.adb_transport import (
     adb_client_lock,
     capture,
 )
-from core.native_process import NativeCommandScope, close_native_pipes, popen_native
+from core.native_process import (
+    NativeCommandScope,
+    close_native_pipes,
+    popen_native,
+    retain_native_cleanup,
+)
+from core.native_process import (
+    native_cleanup_count as native_cleanup_count,
+)
+from core.native_process import (
+    wait_for_native_cleanup as wait_for_native_cleanup,
+)
 from utils import adb_debug
-
-_native_cleanup_lock = threading.Lock()
-_native_cleanup_scopes: set[NativeCommandScope] = set()
-
-
-def native_cleanup_count() -> int:
-    """保留无显式 owner 且命令线程已交还的残留；仅确认退出才解除应用级归属。"""
-    with _native_cleanup_lock:
-        released = [scope for scope in _native_cleanup_scopes if not scope.is_running()]
-        _native_cleanup_scopes.difference_update(released)
-        return len(_native_cleanup_scopes)
-
-
-def wait_for_native_cleanup(timeout: float) -> bool:
-    """后台在共享预算内重试残留清理；不接管显式作用域，也不重放业务命令。"""
-    deadline = time.monotonic() + max(0.0, timeout)
-    with _native_cleanup_lock:
-        scopes = tuple(_native_cleanup_scopes)
-    for scope in scopes:
-        scope.wait(max(0.0, deadline - time.monotonic()))
-    return native_cleanup_count() == 0
 
 
 def native_capture(
@@ -154,9 +144,7 @@ def native_capture(
         if command_scope is not None and token is not None:
             command_scope._finish_command(token)
             if internal_scope and command_scope.is_running():
-                command_scope.request_stop()
-                with _native_cleanup_lock:
-                    _native_cleanup_scopes.add(command_scope)
+                retain_native_cleanup(command_scope)
         if held_adb_lock:
             adb_client_lock.release()
 

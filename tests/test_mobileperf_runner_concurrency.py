@@ -93,6 +93,170 @@ class _StoppableProcess:
         return 0
 
 
+def test_all_generations_keep_delayed_readers_owned_after_restart(tmp_path, monkeypatch):
+    """新代完成不代表旧代双管道退出，关闭等待必须覆盖原线程。"""
+    old_out, old_err = _DelayedStream(["old output\n"]), _DelayedStream([])
+    new_out = _DelayedStream(["new output\n"])
+    old = _StoppableProcess(old_out, old_err)
+    new = _StoppableProcess(new_out, None)
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([old, new]), project_root=tmp_path,
+    )
+    old_finished, new_finished = threading.Event(), threading.Event()
+    release_finished_tail = threading.Event()
+    old_logs, new_logs = [], []
+
+    def finish_new_run():
+        new_finished.set()
+        assert release_finished_tail.wait(3), "测试未放行本代完成回调尾部"
+    runner.start(MobilePerfRunConfig(), on_log=old_logs.append, on_finished=old_finished.set)
+    first = runner._active_context
+    assert first is not None
+    stopping = None
+    try:
+        assert old_out.started.wait(1) and old_err.started.wait(1)
+        old.returncode = 0
+        assert first.mode_done.wait(1)
+        first.mode_thread.join(1)
+        assert not runner.is_running(), "管道排空不应禁止既有业务重启"
+        assert runner.has_active_resources()
+        assert not runner.is_current_run_complete()
+        runner.start(MobilePerfRunConfig(), on_log=new_logs.append, on_finished=finish_new_run)
+        second = runner._active_context
+        assert second is not None and second is not first
+        new.returncode = 0
+        new_out.release.set()
+        assert new_finished.wait(1)
+        assert not runner.is_current_run_complete(), "完成通知不能代替本代线程真实退出"
+        assert runner.has_active_resources()
+        release_finished_tail.set()
+        runner._join_context_readers(second, timeout=1)
+        assert all(thread is None or not thread.is_alive() for thread in (
+            second.log_thread, second.diagnostic_thread, second.mode_thread,
+        ))
+        assert runner.is_current_run_complete(), "新代报告不能等待旧代排空"
+        assert runner.has_active_resources()
+        assert not runner.wait(0)
+        joining, stopped = threading.Event(), threading.Event()
+        original_join = first.log_thread.join
+
+        def join_old_stdout(timeout=None):
+            joining.set()
+            original_join(timeout)
+
+        monkeypatch.setattr(first.log_thread, "join", join_old_stdout)
+
+        def stop_old_resources():
+            runner.stop(timeout=2)
+            stopped.set()
+
+        stopping = threading.Thread(target=stop_old_resources)
+        stopping.start()
+        assert joining.wait(1), "停止必须真实 join 旧代 stdout"
+        assert not stopped.is_set()
+        assert runner.has_active_resources()
+        old_out.release.set()
+        old_err.release.set()
+        assert stopped.wait(2)
+        stopping.join(1)
+        assert not stopping.is_alive()
+        assert runner.wait(0)
+        assert not runner.has_active_resources()
+        assert not first.log_thread.is_alive() and not first.diagnostic_thread.is_alive()
+        assert not old_finished.is_set()
+        assert old_logs == ["old output"]
+        assert new_logs == ["new output"]
+    finally:
+        release_finished_tail.set()
+        old.returncode = new.returncode = 0
+        old_out.release.set()
+        old_err.release.set()
+        new_out.release.set()
+        if stopping is not None:
+            stopping.join(2)
+        runner._join_context_readers(first, timeout=2)
+        runner.stop(timeout=0)
+
+
+def test_stop_uses_remaining_budget_for_all_generation_readers(tmp_path, monkeypatch):
+    """停止进程耗尽预算后，双 reader 不能各自重新取得等待时间。"""
+    stdout, stderr = _DelayedStream([]), _DelayedStream([])
+    process = _StoppableProcess(stdout, stderr)
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+    runner.start(MobilePerfRunConfig())
+    context = runner._active_context
+    assert context is not None
+    clock = [0.0]
+    joins = []
+    original = runner._join_context_readers
+
+    def wait_process(timeout=None):
+        clock[0] += timeout
+        process.returncode = 0
+        return 0
+
+    def join_readers(context, *, timeout):
+        joins.append((context, timeout))
+
+    monkeypatch.setattr(process, "wait", wait_process)
+    monkeypatch.setattr(runner, "_join_context_readers", join_readers)
+    monkeypatch.setattr(runner_module.time, "monotonic", lambda: clock[0])
+    try:
+        assert stdout.started.wait(1) and stderr.started.wait(1)
+        runner.stop(timeout=0.4)
+        assert joins == [(context, 0.0)]
+    finally:
+        stdout.release.set()
+        stderr.release.set()
+        original(context, timeout=0)
+        context.log_thread.join(1)
+        context.diagnostic_thread.join(1)
+        context.mode_thread.join(1)
+
+
+def test_thread_submission_keeps_resource_ownership_visible(tmp_path, monkeypatch):
+    """提交首个线程的同步回入仍必须看到尚未启动的资源义务。"""
+    process = _StoppableProcess(_CountingStream([]), None)
+    process.returncode = 0
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+    original = threading.Thread.start
+    observed = []
+
+    def start(thread):
+        if thread.name.startswith("adblab-mobileperf-"):
+            observed.append(runner.has_active_resources())
+        original(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    try:
+        runner.start(MobilePerfRunConfig())
+        assert observed and all(observed)
+    finally:
+        runner.wait(2)
+
+
+def test_failed_thread_submission_releases_pending_ownership(tmp_path, monkeypatch):
+    """线程未提交时失败必须明确撤回待启动义务，不能永远阻塞关闭。"""
+    process = _StoppableProcess(_CountingStream([]), None)
+    process.returncode = 0
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+
+    def fail_start(_thread):
+        raise RuntimeError("synthetic thread submission failure")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    with pytest.raises(RuntimeError, match="synthetic thread submission failure"):
+        runner.start(MobilePerfRunConfig())
+    assert runner.wait(0)
+    assert not runner.has_active_resources()
+
+
 class _SnapshotRaceProcess(_StoppableProcess):
     """在旧 stop 完成进程快照后暂停，允许测试线程安装新运行。"""
 
@@ -270,6 +434,8 @@ def test_mobileperf_failed_stop_keeps_running_state_and_can_be_retried(tmp_path)
 
     assert len(stop_attempts) == 2
     assert stop_attempts[0] == stop_attempts[1]
+    # timeout=0 不附加线程等待；真实 join 后再检查既有业务完成状态。
+    runner._join_context_readers(context, timeout=1)
     assert runner.is_running() is False
     finished.assert_called_once_with()
 

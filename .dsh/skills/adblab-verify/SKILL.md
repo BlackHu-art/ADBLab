@@ -63,7 +63,8 @@ PyInstaller 构建（`.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noco
 
 - PowerShell 或子进程输出的编码与终端不一致时可能出现乱码，不能据此判断文件损坏。
   先用 `scripts/check_source_text.py` 严格验证源文件，再核对读取与输出编码；不要猜测编码后覆盖文件。
-- 中文提交信息、路径带空格（本仓库位于 `Program Files (x86)`）时注意引号。
+- 中文提交信息、路径带空格时注意引号；工作区位置以当前 `git rev-parse --show-toplevel` 为准，
+  不假定仓库位于固定的本机目录。
 - `mobileperf/extlib/`、`reference/`、`runtime-tools/`、`resources/icons/` 不参与 lint/覆盖率，
   也不要在未授权时改动。
 

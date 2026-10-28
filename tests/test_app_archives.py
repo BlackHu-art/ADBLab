@@ -10,6 +10,106 @@ from services.apps import archives
 PACKAGE = "org.example.app"
 
 
+@pytest.mark.parametrize("paths", [("/app/one.apk",), ("/app/base.apk", "/app/split.apk")])
+def test_backup_restore_round_trip(tmp_path, paths):
+    events, pulls, installs = [], [], []
+    archives.backup_app(PACKAGE, str(tmp_path), 0, **backup_options(events, puller(pulls, paths)))
+    assert events[-1] == ("done", "backup")
+
+    def execute(*args, **kwargs):
+        installs.append(args)
+        for path in args[4:]:
+            assert Path(path).read_bytes() == f"/app/{Path(path).name}".encode()
+        return response()
+
+    archives.restore_apps(
+        [str(tmp_path / f"backup_{PACKAGE}.zip")], **restore_options(events, execute)
+    )
+    assert [args[0] for args in installs] == [
+        "install-multiple" if len(paths) > 1 else "install"
+    ]
+    assert events[-1] == ("done", "restore")
+
+
+@pytest.mark.parametrize("reason", ["size", "members", "ratio", "path"])
+def test_backup_rejects_restore_unsafe_archive_before_publish(tmp_path, monkeypatch, reason):
+    from utils import archive as safety
+
+    events, calls = [], []
+    old = tmp_path / f"backup_{PACKAGE}.zip"
+    old.write_bytes(b"old backup")
+    compress = archives.shutil.make_archive
+    if reason == "size":
+        monkeypatch.setattr(safety, "MAX_ARCHIVE_BYTES", 1)
+    elif reason == "members":
+        monkeypatch.setattr(safety, "MAX_ARCHIVE_MEMBERS", 1)
+
+    def staged(*args):
+        output = compress(*args)
+        if reason in {"ratio", "path"}:
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("../escape.apk" if reason == "path" else "one.apk", b"a" * 1048576)
+        return output
+
+    monkeypatch.setattr(archives.shutil, "make_archive", staged)
+    archives.backup_app(PACKAGE, str(tmp_path), 0, **backup_options(events, puller(calls)))
+    assert old.read_bytes() == b"old backup"
+    assert events[-1][0] == "failure"
+    assert not any(event[0] == "done" for event in events)
+    assert list(tmp_path.iterdir()) == [old]
+    assert not any(args[0].startswith("install") for args, _ in calls)
+
+
+@pytest.mark.parametrize("reason", ["size", "members", "ratio", "path"])
+def test_restore_unsafe_archive_never_installs(tmp_path, monkeypatch, reason):
+    from utils import archive as safety
+
+    events, installs = [], []
+    if reason == "size":
+        monkeypatch.setattr(safety, "MAX_ARCHIVE_BYTES", 1)
+    elif reason == "members":
+        monkeypatch.setattr(safety, "MAX_ARCHIVE_MEMBERS", 1)
+    path = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("good.apk", b"apk")
+        zf.writestr(
+            "../escape.apk" if reason == "path" else "other.apk",
+            b"a" * 1048576 if reason == "ratio" else b"apk",
+        )
+
+    def execute(*args, **kwargs):
+        installs.append(args)
+        return response()
+
+    archives.restore_apps([str(path)], **restore_options(events, execute))
+    assert installs == []
+    assert events[0][0] == "failure"
+    assert events[-1] == ("error", "Restore incomplete: 0 succeeded, 1 failed")
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_backup_cancellation_after_validation_preserves_old_archive(tmp_path, monkeypatch):
+    events, calls = [], []
+    stopped = False
+    old = tmp_path / f"backup_{PACKAGE}.zip"
+    old.write_bytes(b"old backup")
+    from utils.archive import validate_zip_archive
+
+    def validate(zf, target):
+        nonlocal stopped
+        validate_zip_archive(zf, target)
+        stopped = True
+
+    monkeypatch.setattr(archives, "validate_zip_archive", validate)
+    archives.backup_app(
+        PACKAGE, str(tmp_path), 0, **backup_options(events, puller(calls), lambda: stopped)
+    )
+    assert old.read_bytes() == b"old backup"
+    assert list(tmp_path.iterdir()) == [old]
+    assert events[-1] == ("info", f"Backup aborted: {PACKAGE}")
+    assert not any(event[0] in {"failure", "done"} for event in events)
+
+
 def response(success=True, output="", error=""):
     return SimpleNamespace(success=success, output=output, stdout=output, error=error)
 

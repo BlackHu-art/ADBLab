@@ -45,6 +45,15 @@ class _Runner:
     def is_running(self):
         return self.running
 
+    def has_active_resources(self):
+        return self.running
+
+    def is_current_run_complete(self):
+        return not self.running
+
+    def wait(self, timeout):
+        return not self.running
+
     def start(self, config, **_callbacks):
         self.started += 1
         self.last_config = deepcopy(config)

@@ -28,6 +28,8 @@ class DeviceStore:
     _lock = RLock()
     # 状态锁只保护内存快照；持久化锁串行化慢 I/O，避免 GUI 读取等待 fsync。
     _persist_lock = RLock()
+    # 按来源路径保留未读取且未保全的文件，切换存储路径不能解除旧文件保护。
+    _protected_paths: set[str] = set()
     _devices = {}
     _file_path = user_config_path("connected_devices.yaml")
     _legacy_file_path = resource_path("resources/connected_devices.yaml")
@@ -68,6 +70,7 @@ class DeviceStore:
             cls._check_cancelled(cancel_event)
             while not cls._lock.acquire(timeout=0.05):
                 cls._check_cancelled(cancel_event)
+        source_path = None
         try:
             cls._check_cancelled(cancel_event)
             source_path = cls._file_path
@@ -75,6 +78,7 @@ class DeviceStore:
                 source_path = cls._legacy_file_path
             if not os.path.exists(source_path):
                 return
+            cls._protected_paths.add(os.path.normcase(os.path.abspath(source_path)))
             loaded = cls._read_snapshot(source_path, cancel_event)
             if loaded is None:
                 return
@@ -88,6 +92,12 @@ class DeviceStore:
                     LogService().log("WARNING", "连接历史清理未能写入，已过滤显示；下次保存时重试")
             cls._check_cancelled(cancel_event)
             cls._devices = history
+        except BaseException:
+            # 解析后的临时解锁仅供本轮规范化回写；未发布快照就退出时恢复保护，
+            # 避免取消后仍由旧内存覆盖文件。持久化锁保证其他保存看不到临时解锁。
+            if source_path is not None:
+                cls._protected_paths.add(os.path.normcase(os.path.abspath(source_path)))
+            raise
         finally:
             cls._lock.release()
 
@@ -124,7 +134,10 @@ class DeviceStore:
             return None
         try:
             cls._check_cancelled(cancel_event)
-            return cls._parse_snapshot(raw, strict=True)
+            snapshot = cls._parse_snapshot(raw, strict=True)
+            cls._check_cancelled(cancel_event)
+            cls._protected_paths.discard(os.path.normcase(os.path.abspath(source_path)))
+            return snapshot
         except (yaml.YAMLError, ValueError) as exc:
             cls._note_load_failure(type(exc).__name__)
             try:
@@ -138,6 +151,8 @@ class DeviceStore:
                 return None
             # 文件尾部带监控附加块但首个文档合法：采用数据并回写规范化文件，
             # 不产生 corrupt 备份，避免干扰反复出现时备份文件堆积。
+            cls._check_cancelled(cancel_event)
+            cls._protected_paths.discard(os.path.normcase(os.path.abspath(source_path)))
             try:
                 cls._persist_snapshot(copy.deepcopy(tolerant), cancel_event=cancel_event)
             except OSError:
@@ -213,6 +228,9 @@ class DeviceStore:
     @classmethod
     def _persist_snapshot(cls, snapshot: dict, *, cancel_event: Event | None = None) -> None:
         """所有写入路径只保存 IP 历史；原子写盘重试后仍失败则向调用方抛出。"""
+        cls._check_cancelled(cancel_event)
+        if os.path.normcase(os.path.abspath(cls._file_path)) in cls._protected_paths:
+            raise OSError("设备历史未安全读取或备份，拒绝覆盖；请重新加载后重试")
         snapshot = cls._connection_snapshot(snapshot)
         for attempt in range(cls._SAVE_RETRIES + 1):
             cls._check_cancelled(cancel_event)
@@ -256,15 +274,16 @@ class DeviceStore:
                 os.unlink(tmp_path)
             raise
 
-    @staticmethod
-    def _backup_corrupt_file(path: str):
+    @classmethod
+    def _backup_corrupt_file(cls, path: str):
         """尽力备份损坏文件；备份失败不覆盖原始加载失败结果。"""
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         backup_path = f"{path}.corrupt-{timestamp}"
         try:
             shutil.copy2(path, backup_path)
         except OSError:
-            pass
+            return
+        cls._protected_paths.discard(os.path.normcase(os.path.abspath(path)))
 
     @classmethod
     def add_device(

@@ -3,7 +3,6 @@
 from typing import Any, cast
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
@@ -733,7 +732,7 @@ class SystemPanel(BasePanel):
     def _on_battery_param_changed(self, param: str) -> None:
         maximum = 100 if param == "level" else 5
         minimum = 0 if param == "level" else 1
-        self.battery_val.setValidator(QIntValidator(minimum, maximum, self.battery_val))
+        self._set_protocol_int_validator(self.battery_val, minimum, maximum)
         self._field_feedback(self.battery_val).refresh()
         self._update_action_states()
 

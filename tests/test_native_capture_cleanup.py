@@ -5,10 +5,144 @@ import threading
 
 import pytest
 
-from core import adb_runtime
+from core import adb_runtime, native_process
 from core import exec as execution
 from core.native_process import NativeCommandScope
 from tests.test_native_command_scope import ControlledProcess
+
+
+@pytest.fixture
+def default_stuck_client(monkeypatch):
+    process = ControlledProcess()
+    process.exit_on_kill = False
+    starts = []
+
+    def communicate(input=None, timeout=None):
+        raise subprocess.TimeoutExpired("synthetic", timeout, output=b"partial")
+
+    def spawn(*_args, **_kwargs):
+        starts.append(process)
+        return process
+
+    process.communicate = communicate
+    monkeypatch.setattr(native_process, "popen_native", spawn)
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    yield process, starts
+    process.returncode = -9
+    assert execution.CommandRunner.wait_for_idle(0)
+
+
+@pytest.mark.parametrize("exit_late", [False, True])
+def test_default_failure_retains_client_until_retry_or_natural_exit(
+    default_stuck_client, exit_late,
+):
+    process, starts = default_stuck_client
+    result = execution.CommandRunner.run(["synthetic-install"], timeout=0.01)
+    assert result.outcome == "failed"
+    assert process.returncode is None
+    assert execution.CommandRunner.active_count() == 1
+    assert not execution.CommandRunner.wait_for_idle(0.01)
+    kills = process.kill_count
+    if exit_late:
+        process.returncode = 0
+    else:
+        process.exit_on_kill = True
+    assert execution.CommandRunner.wait_for_idle(0.1)
+    assert execution.CommandRunner.wait_for_idle(0)
+    assert execution.CommandRunner.active_count() == 0
+    assert process.kill_count == kills + int(not exit_late)
+    assert starts == [process]
+
+
+def test_direct_run_native_failure_keeps_exception_and_cleanup_owner(default_stuck_client):
+    process, starts = default_stuck_client
+    with pytest.raises(TimeoutError, match="尚未确认客户端退出"):
+        native_process.run_native(["synthetic-install"], timeout=0.01)
+    assert native_process.native_cleanup_count() == 1
+    assert not native_process.wait_for_native_cleanup(0)
+    process.returncode = -9
+    assert adb_runtime.wait_for_native_cleanup(0)
+    assert starts == [process]
+
+
+def test_default_residual_cleanup_shares_total_budget(default_stuck_client, monkeypatch):
+    first, _starts = default_stuck_client
+    assert execution.CommandRunner.run(["first"], timeout=0.01).outcome == "failed"
+    second = ControlledProcess()
+    second.exit_on_kill = False
+    second.communicate = first.communicate
+    monkeypatch.setattr(native_process, "popen_native", lambda *_a, **_kw: second)
+    try:
+        assert execution.CommandRunner.run(["second"], timeout=0.01).outcome == "failed"
+        assert execution.CommandRunner.active_count() == 2
+        now = [0.0]
+        budgets = []
+
+        def cleanup(self, process, *, completed, timeout):
+            budgets.append(timeout)
+            now[0] += timeout
+            raise TimeoutError("synthetic cleanup timeout")
+
+        monkeypatch.setattr(native_process.time, "monotonic", lambda: now[0])
+        monkeypatch.setattr(NativeCommandScope, "_cleanup_process", cleanup)
+        assert not native_process.wait_for_native_cleanup(0.25)
+        assert budgets == [0.25]
+        assert execution.CommandRunner.active_count() == 2
+    finally:
+        first.returncode = second.returncode = -9
+        assert execution.CommandRunner.wait_for_idle(0)
+
+
+def test_concurrent_default_calls_keep_distinct_residual_owners(monkeypatch):
+    entered = threading.Barrier(3)
+    release = threading.Event()
+    processes, results = [], []
+
+    def spawn(*_args, **_kwargs):
+        process = ControlledProcess()
+        process.exit_on_kill = False
+
+        def communicate(input=None, timeout=None):
+            entered.wait(timeout=2)
+            assert release.wait(2)
+            raise subprocess.TimeoutExpired("synthetic", timeout)
+
+        process.communicate = communicate
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(native_process, "popen_native", spawn)
+    monkeypatch.setattr(execution, "resolve_command", lambda command: command)
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    workers = [threading.Thread(target=lambda: results.append(
+        execution.CommandRunner.run(["synthetic"], timeout=1),
+    )) for _ in range(2)]
+    try:
+        for worker in workers:
+            worker.start()
+        entered.wait(timeout=2)
+        assert execution.CommandRunner.active_count() == 2
+        assert not execution.CommandRunner.wait_for_idle(0)
+        assert all(process.kill_count == 0 for process in processes)
+        release.set()
+        for worker in workers:
+            worker.join(2)
+            assert not worker.is_alive()
+        assert len(results) == 2 and all(result.outcome == "failed" for result in results)
+        assert execution.CommandRunner.active_count() == 2
+        processes[0].returncode = -9
+        assert execution.CommandRunner.active_count() == 1
+        assert not execution.CommandRunner.wait_for_idle(0)
+        processes[1].returncode = -9
+        assert execution.CommandRunner.wait_for_idle(0)
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(2)
+        for process in processes:
+            process.returncode = -9
+        assert execution.CommandRunner.wait_for_idle(0)
 
 
 @pytest.fixture

@@ -49,7 +49,8 @@ whenToUse: 改动 ADBLab 界面、控件、主题字体、用户可见文案或�
   改完必须跑它（以及 `test_application_languages.py`、`test_dialog_languages.py`）。
 - 显示文案与稳定业务值必须分离：状态/类型等在数据里保存原文（如 `Enabled`/`User`），
   只在绘制与提示时本地化。
-- 新增设置项：键写进 `core/settings_manager.py` 的 `DEFAULTS`，沿用当前 schema 版本，
+- 新增设置项：键写进 `core/settings/schema.py` 的 `DEFAULTS`，沿用当前 schema 版本；
+  `core/settings_manager.py` 保留同一对象的兼容导出，不在该入口重复定义默认值。
   不要在未授权时升版本或做迁移。
 
 ## 视觉验证

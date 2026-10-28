@@ -1,7 +1,11 @@
+import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from itertools import pairwise
+from pathlib import Path
 from queue import Empty, SimpleQueue
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -14,7 +18,7 @@ from PySide6.QtCore import QRunnable, Qt, QThread, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
 from core.tasks.qt_supervisor import QtTaskSupervisor
-from core.tasks.supervision import StopDisposition, TaskSupervisor
+from core.tasks.supervision import StopDisposition, TaskStopResult, TaskSupervisor
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.features.logcat import LiveLogcatPage
 from gui.features.performance import PerformancePage
@@ -72,6 +76,23 @@ class FakeLeftPanel:
 
     def shutdown(self):
         self.shutdown_calls += 1
+
+
+@pytest.fixture
+def gui_owned_command_logger(qt_application, monkeypatch):
+    """慢命令探针保留真实诊断，但不能在后台首次构造跨用例的 Qt 单例。"""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    from core.log_service import LogService
+
+    monkeypatch.setattr(LogService, "_instance", None)
+    logger = LogService()
+    assert logger.thread() == qt_application.thread()
+    yield logger
+    logger.shutdown()
+    logger._timer.deleteLater()
+    logger.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def _frame(controller_shutdown, *, scan_thread=None, deadline=0.5, left_panel=None):
@@ -184,7 +205,9 @@ def test_application_stop_broadcasts_across_owners_before_any_wait():
     assert supervisor.active_count == 0
 
 
-def test_controller_supervision_retains_unfinished_native_short_command(monkeypatch):
+def test_controller_supervision_retains_unfinished_native_short_command(
+    monkeypatch, qt_application, gui_owned_command_logger,
+):
     from core import exec as execution
 
     entered = threading.Event()
@@ -221,7 +244,7 @@ def test_controller_supervision_retains_unfinished_native_short_command(monkeypa
 @pytest.mark.parametrize("operation", ["connect", "disconnect"])
 @pytest.mark.parametrize("client_state", ["running", "spawn_pending", "refuses_exit"])
 def test_close_accounts_for_inflight_device_connection_client(
-    qt_application, monkeypatch, operation, client_state,
+    qt_application, monkeypatch, operation, client_state, gui_owned_command_logger,
 ):
     import io
     import subprocess
@@ -351,6 +374,10 @@ def test_close_accounts_for_inflight_device_connection_client(
         assert all(client.poll() is not None for client in clients)
         frame.task_supervisor._pool.waitForDone(1000)
         model.deleteLater()
+
+    from core.log_service import LogService
+    if LogService._instance is not None:
+        assert LogService._instance.thread() == qt_application.thread()
 
 
 def test_application_stop_uses_one_wall_clock_deadline_for_many_slow_tasks():
@@ -529,11 +556,135 @@ def test_application_shutdown_releases_live_logcat_feature_session():
     adapter._pool.waitForDone(1000)
 
 
+@pytest.mark.ui
+def test_application_close_waits_for_logcat_export(qt_application):
+    release = threading.Event()
+
+    class Export(QThread):
+        def run(self):
+            release.wait(3)
+
+    frame = _frame(lambda: None, deadline=1.5)
+    _bind_settings_finalizer(frame, Mock())
+    registry = FeatureSessionRegistry()
+    key = FeatureSessionKey("logcat", "synthetic")
+    page, _ = registry.get_or_create(key, lambda _key: LiveLogcatPage(
+        device_ip="synthetic", task_supervisor=frame.task_supervisor,
+    ))
+    worker = Export(page)
+    page._stream_controller._export_worker = worker
+    page._stream_controller._export_in_progress = True
+    worker.finished.connect(page._stream_controller._on_export_finished)
+
+    class Host:
+        def register_shutdown_tasks(self, *args, **kwargs):
+            return registry.register_shutdown_tasks(*args, **kwargs)
+
+        def shutdown(self):
+            registry.request_dispose_all()
+
+    host = Host()
+    host.registry = registry
+    frame._workspace_feature_hosts = {"system": host}
+    worker.start()
+    try:
+        frame.closeEvent(CloseEvent())
+        _drive_until(qt_application, lambda: frame._close_ready or bool(
+            frame.task_supervisor.supervisor.active_snapshot()
+            and any(item.kind == "logcat_export" for item in
+                    frame.task_supervisor.supervisor.active_snapshot())
+        ), frame=frame)
+        assert not frame._close_ready
+        assert worker.isRunning()
+        release.set()
+        assert worker.wait(2000)
+        _drive_until(qt_application, lambda: frame._close_ready, frame=frame)
+        assert not frame._shutdown_residual
+    finally:
+        release.set()
+        worker.wait(2000)
+        frame.task_supervisor._pool.waitForDone(2000)
+        qt_application.processEvents()
+
+
+@pytest.mark.ui
+def test_native_child_join_blocks_close_after_deadline_without_repeating_finalizer(qt_application):
+    release = threading.Event()
+
+    class Export(QThread):
+        def run(self):
+            release.wait(3)
+
+    worker = Export()
+    frame = _frame(lambda: None)
+    frame._close_started = True
+    frame.findChildren.return_value = [worker]
+    frame._handoff = Mock(prepared=True)
+    pending = []
+    residual = (SimpleNamespace(kind="logcat_export"),)
+    result = TaskStopResult("synthetic-finalizer", "synthetic", StopDisposition.GRACEFUL)
+    worker.start()
+    try:
+        with patch("gui.close_controller.QTimer.singleShot",
+                   side_effect=lambda *args: pending.append(args[-1])):
+            frame._on_application_finalized(result, residual)
+            assert not frame._close_ready
+            assert len(pending) == 1
+            frame._handoff.mark_shutdown_success.assert_not_called()
+            frame._on_application_finalized(result, residual)
+            assert len(pending) == 1
+            assert frame._shutdown_results == (result,)
+            release.set()
+            assert worker.wait(2000)
+            pending.pop(0)()
+            assert frame._close_ready
+            assert len(pending) == 1
+            pending.pop(0)()
+            frame.close.assert_called_once()
+            assert frame._shutdown_residual == residual
+            assert frame._shutdown_results == (result,)
+            frame._handoff.mark_shutdown_success.assert_called_once_with(False)
+            frame._handoff.abort.assert_called_once()
+    finally:
+        release.set()
+        worker.wait(2000)
+
+
+def test_logcat_export_real_main_window_native_exit(tmp_path):
+    """子进程继承隔离路径，真实主窗和页面必须在原生线程 join 后销毁。"""
+    env = os.environ.copy()
+    for name in ("LOCALAPPDATA", "APPDATA", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+        directory = tmp_path / name
+        directory.mkdir()
+        env[name] = str(directory)
+    env.update(PYTHONDONTWRITEBYTECODE="1", QT_QPA_PLATFORM="offscreen")
+    probe = Path(__file__).with_name("logcat_export_close_probe.py")
+    result = subprocess.run(
+        [sys.executable, "-B", str(probe)], env=env, cwd=probe.parent.parent,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+    )
+    (tmp_path / "probe-result.json").write_text(json.dumps({
+        "exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
+    }), encoding="utf-8")
+    details = f"exit={result.returncode}\n{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, details
+    assert "QThread: Destroyed while thread" not in details
+    assert "Fatal Python error" not in details
+    state = json.loads(result.stdout.strip().splitlines()[-1])
+    assert state == {
+        "main_destroyed": True, "page_destroyed": True,
+        "blocked_before_join": True, "blocked_after_deadline": True,
+    }
+
+
 def test_performance_page_dispose_delegates_running_stop_without_waiting():
     _app = QApplication.instance() or QApplication([])
     page = PerformancePage(device_ip="target")
     page._runner = Mock()
     page._runner.is_running.return_value = True
+    page._runner.has_active_resources.return_value = True
+    page._runner.is_current_run_complete.return_value = False
+    page._runner.wait.return_value = False
     page.stop_mobileperf = Mock()
 
     started = time.perf_counter()
@@ -551,6 +702,9 @@ def test_performance_page_application_shutdown_does_not_start_second_stop_thread
     page = PerformancePage(device_ip="target")
     page._runner = Mock()
     page._runner.is_running.return_value = True
+    page._runner.has_active_resources.return_value = True
+    page._runner.is_current_run_complete.return_value = False
+    page._runner.wait.return_value = False
     page._shutdown_registered = True
     page.stop_mobileperf = Mock()
 
@@ -559,6 +713,9 @@ def test_performance_page_application_shutdown_does_not_start_second_stop_thread
     page._runner.request_stop.assert_called_once_with()
     page.stop_mobileperf.assert_not_called()
     page._runner.is_running.return_value = False
+    page._runner.has_active_resources.return_value = False
+    page._runner.is_current_run_complete.return_value = True
+    page._runner.wait.return_value = True
     page._poll_dispose_ready()
     page.deleteLater()
 

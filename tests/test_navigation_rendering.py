@@ -894,3 +894,6 @@ def test_menu_collapse_style_reset_frame_preserves_current_material(
         (color.name(), color.alpha()) for color in captured
     ]
     assert _navigation_background_pixel(frame) == expected
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")

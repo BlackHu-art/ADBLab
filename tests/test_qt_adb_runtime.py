@@ -899,3 +899,89 @@ def test_superseded_scan_keeps_snapshot_and_state_and_waits_normally(monkeypatch
     assert snapshots == [["current"]]
     assert states == []
     assert run.call_count == pauses.call_count == 3
+
+
+def test_settings_delayed_detection_never_escapes_test_isolation(monkeypatch, qt_application):
+    """非探测测试处理延迟事件时也不能枚举宿主客户端或执行版本命令。"""
+    from PySide6.QtCore import QThreadPool
+
+    candidates = Mock(return_value=[])
+    resolver = Mock(return_value=None)
+    native = Mock()
+    copied = Mock()
+    monkeypatch.setattr("gui.widgets.adb_client_card.list_adb_candidates", candidates)
+    monkeypatch.setattr("gui.widgets.adb_client_card.resolve_adb_program", resolver)
+    monkeypatch.setattr("services.adb_clients.CommandRunner.run", native)
+    monkeypatch.setattr("utils.adb_resolver.shutil.copyfile", copied)
+    frame = Mock()
+    frame._closing = False
+    page = SettingsPage(frame)
+    page.start_startup_detection()
+    try:
+        qt_application.processEvents()
+        assert QThreadPool.globalInstance().waitForDone(2000)
+        qt_application.processEvents()
+        candidates.assert_not_called()
+        resolver.assert_not_called()
+        native.assert_not_called()
+        copied.assert_not_called()
+        assert not page.adb_client_card._tasks
+    finally:
+        page.close()
+        assert QThreadPool.globalInstance().waitForDone(2000)
+        qt_application.processEvents()
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")
+
+
+def test_settings_detection_uses_scripted_candidates_and_real_qt_delivery(
+    monkeypatch, qt_application, isolated_settings_client_detection, tmp_path,
+):
+    """专项保留真实 QRunnable 与信号投递，仅版本执行和候选解析使用脚本。"""
+    from PySide6.QtCore import QThreadPool
+
+    from services import adb_clients
+    from tests.ui_geometry_helpers import wait_until
+
+    tool = tmp_path / "synthetic-adb.exe"
+    tool.write_text("scripted client only", encoding="utf-8")
+    candidate = AdbCandidate("bundled", str(tool))
+    runner = Mock(return_value=execution.CommandResult(
+        True, "Android Debug Bridge version 1.0.41\nVersion 37.0.0",
+    ))
+    monkeypatch.setattr("gui.widgets.adb_client_card.list_adb_candidates", lambda: [candidate])
+    monkeypatch.setattr("gui.widgets.adb_client_card.resolve_adb_program", lambda: candidate.path)
+    monkeypatch.setattr(adb_clients, "CommandRunner", SimpleNamespace(run=runner))
+    monkeypatch.setattr(adb_clients, "_probe_cache", {})
+    monkeypatch.setattr(
+        AdbClientSettingCard, "start_detection", isolated_settings_client_detection,
+    )
+    frame = Mock()
+    frame._closing = False
+    page = SettingsPage(frame)
+    card = page.adb_client_card
+    delivered = []
+    original = card._on_probes
+
+    def completed(*args):
+        delivered.append(threading.get_ident())
+        original(*args)
+
+    monkeypatch.setattr(card, "_on_probes", completed)
+    try:
+        page.start_startup_detection()
+        wait_until(qt_application, lambda: bool(delivered) and not card._tasks)
+        assert delivered == [threading.get_ident()]
+        runner.assert_called_once()
+        assert runner.call_args.args == ([candidate.path, "version"],)
+        assert runner.call_args.kwargs["native_only"] is True
+        assert card._probes["bundled"].version == "1.0.41 (37.0.0)"
+        assert card.rescan_button().isEnabled()
+        assert QThreadPool.globalInstance().waitForDone(2000)
+    finally:
+        page.prepare_shutdown()
+        assert QThreadPool.globalInstance().waitForDone(2000)
+        qt_application.processEvents()
+        assert not card._tasks
+        page.close()

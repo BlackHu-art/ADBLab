@@ -59,6 +59,18 @@ class _RunnerProbe:
         return False
 
     @staticmethod
+    def has_active_resources() -> bool:
+        return False
+
+    @staticmethod
+    def is_current_run_complete() -> bool:
+        return True
+
+    @staticmethod
+    def wait(timeout: float) -> bool:
+        return True
+
+    @staticmethod
     def latest_result_dir() -> str:
         return ""
 

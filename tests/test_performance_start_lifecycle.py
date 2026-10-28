@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QTimer
 
 from gui.dialogs.performance_launcher import PerformancePage
-from services.mobileperf_runner import MobilePerfRunner
+from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 from tests.ui_geometry_helpers import wait_until
 
 pytestmark = pytest.mark.ui
@@ -45,6 +45,15 @@ class ControlledRunner:
     def is_running(self):
         return self.running
 
+    def has_active_resources(self):
+        return self.running
+
+    def is_current_run_complete(self):
+        return not self.running
+
+    def wait(self, timeout):
+        return not self.running
+
     def stop(self):
         self.stop_calls.append(threading.get_ident())
         self.running = False
@@ -72,6 +81,122 @@ def start_page(qt_application, tmp_path):
     page.request_dispose()
     wait_until(qt_application, lambda: page._dispose_ready_state)
     page.close()
+
+
+def test_report_and_dispose_wait_for_current_readers(qt_application, tmp_path):
+    """进程退出可重启，但本代结果和页面释放必须等双管道收尾。"""
+    from tests.test_mobileperf_runner_concurrency import (
+        _DelayedStream,
+        _StoppableProcess,
+        _TrackingProcessRunner,
+    )
+
+    stdout, stderr = _DelayedStream([]), _DelayedStream([])
+    process = _StoppableProcess(stdout, stderr)
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+    page = PerformancePage("synthetic-device", "com.example.synthetic")
+    page._runner = runner
+    runner.start(MobilePerfRunConfig(save_path=str(tmp_path / "results")))
+    context = runner._active_context
+    assert context is not None
+    page._runner_finished_handled = False
+    page._configuration_locked = True
+    registrations = []
+    supervisor = SimpleNamespace(register=lambda _task_id, **fields: registrations.append(fields))
+    try:
+        assert stdout.started.wait(1) and stderr.started.wait(1)
+        process.returncode = 0
+        assert context.mode_done.wait(1)
+        context.mode_thread.join(1)
+        assert not runner.is_running()
+        page._poll_runner()
+        assert not page._runner_finished_handled
+        assert page._configuration_locked
+        page.register_shutdown_tasks(supervisor, owner_id="owner", task_prefix="perf")
+        task = next(item for item in registrations if item["kind"] == "mobileperf_runner")
+        assert task["is_running"]()
+        assert not page.request_dispose()
+        assert not page._dispose_ready_state
+        stdout.release.set()
+        stderr.release.set()
+        assert runner.wait(2)
+        wait_until(qt_application, lambda: page._dispose_ready_state)
+    finally:
+        stdout.release.set()
+        stderr.release.set()
+        runner.stop(timeout=1)
+        page.request_dispose()
+        wait_until(qt_application, lambda: page._dispose_ready_state)
+        page.close()
+
+
+@pytest.mark.parametrize("finishing_thread", ["stdout", "mode"])
+def test_stop_notification_tail_restarts_poll_and_delivers_report(
+    qt_application, tmp_path, finishing_thread,
+):
+    """停止通知先到但 reader 尚未返回时，轮询继续到本代实际退出。"""
+    from tests.test_mobileperf_runner_concurrency import (
+        _DelayedStream,
+        _StoppableProcess,
+        _TrackingProcessRunner,
+    )
+
+    stdout = _DelayedStream([])
+    process = _StoppableProcess(stdout, None)
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+    page = PerformancePage("synthetic-device", "com.example.synthetic")
+    page._runner = runner
+    entered, release = threading.Event(), threading.Event()
+
+    def finished_tail():
+        page.runner_finished.emit()
+        entered.set()
+        assert release.wait(3), "测试未放行 reader 完成回调尾部"
+
+    runner.start(
+        MobilePerfRunConfig(save_path=str(tmp_path / "results")), on_finished=finished_tail,
+    )
+    context = runner._active_context
+    assert context is not None
+    page._runner_finished_handled = False
+    page._set_running(True)
+    page._stopping = True
+    page._poll_timer.stop()
+    try:
+        assert stdout.started.wait(1)
+        if finishing_thread == "stdout":
+            process.returncode = 0
+            assert context.mode_done.wait(1)
+            context.mode_thread.join(1)
+            assert not context.mode_thread.is_alive()
+            stdout.release.set()
+        else:
+            stdout.release.set()
+            assert context.stdout_done.wait(1)
+            process.returncode = 0
+        assert entered.wait(1)
+        qt_application.processEvents()
+        assert not page._runner_finished_handled
+        assert page._configuration_locked
+        assert page._stopping
+        assert page._poll_timer.isActive(), "停止流程已停表，尾部等待必须恢复轮询"
+        release.set()
+        assert runner.wait(1)
+        wait_until(qt_application, lambda: page._runner_finished_handled)
+        assert not page._stopping
+        assert not page._configuration_locked
+        assert not page._poll_timer.isActive()
+    finally:
+        release.set()
+        stdout.release.set()
+        runner.stop(timeout=1)
+        page.request_dispose()
+        wait_until(qt_application, lambda: page._dispose_ready_state)
+        page.close()
 
 
 def test_slow_result_baseline_does_not_block_qt_heartbeat(monkeypatch, qt_application, tmp_path):

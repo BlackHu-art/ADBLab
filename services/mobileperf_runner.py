@@ -84,6 +84,7 @@ class _MobilePerfRunContext:
     finished_notified: bool = False
     config_cleaned: bool = False
     process_tracking_released: bool = False
+    threads_submitted: bool = False
     log_lock: threading.RLock = field(default_factory=threading.RLock)
     pending_logs: list[str] = field(default_factory=list)
     last_log_flush: float = field(default_factory=time.monotonic)
@@ -122,8 +123,10 @@ class MobilePerfRunner:
         self._state_lock = threading.RLock()
         self._generation = 0
         self._active_context: _MobilePerfRunContext | None = None
+        self._latest_context: _MobilePerfRunContext | None = None
         self._residual_contexts: list[_MobilePerfRunContext] = []
         self._mode_contexts: list[_MobilePerfRunContext] = []
+        self._resource_contexts: list[_MobilePerfRunContext] = []
         self._last_config: MobilePerfRunConfig | None = None
         self._metadata_run_id = ""
         self._last_exit_code: int | None = None
@@ -148,7 +151,7 @@ class MobilePerfRunner:
         return self._last_exit_code
 
     def is_running(self) -> bool:
-        """供关闭监督检查进程及各代非 daemon 模式线程，完成事件不能代替线程退出。"""
+        """保持业务重启判断；管道排空与关闭监督使用独立资源接口。"""
         with self._state_lock:
             self._mode_contexts = [
                 context for context in self._mode_contexts
@@ -157,6 +160,51 @@ class MobilePerfRunner:
             return bool(self._mode_contexts) or (
                 self._proc is not None and self._proc.poll() is None
             )
+
+    @staticmethod
+    def _context_resources_active(context: _MobilePerfRunContext) -> bool:
+        """线程提交前仍保留义务，完成事件不能替代线程实际退出。"""
+        return (
+            not context.threads_submitted
+            or context.proc.poll() is None
+            or (isinstance(context.proc, OwnedWorkerProcess)
+                and not context.proc.resources_released())
+            or any(thread is not None and thread.is_alive() for thread in (
+                context.log_thread, context.diagnostic_thread, context.mode_thread,
+            ))
+        )
+
+    def has_active_resources(self) -> bool:
+        """检查所有未排空代次的进程、客户端和真实 reader/writer 线程。"""
+        with self._state_lock:
+            self._resource_contexts = [
+                context for context in self._resource_contexts
+                if self._context_resources_active(context)
+            ]
+            return bool(self._resource_contexts or self._residual_contexts) or (
+                self._proc is not None and self._proc.poll() is None
+            )
+
+    def is_current_run_complete(self) -> bool:
+        """最近代次的完成回调和真实线程均退出后才交付报告，不等待旧代资源。"""
+        with self._state_lock:
+            context = self._latest_context
+            return context is None or (
+                context.finished_notified and context.threads_submitted
+                and context.proc.poll() is not None
+                and all(thread is None or not thread.is_alive() for thread in (
+                    context.log_thread, context.diagnostic_thread, context.mode_thread,
+                ))
+            )
+
+    def wait(self, timeout: float) -> bool:
+        """在共同预算内等待调用时已归属的全部代次，超时继续保留资源。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._state_lock:
+            contexts = tuple(self._resource_contexts)
+        for context in contexts:
+            self._join_context_readers(context, timeout=max(0.0, deadline - time.monotonic()))
+        return not self.has_active_resources()
 
     def start(
         self,
@@ -278,6 +326,8 @@ class MobilePerfRunner:
                 mode_path=mode_path,
             )
             self._active_context = context
+            self._latest_context = context
+            self._resource_contexts.append(context)
             self._proc = proc
             context.mode_thread = threading.Thread(
                 target=self._sync_adb_mode,
@@ -286,31 +336,47 @@ class MobilePerfRunner:
                 daemon=False,
             )
             self._mode_contexts.append(context)
-            context.mode_thread.start()
-            diagnostic_stream = getattr(proc, "stderr", None)
-            if diagnostic_stream is not None:
-                try:
-                    iter(diagnostic_stream)
-                except TypeError:
-                    diagnostic_stream = None
-            if diagnostic_stream is None:
-                context.stderr_done.set()
-            context.log_thread = threading.Thread(
-                target=self._read_logs,
-                args=(context,),
-                name=f"adblab-mobileperf-log-{generation}",
-                daemon=True,
-            )
-            if diagnostic_stream is not None:
-                context.diagnostic_thread = threading.Thread(
-                    target=self._read_diagnostics,
+            try:
+                context.mode_thread.start()
+                diagnostic_stream = getattr(proc, "stderr", None)
+                if diagnostic_stream is not None:
+                    try:
+                        iter(diagnostic_stream)
+                    except TypeError:
+                        diagnostic_stream = None
+                if diagnostic_stream is None:
+                    context.stderr_done.set()
+                context.log_thread = threading.Thread(
+                    target=self._read_logs,
                     args=(context,),
-                    name=f"adblab-mobileperf-diagnostic-{generation}",
+                    name=f"adblab-mobileperf-log-{generation}",
                     daemon=True,
                 )
-            context.log_thread.start()
-            if context.diagnostic_thread is not None:
-                context.diagnostic_thread.start()
+                if diagnostic_stream is not None:
+                    context.diagnostic_thread = threading.Thread(
+                        target=self._read_diagnostics,
+                        args=(context,),
+                        name=f"adblab-mobileperf-diagnostic-{generation}",
+                        daemon=True,
+                    )
+                context.log_thread.start()
+                if context.diagnostic_thread is not None:
+                    context.diagnostic_thread.start()
+            except Exception:
+                # 已提交的线程仍由原代次持有；未提交者撤回义务，避免永久 pending。
+                context.on_finished = None
+                context.mode_stop.set()
+                for thread, done in (
+                    (context.mode_thread, context.mode_done),
+                    (context.log_thread, context.stdout_done),
+                    (context.diagnostic_thread, context.stderr_done),
+                ):
+                    if thread is None or thread.ident is None:
+                        done.set()
+                context.threads_submitted = True
+                self.stop(timeout=2.0)
+                raise
+            context.threads_submitted = True
         self._safe_write_diagnostic(
             f"MobilePerf worker started: diagnostic_reader={diagnostic_stream is not None}",
             context,
@@ -353,48 +419,57 @@ class MobilePerfRunner:
             self._mark_reader_done(context, context.mode_done)
 
     def stop(self, timeout: float = REPORT_SHUTDOWN_TIMEOUT_SECONDS) -> int | None:
-        """请求生成报告并等待退出；未确认退出时保留运行状态，允许后续重试。"""
+        """在共同截止时间内停止调用时的代次，超时仍保留进程及线程归属。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
         with self._state_lock:
             context = self._active_context
             proc = context.proc if context is not None else self._proc
             process_key = context.process_key if context is not None else self._process_key
-            mode_contexts = tuple(self._mode_contexts)
-        if proc is None:
-            for mode_context in mode_contexts:
-                mode_context.mode_stop.set()
-            self._join_stop_resources(context, mode_contexts, timeout=1.0)
-            return None
-        code: int | None
-        if proc.poll() is None:
-            self._request_stop_context(context)
-            try:
-                proc.wait(timeout=timeout)
+            contexts = tuple(self._resource_contexts)
+        code: int | None = None
+        if proc is not None:
+            if proc.poll() is None:
+                self._request_stop_context(context)
+                try:
+                    proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+                    code = proc.returncode
+                    self._release_process_tracking(context, process_key, timeout=0)
+                except subprocess.TimeoutExpired:
+                    code = self._release_process_tracking(
+                        context, process_key, timeout=max(0.0, deadline - time.monotonic()),
+                    )
+            else:
                 code = proc.returncode
                 self._release_process_tracking(context, process_key, timeout=0)
-            except subprocess.TimeoutExpired:
-                code = self._release_process_tracking(context, process_key, timeout=3)
-        else:
-            code = proc.returncode
-            self._release_process_tracking(context, process_key, timeout=0)
-        if context is not None and code is not None:
-            context.exit_code = code
-            context.mode_stop.set()
-        if code is not None:
-            for mode_context in mode_contexts:
-                mode_context.mode_stop.set()
-        with self._state_lock:
-            if code is not None and (context is None or self._active_context is context):
-                self._last_exit_code = code
-                self._proc = None
-        self._join_stop_resources(context, mode_contexts, timeout=1.0)
-        if context is not None:
-            self._maybe_notify_finished(context)
+            if context is not None and code is not None:
+                context.exit_code = code
+                context.mode_stop.set()
+            with self._state_lock:
+                if code is not None and (context is None or self._active_context is context):
+                    self._last_exit_code = code
+                    self._proc = None
+        for owned in contexts:
+            if owned.proc.poll() is not None:
+                owned.mode_stop.set()
+                if owned is not context:
+                    self._release_process_tracking(
+                        owned, owned.process_key,
+                        timeout=max(0.0, deadline - time.monotonic()),
+                    )
+                if owned.process_tracking_released:
+                    with self._state_lock:
+                        self._residual_contexts = [
+                            item for item in self._residual_contexts if item is not owned
+                        ]
+                    self._maybe_notify_finished(owned)
+                    if owned.finished_notified:
+                        self._cleanup_run_context(owned)
+            self._join_context_readers(
+                owned, timeout=max(0.0, deadline - time.monotonic()),
+            )
         if context is None and code is not None:
             self._cleanup_config_dir()
-        self._safe_write_diagnostic(
-            f"MobilePerf stop finished: exit_code={code}",
-            context,
-        )
+        self._safe_write_diagnostic(f"MobilePerf stop finished: exit_code={code}", context)
         return code
 
     def request_stop(self):

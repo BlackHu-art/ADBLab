@@ -20,7 +20,8 @@ class TestNormalizeTcpPort:
         assert normalize_tcp_port(5555) == "5555"
 
     @pytest.mark.parametrize(
-        "bad", ["0", "65536", "-1", "abc", "55;rm", "55 66", "", "5.5"]
+        "bad", ["0", "65536", "-1", "abc", "55;rm", "55 66", "", "5.5",
+                "5,555", "5.555", "+5555", "５５５５", "٥٥٥٥"]
     )
     def test_invalid_port_rejected(self, bad):
         with pytest.raises(ValueError):
@@ -79,7 +80,8 @@ class TestNormalizeGeoCoordinate:
             == "12.5"
         )
 
-    @pytest.mark.parametrize("bad", ["abc", "1;2", "1 2", "1,2", ""])
+    @pytest.mark.parametrize("bad", ["abc", "1;2", "1 2", "1,2", "", "+12.5",
+                                     "1,000", "１２.５", "−12.5", "1e1"])
     def test_invalid_rejected(self, bad):
         with pytest.raises(ValueError):
             normalize_geo_coordinate(bad, minimum=Decimal("-90"), maximum=Decimal("90"))

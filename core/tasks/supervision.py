@@ -196,6 +196,9 @@ class TaskSupervisor:
             if error_type:
                 return self._result(task, StopDisposition.FAILED, error_type)
             if not running:
+                completion_error = self._completion_error(task)
+                if completion_error:
+                    return self._result(task, StopDisposition.FAILED, completion_error)
                 self._remove_if_same(task)
                 return self._result(task, StopDisposition.ALREADY_STOPPED)
 
@@ -289,11 +292,19 @@ class TaskSupervisor:
                         error_type,
                     )
                 elif not running:
-                    self._remove_if_same(task)
-                    results[task.task_id] = self._result(
-                        task,
-                        StopDisposition.ALREADY_STOPPED,
-                    )
+                    completion_error = self._completion_error(task)
+                    if completion_error:
+                        results[task.task_id] = self._result(
+                            task,
+                            StopDisposition.FAILED,
+                            completion_error,
+                        )
+                    else:
+                        self._remove_if_same(task)
+                        results[task.task_id] = self._result(
+                            task,
+                            StopDisposition.ALREADY_STOPPED,
+                        )
                 else:
                     active.append(task)
 

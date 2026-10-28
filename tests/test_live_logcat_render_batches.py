@@ -25,7 +25,9 @@ def page(qt_application):
     if page.worker is not None:
         page.worker._finished_event.set()
         page._on_worker_finished(page.worker)
-    page.close()
+    from shiboken6 import isValid
+    if isValid(page):
+        page.close()
 
 
 def _feed(page, count, *, prefix="record", level="I", width=225):
@@ -37,6 +39,160 @@ def _feed(page, count, *, prefix="record", level="I", width=225):
 
 def _finish(page, app):
     wait_until(app, lambda: not page._line_flush_timer.isActive())
+
+
+@pytest.mark.parametrize("during_dialog", [False, True])
+def test_export_rejects_disposed_page_before_and_after_dialog(
+    page, monkeypatch, tmp_path, during_dialog,
+):
+    calls = []
+
+    def choose(*_args):
+        calls.append("dialog")
+        if during_dialog:
+            page.request_dispose()
+        return str(tmp_path / "closed.txt"), ""
+
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName", choose)
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.LogcatExportWorker.start",
+                        lambda _worker: calls.append("start"))
+    if not during_dialog:
+        page.request_dispose()
+    page._export()
+    assert calls == (["dialog"] if during_dialog else [])
+    assert page._stream_controller._export_worker is None
+
+
+def test_export_modal_return_rejects_deleted_qobject(page, qt_application, monkeypatch, tmp_path):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from shiboken6 import isValid
+
+    def choose(*_args):
+        page.request_dispose()
+        page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(page)
+        return str(tmp_path / "deleted.txt"), ""
+
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName", choose)
+    page._export()
+    assert page._stream_controller._export_worker is None
+
+
+def test_export_cancel_and_busy_do_not_create_work(page, monkeypatch):
+    calls = []
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName",
+                        lambda *_args: (calls.append("dialog") or "", ""))
+    page._export()
+    assert calls == ["dialog"]
+    assert page._stream_controller._export_worker is None
+    page._stream_controller._export_in_progress = True
+    page._export()
+    assert calls == ["dialog"]
+    page._stream_controller._export_in_progress = False
+
+
+def test_export_failure_retains_feedback_and_releases_owner(
+    page, qt_application, monkeypatch, tmp_path,
+):
+    errors = []
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName",
+                        lambda *_args: (str(tmp_path / "missing" / "export.txt"), ""))
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.FluentMessageBox.critical",
+                        lambda _owner, title, message: errors.append((title, message)))
+    page._export()
+    wait_until(qt_application, lambda: page._stream_controller._export_worker is None)
+    assert len(errors) == 1
+    assert errors[0][0] == "日志导出失败"
+    assert errors[0][1]
+    assert page._task_supervisor.supervisor.active_count == 0
+
+
+def test_export_start_failure_restores_action_and_owner(page, monkeypatch, tmp_path):
+    _feed(page, 1)
+    page._flush_pending_lines()
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName",
+                        lambda *_args: (str(tmp_path / "export.txt"), ""))
+
+    def fail_start(_worker):
+        raise RuntimeError("synthetic thread start failure")
+
+    errors = []
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.LogcatExportWorker.start", fail_start)
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.FluentMessageBox.critical",
+                        lambda *_args: errors.append(True))
+    page._export()
+    assert errors == [True]
+    assert page._stream_controller._export_worker is None
+    assert page._task_supervisor.supervisor.active_count == 0
+    assert page.export_action.isEnabled()
+
+
+def test_export_finished_retains_thread_until_join_confirmed(page, qt_application, monkeypatch):
+    worker = QThread(page)
+    stream = page._stream_controller
+    stream._export_worker = worker
+    stream._export_in_progress = True
+    joined = {"value": False}
+    monkeypatch.setattr(stream, "_export_joined", lambda *_args: joined["value"])
+    stream._on_export_finished()
+    assert stream._export_worker is worker
+    assert stream._export_in_progress
+    page.close()
+    assert not page._close_ready
+    joined["value"] = True
+    stream._on_export_finished()
+    wait_until(qt_application, lambda: page._close_ready)
+    assert stream._export_worker is None
+
+
+def test_started_export_is_owned_until_single_page_dispose_joins(
+    qt_application, monkeypatch, tmp_path,
+):
+    from PySide6.QtCore import Signal
+
+    from core.tasks.qt_supervisor import QtTaskSupervisor
+
+    release = threading.Event()
+
+    class Export(QThread):
+        completed = Signal(bool, str)
+
+        def __init__(self, _text, _path, parent):
+            super().__init__(parent)
+
+        def run(self):
+            release.wait(3)
+            self.completed.emit(True, "")
+
+    adapter = QtTaskSupervisor()
+    page = LiveLogcatPage(device_ip="synthetic", task_supervisor=adapter)
+    stream = page._stream_controller
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.LogcatExportWorker", Export)
+    calls = []
+    monkeypatch.setattr("gui.dialogs.live_logcat_stream.QFileDialog.getSaveFileName",
+                        lambda *_args: (calls.append("dialog") or str(tmp_path / "export.txt"), ""))
+    try:
+        page._export()
+        worker = stream._export_worker
+        assert worker is not None and worker.isRunning()
+        page._export()
+        assert calls == ["dialog"]
+        assert adapter.supervisor.active_count == 1
+        assert page.request_dispose() is False
+        assert not page._close_ready
+        assert stream._export_worker is worker
+        release.set()
+        assert worker.wait(2000)
+        wait_until(qt_application, lambda: page._close_ready)
+        assert adapter.supervisor.active_count == 0
+        assert stream._export_worker is None
+    finally:
+        release.set()
+        if stream._export_worker is not None:
+            stream._export_worker.wait(2000)
+        adapter._pool.waitForDone(2000)
+        page.close()
 
 
 def test_hidden_backlog_yields_before_all_records_reach_document(page, qt_application):

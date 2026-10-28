@@ -48,7 +48,7 @@ class PerformanceStartWorker(QThread):
             self.error = str(exc) or type(exc).__name__
         finally:
             # spawn 已进入时无法撤回；同一任务必须确认其停止后才交回 GUI 终态。
-            if (self.cancelled.is_set() or self.error) and self.runner.is_running():
+            if (self.cancelled.is_set() or self.error) and self.runner.has_active_resources():
                 try:
                     self.runner.stop()
                 except Exception as exc:
@@ -246,7 +246,7 @@ class PerformanceLauncherRun(QObject):
                 worker.wait()
             except RuntimeError:
                 pass
-            if worker.runner.is_running():
+            if worker.runner.has_active_resources():
                 worker.runner.stop()
 
         shutdown = ThreadedShutdownTask(stop_after_start, name="adblab-mobileperf-start-stop")
@@ -259,7 +259,7 @@ class PerformanceLauncherRun(QObject):
             deadline = time.monotonic() + max(0, timeout)
             return (join_start(timeout)
                     and shutdown.wait(max(0, deadline - time.monotonic()))
-                    and not worker.runner.is_running())
+                    and worker.runner.wait(max(0, deadline - time.monotonic())))
 
         def force_stop(timeout):
             worker.abort()
@@ -270,7 +270,7 @@ class PerformanceLauncherRun(QObject):
             task_id, owner_id=owner_id, kind="performance_start_worker",
             request_stop=request_stop, wait=wait,
             is_running=lambda: (thread_active() or shutdown.is_running()
-                                or worker.runner.is_running()),
+                                or worker.runner.has_active_resources()),
             force_stop=force_stop, error_type=shutdown.get_error_type,
         )
         return task_id
@@ -282,7 +282,7 @@ class PerformanceLauncherRun(QObject):
             return
         if self._frame._stopping:
             return
-        if not self._frame._runner.is_running():
+        if not self._frame._runner.has_active_resources():
             self._mark_runner_finished()
             return
         self._frame._stopping = True
@@ -319,7 +319,7 @@ class PerformanceLauncherRun(QObject):
         if self.starting:
             return
         self._update_progress()
-        if self._frame._runner.is_running():
+        if not self._frame._runner.is_current_run_complete():
             return
         self._mark_runner_finished()
 
@@ -331,7 +331,15 @@ class PerformanceLauncherRun(QObject):
             return
         frame = self._frame
         factory = getattr(type(frame._runner), "freeze_result_query", None)
-        if (factory is not None and not frame._runner.is_running()
+        if not frame._runner.is_current_run_complete() and (
+            not frame._runner.is_running()
+            or (factory is not None and frame._runner.last_exit_code is not None)
+        ):
+            # 完成信号可先于 reader/mode 回调尾部退出；停止曾停表，必须补交最终报告。
+            if not frame._closing and not frame._runner_finished_handled:
+                frame._poll_timer.start()
+            return
+        if (factory is not None and frame._runner.is_current_run_complete()
                 and not frame._runner_finished_handled):
             # 冻结归属不做 I/O，先解锁交互，再由受监督任务发现附件和读取图表。
             query = frame._runner.freeze_result_query()
@@ -350,7 +358,6 @@ class PerformanceLauncherRun(QObject):
                 frame.chart_status.setText(tr("Loading chart…"))
             return
         # 注入的旧 runner 未提供冻结快照接口时保留同步兼容边界。
-        self._frame._library_controller.finish()
         if self._frame._closing or self._frame._runner_finished_handled:
             return
         if self._frame._runner.is_running():
@@ -365,6 +372,7 @@ class PerformanceLauncherRun(QObject):
                 )
                 self._frame._poll_timer.start()
             return
+        self._frame._library_controller.finish()
         self._frame._runner_finished_handled = True
         self._frame._stopping = False
         self._frame._poll_timer.stop()

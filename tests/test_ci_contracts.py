@@ -49,11 +49,6 @@ PINNED_ACTIONS = {
     "actions/download-artifact": ("634f93cb2916e3fdff6788551b99b062d0335ce0", "v5"),
 }
 
-USES_PATTERN = re.compile(
-    r"^\s*uses:\s*(?P<action>[^@\s]+)@(?P<ref>[^\s#]+)\s*#\s*(?P<version>v\d+)\s*$",
-    re.MULTILINE,
-)
-
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -100,18 +95,147 @@ def _missing_svg_references(declared: set[str], icon_directory: Path) -> set[str
     return missing
 
 
-def test_all_actions_are_pinned_to_verified_commit_shas():
-    workflows = "\n".join(_read(path) for path in WORKFLOW_DIR.glob("*.yaml"))
-    matches = list(USES_PATTERN.finditer(workflows))
+def _workflow_mapping(node, location):
+    """保留标量的源码位置，并拒绝会掩盖引用的重复键。"""
+    assert isinstance(node, yaml.MappingNode), f"Expected mapping: {location}"
+    result = {}
+    for key, value in node.value:
+        assert isinstance(key, yaml.ScalarNode), f"Expected scalar key: {location}"
+        assert key.value not in result, f"Duplicate key {key.value}: {location}"
+        result[key.value] = value
+    return result
 
-    assert matches, "Expected at least one GitHub Action reference"
-    for match in matches:
-        action = match.group("action")
-        assert action in PINNED_ACTIONS, f"Unreviewed action: {action}"
+
+def _workflow_action_references(path):
+    """按工作流结构枚举 job/step uses，不依赖注释、缩进或 flow/block 写法。"""
+    source = _read(path)
+    workflow = _workflow_mapping(yaml.compose(source), str(path))
+    jobs = _workflow_mapping(workflow.get("jobs"), f"{path}:jobs")
+    references = []
+    for name, node in jobs.items():
+        location = f"{path}:jobs.{name}"
+        job = _workflow_mapping(node, location)
+        if "uses" in job:
+            references.append(("reusable workflow", location, job["uses"], source))
+        if "steps" in job:
+            assert isinstance(job["steps"], yaml.SequenceNode), f"Expected steps: {location}"
+            for index, step_node in enumerate(job["steps"].value):
+                step_location = f"{location}.steps[{index}]"
+                step = _workflow_mapping(step_node, step_location)
+                if "uses" in step:
+                    references.append(("action", step_location, step["uses"], source))
+    return references
+
+
+def test_all_actions_are_pinned_to_verified_commit_shas():
+    references = []
+    for path in sorted(WORKFLOW_DIR.iterdir()):
+        if path.is_file() and path.suffix in {".yaml", ".yml"}:
+            references.extend(_workflow_action_references(path))
+
+    assert references, "Expected at least one GitHub Action reference"
+    for kind, location, node, source in references:
+        assert isinstance(node, yaml.ScalarNode) and node.tag == "tag:yaml.org,2002:str", (
+            f"Expected string uses: {location}"
+        )
+        reference = node.value
+        assert kind != "reusable workflow", f"Unsupported reusable workflow: {location}"
+        assert not reference.startswith("./"), f"Unsupported local action: {location}"
+        assert not reference.startswith("docker://"), f"Unsupported container action: {location}"
+        assert "/.github/workflows/" not in reference, (
+            f"Unsupported reusable workflow in steps: {location}"
+        )
+        action, separator, ref = reference.partition("@")
+        assert action in PINNED_ACTIONS, f"Unreviewed action: {action} ({location})"
         expected_sha, expected_version = PINNED_ACTIONS[action]
-        assert match.group("ref") == expected_sha
-        assert re.fullmatch(r"[0-9a-f]{40}", match.group("ref"))
-        assert match.group("version") == expected_version
+        assert separator and re.fullmatch(r"[0-9a-f]{40}", ref), (
+            f"Expected full commit SHA: {reference} ({location})"
+        )
+        assert ref == expected_sha, f"Unverified commit: {reference} ({location})"
+        # 注释不是引用存在的前提；若保留版本注释，仍校验其与审核记录一致。
+        lines = source.splitlines()
+        tail = lines[node.end_mark.line][node.end_mark.column:] if (
+            node.end_mark.line < len(lines)
+        ) else ""
+        version_comment = re.fullmatch(r"\s*#\s*(v\d+)\s*", tail)
+        if version_comment:
+            assert version_comment.group(1) == expected_version, location
+
+
+@pytest.mark.parametrize("extension", [".yaml", ".yml"])
+@pytest.mark.parametrize("reference", [
+    "actions/setup-python@main",
+    "actions/setup-python@" + "a" * 40,
+    "unknown/action@" + "a" * 40,
+    "./local-action",
+    "docker://alpine:latest",
+    "owner/repo/.github/workflows/shared.yml@" + "a" * 40,
+])
+@pytest.mark.parametrize("style", ["named", "list", "flow", "job"])
+def test_action_pin_gate_rejects_every_unreviewed_reference(
+    monkeypatch, tmp_path, extension, reference, style,
+):
+    """混合有效引用不能掩盖另一文件或语法中的未审核引用。"""
+    sha, version = PINNED_ACTIONS["actions/checkout"]
+    (tmp_path / "valid.yaml").write_text(
+        f"jobs:\n  valid:\n    steps:\n      - name: checkout\n"
+        f"        uses: actions/checkout@{sha} # {version}\n", encoding="utf-8",
+    )
+    declarations = {
+        "named": f"    steps:\n      - name: unchecked\n        uses: {reference}\n",
+        "list": f"    steps:\n      - uses: {reference}\n",
+        "flow": f"    steps: [{{uses: '{reference}'}}]\n",
+        "job": f"    uses: {reference}\n",
+    }
+    (tmp_path / f"unchecked{extension}").write_text(
+        "jobs:\n  unchecked:\n" + declarations[style], encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW_DIR", tmp_path)
+
+    with pytest.raises(AssertionError):
+        test_all_actions_are_pinned_to_verified_commit_shas()
+
+
+@pytest.mark.parametrize("extension", [".yaml", ".yml"])
+def test_action_pin_gate_accepts_verified_refs_without_comments(monkeypatch, tmp_path, extension):
+    sha = PINNED_ACTIONS["actions/checkout"][0]
+    (tmp_path / f"verified{extension}").write_text(
+        f"jobs:\n  verified:\n    steps:\n      - uses: actions/checkout@{sha}\n"
+        f"      - {{uses: 'actions/checkout@{sha}'}}\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW_DIR", tmp_path)
+
+    test_all_actions_are_pinned_to_verified_commit_shas()
+
+
+@pytest.mark.parametrize("steps,reason", [
+    ("      - uses: null\n", "Expected string uses"),
+    ("      - uses: 123\n", "Expected string uses"),
+    ("      - uses: actions/checkout\n", "Expected full commit SHA"),
+    ("      - uses: actions/checkout@v5\n", "Expected full commit SHA"),
+    ("      - uses: unknown/action@main\n        uses: actions/checkout@main\n", "Duplicate key"),
+    ("      - run: echo no-actions\n", "Expected at least one"),
+])
+def test_action_pin_gate_rejects_malformed_or_absent_refs(monkeypatch, tmp_path, steps, reason):
+    (tmp_path / "invalid.yml").write_text(
+        "jobs:\n  invalid:\n    steps:\n" + steps, encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW_DIR", tmp_path)
+
+    with pytest.raises(AssertionError, match=reason):
+        test_all_actions_are_pinned_to_verified_commit_shas()
+
+
+def test_action_pin_gate_preserves_version_comment_validation(monkeypatch, tmp_path):
+    sha = PINNED_ACTIONS["actions/checkout"][0]
+    (tmp_path / "wrong-version.yaml").write_text(
+        f"jobs:\n  wrong:\n    steps:\n      - uses: actions/checkout@{sha} # v99\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "WORKFLOW_DIR", tmp_path)
+
+    with pytest.raises(AssertionError, match="jobs.wrong.steps"):
+        test_all_actions_are_pinned_to_verified_commit_shas()
 
 
 def test_build_uses_read_only_default_permissions_and_scoped_release_write():

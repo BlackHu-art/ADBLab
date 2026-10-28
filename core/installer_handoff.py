@@ -27,6 +27,7 @@ class InstallerHandoff:
         self._process: subprocess.Popen | None = None
         self._prepared = False
         self._approved = False
+        self._committed = False
         self._nonce = ""
         self._preparing = False
 
@@ -70,6 +71,7 @@ class InstallerHandoff:
             self._process = None
             self._cancel = Event()
             self._approved = self._prepared = False
+            self._committed = False
             self._nonce = ""
 
     def _prepare(self, verified: VerifiedInstaller) -> None:
@@ -129,10 +131,37 @@ class InstallerHandoff:
                     self._process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     pass
-                if self._process.stdout is not None:
-                    self._process.stdout.close()
-                self._process = None
+                if self._process.poll() is not None:
+                    if self._process.stdout is not None:
+                        self._process.stdout.close()
+                    self._process = None
             raise
+
+    def has_pending_helper(self) -> bool:
+        """只观察失败或撤销后仍活跃的 helper；READY 交接需跨父进程退出保留。"""
+        with self._lock:
+            return (not self._prepared and not self._committed and self._process is not None
+                    and self._process.poll() is None)
+
+    def wait_pending_helper(self, timeout: float) -> bool:
+        """后台有界等待未授权 helper；超时保留归属，不终止进程或等待 READY 交接。"""
+        with self._lock:
+            process = None if self._prepared or self._committed else self._process
+        if process is None:
+            return True
+        if process.poll() is None:
+            if timeout <= 0:
+                return False
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return False
+        with self._lock:
+            if self._process is process:
+                if process.stdout is not None:
+                    process.stdout.close()
+                self._process = None
+        return True
 
     def mark_shutdown_success(self, succeeded: bool) -> None:
         """关闭 owner 只记录严格屏障结果，不能在此启动安装器。"""
@@ -163,6 +192,7 @@ class InstallerHandoff:
                     if self._process.poll() is None and self._process.stdin is not None:
                         self._process.stdin.write(f"COMMIT {self._nonce}\n".encode("ascii"))
                         self._process.stdin.flush()
+                        self._committed = True
         except OSError:
             # 根入口已完成关闭；通道失败不能伪造升级完成或再启动另一个 helper。
             self._approved = False

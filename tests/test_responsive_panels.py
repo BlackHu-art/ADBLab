@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QLocale, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QFont, QIntValidator, QRegularExpressionValidator
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -32,6 +32,8 @@ from gui.features.media import ScreenshotPage
 from gui.panels.app_panel import AppPanel
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
+from gui.panels.side_panel_signals import SidePanelSignals
+from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles
 from gui.styles.typography import FontConfig, typography_manager
 from gui.widgets.responsive_controller import (
@@ -77,6 +79,114 @@ def _side_panel() -> SimpleNamespace:
         selected_devices=[],
         signals=SimpleNamespace(),
     )
+
+
+@pytest.mark.parametrize("locale_name", ("de_DE", "en_US", "zh_CN"))
+def test_system_protocol_numbers_ignore_display_locale(qt_application, locale_name):
+    """真实字段与提交信号仅接受后端支持的 ASCII 普通十进制格式。"""
+    previous_locale = QLocale()
+    QLocale.setDefault(QLocale(locale_name))
+    host = _side_panel()
+    host.selected_devices = ["synthetic-system"]
+    host.signals = SidePanelSignals()
+    system = SystemPanel(host)
+    root = None
+    try:
+        root = system.build_ui()
+        system.connect_signals()
+        cases = (
+            (system.tcpip_port_input, ("1", "65535"),
+             ("0", "65536", "5,555", "5.555", "+5555", "-1")),
+            (system.fwd_local, ("1234",), ("1,234", "1.234")),
+            (system.fwd_remote, ("5678",), ("5,678", "5.678")),
+            (system.kill_pid_input, ("1", "2147483647"),
+             ("0", "2147483648", "1,234", "1.234", "+1234", "-1")),
+            (system.emu_geo_lon, ("-180", "180", "12.5", "-.5"),
+             ("180.000001", "-180.000001", "12,5", "1,000", "+12.5", "1e1")),
+            (system.emu_geo_lat, ("-90", "90", "-12.5", ".5"),
+             ("90.000001", "-90.000001", "12,5", "1,000", "+12.5")),
+        )
+        for field, valid, invalid in cases:
+            assert field.validator().locale().name() == "C"
+            assert (
+                field.validator().locale().numberOptions()
+                & QLocale.NumberOption.RejectGroupSeparator
+            )
+            for text in valid:
+                field.setText(text)
+                assert field.hasAcceptableInput(), (locale_name, text)
+                field.clear()
+                QTest.keyClicks(field, text)
+                assert field.text() == text and field.hasAcceptableInput()
+            for text in invalid:
+                field.setText(text)
+                assert not field.hasAcceptableInput(), (locale_name, text)
+            for text in ("１２", "١٢", "−1"):
+                field.setText(text)
+                assert not field.hasAcceptableInput(), (locale_name, text)
+
+        submissions = (
+            (system.tcpip_port_input, system.btn_tcpip_mode,
+             host.signals.tcpip_mode_requested, "5555", "5,555"),
+            (system.kill_pid_input, system.btn_kill_pid,
+             host.signals.kill_process_requested, "2147483647", "1,234"),
+        )
+        for field, button, signal, valid, invalid in submissions:
+            spy = QSignalSpy(signal)
+            field.setText(valid)
+            button.click()
+            assert spy.count() == 1
+            assert spy.at(0) == [host.selected_devices, valid]
+            for text in (invalid, "+1", "-1", "0", "2147483648"):
+                field.setText(text)
+                button.click()
+                button.clicked.emit()
+                assert spy.count() == 1
+        geo_spy = QSignalSpy(host.signals.emu_geo_requested)
+        system.emu_geo_lon.setText("12.5")
+        system.emu_geo_lat.setText("-89.75")
+        system.btn_emu_geo.click()
+        assert geo_spy.count() == 1
+        assert geo_spy.at(0) == [host.selected_devices, "12.5", "-89.75"]
+        system.emu_geo_lon.setText("12,5")
+        system.btn_emu_geo.clicked.emit()
+        assert geo_spy.count() == 1
+        for button, signal, expected in (
+            (system.btn_forward, host.signals.forward_port_requested, ["1234", "5678"]),
+            (system.btn_reverse, host.signals.reverse_port_requested, ["5678", "1234"]),
+        ):
+            spy = QSignalSpy(signal)
+            system.fwd_local.setText("1234")
+            system.fwd_remote.setText("5678")
+            button.click()
+            assert spy.count() == 1
+            assert spy.at(0) == [host.selected_devices, *expected]
+            for field in (system.fwd_local, system.fwd_remote):
+                field.setText("1,234")
+                button.clicked.emit()
+                assert spy.count() == 1
+                field.setText("1234")
+        for param, valid, invalid in (("status", "5", "6"), ("level", "100", "101")):
+            system.battery_param.setCurrentText(param)
+            battery_spy = QSignalSpy(host.signals.battery_set_requested)
+            for text in ("+1", "1,0", "1.0", invalid):
+                system.battery_val.setText(text)
+                assert not system.battery_val.hasAcceptableInput()
+                system.btn_battery_set.clicked.emit()
+                assert battery_spy.count() == 0
+            system.battery_val.setText(valid)
+            assert system.battery_val.hasAcceptableInput()
+            system.btn_battery_set.click()
+            assert battery_spy.count() == 1
+            assert battery_spy.at(0) == [host.selected_devices, param, valid]
+    finally:
+        QLocale.setDefault(previous_locale)
+        if root is not None:
+            root.close()
+            root.deleteLater()
+        system.close()
+        system.deleteLater()
+        qt_application.processEvents()
 
 
 def _set_scroll_viewport_width(

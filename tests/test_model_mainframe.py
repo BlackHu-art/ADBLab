@@ -8,7 +8,8 @@ from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer
+import pytest
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import SmoothScrollArea
 
@@ -746,7 +747,10 @@ def test_main_frame_syncs_device_context_to_every_task_page():
         page.set_device_context.assert_called_once_with(*expected)
 
 
-def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails():
+def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails(
+    monkeypatch,
+):
+    monkeypatch.setattr("gui.main_frame.os", SimpleNamespace(name="nt"))
     _app = QApplication.instance() or QApplication([])
     frame = SimpleNamespace()
     frame._always_on_top = False
@@ -770,7 +774,8 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     pin_card.setChecked.assert_called_once_with(True)
 
 
-def test_main_frame_always_on_top_native_path_does_not_recreate_window():
+def test_main_frame_always_on_top_native_path_does_not_recreate_window(monkeypatch):
+    monkeypatch.setattr("gui.main_frame.os", SimpleNamespace(name="nt"))
     _app = QApplication.instance() or QApplication([])
     frame = SimpleNamespace()
     frame._always_on_top = False
@@ -880,3 +885,94 @@ def test_main_frame_device_refresh_uses_side_panel_state_owner():
 
     frame.left_panel.request_device_refresh.assert_called_once_with()
     frame.left_panel.signals.refresh_devices_requested.emit.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["normal", "hidden", "minimized", "maximized"])
+@pytest.mark.parametrize("initial,enabled", [(False, True), (True, False)])
+def test_main_frame_nonwindows_always_on_top_preserves_qt_window(
+    monkeypatch, qt_application, mode, initial, enabled
+):
+    frame = QWidget()
+    frame._always_on_top = initial
+    frame._settings_page = None
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
+    frame._set_always_on_top_native = Mock(side_effect=AssertionError("Windows API called"))
+    frame.setGeometry(70, 90, 520, 360)
+    frame.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, initial)
+    if mode == "normal":
+        frame.show()
+    elif mode == "minimized":
+        frame.showMinimized()
+    elif mode == "maximized":
+        frame.showMaximized()
+    qt_application.processEvents()
+    visible, state, geometry = frame.isVisible(), frame.windowState(), frame.geometry()
+    monkeypatch.setattr("gui.main_frame.os", SimpleNamespace(name="posix"))
+    try:
+        with patch("core.settings_manager.AppSettings") as settings_cls:
+            MainFrame.set_always_on_top(frame, enabled)
+        assert bool(frame.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) is enabled
+        assert frame.isVisible() is visible
+        assert frame.windowState() == state
+        assert frame.geometry() == geometry
+        assert frame._always_on_top is enabled
+        settings_cls.instance.return_value.set.assert_called_once_with("always_on_top", enabled)
+    finally:
+        frame.close()
+        frame.deleteLater()
+        qt_application.processEvents()
+
+
+@pytest.mark.parametrize("active,minimized", [(False, False), (True, False), (True, True)])
+def test_main_frame_nonwindows_always_on_top_focus_policy(active, minimized):
+    flags = Qt.WindowType.Window
+    frame = SimpleNamespace(
+        windowFlags=lambda: flags,
+        isVisible=lambda: True,
+        windowState=lambda: (
+            Qt.WindowState.WindowMinimized if minimized else Qt.WindowState.WindowNoState
+        ),
+        saveGeometry=lambda: b"geometry",
+        isActiveWindow=lambda: active,
+        focusWidget=lambda: focus,
+        testAttribute=lambda attribute: False,
+        restoreGeometry=Mock(return_value=True),
+        setWindowState=Mock(),
+        setAttribute=Mock(),
+        show=Mock(),
+        isMinimized=lambda: minimized,
+        activateWindow=Mock(),
+    )
+    focus = SimpleNamespace(setFocus=Mock())
+
+    def set_flag(flag, enabled):
+        nonlocal flags
+        flags = flags | flag if enabled else flags & ~flag
+
+    frame.setWindowFlag = set_flag
+    assert MainFrame._set_always_on_top_qt(frame, True) is True
+    assert bool(flags & Qt.WindowType.WindowStaysOnTopHint)
+    assert frame.activateWindow.call_count == int(active and not minimized)
+    assert focus.setFocus.call_count == int(active and not minimized)
+    assert frame.setAttribute.call_args_list == [
+        call(Qt.WidgetAttribute.WA_ShowWithoutActivating, not active),
+        call(Qt.WidgetAttribute.WA_ShowWithoutActivating, False),
+    ]
+
+
+def test_main_frame_nonwindows_always_on_top_refusal_does_not_claim_applied(monkeypatch):
+    frame = SimpleNamespace(
+        _always_on_top=False,
+        windowFlags=lambda: Qt.WindowType.Window,
+        _refresh_always_on_top_button=Mock(),
+    )
+    monkeypatch.setattr("gui.main_frame.os", SimpleNamespace(name="posix"))
+    with (
+        patch.object(MainFrame, "_set_always_on_top_qt", return_value=False),
+        patch("gui.main_frame._debug_log") as log,
+        patch("core.settings_manager.AppSettings") as settings_cls,
+    ):
+        MainFrame.set_always_on_top(frame, True)
+    assert frame._always_on_top is False
+    assert log.call_args.kwargs["phase"] == "deferred"
+    settings_cls.instance.return_value.set.assert_called_once_with("always_on_top", False)

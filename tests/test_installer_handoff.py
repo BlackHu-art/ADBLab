@@ -218,3 +218,104 @@ def test_rearm_never_revives_an_active_or_unfinished_attempt():
     owner.reset_attempt()
     assert not owner._cancel.is_set()
     assert not owner.prepared
+
+
+def fake_handoff_attempt(tmp_path, monkeypatch, *, answer=b"INVALID"):
+    """仅替换原生进程边界，执行真实复制、握手及异常清理路径。"""
+    from core import installer_handoff as module
+    from services.app_update import InstallerAsset
+    from services.installer_update import VerifiedInstaller
+
+    request = _request(tmp_path, monkeypatch)
+    verified = VerifiedInstaller(Path(request["path"]), InstallerAsset(**request["asset"]))
+    source = tmp_path / "helper.exe"
+    source.write_bytes(b"helper fixture")
+    owner = module.InstallerHandoff()
+    monkeypatch.setattr(owner, "_helper_source", lambda: (
+        source, hashlib.sha256(b"helper fixture").hexdigest(),
+    ))
+
+    class Parent:
+        created = 1
+        def __init__(self, _pid):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    class Process:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+            self.returncode = None
+            self.wait_calls = []
+        def poll(self):
+            return self.returncode
+        def wait(self, timeout):
+            self.wait_calls.append(timeout)
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("fake helper", timeout)
+            return self.returncode
+
+    process = Process()
+    monkeypatch.setattr(module, "ParentProcess", Parent)
+    monkeypatch.setattr(module, "locked_file", lambda path: path.open("rb"))
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(module, "read_pipe_line", lambda *args, **kwargs: (
+        f"READY {owner._nonce}".encode("ascii") if answer == b"READY" else answer
+    ))
+    return owner, verified, process
+
+
+def test_failed_handshake_retains_live_helper_until_late_exit(tmp_path, monkeypatch):
+    owner, verified, process = fake_handoff_attempt(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="handshake"):
+        owner.prepare(verified)
+    assert process.wait_calls == [5]
+    assert owner._process is process
+    assert not process.stdout.closed
+    assert not owner.prepared
+    for _ in range(2):
+        owner.abort()
+        with pytest.raises(RuntimeError, match="still active"):
+            owner.reset_attempt()
+        with pytest.raises(RuntimeError):
+            owner.prepare(verified)
+    process.returncode = 1
+    owner.reset_attempt()
+    assert process.stdout.closed
+    assert owner._process is None
+    assert not owner._cancel.is_set()
+    retry_process = type(process)()
+    from core import installer_handoff as module
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: retry_process)
+    monkeypatch.setattr(module, "read_pipe_line", lambda *args, **kwargs: (
+        f"READY {owner._nonce}".encode("ascii")
+    ))
+    owner.prepare(verified)
+    assert owner.prepared
+    owner.abort()
+    retry_process.returncode = 0
+    assert owner.wait_pending_helper(0)
+
+
+def test_committed_helper_remains_live_without_becoming_a_failed_resource(tmp_path, monkeypatch):
+    owner, verified, process = fake_handoff_attempt(tmp_path, monkeypatch, answer=b"READY")
+    owner.prepare(verified)
+    written = []
+
+    class Pipe(io.BytesIO):
+        def close(self):
+            written.append(self.getvalue())
+            super().close()
+
+    process.stdin = Pipe()
+    owner.mark_shutdown_success(True)
+    owner.commit()
+    assert written == [f"COMMIT {owner._nonce}\n".encode("ascii")]
+    assert not owner.has_pending_helper()
+    assert owner.wait_pending_helper(0.01)
+    assert process.wait_calls == []
+    assert process.poll() is None
+    assert owner._process is process

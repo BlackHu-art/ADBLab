@@ -264,3 +264,6 @@ def test_screen_action_rows_align_with_preview_in_real_workspace(
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
+
+
+pytestmark = pytest.mark.usefixtures("isolated_settings_client_detection")

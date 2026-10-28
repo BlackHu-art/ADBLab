@@ -542,10 +542,17 @@ def test_metadata_rechecks_generation_after_waiting_for_disk_lock():
 def test_device_metadata_is_published_before_later_queries_finish(first_failure):
     controller = _device_metadata_controller()
     second_started = threading.Event()
+    release_first = threading.Event()
+    first_published = threading.Event()
     release_second = threading.Event()
+
+    controller.signals.device_info_updated.emit.side_effect = (
+        lambda device, _info: first_published.set() if device == "device-1" else None
+    )
 
     def get_info(device, *, cancelled=None):
         if device == "device-1":
+            assert release_first.wait(3), "first query was not released"
             if first_failure:
                 raise RuntimeError("overview unavailable")
             return {"Model": "First", "Battery Level": "90%"}
@@ -562,6 +569,10 @@ def test_device_metadata_is_published_before_later_queries_finish(first_failure)
         future = executor.submit(controller.executor.submit.call_args.args[0])
         try:
             assert second_started.wait(3), "second query did not start"
+            # 查询启动不代表首个结果已发布；门闩固定这一合法调度。
+            controller.signals.device_info_updated.emit.assert_not_called()
+            release_first.set()
+            assert first_published.wait(3), "first metadata was not published"
             metadata = controller.signals.device_info_updated.emit.call_args_list
             assert len(metadata) == 1
             assert metadata[0].args[0] == "device-1"
@@ -572,6 +583,7 @@ def test_device_metadata_is_published_before_later_queries_finish(first_failure)
             upsert.assert_not_called()
             controller.signals.devices_updated.emit.assert_not_called()
         finally:
+            release_first.set()
             release_second.set()
             future.result(timeout=3)
 
@@ -589,9 +601,17 @@ def test_device_metadata_is_published_before_later_queries_finish(first_failure)
 def test_late_metadata_and_batch_write_are_suppressed_after_invalidation(invalidation):
     controller = _device_metadata_controller()
     second_started = threading.Event()
+    release_first = threading.Event()
+    first_published = threading.Event()
     release_second = threading.Event()
 
+    controller.signals.device_info_updated.emit.side_effect = (
+        lambda device, _info: first_published.set() if device == "device-1" else None
+    )
+
     def get_info(device, *, cancelled=None):
+        if device == "device-1":
+            assert release_first.wait(3), "first query was not released"
         if device == "device-2":
             second_started.set()
             assert release_second.wait(3), "second query was not released"
@@ -606,6 +626,10 @@ def test_late_metadata_and_batch_write_are_suppressed_after_invalidation(invalid
         future = executor.submit(controller.executor.submit.call_args.args[0])
         try:
             assert second_started.wait(3), "second query did not start"
+            # 查询启动不代表首个结果已发布；门闩固定这一合法调度。
+            controller.signals.device_info_updated.emit.assert_not_called()
+            release_first.set()
+            assert first_published.wait(3), "first metadata was not published"
             assert controller.signals.device_info_updated.emit.call_count == 1
             if invalidation == "shutdown":
                 controller._shutting_down = True
@@ -614,6 +638,7 @@ def test_late_metadata_and_batch_write_are_suppressed_after_invalidation(invalid
                     controller._device_topology_generation += 1
                     controller._device_topology = ()
         finally:
+            release_first.set()
             release_second.set()
             future.result(timeout=3)
 

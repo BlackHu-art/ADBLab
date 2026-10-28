@@ -146,6 +146,36 @@ class NativeCommandScope:
                         self._condition.wait(min(0.05, max(0.0, deadline - time.monotonic())))
 
 
+_native_cleanup_lock = threading.Lock()
+_native_cleanup_scopes: set[NativeCommandScope] = set()
+
+
+def native_cleanup_count() -> int:
+    """保留无显式 owner 且命令线程已交还的残留；仅确认退出才解除应用级归属。"""
+    with _native_cleanup_lock:
+        released = [scope for scope in _native_cleanup_scopes if not scope.is_running()]
+        _native_cleanup_scopes.difference_update(released)
+        return len(_native_cleanup_scopes)
+
+
+def wait_for_native_cleanup(timeout: float) -> bool:
+    """后台在共享预算内重试残留清理；不接管显式作用域，也不重放业务命令。"""
+    deadline = time.monotonic() + max(0.0, timeout)
+    with _native_cleanup_lock:
+        scopes = tuple(_native_cleanup_scopes)
+    for scope in scopes:
+        scope.wait(max(0.0, deadline - time.monotonic()))
+    return native_cleanup_count() == 0
+
+
+def retain_native_cleanup(scope: NativeCommandScope) -> None:
+    """接收执行方交还的残留作用域，复用关闭屏障；不启动线程或重放命令。"""
+    scope.request_stop()
+    with _native_cleanup_lock:
+        if scope.is_running():
+            _native_cleanup_scopes.add(scope)
+
+
 class _CancellationEvent:
     """每次启动独占取消事件；保持到入口退出，避免尚未打开事件时丢失控制通道。"""
 
@@ -350,7 +380,7 @@ def run_native(
     command: list[str], *, isolate: bool = False, input=None, capture_output: bool = False,
     timeout: float | None = None, check: bool = False, **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    """保留 run 的流和退出契约；各启动方式共用两秒的终止及排空预算。"""
+    """保留 run 的流和退出契约；两秒收尾后仍活跃的客户端交还应用关闭屏障。"""
     if input is not None:
         if kwargs.get("stdin") is not None:
             raise ValueError("stdin and input arguments may not both be used")
@@ -359,8 +389,13 @@ def run_native(
         if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
             raise ValueError("stdout and stderr arguments may not be used with capture_output")
         kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
-    process = popen_native(command, isolate=isolate, **kwargs)
+    scope = NativeCommandScope()
+    token = scope._begin_command()
+    assert token is not None
+    process = None
     try:
+        process = popen_native(command, isolate=isolate, **kwargs)
+        scope._attach_process(token, process)
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired as error:
@@ -382,5 +417,10 @@ def run_native(
             raise subprocess.CalledProcessError(returncode, command, stdout, stderr)
     finally:
         # 普通 Popen 上下文退出会同步关闭活跃 reader 的流，绕过上面的共享预算。
-        close_native_pipes(process)
+        try:
+            if process is not None:
+                close_native_pipes(process)
+        finally:
+            scope._finish_command(token)
+            retain_native_cleanup(scope)
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)

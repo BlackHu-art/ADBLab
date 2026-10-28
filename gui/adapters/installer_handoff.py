@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from threading import Event, Thread
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -76,7 +77,7 @@ class QtInstallerHandoff(QObject):
 
     def _finish(self) -> None:
         """GUI 轮询只观察已结束线程，不把线程中的结果直接投递给可销毁控件。"""
-        if self.is_running():
+        if self._thread is not None and self._thread.is_alive():
             return
         self.wait(0)
         self._poll.stop()
@@ -108,12 +109,16 @@ class QtInstallerHandoff(QObject):
             self.cancel()
 
     def is_running(self) -> bool:
-        """供关闭监督器读取实际线程状态，不访问 Qt 对象。"""
-        return self._thread is not None and self._thread.is_alive()
+        """供关闭监督器观察线程及未授权 helper；正常 READY 交接不阻塞父应用退出。"""
+        return ((self._thread is not None and self._thread.is_alive())
+                or self._handoff.has_pending_helper())
 
     def wait(self, timeout: float) -> bool:
-        """由后台关闭通道等待；超时不撤销线程归属或假装准备结束。"""
+        """后台共享预算等待线程和未授权 helper；零预算只观察，超时保留资源归属。"""
+        deadline = monotonic() + max(0.0, timeout)
         thread = self._thread
         if thread is not None:
             thread.join(max(0.0, timeout))
-        return not self.is_running()
+            if thread.is_alive():
+                return False
+        return self._handoff.wait_pending_helper(max(0.0, deadline - monotonic()))

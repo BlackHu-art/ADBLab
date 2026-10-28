@@ -2934,16 +2934,46 @@ class MainFrame(FluentWindow):
         except Exception:
             return False
 
+    def _set_always_on_top_qt(self, enabled: bool) -> bool:
+        """非 Windows 更新 Qt 置顶请求，保留显隐、几何和窗口状态，不抢占后台窗口焦点。"""
+        flag = Qt.WindowType.WindowStaysOnTopHint
+        if bool(self.windowFlags() & flag) == enabled:
+            return True
+        visible = self.isVisible()
+        state = self.windowState()
+        geometry = self.saveGeometry()
+        active = self.isActiveWindow()
+        focus = self.focusWidget()
+        without_activation = self.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setWindowFlag(flag, enabled)
+        self.restoreGeometry(geometry)
+        self.setWindowState(state)
+        if visible:
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not active)
+            self.show()
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, without_activation)
+            if active and not self.isMinimized():
+                self.activateWindow()
+                if focus is not None:
+                    focus.setFocus(Qt.FocusReason.OtherFocusReason)
+        return bool(self.windowFlags() & flag) == enabled
+
     def set_always_on_top(self, enabled: bool):
         self._always_on_top = bool(enabled)
-        native_applied = self._set_always_on_top_native(self._always_on_top)
+        native_applied = False
+        if os.name == "nt":
+            # Windows 原生失败时不得通过重建窗口兜底，以免破坏材质与窗口生命周期。
+            applied = native_applied = self._set_always_on_top_native(self._always_on_top)
+        else:
+            applied = MainFrame._set_always_on_top_qt(self, self._always_on_top)
+            self._always_on_top = bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
         _debug_log(
             self,
             "ui.window",
             action="always_on_top",
             enabled=self._always_on_top,
             native_applied=native_applied,
-            phase="applied",
+            phase="applied" if applied else "deferred",
         )
         self._refresh_always_on_top_button()
         from core.settings_manager import AppSettings

@@ -321,3 +321,25 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.ui)
         elif item.path.name in _INTEGRATION_TEST_FILES:
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture
+def isolated_settings_client_detection(monkeypatch, qt_application):
+    """仅显式选用的 UI 测试封闭探测，补丁持续到延迟事件与后台任务收口。"""
+    from PySide6.QtCore import QThreadPool
+    from PySide6.QtWidgets import QApplication
+
+    from gui.widgets.adb_client_card import AdbClientSettingCard
+
+    original = AdbClientSettingCard.start_detection
+    monkeypatch.setattr(AdbClientSettingCard, "start_detection", lambda _self: None)
+    yield original
+    # 检测专项可显式恢复真实入口，但必须在恢复补丁和临时路径前停止其任务。
+    for widget in QApplication.allWidgets():
+        if isinstance(widget, AdbClientSettingCard):
+            widget.prepare_shutdown()
+    assert QThreadPool.globalInstance().waitForDone(2000), "客户端探测线程未结束"
+    qt_application.processEvents()
+    for widget in QApplication.allWidgets():
+        if isinstance(widget, AdbClientSettingCard):
+            assert not widget._tasks, "客户端探测仍有未投递完成通知"

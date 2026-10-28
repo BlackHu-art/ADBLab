@@ -71,6 +71,31 @@ class _ResponsiveRowLayout(QGridLayout):
         return super().heightForWidth(effective_width)
 
 
+def _set_protocol_number_locale(validator: QIntValidator | QDoubleValidator) -> None:
+    """协议数值使用 ASCII 小数点且拒绝分组符，不跟随界面区域设置。"""
+    locale = QLocale.c()
+    locale.setNumberOptions(locale.numberOptions() | QLocale.NumberOption.RejectGroupSeparator)
+    validator.setLocale(locale)
+
+
+class _ProtocolIntValidator(QIntValidator):
+    """保留 Qt 范围和编辑中间态，仅允许协议支持的 ASCII 数字与负号。"""
+
+    def validate(self, input_text: str, position: int):
+        if any(char not in "0123456789-" for char in input_text):
+            return self.State.Invalid, input_text, position
+        return super().validate(input_text, position)
+
+
+class _ProtocolDoubleValidator(QDoubleValidator):
+    """保留 Qt 小数范围和精度，拒绝后端不接受的正号和本地化字符。"""
+
+    def validate(self, input_text: str, position: int):
+        if any(char not in "0123456789-." for char in input_text):
+            return self.State.Invalid, input_text, position
+        return super().validate(input_text, position)
+
+
 class _SuffixedIntValidator(QIntValidator):
     """接受纯整数或带固定单位后缀的同一整数范围。"""
 
@@ -685,11 +710,18 @@ class BasePanel(QWidget):
         return i
 
     def _in_int(self, placeholder: str, minimum: int, maximum: int, width: int = 0):
-        """创建带业务范围约束的整数输入框。"""
+        """创建带业务范围约束、使用 ASCII 协议格式的整数输入框。"""
 
         field = self._in(placeholder, width)
-        field.setValidator(QIntValidator(minimum, maximum, field))
+        self._set_protocol_int_validator(field, minimum, maximum)
         return field
+
+    @staticmethod
+    def _set_protocol_int_validator(field: QLineEdit, minimum: int, maximum: int) -> None:
+        """动态范围更新也沿用相同协议格式，避免重建 validator 后恢复系统 locale。"""
+        validator = _ProtocolIntValidator(minimum, maximum, field)
+        _set_protocol_number_locale(validator)
+        field.setValidator(validator)
 
     def _in_float(
         self,
@@ -699,10 +731,11 @@ class BasePanel(QWidget):
         decimals: int = 6,
         width: int = 0,
     ):
-        """创建带业务范围约束的浮点输入框。"""
+        """创建带业务范围约束、使用 ASCII 协议格式的浮点输入框。"""
 
         field = self._in(placeholder, width)
-        validator = QDoubleValidator(minimum, maximum, decimals, field)
+        validator = _ProtocolDoubleValidator(minimum, maximum, decimals, field)
+        _set_protocol_number_locale(validator)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         field.setValidator(validator)
         return field

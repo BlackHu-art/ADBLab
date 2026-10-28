@@ -9,12 +9,12 @@ from collections import deque
 from datetime import datetime
 from math import ceil
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QFileDialog, QPlainTextEdit
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
-from gui.dialogs.lifecycle import safe_disconnect
+from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
 from gui.i18n import tr
 from utils.adb_values import normalize_android_package
 
@@ -78,6 +78,7 @@ class LiveLogcatStream:
         self._export_worker: LogcatExportWorker | None = None
         self._export_in_progress = False
         self._export_path = ""
+        self._export_registrations = []
 
     @property
     def _frame(self):
@@ -550,6 +551,8 @@ class LiveLogcatStream:
     def _export(self):
         from core.settings_manager import AppSettings
 
+        if not self._can_export():
+            return
         save_dir = AppSettings.instance().save_directory
         name = f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         fp, _ = QFileDialog.getSaveFileName(
@@ -558,7 +561,7 @@ class LiveLogcatStream:
             os.path.join(save_dir, name),
             tr("文本文件 (*.txt);;所有文件 (*)"),
         )
-        if not fp or self._export_in_progress:
+        if not fp or not self._can_export():
             return
         # 文档可能只完成部分绘制；逻辑可见队列包含完整筛选结果，且排除已淘汰记录。
         text = "\n".join(
@@ -567,25 +570,82 @@ class LiveLogcatStream:
             ) for entry in entries
         )
         worker = LogcatExportWorker(text, fp, self._frame)
-        worker.completed.connect(self._on_export_completed)
-        worker.finished.connect(self._on_export_finished)
+        worker.completed.connect(self._frame._on_export_completed)
+        worker.finished.connect(self._frame._on_export_finished)
         self._export_worker = worker
         self._export_path = fp
         self._export_in_progress = True
         self._update_content_actions()
         try:
+            self.register_shutdown_tasks(
+                self._frame._task_supervisor.supervisor,
+                owner_id=self._frame._supervisor_owner_id,
+                task_prefix=f"{self._frame._supervisor_owner_id}-{uuid.uuid4()}",
+            )
             worker.start()
         except RuntimeError as exc:
-            self._export_in_progress = False
-            self._export_worker = None
-            worker.deleteLater()
+            self._release_export_worker()
             self._update_content_actions()
             FluentMessageBox.critical(self._frame, tr("日志导出失败"), str(exc))
+
+    def _can_export(self) -> bool:
+        """模态文件框前后均复核页面生命期，关闭后禁止新增本地任务。"""
+        frame = self._frame_ref()
+        return bool(
+            frame is not None and is_qobject_alive(frame)
+            and not frame._closing and not frame._close_pending and not frame._close_ready
+            and not self._export_in_progress
+        )
+
+    @staticmethod
+    def _export_joined(worker, timeout: float = 0.0) -> bool:
+        """仅以原生线程 join 成功作为导出资源完成条件。"""
+        if not is_qobject_alive(worker):
+            return True
+        return bool(worker.wait(max(0, ceil(timeout * 1000))))
+
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """将当前导出纳入现有关闭监督；同一监督器只登记一次。"""
+        worker = self._export_worker
+        if worker is None:
+            return ()
+        for registered, task_id in self._export_registrations:
+            if registered is supervisor:
+                return (task_id,)
+        task_id = f"{task_prefix}-logcat-export"
+        supervisor.register(
+            task_id, owner_id=owner_id, kind="logcat_export",
+            request_stop=worker.requestInterruption,
+            wait=lambda timeout: LiveLogcatStream._export_joined(worker, timeout),
+            is_running=lambda: not LiveLogcatStream._export_joined(worker),
+        )
+        self._export_registrations.append((supervisor, task_id))
+        return (task_id,)
+
+    def _release_export_worker(self) -> bool:
+        """保留线程和监督归属直到 join 成功，不能以 finished 信号提前销毁。"""
+        worker = self._export_worker
+        if worker is None:
+            return True
+        if not self._export_joined(worker):
+            return False
+        for supervisor, task_id in self._export_registrations:
+            supervisor.unregister(task_id)
+        self._export_registrations.clear()
+        self._export_worker = None
+        self._export_in_progress = False
+        if hasattr(worker, "completed"):
+            safe_disconnect(worker.completed, self._frame._on_export_completed)
+        safe_disconnect(worker.finished, self._frame._on_export_finished)
+        worker.deleteLater()
+        return True
 
     def _on_export_completed(self, success: bool, message: str) -> None:
         try:
             frame = self._frame
         except RuntimeError:
+            return
+        if not is_qobject_alive(frame) or frame._closing:
             return
         if success:
             frame.status_bar.setText(
@@ -598,10 +658,12 @@ class LiveLogcatStream:
         FluentMessageBox.critical(frame, tr("日志导出失败"), message)
 
     def _on_export_finished(self) -> None:
-        worker, self._export_worker = self._export_worker, None
-        self._export_in_progress = False
-        if worker is not None:
-            worker.deleteLater()
+        frame = self._frame_ref()
+        if frame is None or not is_qobject_alive(frame):
+            return
+        if not self._release_export_worker():
+            QTimer.singleShot(frame.CLEANUP_RECHECK_MS, frame, frame._on_export_finished)
+            return
         try:
             self._update_content_actions()
         except RuntimeError:
