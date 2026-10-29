@@ -18,7 +18,6 @@ from gui.pages.fluent_pages import ActionCard, ActionCardView, HomePage
 from gui.styles import BaseStyles
 from gui.widgets.home_banner import HomeBanner
 from models.device_store import DeviceStore
-from tests.test_accessibility_contract import _contrast_ratio
 from tests.test_main_window_layout import (
     _FakeScreen,
     _FakeScreenAdapter,
@@ -190,42 +189,65 @@ def test_home_cards_follow_host_mica_without_losing_input_state(
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_banner_card_text_remains_readable_over_original_artwork(
-    qt_application, home_settings, theme,
+@pytest.mark.parametrize("mica", [True, False])
+def test_banner_cards_match_plain_cards_in_every_interaction_state(
+    qt_application, home_settings, theme, mica,
 ):
-    """完整原图可包含黑白色块，卡片三个交互态仍须保留文字对比度。"""
+    """横幅原图不改变卡片材质；明暗、交互及非云母回退均与下方卡片一致。"""
     BaseStyles.switch_theme(theme)
     host = QWidget()
-    host.isMicaEffectEnabled = lambda: True
+    host.isMicaEffectEnabled = lambda: mica
     content = QWidget()
     banner = HomeBanner(content, host)
     content.hide()
-    card = ActionCard("", "标题", "说明", lambda: None, banner)
-    card.setGeometry(30, 30, 300, 100)
+    activated = Mock()
+    cards = (
+        ActionCard("", "标题", "说明", activated, banner),
+        ActionCard("", "标题", "说明", activated, host),
+    )
+    cards[0].setGeometry(30, 30, 300, 100)
+    cards[1].setGeometry(30, 210, 300, 100)
     banner.resize(360, 180)
-    host.resize(400, 220)
+    host.resize(400, 350)
     host.show()
+    qt_application.processEvents()
+    alphas = (13, 21, 8) if theme == "Dark" else ((64, 40, 24) if mica else (170, 64, 64))
+    surfaces = []
     try:
-        for state in ("normal", "hover", "pressed"):
-            if state == "normal":
-                QTest.mouseMove(host, QPoint(390, 210))
-            elif state == "hover":
-                QTest.mouseMove(card, QPoint(200, 80))
-            else:
-                QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(200, 80))
-            wait_until(qt_application, lambda: (
-                card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
-            ))
-            for color in (QColor("black"), QColor("white")):
-                image = QImage(1, 1, QImage.Format.Format_RGB32)
-                image.fill(color)
-                painter = QPainter(image)
-                painter.fillRect(image.rect(), card.backgroundColor)
+        for card in cards:
+            # 每张卡先完整经过进入/离开，避免复用前一窗口的全局鼠标位置。
+            QTest.mouseMove(card, QPoint(200, 80))
+            qt_application.processEvents()
+            QTest.mouseMove(host, QPoint(390, 340))
+            qt_application.processEvents()
+            pixels = []
+            for index, state in enumerate(("normal", "hover", "pressed")):
+                if state == "hover":
+                    QTest.mouseMove(card, QPoint(200, 80))
+                elif state == "pressed":
+                    QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(200, 80))
+                wait_until(qt_application, lambda: (
+                    card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+                ))
+                assert card.isHover == (state != "normal"), (theme, mica, state)
+                assert card.isPressed == (state == "pressed"), (theme, mica, state)
+                expected = QColor(255, 255, 255, alphas[index])
+                assert card.backgroundColor == expected, (theme, mica, state)
+                image = QImage(card.size(), QImage.Format.Format_RGB32)
+                image.fill(QColor("#425970"))
+                card.render(image, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+                pixel = image.pixelColor(20, card.height() - 10)
+                expected_image = QImage(1, 1, QImage.Format.Format_RGB32)
+                expected_image.fill(QColor("#425970"))
+                painter = QPainter(expected_image)
+                painter.fillRect(expected_image.rect(), expected)
                 painter.end()
-                assert _contrast_ratio(
-                    BaseStyles.color("TEXT_PRIMARY"), image.pixelColor(0, 0).name(),
-                ) >= 4.5, (theme, state, color.name(), card.backgroundColor.name())
-        QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
+                assert pixel == expected_image.pixelColor(0, 0)
+                pixels.append(pixel)
+            surfaces.append(pixels)
+            QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
+        assert surfaces[0] == surfaces[1]
+        activated.assert_not_called()
     finally:
         host.close()
         host.deleteLater()
@@ -233,10 +255,10 @@ def test_banner_card_text_remains_readable_over_original_artwork(
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 @pytest.mark.parametrize("move_group", [False, True])
-def test_action_card_refreshes_artwork_surface_when_reparented_in_same_window(
+def test_action_card_keeps_shared_surface_when_reparented_in_same_window(
     qt_application, home_settings, theme, move_group,
 ):
-    """同窗移动卡片或其分组后，首次显示就应使用新背景所需的文字对比底色。"""
+    """同窗移入或移出横幅时，卡片及分组均保留共用轻透明底色。"""
     BaseStyles.switch_theme(theme)
     host = QWidget()
     host.isMicaEffectEnabled = lambda: True
@@ -255,26 +277,25 @@ def test_action_card_refreshes_artwork_surface_when_reparented_in_same_window(
     card.show()
     moving = group if move_group else card
     generic = QColor(255, 255, 255, 64 if theme == "Light" else 13)
-    artwork = QColor(255, 255, 255, 170) if theme == "Light" else QColor(0, 0, 0, 160)
     try:
         assert not card.isHover
         assert card.backgroundColor == generic
-        for parent, expected in ((banner, artwork), (plain, generic), (banner, artwork)):
+        for parent in (banner, plain, banner):
             moving.setParent(parent)
             moving.show()
             qt_application.processEvents()
             assert not card.isHover
-            assert card.backgroundColor == expected, (theme, move_group, parent)
+            assert card.backgroundColor == generic, (theme, move_group, parent)
     finally:
         host.close()
         host.deleteLater()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_home_initial_show_refreshes_cards_wrapped_into_banner(
+def test_home_initial_show_keeps_banner_and_workflow_cards_consistent(
     qt_application, home_settings, theme,
 ):
-    """首页先创建快捷分组再包入横幅，不依赖 MainFrame 后续全局刷新纠正底色。"""
+    """首页首显即保持上下卡片一致，不依赖 MainFrame 后续全局刷新。"""
     BaseStyles.switch_theme(theme)
     host = QWidget()
     host.isMicaEffectEnabled = lambda: True
@@ -286,7 +307,7 @@ def test_home_initial_show_refreshes_cards_wrapped_into_banner(
     page.show()
     try:
         wait_for_stable_geometry(qt_application, (page, page.banner, *page.tool_cards.values()))
-        expected = QColor(255, 255, 255, 170) if theme == "Light" else QColor(0, 0, 0, 160)
+        expected = QColor(255, 255, 255, 64 if theme == "Light" else 13)
         banner_cards = page.banner.findChildren(ActionCard)
         assert len(banner_cards) == 6
         for card in banner_cards:

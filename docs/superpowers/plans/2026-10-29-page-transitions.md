@@ -315,3 +315,35 @@ $previousScale = $env:QT_SCALE_FACTOR; $env:QT_SCALE_FACTOR = '1.5'
 .\.venv\Scripts\python.exe -B "$scratch/run_tests.py" theme-dpi150-review-final tests/test_card_material.py tests/test_home_banner.py::test_home_banner_preserves_original_pixels_in_both_material_modes tests/test_home_banner.py::test_banner_card_text_remains_readable_over_original_artwork tests/test_home_banner.py::test_action_card_refreshes_artwork_surface_when_reparented_in_same_window tests/test_home_banner.py::test_home_initial_show_refreshes_cards_wrapped_into_banner tests/test_navigation_theme.py::test_theme_rebuild_uses_target_tokens_without_painting_partial_state tests/test_navigation_theme.py::test_theme_rebuild_failure_restores_window_updates
 $env:QT_SCALE_FACTOR = $previousScale
 ```
+
+## 2026-10-30 首页卡片恢复统一轻透明材质
+
+按用户对实际深色首页截图的反馈，撤掉前一节为图片区域增加的专用深色/浅色底板。
+基线为 `ui-design` / `30f8a5a4cc84e929372893d0cb1edaa62e385e64`，保留原有 `docs/design/` 草稿。
+只删除 ActionCard 的图片祖先配色分支、仅服务该分支的强制刷新和六个 `IMAGE_CARD_*` token。
+横幅内外卡片共用 MaterialCard；正常、悬停、按压均一致，非云母继续沿用原生 Fluent 配色。
+HomeBanner、资源原图、主题事务、设置卡材质、动画、数据格式与业务入口均未修改。
+
+旧的任意黑白图片对比度用例属于已被用户否定的专用底板方案，本轮按新契约替换为横幅内外
+卡片的精确 RGBA、实际绘制像素与交互态一致性断言；重挂、首显、原图像素/DPI/哈希及输入覆盖保留。
+
+验证使用仓库解释器与串行隔离 runner，临时用户/数据/缓存、离屏 Qt 和外部调用防护，
+证据在 `%TEMP%/adblab-home-card-2vu6vygn/validation.json` 及同目录日志：
+
+| 验证组 | 实际结果 | 退出码 |
+| --- | --- | --- |
+| `shared-card-red` | 9 failed / 1 passed；8 项复现配色不一致，另 1 项为离屏鼠标残留 | 1 |
+| `shared-card-green-isolated` | 10 passed；修复配色，测试每卡先进入再离开，保留交互态和像素断言 | 0 |
+| `shared-card-related` | 55 passed：首页整文件、共享设置/空态卡、主题事务/异常恢复、主窗口隐藏页及键盘入口 | 0 |
+| `home-card-dpi150` | 14 passed：150% 缩放下深浅主题、云母回退、原图、交互、重挂及首次显示 | 0 |
+| `home-visual-composited` | 4 passed：实际 HomePage 深浅主题 × 云母开关，连同固定实色宿主渲染并查看图片 | 0 |
+
+运行计数存在重复覆盖，不累加为独立用例数。初版单独抓取透明页面缺少宿主合成底色，
+不作为视觉证据；最终图片直接来自首页及其模拟底色宿主，不截取桌面，也不代表真实 DWM。
+深色黑板已消失；浅色深紫图案处黑字对比仍较弱，本轮遵循统一轻透明与保留原图的明确要求，
+不再擅自增加局部遮罩。真实壁纸、前后台与跨屏观感仍需人工复验。
+
+修改文件 Ruff、中文注释检查通过；两个生产模块使用临时配置定位实际依赖的 Pyright 为
+0 errors，文档链接/frontmatter 与 `git diff --check` 通过。独立 Agent
+`home_card_consistency_review` 核对实际安装控件、原图哈希、输入与刷新边界及测试契约，
+未发现必须修改项。未触发全量 pytest 或打包检查，未执行真实 ADB、构建、发布或用户数据迁移。

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QRegion
+from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -29,7 +29,6 @@ from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_font_role, apply_label_role, use_smooth_scroll
 from gui.styles.icon_loader import DEVICE_ICON, cached_fluent_icon
-from gui.styles.material import MaterialObserver
 from gui.widgets.home_banner import HomeBanner
 from gui.widgets.material_card import MaterialCard
 
@@ -38,24 +37,6 @@ class ActionCard(MaterialCard):
     """由 Gallery ``SampleCard`` 改写的 ADBLab 快捷操作卡片。"""
 
     activated = Signal()
-
-    def event(self, event: QEvent) -> bool:
-        handled = super().event(event)
-        if event.type() in (QEvent.Type.ParentChange, QEvent.Type.Show):
-            # 同窗重挂分组不会改变宿主缓存；首次显示也需重新判断是否覆盖横幅原图。
-            observer = getattr(self, "_adblab_material_observer", None)
-            if isinstance(observer, MaterialObserver):
-                observer.refresh(force=True)
-        return handled
-
-    def _material_background_color(self, state: str) -> QColor:
-        """横幅原图的明暗跨度大，卡片需独立保证文字对比，不冲淡整张图片。"""
-        ancestor = self.parentWidget()
-        while ancestor is not None:
-            if isinstance(ancestor, HomeBanner):
-                return BaseStyles.get_color(f"IMAGE_CARD_{state}")
-            ancestor = ancestor.parentWidget()
-        return super()._material_background_color(state)
 
     def __init__(
         self,
