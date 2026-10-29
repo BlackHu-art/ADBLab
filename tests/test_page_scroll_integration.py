@@ -25,7 +25,7 @@ def test_visible_page_pixel_scroll_uses_one_controller(frame, qt_application, se
     else:
         frame._open_workspace_feature(section, feature)
     wait_until(qt_application, lambda: (
-        frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and frame.left_panel._responsive_coordinator.diagnostics.stable
     ))
     areas = [area for area in frame.findChildren(QAbstractScrollArea)
@@ -45,7 +45,7 @@ def test_application_shutdown_rejects_late_input_on_all_installed_scrolls(frame,
     frame.show()
     frame._on_nav_requested("home")
     wait_until(qt_application, lambda: (
-        frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
     ))
     area = frame._home_page
     _wheel(qt_application, area.viewport())

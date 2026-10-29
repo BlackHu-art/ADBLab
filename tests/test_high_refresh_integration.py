@@ -104,7 +104,7 @@ def test_minimize_finishes_transitions_and_releases_layout_gate(
     elif surface == "selector":
         window._open_workspace_feature("devices", "remote")
         wait_until(qt_application, lambda: (
-            window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+            window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
             and coordinator.diagnostics.stable
         ))
         window._global_device_bar.open_picker()
@@ -112,7 +112,7 @@ def test_minimize_finishes_transitions_and_releases_layout_gate(
     else:
         window._on_nav_requested("settings")
         wait_until(qt_application, lambda: (
-            window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+            window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         ))
         card = window._settings_page.adb_client_card
         card.setExpand(True)

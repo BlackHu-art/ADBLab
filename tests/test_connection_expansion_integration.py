@@ -26,7 +26,7 @@ def connection_frame(request, qt_application):
     window._on_devices_updated(["demo-a"])
     coordinator = window.left_panel._responsive_coordinator
     wait_until(qt_application, lambda: (
-        window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and coordinator.diagnostics.stable
     ))
     QTest.qWait(30)

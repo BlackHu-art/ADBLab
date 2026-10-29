@@ -102,7 +102,10 @@ _SVG = (b'<svg xmlns="http://www.w3.org/2000/svg" width="8" height="6">'
 
 
 @pytest.mark.ui
-@pytest.mark.parametrize("content", [_SVG, gzip.compress(_SVG), b"invalid image"])
+@pytest.mark.parametrize(
+    "content", [_SVG, gzip.compress(_SVG, mtime=0), b"invalid image"],
+    ids=["svg", "svgz", "invalid"],
+)
 def test_all_external_image_boundaries_reject_non_raster(qt_application, tmp_path, content):
     from gui.dialogs.file_explorer_preview_tasks import PreviewReadWorker
     from gui.dialogs.file_explorer_view import _load_image_preview

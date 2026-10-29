@@ -1617,7 +1617,7 @@ def test_workspace_selection_keeps_visible_page_and_bar_geometry(
     qt_application.processEvents()
     wait_until(qt_application, lambda: (
         frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
-        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
     ))
     # 首次显示会恢复窗口尺寸，必须在恢复完成后检查截图对应的实际可用宽度。
     frame.resize(window_width, 900)
@@ -1663,7 +1663,7 @@ def test_page_scrollbars_stay_close_to_content(frame, qt_application, monkeypatc
     qt_application.processEvents()
     wait_until(qt_application, lambda: (
         frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
-        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
     ))
     window_width = 860 if route == "homePage" else 1048
     frame.resize(window_width, 500)
@@ -1730,7 +1730,7 @@ def test_page_scrollbar_uses_full_viewport_and_accepts_drag(frame, qt_applicatio
     qt_application.processEvents()
     wait_until(qt_application, lambda: (
         frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
-        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
     ))
     for width in (1048, 860, 1048, 860):
         frame.resize(width, 500)

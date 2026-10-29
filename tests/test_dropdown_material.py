@@ -264,7 +264,7 @@ def test_settings_dropdown_inherits_shell_material_without_selection_changes(
     frame._on_nav_requested("settings")
     wait_until(
         qt_application,
-        lambda: frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped,
+        lambda: frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped,
     )
     field = frame._settings_page.log_lines_card.combo_box
     frame._settings_page.ensureWidgetVisible(field)

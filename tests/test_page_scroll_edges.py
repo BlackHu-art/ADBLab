@@ -31,7 +31,7 @@ def _assert_visible_track_at_window_edge(frame, scroll, qt_application):
 
 
 def _animation_finished(frame):
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     return animation is None or animation.state() == QAbstractAnimation.State.Stopped
 
 

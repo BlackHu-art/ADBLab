@@ -735,7 +735,7 @@ def test_file_explorer_main_window_toolbar_does_not_force_horizontal_scroll(
         frame.navigationInterface.widget("filesPage").click()
         wait_until(qt_application, lambda: (
             frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
-            and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+            and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         ))
         host = frame._workspace_feature_hosts["devices"]
         page = host.stack.currentWidget()

@@ -20,7 +20,12 @@ __pycache__/
 .superpowers/
 /pyright_output.json
 .coverage
+.coverage.*
 htmlcov/
+/coverage.xml
+/test-results/
+/pytest-results*.xml
+/demo_*.png
 logs/
 resources/app.log
 Excalidraw/

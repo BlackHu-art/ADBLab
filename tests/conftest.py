@@ -231,6 +231,7 @@ _UI_TEST_FILES = frozenset(
         "test_model_performance_launcher.py",
         "test_navbar.py",
         "test_navigation_rendering.py",
+        "test_page_transition.py",
         "test_panel_typography.py",
         "test_page_layout.py",
         "test_perf_chart_data.py",

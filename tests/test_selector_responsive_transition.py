@@ -36,7 +36,7 @@ def test_selector_defers_workspace_planning_until_transition_finishes(
     frame._open_workspace_feature(route, feature)
     coordinator = frame.left_panel._responsive_coordinator
     wait_until(qt_application, lambda: (
-        frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and coordinator.diagnostics.stable
     ))
     collect = Mock(wraps=coordinator._collect_candidates)
@@ -106,7 +106,7 @@ def test_transition_applies_final_width_font_and_theme_after_resume(
     panel = frame.left_panel
     coordinator = panel._responsive_coordinator
     wait_until(qt_application, lambda: (
-        frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and coordinator.diagnostics.stable
     ))
     collect = Mock(wraps=coordinator._collect_candidates)

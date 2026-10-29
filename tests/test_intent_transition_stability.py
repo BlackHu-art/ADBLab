@@ -42,7 +42,7 @@ def test_intent_advanced_keeps_leading_fields_fixed_in_mainframe_paints(
     assert window._open_workspace_feature("system", "overview")
     coordinator = window.left_panel._responsive_coordinator
     wait_until(qt_application, lambda: (
-        window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and coordinator.diagnostics.stable
     ))
     window.resize(width, 900)

@@ -628,7 +628,7 @@ def test_dark_theme_updates_hidden_workspace_surfaces_before_navigation(qt_appli
         wrapper = frame._workspace_feature_hosts["apps"].overview.body.widget()
         layout_surfaces = [wrapper, wrapper.layout().itemAt(0).widget()]
         assert all(not widget.autoFillBackground() for widget in layout_surfaces)
-        animation = frame.stackedWidget.view._ani
+        animation = frame._page_transition.animation
         animation.setCurrentTime(animation.duration())
         image = frame.grab().toImage()
         scale = image.devicePixelRatio()
@@ -759,7 +759,7 @@ def test_theme_switch_keeps_mica_content_stack_edges_borderless(qt_application, 
         frame._on_nav_requested("settings")
         wait_until(
             qt_application,
-            lambda: frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped,
+            lambda: frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped,
         )
         qt_application.processEvents()
         # 用可控背景验证 Qt 遮罩，真实桌面的 DWM 纹理仍需人工检查。

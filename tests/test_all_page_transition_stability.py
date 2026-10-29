@@ -31,7 +31,7 @@ def _settle(window, application):
     wait_until(application, lambda: (
         bar._selector_animation.state() == QAbstractAnimation.State.Stopped
         and not bar._selector_transition_active
-        and window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        and window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
         and window.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
         and window.left_panel._responsive_coordinator.diagnostics.stable
     ))

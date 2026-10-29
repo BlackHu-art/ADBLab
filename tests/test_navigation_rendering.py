@@ -434,7 +434,7 @@ def test_non_mica_window_and_content_match_native_gallery(theme_probe_frame, the
         assert frame.backgroundColor == native._normalBackgroundColor()
         assert _navigation_background_pixel(frame) == native._normalBackgroundColor()
         frame._on_nav_requested("settings")
-        animation = frame.stackedWidget.view._ani
+        animation = frame._page_transition.animation
         animation.setCurrentTime(animation.duration())
         assert not frame._settings_page.viewport().autoFillBackground()
         assert not frame._apps_page.autoFillBackground()
@@ -470,7 +470,7 @@ def test_mica_toggle_reveals_backdrop_and_restores_opaque_surfaces(
 
     monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", set_native_mica)
     frame._on_nav_requested("settings")
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
     backdrop = QColor("#315879")
     frame.setMicaEffectEnabled(True)
@@ -506,7 +506,7 @@ def test_light_material_matches_native_gallery_for_different_backdrops(
     """不同合成根底色上都只叠加一层原生内容表面，不增加自定义遮罩。"""
     frame = theme_probe_frame("Light", True)
     frame._on_nav_requested("settings")
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
     sources = (QColor("#DCE5EF"), QColor("#E8E2DC"))
     for source in sources:
@@ -525,7 +525,7 @@ def test_unsupported_mica_request_keeps_opaque_surfaces(monkeypatch, theme_probe
     frame = theme_probe_frame("Light", False)
     monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", lambda _window, _enabled: None)
     frame._on_nav_requested("settings")
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
 
     frame.setMicaEffectEnabled(True)
@@ -545,7 +545,7 @@ def test_workspace_scroll_content_preserves_the_window_material(
     """实际工作区内层滚动留白也必须透出内容遮罩，不能只验证外层栈边缘。"""
     frame = theme_probe_frame(theme_name, False)
     frame._on_nav_requested(section)
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
     qt_application.processEvents()
     host = frame._workspace_feature_hosts[section]
@@ -580,7 +580,7 @@ def test_all_navigation_pages_share_material_without_covering_reading_controls(
     checked = []
     for key in frame._navigation_labels:
         frame.navigationInterface.widget(key).click()
-        animation = frame.stackedWidget.view._ani
+        animation = frame._page_transition.animation
         if animation is not None:
             animation.setCurrentTime(animation.duration())
         qt_application.processEvents()
@@ -663,7 +663,7 @@ def test_shared_content_keeps_round_corner_when_material_changes(
     backdrop = QColor("#315879")
     monkeypatch.setattr(frame, "_normalBackgroundColor", lambda: backdrop)
     frame._on_nav_requested("settings")
-    animation = frame.stackedWidget.view._ani
+    animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
     for enabled in (True, False, True):
         frame.setMicaEffectEnabled(enabled)
@@ -672,7 +672,7 @@ def test_shared_content_keeps_round_corner_when_material_changes(
             qt_application,
             lambda: frame.navigationInterface.panel.expandAni.state()
             == QAbstractAnimation.State.Stopped
-            and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped,
+            and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped,
         )
         wait_for_stable_geometry(qt_application, (frame, frame._content_surface))
         frame.backgroundColorAni.stop()
@@ -708,7 +708,7 @@ def test_home_corner_mask_is_stable_across_mica_changes_and_navigation(
             frame._on_nav_requested("home")
             wait_until(
                 qt_application,
-                lambda: frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                lambda: frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
                 and frame.navigationInterface.panel.expandAni.state()
                 == QAbstractAnimation.State.Stopped,
             )
@@ -820,13 +820,14 @@ def test_route_animation_and_device_bar_visibility_keep_same_theme_surface(
         previous = frame.stackedWidget.currentWidget()
         frame.navigationInterface.widget(key).click()
         assert frame._global_device_bar.isVisible() == (key not in {"devicesPage", "settingsPage"})
-        assert frame.stackedWidget.isAnimationEnabled()
-        animation = frame.stackedWidget.view._ani
+        assert not frame.stackedWidget.isAnimationEnabled()
+        animation = frame._page_transition.animation
         if frame.stackedWidget.currentWidget() is not previous:
             assert animation.state() == QAbstractAnimation.State.Running
             for time in (0, 30, 120):
                 animation.setCurrentTime(time)
-                assert frame.stackedWidget.currentWidget().y() > 0
+                assert frame.stackedWidget.currentWidget().y() == 0
+                assert 0 < frame._page_transition.effect.opacity() < 1
                 _assert_stack_gap_matches_surface(frame, (key, time))
             animation.setCurrentTime(animation.duration())
         _assert_stack_gap_matches_surface(frame, (key, "immediate"))
@@ -842,8 +843,8 @@ def test_rapid_route_replacement_keeps_animated_gap_in_current_theme(
     frame = theme_probe_frame(theme_name, mica)
     for key in ("appsPage", "settingsPage", "systemPage", "filesPage", "appsPage"):
         frame.navigationInterface.widget(key).click()
-        animation = frame.stackedWidget.view._ani
-        assert frame.stackedWidget.isAnimationEnabled()
+        animation = frame._page_transition.animation
+        assert not frame.stackedWidget.isAnimationEnabled()
         assert animation.state() == QAbstractAnimation.State.Running
         animation.setCurrentTime(30)
         _assert_stack_gap_matches_surface(frame, key)

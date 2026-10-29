@@ -333,13 +333,13 @@ def test_main_window_home_retains_all_shortcuts_after_hidden_resize_and_theme_ch
                 frame.resize(width, 720)
                 wait_until(
                     qt_application,
-                    lambda: frame.stackedWidget.view._ani.state()
+                    lambda: frame._page_transition.animation.state()
                     == QAbstractAnimation.State.Stopped,
                 )
                 frame._on_nav_requested("home")
                 wait_until(
                     qt_application,
-                    lambda: frame.stackedWidget.view._ani.state()
+                    lambda: frame._page_transition.animation.state()
                     == QAbstractAnimation.State.Stopped
                     and frame.navigationInterface.panel.expandAni.state()
                     == QAbstractAnimation.State.Stopped,

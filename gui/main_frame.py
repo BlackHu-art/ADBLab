@@ -5,6 +5,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import (
@@ -80,6 +81,7 @@ from gui.widgets.frame_animation import FrameAnimation
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.layout_settle import settle_responsive_layout
 from gui.widgets.navigation_theme import NavigationThemeToggle
+from gui.widgets.page_transition import PageTransition
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
     DEFAULT_WINDOW_SIZE,
@@ -966,6 +968,9 @@ class MainFrame(FluentWindow):
         self.stackedWidget.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.addWidget(self.stackedWidget, 1)
         self.widgetLayout.addWidget(self._content_surface, 1)
+        # 页面几何由布局独占；视觉过渡只作用于透明内容，不移动或淡出共享材质。
+        self.stackedWidget.setAnimationEnabled(False)
+        self._page_transition = PageTransition(self._content_surface, self.stackedWidget)
         self._sync_material_surface_styles()
         self._device_hub = DeviceHubPage(self)
         self._device_hub.details_transition_changed.connect(
@@ -1525,6 +1530,27 @@ class MainFrame(FluentWindow):
         _target_location: str | WorkspaceRoute | None = None,
     ) -> None:
         """切换独立主页面，并同步功能会话的前后台生命周期。"""
+
+        with MainFrame._page_change_batch(self):
+            MainFrame._switch_to_prepared_page(
+                self, interface, _record_history=_record_history, _target_location=_target_location,
+            )
+
+    def _page_change_batch(self):
+        """同宿主路由和跨宿主切换共用绘制批次；构建期及纯协调测试保持同步兼容。"""
+
+        transition = getattr(self, "_page_transition", None)
+        if transition is None:
+            return nullcontext()
+        return transition.batch(
+            lambda: self._navigation_location_for_page(self.stackedWidget.currentWidget()),
+        )
+
+    def _switch_to_prepared_page(
+        self, interface, *, _record_history: bool,
+        _target_location: str | WorkspaceRoute | None,
+    ) -> None:
+        """同步提交导航身份与会话；调用方在完整布局确定后一次恢复绘制。"""
 
         workspace_pages = getattr(self, "_workspace_pages", {})
         next_section = next(
@@ -2178,6 +2204,18 @@ class MainFrame(FluentWindow):
     ) -> bool:
         """在所属主页面打开内嵌功能，不创建独立业务窗口。"""
 
+        with MainFrame._page_change_batch(self):
+            return MainFrame._open_workspace_feature_now(
+                self, section, feature, device_id=device_id, payload=payload,
+                _record_history=_record_history,
+            )
+
+    def _open_workspace_feature_now(
+        self, section: str, feature: str, *, device_id: str, payload,
+        _record_history: bool,
+    ) -> bool:
+        """在现有准入和代次规则下打开路由，不把业务执行推迟到动画结束。"""
+
         if not getattr(self, "_startup_complete", True) or getattr(self, "_closing", False):
             return False
         if section == "remote":
@@ -2234,6 +2272,9 @@ class MainFrame(FluentWindow):
         """主题变化后刷新窗口与页面状态，并持久化主题选择。"""
         if self._closing:
             return
+        transition = getattr(self, "_page_transition", None)
+        if transition is not None:
+            transition.cancel()
         _debug_log(self, "ui.theme", action="apply", phase="applied", theme=_name)
         from core.settings_manager import AppSettings
 
@@ -2327,6 +2368,9 @@ class MainFrame(FluentWindow):
     def _sync_material_surface_styles(self) -> None:
         """保持原生内容层次，由根窗口决定云母或实色背景。"""
 
+        transition = getattr(self, "_page_transition", None)
+        if transition is not None:
+            transition.cancel()
         mica = self.isMicaEffectEnabled()
         home = getattr(self, "_home_page", None)
         # 云母只改变材质，页面形状保持一致；滚动视口与内容壳共用左上圆角。
@@ -3321,6 +3365,9 @@ class MainFrame(FluentWindow):
         self.close()
 
     def closeEvent(self, event):
+        transition = getattr(self, "_page_transition", None)
+        if transition is not None:
+            transition.cancel()
         if not getattr(self, "_startup_complete", True) and not self._startup_aborting:
             event.ignore()
             self.abort_startup()

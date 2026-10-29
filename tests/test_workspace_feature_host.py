@@ -558,7 +558,7 @@ def test_real_feature_size_ignores_hidden_wrapping_page(
         def geometry_at(width):
             frame.resize(width, 650)
             wait_until(qt_application, lambda: (
-                frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
                 and frame.navigationInterface.panel.expandAni.state()
                 == QAbstractAnimation.State.Stopped
             ))

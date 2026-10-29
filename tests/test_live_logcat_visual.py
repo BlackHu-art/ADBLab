@@ -421,7 +421,7 @@ def test_logcat_return_from_performance_keeps_output_inside_view_and_reading_sta
 
         def settle():
             wait_until(qt_application, lambda: (
-                frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
                 and frame.navigationInterface.panel.expandAni.state()
                 == QAbstractAnimation.State.Stopped
             ))

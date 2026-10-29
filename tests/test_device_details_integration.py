@@ -129,7 +129,7 @@ def test_leaving_device_page_stops_details_and_releases_layout_gate(
         _advance(card._details_animation, .4)
     window._on_nav_requested("settings")
     wait_until(qt_application, lambda: (
-        window.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        window._page_transition.animation.state() == QAbstractAnimation.State.Stopped
     ))
     _wait_settled(window, qt_application)
     assert not window.left_panel._responsive_coordinator._geometry_transition_active
