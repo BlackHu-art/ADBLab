@@ -20,6 +20,7 @@ from qfluentwidgets import ComboBox
 
 from gui.i18n import tr
 from gui.styles.icon_loader import get_fluent_icon
+from gui.widgets.collapsible_tools import ContentReveal
 from services.intent_request import (
     IntentExtra,
     IntentRequest,
@@ -75,8 +76,8 @@ class SystemIntentControls:
             advanced_layout, (self.flags, 2), (self.wait, 1),
             compact_columns=1, medium_columns=2, wide_columns=2,
         )
-        layout.addWidget(self.advanced)
-        self.advanced.hide()
+        self.advanced_reveal = ContentReveal(self.advanced, self.advanced_toggle)
+        layout.addWidget(self.advanced_reveal)
         panel.deep_link_uri.setPlaceholderText(tr("https://… 或 app://…"))
         panel.deep_link_uri.setValidator(QRegularExpressionValidator(
             QRegularExpression(r"[A-Za-z][A-Za-z0-9+.-]*:\S+"), panel.deep_link_uri,
@@ -110,7 +111,7 @@ class SystemIntentControls:
         self.wait.toggled.connect(lambda _checked: panel._update_action_states())
 
     def _toggle_advanced(self, expanded: bool) -> None:
-        self.advanced.setVisible(expanded)
+        self.advanced_reveal.set_expanded(expanded)
         self.advanced_toggle.setText(tr("收起高级参数") if expanded else tr("高级参数"))
         icon = "arrow-up.svg" if expanded else "arrow-down.svg"
         self.advanced_toggle.setIcon(get_fluent_icon(icon))

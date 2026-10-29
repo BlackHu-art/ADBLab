@@ -93,6 +93,19 @@ def test_refresh_reuses_unchanged_session_cells(host, qt_application):
     assert calls == []
 
 
+def test_expanded_session_list_tracks_changed_row_height(host, qt_application):
+    host.set_device_context(["demo-a", "demo-b"], ["demo-a", "demo-b"])
+    host.open_feature("performance", payload={"package_name": "com.example.pending"})
+    panel = host.performance_sessions
+    for devices in (
+        ["demo-a", "demo-b"], ["demo-a", "demo-b", "demo-c"], ["demo-a", "demo-b"],
+    ):
+        host.set_device_context(devices, devices)
+        wait_until(qt_application, lambda: panel.section.reveal.height() == panel.table.height())
+        assert panel.table.rowCount() == len(devices)
+        assert panel.section.reveal.height() == panel.table.height()
+
+
 def test_multiple_selection_lists_idle_devices_without_creating_or_starting_sessions(
     host, qt_application,
 ):

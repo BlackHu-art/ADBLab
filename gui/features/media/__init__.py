@@ -262,6 +262,7 @@ class ScreenshotPage(QWidget):
         self._nav_controller._suspended = True
         self.setProperty("deactivation_reason", reason)
         self._fit_resize_timer.stop()
+        self._info_reveal.finish()
         self._metadata_reflow_timer.stop()
         self._view.stop_animations()
         self._pager.stop_animations()

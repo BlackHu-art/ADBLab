@@ -40,6 +40,7 @@ from gui.i18n import tr
 from gui.styles.fluent import apply_label_role, configure_button, use_smooth_scroll
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.content_section import ContentSection
 from gui.widgets.performance_progress import PerformanceProgress
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
@@ -744,7 +745,10 @@ class PerformanceLauncherForm:
         monkey_layout.addWidget(self._frame.monkey_check)
         self._apply_hint(self._frame.monkey_check, tr(CONFIG_HINTS["monkey"]))
         self._frame._monkey_details = self._build_monkey_row()
-        monkey_layout.addWidget(self._frame._monkey_details)
+        self._frame._monkey_reveal = ContentReveal(
+            self._frame._monkey_details, self._frame.monkey_check, monkey,
+        )
+        monkey_layout.addWidget(self._frame._monkey_reveal)
         target.viewLayout.addWidget(self._frame._diagnostic_tools)
         target.viewLayout.addWidget(monkey)
         self._frame._configuration_sections = (target,)
@@ -882,9 +886,9 @@ class PerformanceLauncherForm:
         return widgets
 
     def _on_monkey_enabled_changed(self, checked: bool):
-        details = getattr(self._frame, "_monkey_details", None)
-        if details is not None:
-            details.setVisible(checked)
+        reveal = getattr(self._frame, "_monkey_reveal", None)
+        if reveal is not None:
+            reveal.set_expanded(checked)
         pending_invalid = {}
         for field in getattr(self._frame, "monkey_pct_combos", {}).values():
             editor = self._numeric_editor(field)

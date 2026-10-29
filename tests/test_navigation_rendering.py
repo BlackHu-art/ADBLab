@@ -4,10 +4,15 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QWidget
-from qfluentwidgets import FluentStyleSheet, FluentWindow, NavigationDisplayMode
+from qfluentwidgets import (
+    FluentStyleSheet,
+    FluentWindow,
+    NavigationDisplayMode,
+    setCustomStyleSheet,
+)
 from qfluentwidgets.window.stacked_widget import StackedWidget
 
 from core.exec import CommandResult, CommandRunner
@@ -15,6 +20,7 @@ from core.settings_manager import AppSettings
 from gui import window_effects
 from gui.styles import BaseStyles
 from models.device_store import DeviceStore
+from tests.test_accessibility_contract import _contrast_ratio
 from tests.test_main_window_layout import (
     _FakeScreen,
     _FakeScreenAdapter,
@@ -387,6 +393,8 @@ def theme_probe_frame(qt_application, monkeypatch):
                 frame, "_normalBackgroundColor",
                 lambda: QColor("#315879") if frame.isMicaEffectEnabled() else original_background(),
             )
+            # 探针以固定颜色代替 DWM；停止创建期旧时钟，避免采样时又被写回透明色。
+            frame.backgroundColorAni.stop()
             frame.setBackgroundColor(QColor("#315879"))
         return frame
 
@@ -399,8 +407,8 @@ def theme_probe_frame(qt_application, monkeypatch):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def _native_content_image(background):
-    """由实际安装的原生内容栈绘制参考层，避免复制项目遮罩作为预期。"""
+def _native_content_image(background, *, surface_color=None):
+    """复用原生边框绘制；可指定设计表面颜色，不复制项目圆角遮罩。"""
     root = QWidget()
     root.resize(80, 80)
     palette = root.palette()
@@ -410,6 +418,9 @@ def _native_content_image(background):
     stack = StackedWidget(root)
     stack.setGeometry(root.rect())
     FluentStyleSheet.FLUENT_WINDOW.apply(stack)
+    if surface_color is not None:
+        style = f"StackedWidget {{ background-color: {surface_color}; }}"
+        setCustomStyleSheet(stack, style, style)
     root.show()
     QApplication.processEvents()
     image = root.grab().toImage()
@@ -422,6 +433,22 @@ def _native_content_color(background):
     image = _native_content_image(background)
     scale = image.devicePixelRatio()
     return image.pixelColor(round(20 * scale), round(3 * scale))
+
+
+def _mica_content_color(background, theme_name):
+    """独立合成设计约定的单层白色：浅色 25%，深色沿用 8/255。"""
+    image = QImage(1, 1, QImage.Format.Format_RGB32)
+    image.fill(background)
+    painter = QPainter(image)
+    painter.fillRect(image.rect(), QColor(255, 255, 255, 64 if theme_name == "Light" else 8))
+    painter.end()
+    return image.pixelColor(0, 0)
+
+
+def _expected_content_color(frame):
+    if frame.isMicaEffectEnabled():
+        return _mica_content_color(frame.backgroundColor, BaseStyles.resolved_theme())
+    return _native_content_color(frame.backgroundColor)
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
@@ -448,7 +475,7 @@ def _assert_stack_gap_matches_surface(frame, context):
     """整窗合成取顶部空白行，避开文字、控件和圆角的抗锯齿。"""
     image = frame.grab().toImage()
     scale = image.devicePixelRatio()
-    expected = _native_content_color(frame.backgroundColor)
+    expected = _expected_content_color(frame)
     for fraction in (0.25, 0.5, 0.75):
         point = frame.stackedWidget.mapTo(
             frame, QPoint(round(frame.stackedWidget.width() * fraction), 2)
@@ -500,15 +527,15 @@ def test_mica_toggle_reveals_backdrop_and_restores_opaque_surfaces(
     _assert_stack_gap_matches_surface(frame, "mica disabled")
 
 
-def test_light_material_matches_native_gallery_for_different_backdrops(
+def test_light_mica_limits_white_tint_and_keeps_text_readable_for_different_backdrops(
     qt_application, monkeypatch, theme_probe_frame
 ):
-    """不同合成根底色上都只叠加一层原生内容表面，不增加自定义遮罩。"""
+    """浅色云母只覆盖一层低白色染色，保留冷暖底色并验证正文及次要文字对比度。"""
     frame = theme_probe_frame("Light", True)
     frame._on_nav_requested("settings")
     animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
-    sources = (QColor("#DCE5EF"), QColor("#E8E2DC"))
+    sources = tuple(QColor(value) for value in ("#DCE5EF", "#E8E2DC", "#D0D0D0", "#F4F4F4"))
     for source in sources:
         monkeypatch.setattr(frame, "_normalBackgroundColor", lambda color=source: color)
         frame._refresh_window_chrome_theme()
@@ -517,7 +544,11 @@ def test_light_material_matches_native_gallery_for_different_backdrops(
         rendered = frame.grab().toImage()
         scale = rendered.devicePixelRatio()
         sample = rendered.pixelColor(round(point.x() * scale), round(point.y() * scale))
-        assert sample == _native_content_color(source)
+        assert sample == _mica_content_color(source, "Light")
+        assert sample.lightnessF() < _native_content_color(source).lightnessF()
+        assert _navigation_background_pixel(frame) == source
+        for token in ("TEXT_PRIMARY", "TEXT_SECONDARY"):
+            assert _contrast_ratio(BaseStyles.color(token), sample.name()) >= 4.5
 
 
 def test_unsupported_mica_request_keeps_opaque_surfaces(monkeypatch, theme_probe_frame):
@@ -641,7 +672,7 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
     view = frame._home_page.widget()
     tools = frame._home_page.tool_cards["app_mgr"].parentWidget()
     assert tools is not None and tools.isVisibleTo(frame)
-    expected = _native_content_color(frame.backgroundColor)
+    expected = _expected_content_color(frame)
     # 快捷卡片现在属于横幅；材质探针仍采样横幅与下方分区之间的真实空白。
     banner_bottom = frame._home_page.banner.mapTo(
         view, QPoint(0, frame._home_page.banner.height()),
@@ -687,7 +718,11 @@ def test_shared_content_keeps_round_corner_when_material_changes(
             return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 
         assert sample(0, 0) == backdrop
-        reference = _native_content_image(backdrop)
+        # 关闭云母后是固定不透明内容层，不能继续与透明原生层在蓝色底上的合成色比较。
+        color = ("#40FFFFFF" if theme_name == "Light" else "#08FFFFFF") if enabled else (
+            BaseStyles.color("CONTENT_BG")
+        )
+        reference = _native_content_image(backdrop, surface_color=color)
         for x, y in ((20, 0), (20, 3), (0, 20), (3, 20)):
             assert sample(x, y) == reference.pixelColor(round(x * scale), round(y * scale))
 
@@ -740,6 +775,40 @@ def test_native_backdrop_switch_explicitly_clears_mica(monkeypatch, build, attri
     assert window_effects.sync_mica_backdrop(123, True)
     assert window_effects.sync_mica_backdrop(123, False)
     assert requests == [(123, attribute, 1 if build == 22000 else 2), (123, attribute, off_value)]
+
+
+@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+def test_native_palette_during_theme_commit_never_restores_previous_mica(
+    theme_probe_frame, theme_name,
+):
+    """Fluent 完成信号内的原生调色板重入也必须使用目标主题，不能等延迟补救。"""
+    if QApplication.platformName() != "windows" or not window_effects.is_mica_supported():
+        pytest.skip("需要 Windows 11 原生窗口验证 DWM 属性")
+    import ctypes
+    from ctypes import wintypes
+
+    from qfluentwidgets import qconfig
+
+    frame = theme_probe_frame("Light" if theme_name == "Dark" else "Dark", True)
+    getter = ctypes.WinDLL("dwmapi").DwmGetWindowAttribute
+    getter.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    getter.restype = ctypes.c_long
+    observed = []
+
+    def during_commit():
+        QCoreApplication.sendEvent(
+            frame.windowHandle(), QEvent(QEvent.Type.ApplicationPaletteChange),
+        )
+        dark = ctypes.c_int(-1)
+        result = getter(int(frame.winId()), 20, ctypes.byref(dark), ctypes.sizeof(dark))
+        observed.append((result, dark.value))
+
+    qconfig.themeChangedFinished.connect(during_commit)
+    try:
+        BaseStyles.switch_theme(theme_name)
+        assert observed == [(0, int(theme_name == "Dark"))]
+    finally:
+        qconfig.themeChangedFinished.disconnect(during_commit)
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
@@ -823,7 +892,10 @@ def test_route_animation_and_device_bar_visibility_keep_same_theme_surface(
         assert not frame.stackedWidget.isAnimationEnabled()
         animation = frame._page_transition.animation
         if frame.stackedWidget.currentWidget() is not previous:
-            assert animation.state() == QAbstractAnimation.State.Running
+            assert animation.state() == QAbstractAnimation.State.Paused
+            wait_until(
+                qt_application, lambda: animation.state() == QAbstractAnimation.State.Running,
+            )
             for time in (0, 30, 120):
                 animation.setCurrentTime(time)
                 assert frame.stackedWidget.currentWidget().y() == 0
@@ -838,14 +910,15 @@ def test_route_animation_and_device_bar_visibility_keep_same_theme_surface(
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
 @pytest.mark.parametrize("mica", [False, True])
 def test_rapid_route_replacement_keeps_animated_gap_in_current_theme(
-    theme_probe_frame, theme_name, mica
+    qt_application, theme_probe_frame, theme_name, mica
 ):
     frame = theme_probe_frame(theme_name, mica)
     for key in ("appsPage", "settingsPage", "systemPage", "filesPage", "appsPage"):
         frame.navigationInterface.widget(key).click()
         animation = frame._page_transition.animation
         assert not frame.stackedWidget.isAnimationEnabled()
-        assert animation.state() == QAbstractAnimation.State.Running
+        assert animation.state() == QAbstractAnimation.State.Paused
+        wait_until(qt_application, lambda: animation.state() == QAbstractAnimation.State.Running)
         animation.setCurrentTime(30)
         _assert_stack_gap_matches_surface(frame, key)
 

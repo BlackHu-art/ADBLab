@@ -46,6 +46,7 @@ from core.exec import resolve_adb_program
 from gui.i18n import tr
 from gui.styles.fluent import configure_button
 from gui.widgets.frame_animation import FrameAnimation
+from gui.widgets.material_card import configure_setting_card_material
 from services.adb_clients import (
     ERROR_CANCELLED,
     ERROR_MISSING,
@@ -215,6 +216,7 @@ class _ContinuousExpandGroupSettingCard(SimpleExpandGroupSettingCard):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        configure_setting_card_material(self.card)
         previous = self.expandAni
         previous.stop()
         previous.valueChanged.disconnect(self._onExpandValueChanged)

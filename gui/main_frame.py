@@ -2386,12 +2386,14 @@ class MainFrame(FluentWindow):
             # 云母模式让 DWM 壁纸参与合成；实色模式使用与原生命中内容层一致
             # 的不透明 token，避免浅色主题在关闭云母时仍透出一层灰色。
             if mica:
+                mica_light = BaseStyles.color_for("Light", "CONTENT_MICA_BG")
+                mica_dark = BaseStyles.color_for("Dark", "CONTENT_MICA_BG")
                 light_style = (
-                    "background-color: rgba(255, 255, 255, 0.5); "
+                    f"background-color: {mica_light}; "
                     "border: 1px solid rgba(0, 0, 0, 0.068);"
                 )
                 dark_style = (
-                    "background-color: rgba(255, 255, 255, 0.0314); "
+                    f"background-color: {mica_dark}; "
                     "border: 1px solid rgba(0, 0, 0, 0.18);"
                 )
             else:
@@ -2560,12 +2562,12 @@ class MainFrame(FluentWindow):
                     container.setPalette(palette)
                     container.update()
             if isinstance(root, CardWidget):
-                root.backgroundColorAni.stop()
-                root.setBackgroundColor(root._normalBackgroundColor())
+                root._updateBackgroundColor()
+                root.backgroundColorAni.setCurrentTime(root.backgroundColorAni.duration())
                 root.update()
             for card in root.findChildren(CardWidget):
-                card.backgroundColorAni.stop()
-                card.setBackgroundColor(card._normalBackgroundColor())
+                card._updateBackgroundColor()
+                card.backgroundColorAni.setCurrentTime(card.backgroundColorAni.duration())
                 card.update()
 
     def _on_ui_font_changed(self, _config) -> None:

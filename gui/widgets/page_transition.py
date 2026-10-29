@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
-from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject
+from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QTimer
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QStyle, QWidget
 
 from gui.widgets.frame_animation import FrameAnimation
@@ -26,6 +26,10 @@ class PageTransition(QObject):
         self._alive = True
         self._surface_alive = True
         self._enabled = True
+        self._waiting_for_paint = False
+        self._resume_timer = QTimer(self)
+        self._resume_timer.setSingleShot(True)
+        self._resume_timer.timeout.connect(self._resume_after_paint)
         surface.destroyed.connect(self._surface_destroyed)
         content.destroyed.connect(self._content_destroyed)
         self.effect = QGraphicsOpacityEffect(content)
@@ -33,10 +37,10 @@ class PageTransition(QObject):
         self.effect.setEnabled(False)
         content.setGraphicsEffect(self.effect)
         self.animation = FrameAnimation(self, owner=content)
-        self.animation.setDuration(140)
-        self.animation.setStartValue(0.78)
+        self.animation.setDuration(320)
+        self.animation.setStartValue(0.15)
         self.animation.setEndValue(1.0)
-        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutQuad)
         self.animation.valueChanged.connect(self._set_opacity)
         self.animation.stateChanged.connect(self._on_animation_state)
         content.installEventFilter(self)
@@ -54,7 +58,6 @@ class PageTransition(QObject):
             return
         before = current_key()
         updates_enabled = self._surface.updatesEnabled()
-        opacity = self.effect.opacity() if self.effect.isEnabled() else 0.78
         self.cancel()
         self._depth = 1
         succeeded = changed = False
@@ -69,7 +72,7 @@ class PageTransition(QObject):
             try:
                 if self._alive:
                     if succeeded and changed and updates_enabled:
-                        self._start(opacity)
+                        self._start()
                     else:
                         self.cancel()
             finally:
@@ -87,9 +90,10 @@ class PageTransition(QObject):
         """直接恢复最终显示；取消不重放路由，也不触发业务回调。"""
 
         self.animation.stop()
+        self._clear_pending_start()
         self._restore_content()
 
-    def _start(self, opacity: float) -> None:
+    def _start(self) -> None:
         window = self._content.window()
         if (
             not self._enabled or not self._content.isVisible()
@@ -98,10 +102,22 @@ class PageTransition(QObject):
         ):
             self._restore_content()
             return
-        self.animation.setStartValue(max(0.78, opacity))
-        self.effect.setOpacity(max(0.78, opacity))
+        self.effect.setOpacity(0.15)
         self.effect.setEnabled(True)
         self.animation.start()
+        # 首帧的布局与绘制成本不占用淡入时长；暂停态也让现有等待者识别尚未结束。
+        self.animation.pause()
+        self._waiting_for_paint = self.animation.state() == QAbstractAnimation.State.Paused
+
+    def _resume_after_paint(self) -> None:
+        """绘制返回事件循环后再开始推进；取消会撤销此对象持有的单次计时器。"""
+
+        if self._alive and self.animation.state() == QAbstractAnimation.State.Paused:
+            self.animation.resume()
+
+    def _clear_pending_start(self) -> None:
+        self._waiting_for_paint = False
+        self._resume_timer.stop()
 
     def _set_opacity(self, value: object) -> None:
         if self._alive and isinstance(value, (int, float)):
@@ -109,6 +125,7 @@ class PageTransition(QObject):
 
     def _on_animation_state(self, state: object, _previous: object) -> None:
         if state == QAbstractAnimation.State.Stopped:
+            self._clear_pending_start()
             self._restore_content()
 
     def _restore_content(self) -> None:
@@ -120,10 +137,15 @@ class PageTransition(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         if event.type() in (QEvent.Type.Resize, QEvent.Type.Hide, QEvent.Type.Close):
             self.cancel()
+        elif event.type() == QEvent.Type.Paint and self._waiting_for_paint:
+            self._waiting_for_paint = False
+            # 不在 paint 调用栈中修改透明度或重绘；替换路由会先 stop 旧计时器。
+            self._resume_timer.start(0)
         return False
 
     def _content_destroyed(self) -> None:
         self._alive = False
+        self._clear_pending_start()
 
     def _surface_destroyed(self) -> None:
         self._surface_alive = False

@@ -22,6 +22,7 @@ from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
 from gui.widgets.category_stack import AdaptiveCategoryStack
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.responsive_layout import (
     RESPONSIVE_MINIMUM_TEXT_PROPERTY,
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
@@ -303,7 +304,11 @@ class AppPanel(BasePanel):
         assert overview_row is not None
         self.monkey_package_overview_row = overview_row
         self.monkey_package_overview_row.hide()
-        package_info_layout.addWidget(self.monkey_package_info)
+        self.monkey_package_reveal = ContentReveal(
+            self.monkey_package_info, self.monkey_package_details_btn,
+        )
+        package_info_layout.addWidget(self.monkey_package_reveal)
+        self.monkey_package_reveal.set_expanded(True, animated=False)
         # 目标摘要按内容取高，不分配表单的剩余高度；长包名仍通过响应式行自然换行。
         gm_l.addWidget(self.monkey_package_card, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -718,11 +723,11 @@ class AppPanel(BasePanel):
         self.monkey_package_details_btn.setChecked(False)
         self.monkey_package_overview.setText(overview)
         self.monkey_package_overview_row.setVisible(bool(overview))
-        self.monkey_package_info.setVisible(not overview)
+        self.monkey_package_reveal.set_expanded(not overview, animated=False)
 
     def _toggle_monkey_package_details(self, expanded: bool) -> None:
         """只切换已返回信息的可见性，展开与收起不会重复查询或改变启动目标。"""
-        self.monkey_package_info.setVisible(expanded)
+        self.monkey_package_reveal.set_expanded(expanded)
         self.monkey_package_details_btn.setText(
             tr("收起设备明细") if expanded else tr("展开设备明细")
         )

@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
-    CardWidget,
     CheckBox,
     CommandBar,
     InfoBadge,
@@ -51,6 +50,7 @@ from gui.styles.fluent import (
 )
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
+from gui.widgets.material_card import MaterialCard as CardWidget
 from gui.workers.file_explorer import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
 

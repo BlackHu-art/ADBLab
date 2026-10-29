@@ -72,7 +72,10 @@ def test_intent_advanced_keeps_leading_fields_fixed_in_mainframe_paints(
             positions.clear()
         QTest.mouseClick(form.advanced_toggle, Qt.MouseButton.LeftButton)
         QTest.qWait(60)
-        wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+        wait_until(qt_application, lambda: (
+            coordinator.diagnostics.stable
+            and form.advanced_reveal.animation.state() == QAbstractAnimation.State.Stopped
+        ))
         assert form.advanced.isVisibleTo(card) is expanded
         assert form.data_uri.text() == "demo://stable/draft"
         assert form.flags.text() == "0x10000000"

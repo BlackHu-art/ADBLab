@@ -873,7 +873,7 @@ class RemotePanel(BasePanel):
             details.append(tr("可在应用日志中查看具体错误。"))
         diagnostic = "\n".join(details)
         if diagnostic != self._mirror_diagnostic_label.text() or not error:
-            self._mirror_diagnostic_label.hide()
+            self._mirror_diagnostic_reveal.set_expanded(False, animated=False)
             self.btn_mirror_diagnostics.setChecked(False)
             self.btn_mirror_diagnostics.setText(tr("查看原因"))
         self._mirror_error_label.setText(error)

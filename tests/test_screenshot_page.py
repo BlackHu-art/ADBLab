@@ -32,6 +32,56 @@ def _write_image(path, color: Qt.GlobalColor) -> str:
     return str(path)
 
 
+def test_image_details_reveal_keeps_canvas_and_image_unchanged(qt_application, tmp_path):
+    path = _write_image(tmp_path / "details.png", Qt.GlobalColor.green)
+    page = make_screenshot_page([path])
+    try:
+        page.resize(720, 580)
+        page.show()
+        wait_for_screenshot(page)
+        wait_for_stable_geometry(qt_application, (page, page._view))
+        canvas = page._canvas_frame.geometry()
+        page._info_action.trigger()
+        reveal = page._info_reveal
+        assert reveal.animation.state() == QAbstractAnimation.State.Running
+        reveal.animation.setCurrentTime(reveal.animation.duration() // 2)
+        qt_application.processEvents()
+        assert 0 < reveal.height() < page._info_label.height()
+        assert page._canvas_frame.geometry() == canvas
+        assert page._current_path() == path
+        reveal.animation.setCurrentTime(reveal.animation.duration())
+        qt_application.processEvents()
+        expanded_width = page._details_bar.width()
+        content_geometry = page._info_label.geometry()
+        page._info_action.trigger()
+        assert page._details_bar.width() == expanded_width
+        assert page._info_label.geometry() == content_geometry
+        reveal.animation.setCurrentTime(reveal.animation.duration())
+        assert page._info_label.isHidden()
+        assert page._canvas_frame.geometry() == canvas
+    finally:
+        close_screenshot_page(page)
+
+
+@pytest.mark.parametrize("action", ["deactivate", "request_dispose"])
+def test_image_details_stop_on_page_deactivation(qt_application, tmp_path, action):
+    path = _write_image(tmp_path / "details.png", Qt.GlobalColor.green)
+    page = make_screenshot_page([path])
+    try:
+        page.show()
+        wait_for_screenshot(page)
+        page._info_action.trigger()
+        reveal = page._info_reveal
+        assert reveal.animation.state() == QAbstractAnimation.State.Running
+        getattr(page, action)()
+        assert reveal.animation.state() == QAbstractAnimation.State.Stopped
+        assert not page._metadata_reflow_timer.isActive()
+        qt_application.processEvents()
+        assert not page._metadata_reflow_timer.isActive()
+    finally:
+        close_screenshot_page(page)
+
+
 @pytest.mark.parametrize("control", ["command", "wheel"])
 def test_long_screenshot_zoom_stays_monotonic_below_manual_minimum(
     qt_application, tmp_path, control,

@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
-    CardWidget,
     ComboBox,
     CommandBar,
     InfoBadge,
@@ -45,6 +44,7 @@ from gui.styles.fluent import (
 )
 from gui.styles.icon_loader import get_fluent_icon
 from gui.styles.typography import FontRole
+from gui.widgets.material_card import MaterialCard as CardWidget
 
 from .material import AppManagerMaterial
 from .rows import STATUS_ROLE, AppManagerIconView, AppManagerRowDelegate

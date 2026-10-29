@@ -10,7 +10,7 @@ from qfluentwidgets import FluentWindow, TableWidget
 from gui.styles import BaseStyles
 from tests.test_live_logcat_visual import _contrast
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
-from tests.test_navigation_rendering import _native_content_color
+from tests.test_navigation_rendering import _expected_content_color
 from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 pytestmark = pytest.mark.ui
@@ -92,7 +92,7 @@ def test_workspace_palette_accent_and_mica_round_trip_preserve_transparent_log(
             BaseStyles.set_accent_color("#9B327D" if mica else "#0F6CBD")
             page.pkg_input.setFocus()
             qt_application.processEvents()
-            content = _native_content_color(frame.backgroundColor)
+            content = _expected_content_color(frame)
             expected = _file_list_color(content, qt_application)
             assert expected == content
             frame.activateWindow()

@@ -56,6 +56,7 @@ from gui.styles.fluent import (
 )
 from gui.styles.icon_loader import get_fluent_icon
 from gui.widgets.category_stack import AdaptiveCategoryStack
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.responsive_layout import (
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
@@ -489,8 +490,8 @@ class RemotePanelForm(QObject):
 
     def _toggle_mirror_diagnostics(self) -> None:
         frame = self._frame
-        expanded = frame._mirror_diagnostic_label.isHidden()
-        frame._mirror_diagnostic_label.setVisible(expanded)
+        expanded = not frame._mirror_diagnostic_reveal.expanded
+        frame._mirror_diagnostic_reveal.set_expanded(expanded)
         frame.btn_mirror_diagnostics.setText(tr("收起原因") if expanded else tr("查看原因"))
         frame.apply_responsive_width(0)
 
@@ -620,8 +621,10 @@ class RemotePanelForm(QObject):
         frame._mirror_diagnostic_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse,
         )
-        gl.addWidget(frame._mirror_diagnostic_label)
-        frame._mirror_diagnostic_label.hide()
+        frame._mirror_diagnostic_reveal = ContentReveal(
+            frame._mirror_diagnostic_label, frame.btn_mirror_diagnostics,
+        )
+        gl.addWidget(frame._mirror_diagnostic_reveal)
         frame._session_list = QWidget(g)
         frame._session_list.setObjectName("remoteSessionList")
         frame._session_list_layout = QVBoxLayout(frame._session_list)

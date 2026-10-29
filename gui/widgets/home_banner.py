@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPixm
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from gui.styles import BaseStyles
+from gui.styles.material import ensure_material_observer, is_mica_active
 from utils.resource_path import resource_path
 
 
@@ -30,6 +31,7 @@ class HomeBanner(QWidget):
         layout.setSpacing(24)
         layout.addWidget(content)
         BaseStyles.theme_changed.connect(self._refresh_background)
+        ensure_material_observer(self, lambda widget, _mica: widget.update())
 
     def set_top_left_radius(self, radius: int) -> None:
         """与主窗口的内容壳同步左上圆角；独立使用时默认为直角。"""
@@ -70,22 +72,23 @@ class HomeBanner(QWidget):
         clip.closeSubpath()
         painter.setClipPath(clip)
 
-        dark = BaseStyles.resolved_theme() == "Dark"
-        wash = QLinearGradient(0, 0, 0, height)
-        # 沿用 Gallery 的透明渐变底色，原图自身的颜色不随强调色重绘。
-        # 与主窗口共享内容表面 token；固定偏蓝灰的 0xCFD8E4 会让白色主题
-        # 的横幅顶部和半透明卡片整体发灰。
-        top_color = (
-            QColor(0, 0, 0) if dark
-            else QColor(BaseStyles.color_for("Light", "CONTENT_BG"))
-        )
-        clear_color = QColor(top_color)
-        clear_color.setAlpha(0)
-        wash.setColorAt(0, top_color)
-        wash.setColorAt(1, clear_color)
-        painter.fillPath(clip, wash)
+        mica = is_mica_active(self)
+        if not mica:
+            dark = BaseStyles.resolved_theme() == "Dark"
+            wash = QLinearGradient(0, 0, 0, height)
+            # 实色宿主沿用 Gallery 渐变；云母宿主直接透出共用内容面，避免重复盖底。
+            top_color = (
+                QColor(0, 0, 0) if dark
+                else QColor(BaseStyles.color_for("Light", "CONTENT_BG"))
+            )
+            clear_color = QColor(top_color)
+            clear_color.setAlpha(0)
+            wash.setColorAt(0, top_color)
+            wash.setColorAt(1, clear_color)
+            painter.fillPath(clip, wash)
 
         if not self._background.isNull():
+            # 原图本身保留清晰度；云母通过资源透明区域透出，不再额外冲淡图案。
             # 从原图直接映射至设备像素，避免逻辑分辨率缩略图在高 DPI 下二次放大。
             # 沿用 Gallery 的完整源图到横幅矩形映射，不能按宽度等比裁掉图案或留空。
             painter.drawPixmap(

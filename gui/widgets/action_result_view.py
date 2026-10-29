@@ -26,6 +26,7 @@ from gui.styles.fluent import (
     configure_fluent_control,
     set_function_tooltip,
 )
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.eliding_combo_box import ElidingComboBox
 from services.tasks.action_results import (
     ActionResult,
@@ -122,7 +123,8 @@ class ActionResultView(QWidget):
         commands.addWidget(self.copy_button)
         commands.addWidget(self.export_button)
         detail_layout.addLayout(commands)
-        layout.addWidget(self.detail_host)
+        self.detail_reveal = ContentReveal(self.detail_host, self.detail_toggle)
+        layout.addWidget(self.detail_reveal)
         self.artifacts = ElidingComboBox()
         self.artifacts.setMinimumWidth(0)
         self.artifacts.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -154,7 +156,6 @@ class ActionResultView(QWidget):
         self.folder_button.clicked.connect(lambda: self._open(True))
         BaseStyles.fonts_changed.connect(self._refresh_font)
         self._refresh_font()
-        self.detail_host.hide()
         if diagnostic:
             self.history.hide()
             self.detail_toggle.hide()
@@ -175,7 +176,7 @@ class ActionResultView(QWidget):
         self.output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
     def _toggle_detail(self, expanded: bool) -> None:
-        self.detail_host.setVisible(expanded)
+        self.detail_reveal.set_expanded(expanded)
         self.detail_toggle.setText(tr("收起详情") if expanded else tr("查看详情"))
 
     def present(self, result: ActionResult) -> None:

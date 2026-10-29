@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QAbstractAnimation, QPoint, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
@@ -19,7 +19,7 @@ from gui.i18n import install_translators
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
 from services.app_update import ReleaseInfo, UpdateSnapshot
-from tests.ui_geometry_helpers import assert_contained, wait_for_stable_geometry
+from tests.ui_geometry_helpers import assert_contained, wait_for_stable_geometry, wait_until
 
 
 def _setting_card_controls(page):
@@ -48,6 +48,9 @@ def _setting_card_controls(page):
 
 
 def _settle_settings(qt_application, page):
+    wait_until(qt_application, lambda: (
+        page.about_panel.support_reveal.animation.state() == QAbstractAnimation.State.Stopped
+    ))
     cards = [card for card, _control in _setting_card_controls(page)]
     cards.append(page.about_panel.support_card)
     wait_for_stable_geometry(qt_application, (page, *cards))

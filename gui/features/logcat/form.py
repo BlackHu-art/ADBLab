@@ -16,7 +16,6 @@ from qfluentwidgets import (
     Action,
     BodyLabel,
     CaptionLabel,
-    CardWidget,
     ComboBox,
     FluentIcon,
     InfoBadge,
@@ -34,6 +33,7 @@ from gui.styles.combo_menu import configure_combo_menu
 from gui.styles.fluent import apply_focus_indicator, apply_label_role, use_smooth_scroll
 from gui.styles.icon_loader import cached_fluent_icon
 from gui.styles.typography import FontRole
+from gui.widgets.material_card import MaterialCard as CardWidget
 
 from .controls import LogcatCommandBar
 from .highlighter import LogcatHighlighter

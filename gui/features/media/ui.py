@@ -1,6 +1,6 @@
 """使用官方 Fluent 图片翻页、命令栏和圆点分页构建截图页面。"""
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QSize, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     Action,
     BodyLabel,
-    CardWidget,
     CommandBar,
     FluentIcon,
     InfoBadge,
@@ -24,6 +23,8 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.typography import FontRole
+from gui.widgets.collapsible_tools import ContentReveal
+from gui.widgets.material_card import MaterialCard as CardWidget
 
 from .widgets import (
     ScreenshotDetailsBar,
@@ -236,6 +237,8 @@ class ScreenshotViewerUI:
             frame._command_icons.append((action, icon))
             button = bar.addAction(action)
             assert button is not None
+            if name == "info":
+                frame._info_button = button
             button.setAccessibleName(action.text())
             button.setAccessibleDescription(action.toolTip())
             action.changed.connect(
@@ -288,8 +291,11 @@ class ScreenshotViewerUI:
         frame._info_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         frame._info_label.setAccessibleName(tr("Screenshot metadata"))
         frame._info_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        frame._info_label.hide()
-        layout.addWidget(frame._info_label)
+        frame._info_reveal = ContentReveal(
+            frame._info_label, frame._info_button, frame._details_bar,
+        )
+        frame._info_reveal.geometry_changed.connect(frame._schedule_metadata_reflow)
+        layout.addWidget(frame._info_reveal)
         return frame._details_bar
 
     def _refresh_metadata(self) -> None:
@@ -306,12 +312,17 @@ class ScreenshotViewerUI:
         name = str(label.property("screenshotFullFileName") or "")
         width = max(0, available - 16)
         label.setText(label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, width))
-        frame._info_label.setVisible(frame._info_action.isChecked())
+        expanded = frame._info_action.isChecked()
+        revealing = frame._info_reveal.animation.state() != QAbstractAnimation.State.Stopped
         details = frame._details_bar
-        details.setFixedWidth(available if frame._info_action.isChecked() else min(
+        # 收起启动时仍用展开宽度；终帧隐藏信息后才恢复文件名宽度，避免横向闪缩。
+        keep_width = expanded or revealing or frame._info_reveal.expanded
+        details.setFixedWidth(available if keep_width else min(
             available, label.fontMetrics().horizontalAdvance(label.text()) + 18,
         ))
         details.layout().activate()
+        if expanded != frame._info_reveal.expanded:
+            frame._info_reveal.set_expanded(expanded)
         details.setFixedHeight(max(
             details.sizeHint().height(), details.heightForWidth(details.width()),
         ))

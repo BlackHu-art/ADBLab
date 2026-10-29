@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 from qfluentwidgets import SettingCard
 
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.material_card import configure_setting_card_material
 
 
 def apply_setting_text_style(widget: QWidget, role: FontRole, *, bold: bool = False) -> None:
@@ -24,6 +25,7 @@ class SettingsCardPresentation:
     def __init__(self, card: SettingCard, control: QWidget) -> None:
         self.card = card
         self.control = control
+        configure_setting_card_material(card)
         # 保留原卡片和操作控件的身份，仅替换固定高度的内部排布。
         while card.vBoxLayout.count():
             card.vBoxLayout.takeAt(0)

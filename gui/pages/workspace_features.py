@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
-    CardWidget,
     ComboBox,
     FluentIcon,
     FluentIconBase,
@@ -36,6 +35,7 @@ from gui.styles.fluent import apply_font_role, apply_label_role, use_smooth_scro
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 from gui.widgets.layout_settle import settle_widget_layout
+from gui.widgets.material_card import MaterialCard as CardWidget
 from gui.widgets.performance_sessions import PerformanceSessions
 
 

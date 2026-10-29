@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -33,6 +34,15 @@ THEMES = {
         "PANEL_BG": "#FBFBFB",
         # 原生 FluentWindow 内容层在浅色窗口底色上的实际颜色。
         "CONTENT_BG": "#F7F9FC",
+        # 云母本身已含系统明暗染色，正文只叠加约 25% 白色，保留壁纸冷暖层次。
+        "CONTENT_MICA_BG": "#40FFFFFF",
+        "CARD_MICA_BG": "#40FFFFFF",
+        "CARD_MICA_HOVER": "#28FFFFFF",
+        "CARD_MICA_PRESSED": "#18FFFFFF",
+        # 原图区域的卡片保证深色图案上的正文对比度；图案本身不做统一淡化。
+        "IMAGE_CARD_BG": "#AAFFFFFF",
+        "IMAGE_CARD_HOVER": "#B9FFFFFF",
+        "IMAGE_CARD_PRESSED": "#A0FFFFFF",
         "INPUT_BG": "#FFFFFF",
         "INPUT_BG_HOVER": "#F7F7F7",
         "BUTTON_BG": "#FFFFFF",
@@ -72,6 +82,13 @@ THEMES = {
         "PANEL_BG": "#2B2B2B",
         # 与浅色内容层对称的深色内容层；云母开启时再叠加白色低透明层。
         "CONTENT_BG": "#272727",
+        "CONTENT_MICA_BG": "#08FFFFFF",
+        "CARD_MICA_BG": "#0DFFFFFF",
+        "CARD_MICA_HOVER": "#15FFFFFF",
+        "CARD_MICA_PRESSED": "#08FFFFFF",
+        "IMAGE_CARD_BG": "#A0000000",
+        "IMAGE_CARD_HOVER": "#96000000",
+        "IMAGE_CARD_PRESSED": "#AA000000",
         "INPUT_BG": "#323232",
         "INPUT_BG_HOVER": "#383838",
         "BUTTON_BG": "#333333",
@@ -232,6 +249,27 @@ def _sync_application_palette() -> None:
         app.setPalette(_application_palette())
 
 
+@contextmanager
+def _hold_theme_paints():
+    """主题事务内不呈现混合帧；异常或回调销毁窗口后也安全恢复原绘制状态。"""
+    from PySide6.QtWidgets import QApplication
+    from shiboken6.Shiboken import isValid
+
+    app = QApplication.instance()
+    windows = (
+        [window for window in app.topLevelWidgets() if window.updatesEnabled()]
+        if isinstance(app, QApplication) else []
+    )
+    for window in windows:
+        window.setUpdatesEnabled(False)
+    try:
+        yield
+    finally:
+        for window in windows:
+            if isValid(window):
+                window.setUpdatesEnabled(True)
+
+
 # ── 主题管理混入类 ──────────────────────────────────────────────────────
 
 
@@ -280,11 +318,17 @@ class ThemeMixin:
                 # 仅标签变化（System 实际 Light -> 显式 Light）不重排视觉，但仍持久化模式。
                 _theme_signal.changed.emit(mode)
             return
-        _theme_mode = mode
-        _sync_qfluentwidgets_theme(desired)
-        _current_theme = _resolve_qfluentwidgets_theme()
-        _sync_application_palette()
-        _theme_signal.changed.emit(mode)
+        with _hold_theme_paints():
+            _theme_mode = mode
+            # Fluent 重建样式时会同步投递 PaletteChange；先公布目标主题，避免
+            # 原生窗口回调把新 Mica 明暗写回旧值。文字、色板和项目回调统一提交。
+            _current_theme = desired
+            try:
+                _sync_qfluentwidgets_theme(desired)
+            finally:
+                _current_theme = _resolve_qfluentwidgets_theme()
+            _sync_application_palette()
+            _theme_signal.changed.emit(mode)
 
     @classmethod
     def toggle_theme(cls) -> str:

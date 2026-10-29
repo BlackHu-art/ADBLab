@@ -4,7 +4,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QAbstractAnimation, QPoint
 from PySide6.QtGui import QRegion
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QWidget
@@ -22,6 +22,7 @@ from tests.ui_geometry_helpers import (
     assert_contained,
     assert_non_overlapping,
     mapped_rect,
+    wait_until,
 )
 
 
@@ -307,6 +308,9 @@ def test_multi_monkey_details_expand_without_query_and_errors_remain_visible(
         assert "设备 12" in apps.monkey_package_info.text()
         assert apps.monkey_package_card.height() > collapsed_height
         apps.monkey_package_details_btn.click()
+        wait_until(qt_application, lambda: (
+            apps.monkey_package_reveal.animation.state() == QAbstractAnimation.State.Stopped
+        ))
         _resize_feature_viewport(qt_application, owner, apps, scroll, 900)
         assert apps.monkey_package_card.height() == collapsed_height
         assert queries.count() == 1 and starts.count() == 0

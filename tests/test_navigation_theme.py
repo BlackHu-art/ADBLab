@@ -26,6 +26,69 @@ from tests.test_main_window_layout import (
 from tests.ui_geometry_helpers import wait_until
 
 
+@pytest.mark.parametrize("initial,target", [("Light", "Dark"), ("Dark", "Light")])
+def test_theme_rebuild_uses_target_tokens_without_painting_partial_state(
+    qt_application, monkeypatch, initial, target,
+):
+    """Fluent 重建与应用回调只见目标 token，窗口等完整提交后恢复绘制。"""
+    from qfluentwidgets.common import style_sheet
+
+    BaseStyles.switch_theme(initial)
+    visible = QWidget()
+    disabled = QWidget()
+    visible.show()
+    disabled.setUpdatesEnabled(False)
+    observed = []
+    original = style_sheet.updateStyleSheet
+
+    def rebuild(*args, **kwargs):
+        observed.append((BaseStyles.resolved_theme(), visible.updatesEnabled()))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(style_sheet, "updateStyleSheet", rebuild)
+    try:
+        BaseStyles.switch_theme(target)
+        assert observed == [(target, False)]
+        assert visible.updatesEnabled()
+        assert not disabled.updatesEnabled()
+    finally:
+        monkeypatch.setattr(style_sheet, "updateStyleSheet", original)
+        visible.close()
+        disabled.close()
+        visible.deleteLater()
+        disabled.deleteLater()
+
+
+def test_theme_rebuild_failure_restores_window_updates(qt_application, monkeypatch):
+    """样式重建失败不能把窗口永久留在停止重绘状态。"""
+    from qfluentwidgets.common import style_sheet
+    from shiboken6.Shiboken import delete
+
+    BaseStyles.switch_theme("Light")
+    host = QWidget()
+    host.show()
+    doomed = QWidget()
+    doomed.show()
+    seen = []
+    original = style_sheet.updateStyleSheet
+
+    def fail(*_args, **_kwargs):
+        seen.append(host.updatesEnabled())
+        delete(doomed)
+        raise RuntimeError("synthetic style failure")
+
+    monkeypatch.setattr(style_sheet, "updateStyleSheet", fail)
+    try:
+        with pytest.raises(RuntimeError, match="synthetic style failure"):
+            BaseStyles.switch_theme("Dark")
+        assert seen == [False]
+        assert host.updatesEnabled()
+    finally:
+        monkeypatch.setattr(style_sheet, "updateStyleSheet", original)
+        host.close()
+        host.deleteLater()
+
+
 @pytest.mark.parametrize("compacted", [True, False])
 def test_theme_focus_keeps_fluent_background_without_outer_outline(qt_application, compacted):
     """明暗切换和键盘焦点都不为主题入口增加外围黑白框。"""

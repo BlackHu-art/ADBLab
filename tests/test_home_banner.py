@@ -8,7 +8,7 @@ from unittest.mock import Mock, call
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QObject, QPoint, QSize, Qt
-from PySide6.QtGui import QColor, QImage, QRegion
+from PySide6.QtGui import QColor, QImage, QPainter, QRegion
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QLayout, QWidget
 from shiboken6 import isValid
@@ -18,12 +18,14 @@ from gui.pages.fluent_pages import ActionCard, ActionCardView, HomePage
 from gui.styles import BaseStyles
 from gui.widgets.home_banner import HomeBanner
 from models.device_store import DeviceStore
+from tests.test_accessibility_contract import _contrast_ratio
 from tests.test_main_window_layout import (
     _FakeScreen,
     _FakeScreenAdapter,
     _MainFrameSettings,
     build_main_frame,
 )
+from tests.test_navigation_rendering import _mica_content_color
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     mapped_rect,
@@ -75,6 +77,227 @@ def test_home_banner_asset_preserves_reference_original():
     source = QImage(str(path))
     assert source.size() == QSize(1921, 1203)
     assert source.hasAlphaChannel()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_home_banner_preserves_original_pixels_in_both_material_modes(
+    qt_application, home_settings, monkeypatch, tmp_path, theme,
+):
+    """云母只改变透明区域的底色，不能冲淡原图中不透明的图案。"""
+    BaseStyles.switch_theme(theme)
+    source = QImage(16, 16, QImage.Format.Format_RGB32)
+    source.fill(QColor("#5130A5"))
+    image_path = tmp_path / "resources" / "images" / "gallery_header.png"
+    image_path.parent.mkdir(parents=True)
+    assert source.save(str(image_path))
+    monkeypatch.setattr(import_module("utils.resource_path"), "_base_dir", lambda: str(tmp_path))
+    host = QWidget()
+    active = [False]
+    host.isMicaEffectEnabled = lambda: active[0]
+    host.setAutoFillBackground(True)
+    content = QWidget()
+    banner = HomeBanner(content, host)
+    banner.setGeometry(0, 0, 180, 120)
+    content.hide()
+    host.resize(180, 120)
+    host.show()
+    try:
+        for mica in (False, True, False, True):
+            active[0] = mica
+            colors = []
+            for backdrop in (QColor("#DCE5EF"), QColor("#E8E2DC")):
+                palette = host.palette()
+                palette.setColor(host.backgroundRole(), backdrop)
+                host.setPalette(palette)
+                host.update()
+                qt_application.processEvents()
+                image = host.grab().toImage()
+                scale = image.devicePixelRatio()
+                colors.append(image.pixelColor(round(90 * scale), round(10 * scale)))
+            assert colors == [QColor("#5130A5"), QColor("#5130A5")]
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_home_cards_follow_host_mica_without_losing_input_state(
+    qt_application, home_settings, theme,
+):
+    """卡片按实际宿主低覆盖着色；开关材质不触发动作，鼠标和键盘入口保持。"""
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    active = [False]
+    host.isMicaEffectEnabled = lambda: active[0]
+    host.setAutoFillBackground(True)
+    backdrop = QColor("#DCE5EF" if theme == "Light" else "#252B32")
+    palette = host.palette()
+    palette.setColor(host.backgroundRole(), backdrop)
+    host.setPalette(palette)
+    activated = Mock()
+    card = ActionCard("", "示例", "输入和导航保持原状", activated, host)
+    card.setGeometry(10, 10, 330, 100)
+    host.resize(360, 150)
+    host.show()
+    try:
+        QTest.mouseMove(host, QPoint(350, 140))
+        for mica in (True, False, True):
+            active[0] = mica
+            host.update()
+            qt_application.processEvents()
+            wait_until(qt_application, lambda: (
+                card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+            ))
+            image = host.grab().toImage()
+            scale = image.devicePixelRatio()
+            actual = image.pixelColor(round(20 * scale), round(100 * scale))
+            if mica and theme == "Light":
+                assert actual == _mica_content_color(backdrop, "Light")
+            elif not mica:
+                native = QColor(255, 255, 255, 170 if theme == "Light" else 13)
+                assert card.backgroundColor == native
+            activated.assert_not_called()
+        for switched_theme in ("Dark" if theme == "Light" else "Light", theme):
+            BaseStyles.switch_theme(switched_theme)
+            host.update()
+            qt_application.processEvents()
+            expected = QColor(255, 255, 255, 64 if switched_theme == "Light" else 13)
+            wait_until(qt_application, lambda: (
+                card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+                and card.backgroundColor == expected
+            ))
+            activated.assert_not_called()
+        normal = card.backgroundColor
+        QTest.mouseMove(card, QPoint(200, 80))
+        wait_until(qt_application, lambda: (
+            card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped and card.isHover
+        ))
+        hovered = card.backgroundColor
+        assert hovered != normal
+        QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(200, 80))
+        wait_until(qt_application, lambda: (
+            card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped and card.isPressed
+        ))
+        assert card.backgroundColor != hovered
+        QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
+        activated.assert_not_called()
+        card.setFocus()
+        QTest.keyClick(card, Qt.Key.Key_Return)
+        activated.assert_called_once_with()
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_banner_card_text_remains_readable_over_original_artwork(
+    qt_application, home_settings, theme,
+):
+    """完整原图可包含黑白色块，卡片三个交互态仍须保留文字对比度。"""
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    host.isMicaEffectEnabled = lambda: True
+    content = QWidget()
+    banner = HomeBanner(content, host)
+    content.hide()
+    card = ActionCard("", "标题", "说明", lambda: None, banner)
+    card.setGeometry(30, 30, 300, 100)
+    banner.resize(360, 180)
+    host.resize(400, 220)
+    host.show()
+    try:
+        for state in ("normal", "hover", "pressed"):
+            if state == "normal":
+                QTest.mouseMove(host, QPoint(390, 210))
+            elif state == "hover":
+                QTest.mouseMove(card, QPoint(200, 80))
+            else:
+                QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(200, 80))
+            wait_until(qt_application, lambda: (
+                card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+            ))
+            for color in (QColor("black"), QColor("white")):
+                image = QImage(1, 1, QImage.Format.Format_RGB32)
+                image.fill(color)
+                painter = QPainter(image)
+                painter.fillRect(image.rect(), card.backgroundColor)
+                painter.end()
+                assert _contrast_ratio(
+                    BaseStyles.color("TEXT_PRIMARY"), image.pixelColor(0, 0).name(),
+                ) >= 4.5, (theme, state, color.name(), card.backgroundColor.name())
+        QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("move_group", [False, True])
+def test_action_card_refreshes_artwork_surface_when_reparented_in_same_window(
+    qt_application, home_settings, theme, move_group,
+):
+    """同窗移动卡片或其分组后，首次显示就应使用新背景所需的文字对比底色。"""
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    host.isMicaEffectEnabled = lambda: True
+    host.resize(800, 500)
+    plain = QWidget(host)
+    plain.setGeometry(0, 0, 360, 300)
+    banner = HomeBanner(QWidget(), host)
+    banner.setGeometry(380, 0, 360, 300)
+    host.show()
+    QTest.mouseMove(host, QPoint(790, 490))
+    group = QWidget(plain)
+    card = ActionCard("", "标题", "说明", lambda: None, group)
+    card.resize(300, 100)
+    group.resize(320, 120)
+    group.show()
+    card.show()
+    moving = group if move_group else card
+    generic = QColor(255, 255, 255, 64 if theme == "Light" else 13)
+    artwork = QColor(255, 255, 255, 170) if theme == "Light" else QColor(0, 0, 0, 160)
+    try:
+        assert not card.isHover
+        assert card.backgroundColor == generic
+        for parent, expected in ((banner, artwork), (plain, generic), (banner, artwork)):
+            moving.setParent(parent)
+            moving.show()
+            qt_application.processEvents()
+            assert not card.isHover
+            assert card.backgroundColor == expected, (theme, move_group, parent)
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_home_initial_show_refreshes_cards_wrapped_into_banner(
+    qt_application, home_settings, theme,
+):
+    """首页先创建快捷分组再包入横幅，不依赖 MainFrame 后续全局刷新纠正底色。"""
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    host.isMicaEffectEnabled = lambda: True
+    host.resize(1200, 800)
+    host.show()
+    QTest.mouseMove(host, QPoint(1190, 790))
+    page = HomePage(_frame(), host)
+    page.resize(900, 700)
+    page.show()
+    try:
+        wait_for_stable_geometry(qt_application, (page, page.banner, *page.tool_cards.values()))
+        expected = QColor(255, 255, 255, 170) if theme == "Light" else QColor(0, 0, 0, 160)
+        banner_cards = page.banner.findChildren(ActionCard)
+        assert len(banner_cards) == 6
+        for card in banner_cards:
+            assert not card.isHover
+            assert card.backgroundColor == expected
+        outside_card = page.tool_cards["save_path"]
+        assert not outside_card.isHover
+        assert outside_card.backgroundColor == QColor(255, 255, 255, 64 if theme == "Light" else 13)
+    finally:
+        host.close()
+        host.deleteLater()
 
 
 @pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])

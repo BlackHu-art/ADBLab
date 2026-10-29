@@ -21,6 +21,7 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_font_role, configure_button, set_fluent_font_rule
 from gui.styles.typography import FontRole
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.setting_card_layout import SettingsCardPresentation, apply_setting_text_style
 from services.app_update import UpdateSnapshot
 from utils.app_metadata import APP_PROJECT_URL, APP_VERSION
@@ -124,9 +125,12 @@ class AboutPanel(SettingCardGroup):
             self.support_qr.setPixmap(square)
         self.support_qr.setFixedSize(QSize(132, 132))
         self.support_qr.setScaledContents(True)
-        self.support_qr.hide()
         self.support_action_layout.addWidget(self.support_button, 0, Qt.AlignmentFlag.AlignRight)
-        self.support_action_layout.addWidget(self.support_qr, 0, Qt.AlignmentFlag.AlignRight)
+        self.support_reveal = ContentReveal(
+            self.support_qr, self.support_button, self.support_actions,
+        )
+        self.support_reveal.setFixedWidth(132)
+        self.support_action_layout.addWidget(self.support_reveal, 0, Qt.AlignmentFlag.AlignRight)
         self.support_button.toggled.connect(self._set_support_expanded)
         self.installer_card = SettingCard(
             FluentIcon.DOWNLOAD, tr("安装版更新"), tr("检查到可用安装包后可在此下载"), self,
@@ -153,6 +157,7 @@ class AboutPanel(SettingCardGroup):
             SettingsCardPresentation(self.installer_card, self.installer_actions),
             SettingsCardPresentation(self.support_card, self.support_actions),
         )
+        self.support_reveal.geometry_changed.connect(self._sync_support_geometry)
         self.support_qr.setAccessibleName(tr("作者支持二维码"))
         self.addSettingCards([self.project_card, self.installer_card, self.support_card])
         self.installer_card.hide()
@@ -181,13 +186,17 @@ class AboutPanel(SettingCardGroup):
     def _set_support_expanded(self, expanded: bool) -> None:
         """只切换本页二维码的可见性，并同步卡片高度与设置页滚动范围。"""
 
-        self.support_qr.setVisible(expanded)
+        self.support_reveal.set_expanded(expanded)
         configure_button(
             self.support_button,
             text=tr("收起二维码") if expanded else tr("显示二维码"),
             tooltip=tr("展开或收起作者支持二维码"),
         )
         self._style_action_button(self.support_button)
+        self._sync_support_geometry()
+
+    def _sync_support_geometry(self) -> None:
+        """固定高度设置卡随裁剪范围同步取高，保留二维码原始尺寸。"""
         self.reflow(self.width())
         self.layoutChanged.emit()
 

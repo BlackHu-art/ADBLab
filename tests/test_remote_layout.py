@@ -433,6 +433,39 @@ def test_default_preset_is_selected_before_user_interaction(remote_layout):
 
 
 @pytest.mark.parametrize("width,font_size", ((1280, 12), (292, 22)))
+def test_mirror_diagnostics_reveal_keeps_full_text_and_clears_on_recovery(
+    remote_layout, qt_application, width, font_size,
+):
+    from PySide6.QtCore import QAbstractAnimation
+
+    panel, remote, scroll, content, _settings = remote_layout
+    config = BaseStyles.current_font_config()
+    config = FontConfig(
+        ui_family="Arial", ui_size=font_size,
+        log_size=config.log_size, mono_family=config.mono_family,
+    )
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+    remote._last_mirror_status = "Error"
+    remote._refresh_mirror_presentation()
+    wait_for_stable_geometry(qt_application, content)
+    remote.btn_mirror_diagnostics.click()
+    reveal = remote._mirror_diagnostic_reveal
+    assert reveal.animation.state() == QAbstractAnimation.State.Running
+    reveal.animation.setCurrentTime(reveal.animation.duration() // 2)
+    qt_application.processEvents()
+    label = remote._mirror_diagnostic_label
+    assert 0 < reveal.height() < label.height()
+    assert label.height() >= label.heightForWidth(label.width())
+    remote._last_mirror_status = ""
+    remote._refresh_mirror_presentation()
+    assert reveal.animation.state() == QAbstractAnimation.State.Stopped
+    assert reveal.isHidden() and label.isHidden()
+    assert remote.btn_mirror_diagnostics.isHidden()
+
+
+@pytest.mark.parametrize("width,font_size", ((1280, 12), (292, 22)))
 def test_mirror_toolbar_keeps_height_across_selection_and_session_states(
     remote_layout, qt_application, width, font_size,
 ):

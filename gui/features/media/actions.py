@@ -78,8 +78,8 @@ class ScreenshotViewerActions:
 
         if self._frame._disposed:
             return
-        self._frame._info_label.setVisible(self._frame._info_action.isChecked())
-        self._frame._schedule_metadata_reflow()
+        # 先落实信息区的最终宽度，再按完整换行高度裁剪，避免首帧宽度变化缩短动画。
+        self._frame._refresh_metadata()
 
     def copy_to_clipboard(self):
         """复制当前浏览方向的完整图像，不使用降采样后的翻页预览。"""

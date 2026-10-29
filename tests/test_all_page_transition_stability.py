@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
 
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager
@@ -12,6 +13,75 @@ from tests.test_global_device_context import _ClosableSessionPage, frame  # noqa
 from tests.ui_geometry_helpers import wait_until
 
 pytestmark = pytest.mark.ui
+
+
+@pytest.mark.parametrize("action", ["hide", "close", "minimize"])
+def test_folded_tools_settle_on_host_exit_and_keep_content_owned(qt_application, action):
+    from gui.widgets.collapsible_tools import CollapsibleTools
+
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    editor = QLineEdit("保留输入")
+    content_layout.addWidget(editor)
+    content.setMinimumHeight(120)
+    tools = CollapsibleTools("批量操作", content, window)
+    layout.addWidget(tools)
+    window.resize(500, 300)
+    try:
+        window.show()
+        qt_application.processEvents()
+        tools.toggle_button.click()
+        animation = tools.reveal.animation
+        assert animation.state() == QAbstractAnimation.State.Running
+        animation.setCurrentTime(animation.duration() // 2)
+        assert 0 < tools.reveal.height() < content.height()
+        if action == "minimize":
+            window.showMinimized()
+        else:
+            getattr(window, action)()
+        qt_application.processEvents()
+        assert animation.state() == QAbstractAnimation.State.Stopped
+        assert tools.reveal.height() == content.height()
+        assert content.parentWidget() is tools.reveal
+        assert editor.text() == "保留输入"
+    finally:
+        window.close()
+        window.deleteLater()
+
+
+def test_folded_tools_keyboard_focus_finishes_reveal_and_returns_on_collapse(qt_application):
+    from gui.widgets.collapsible_tools import CollapsibleTools
+
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    editor = QLineEdit("原值")
+    content_layout.addWidget(editor)
+    content.setMinimumHeight(120)
+    tools = CollapsibleTools("批量操作", content, window)
+    layout.addWidget(tools)
+    try:
+        window.show()
+        window.activateWindow()
+        qt_application.processEvents()
+        tools.toggle_button.click()
+        tools.reveal.animation.setCurrentTime(30)
+        editor.setFocus(Qt.FocusReason.TabFocusReason)
+        assert editor.hasFocus()
+        assert tools.reveal.animation.state() == QAbstractAnimation.State.Stopped
+        assert tools.reveal.height() == content.height()
+        tools.toggle_button.setChecked(False)
+        assert tools.toggle_button.hasFocus()
+        assert not content.isEnabled()
+        tools.reveal.animation.setCurrentTime(tools.reveal.animation.duration())
+        assert content.isHidden() and tools.reveal.height() == 0
+        assert editor.text() == "原值"
+    finally:
+        window.close()
+        window.deleteLater()
 
 _SELECTOR_ROUTES = (
     ("devices", "files"), ("devices", "remote"), ("apps", "manager"),

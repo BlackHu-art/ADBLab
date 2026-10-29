@@ -100,6 +100,43 @@ def _build_performance_page(*, package: str = "com.example"):
     return dialog, runner
 
 
+def test_monkey_reveal_clips_full_layout_and_reverses_without_resetting_values(qt_application):
+    page, _runner = _build_performance_page()
+    try:
+        page.resize(980, 900)
+        page.show()
+        qt_application.processEvents()
+        page.monkey_check.setChecked(True)
+        reveal = page._monkey_reveal
+        assert reveal.animation.state() == QAbstractAnimation.State.Running
+        qt_application.processEvents()
+        reveal.animation.setCurrentTime(reveal.animation.duration() // 2)
+        full_height = page._monkey_details.height()
+        assert 0 < reveal.height() < full_height
+        field = page.monkey_seed_edit
+        position = field.mapTo(page._monkey_details, QPoint())
+        field.setText("123456")
+        height = reveal.height()
+        page.monkey_check.setChecked(False)
+        assert reveal.height() == height
+        assert not field.isEnabled()
+        reveal.animation.setCurrentTime(reveal.animation.duration() // 2)
+        assert reveal.height() < height
+        assert page._monkey_details.height() == full_height
+        assert field.mapTo(page._monkey_details, QPoint()) == position
+        page.monkey_check.setChecked(True)
+        reveal.animation.setCurrentTime(reveal.animation.duration())
+        assert reveal.height() == page._monkey_details.height()
+        assert field.text() == "123456"
+        assert field.isEnabled()
+        page.monkey_check.setChecked(False)
+        page.hide()
+        assert reveal.animation.state() == QAbstractAnimation.State.Stopped
+        assert reveal.height() == 0 and page._monkey_details.isHidden()
+    finally:
+        page.close()
+
+
 def _editor(field) -> QLineEdit:
     if isinstance(field, QLineEdit):
         return field
@@ -1307,6 +1344,9 @@ def test_embedded_expanded_performance_keeps_result_content_inside_card(
         workspace.resize(780, 900)
         workspace.show()
         dialog.monkey_check.setChecked(True)
+        wait_until(qt_application, lambda: (
+            dialog._monkey_reveal.animation.state() == QAbstractAnimation.State.Stopped
+        ))
         for result_index in (0, 1, 0):
             dialog._chart_stack.setCurrentIndex(result_index)
             wait_for_stable_geometry(qt_application, (workspace, dialog, dialog._config_group))
