@@ -607,7 +607,8 @@ class PerformanceLauncherForm:
         monkey.setObjectName("performanceMonkey")
         monkey_layout = QVBoxLayout(monkey)
         monkey_layout.setContentsMargins(0, 0, 0, 0)
-        monkey_layout.setSpacing(8)
+        # 开关下方留白归裁切内容所有，不能在外壳显隐时由父布局瞬间增删。
+        monkey_layout.setSpacing(0)
         layout.addWidget(target)
 
         self._frame.package_edit = LineEdit()
@@ -759,7 +760,7 @@ class PerformanceLauncherForm:
         container = QWidget()
         container.setObjectName("performanceMonkeyOptions")
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
         self._frame.monkey_throttle_input = StrictIntComboBox(
             1, 2_147_483_647, 500, presets=(100, 200, 300, 500, 1000, 2000)

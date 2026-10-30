@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from PySide6.QtCore import QElapsedTimer, QProcess
@@ -103,6 +104,52 @@ def test_source_cli_worker_starts_and_finishes_without_user_data(splash, tmp_pat
     assert process.exitStatus() == QProcess.ExitStatus.NormalExit
     assert painted == [True] and not cancelled
     assert not list(tmp_path.rglob("app_settings.json"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="仅 Unix 本地 socket 受临时目录路径长度限制")
+def test_worker_starts_with_macos_length_temporary_directory(splash, monkeypatch):
+    from PySide6.QtCore import QDir
+
+    # macOS 默认临时目录长 56 字节；Qt 用户权限监听还会占用额外路径空间。
+    with TemporaryDirectory(prefix="adblab-", dir="/tmp") as directory:
+        root = Path(directory).resolve()
+        temporary = root / ("t" * (56 - len(str(root).encode()) - 1))
+        temporary.mkdir()
+        monkeypatch.setenv("TMPDIR", str(temporary))
+        assert len(QDir.tempPath().encode()) == 56
+        painted, diagnostics = [], []
+        splash.first_painted.connect(lambda: painted.append(True))
+        splash.diagnostic.connect(diagnostics.append)
+        try:
+            splash.show()
+            _wait_until(lambda: bool(painted))
+            assert diagnostics[:3] == ["launch", "connected", "ready"]
+            assert not any(record.startswith("fallback") for record in diagnostics)
+            splash.finish()
+            process = splash.findChild(QProcess)
+            _wait_until(lambda: process.state() == QProcess.ProcessState.NotRunning)
+            assert process.exitCode() == 0
+            assert process.exitStatus() == QProcess.ExitStatus.NormalExit
+            assert not list(temporary.iterdir())
+        finally:
+            splash.shutdown()
+
+
+def test_listen_failure_reports_error_and_falls_back(splash, monkeypatch):
+    from PySide6.QtNetwork import QAbstractSocket, QLocalServer
+
+    server = splash.findChild(QLocalServer)
+    monkeypatch.setattr(server, "listen", lambda _name: False)
+    monkeypatch.setattr(
+        server, "serverError", lambda: QAbstractSocket.SocketError.SocketAccessError,
+    )
+    painted, diagnostics = [], []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.diagnostic.connect(diagnostics.append)
+    splash.show()
+    _wait_until(lambda: bool(painted))
+    assert diagnostics == ["fallback listen-failed error=SocketAccessError"]
+    assert splash.findChild(QProcess).state() == QProcess.ProcessState.NotRunning
 
 
 @pytest.mark.parametrize("animate", [False, True], ids=["static", "animated"])

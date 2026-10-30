@@ -41,6 +41,7 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.content_section import ContentSection
 from gui.widgets.performance_progress import PerformanceProgress
 from gui.widgets.performance_sessions import PerformanceSnapshot
@@ -103,6 +104,8 @@ class PerformancePage(QWidget):
     runner_finished = Signal()
     session_state_changed = Signal()
     dispose_ready = Signal(object)
+    # 可见高度动画在 GUI 线程同步通知工作区；宿主在同一帧更新滚动范围。
+    workspace_geometry_changed = Signal()
 
     # 表单与动作区控件在控制器中创建，此处提供类级类型声明供跨控制器解析。
     log_view: QPlainTextEdit
@@ -139,6 +142,7 @@ class PerformancePage(QWidget):
     monkey_ignore_timeouts: QCheckBox
     monkey_ignore_security: QCheckBox
     monkey_kill_after_error: QCheckBox
+    _monkey_reveal: ContentReveal
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
         super().__init__(parent)
@@ -169,6 +173,7 @@ class PerformancePage(QWidget):
         self._pending_log_scroll_to_bottom = False
         self._applied_theme_signature: tuple[str, str, int, int] | None = None
         self._configuration_locked = False
+        self._committing_workspace_geometry = False
         self._view_active = False
         self._dispose_ready_state = False
         self._dispose_emitted = False
@@ -196,6 +201,7 @@ class PerformancePage(QWidget):
         self.runner_finished.connect(self._on_runner_finished)
 
         self._build_ui(package_name)
+        self._monkey_reveal.geometry_changed.connect(self._commit_workspace_geometry)
         self.package_edit.textEdited.connect(self._on_package_edited)
         from .result_tasks import PerformanceResultLoader
         self._result_loader = PerformanceResultLoader(self)
@@ -219,6 +225,26 @@ class PerformancePage(QWidget):
 
         self._form_controller.use_workspace_scroll_container()
         self.set_device_selected(False)
+
+    def _commit_workspace_geometry(self) -> None:
+        """逐层落实当前参数帧，再让宿主同步尺寸；不进入嵌套事件循环。"""
+        if self._closing or self._committing_workspace_geometry:
+            return
+        self._committing_workspace_geometry = True
+        try:
+            parent = self._monkey_reveal.parentWidget()
+            while parent is not None:
+                layout = parent.layout()
+                if layout is not None:
+                    layout.invalidate()
+                    layout.activate()
+                parent.updateGeometry()
+                if parent is self:
+                    break
+                parent = parent.parentWidget()
+            self.workspace_geometry_changed.emit()
+        finally:
+            self._committing_workspace_geometry = False
 
     def activate(self, payload=None) -> None:
         """恢复页面外观刷新；已运行采集不会因返回页面而重启。"""
@@ -247,6 +273,7 @@ class PerformancePage(QWidget):
         self._pending_log_scroll_to_bottom = scrollbar.value() >= scrollbar.maximum() - 20
         self._view_active = False
         self.progress_display.set_animation_enabled(False)
+        self._monkey_reveal.finish()
         self._theme_sync_timer.stop()
         self._log_flush_timer.stop()
 
@@ -888,6 +915,7 @@ class PerformancePage(QWidget):
         """隔离界面回调并发起停止，页面对象保留到所有资源退出。"""
 
         self._closing = True
+        self._monkey_reveal.finish()
         self._result_loader.invalidate()
         self._view_active = False
         self.progress_display.set_animation_enabled(False)

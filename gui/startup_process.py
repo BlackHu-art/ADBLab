@@ -73,9 +73,10 @@ class StartupSplashProcess(QObject):
         if self._shown or self._closed:
             return
         self._shown = True
-        name = "adblab-startup-" + uuid4().hex
+        # macOS 临时目录较长，Qt 用户权限监听还需附加路径空间；缩短前缀并保留完整 UUID。
+        name = "adblab-" + uuid4().hex
         if not self._server.listen(name):
-            self._fallback("listen-failed")
+            self._fallback(f"listen-failed error={self._server.serverError().name}")
             return
         command = _worker_command(name)
         self._startup_timer.start(_START_TIMEOUT_MS)

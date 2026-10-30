@@ -279,6 +279,7 @@ class WorkspaceFeatureHost(QWidget):
         self._activating_route_from_background = False
         self._pending_route: WorkspaceRoute | None = None
         self._extent_update_scheduled = False
+        self._content_frame_sync_active = False
         self._extent_timer = QTimer(self)
         self._extent_timer.setSingleShot(True)
         self._extent_timer.timeout.connect(self._finish_content_extent_sync)
@@ -742,6 +743,9 @@ class WorkspaceFeatureHost(QWidget):
             page.setParent(self.stack)
             self.stack.addWidget(page)
             page.installEventFilter(self)
+            geometry_signal = getattr(page, "workspace_geometry_changed", None)
+            if geometry_signal is not None:
+                geometry_signal.connect(self._on_workspace_geometry_changed)
             self._page_keys[page] = key
         if definition.requires_device:
             self._sync_page_device_context(page, device_id)
@@ -798,6 +802,9 @@ class WorkspaceFeatureHost(QWidget):
             page.setParent(self.stack)
             self.stack.addWidget(page)
             page.installEventFilter(self)
+            geometry_signal = getattr(page, "workspace_geometry_changed", None)
+            if geometry_signal is not None:
+                geometry_signal.connect(self._on_workspace_geometry_changed)
             self._page_keys[page] = key
         if definition.requires_device:
             self._sync_page_device_context(page, device_id)
@@ -1165,6 +1172,25 @@ class WorkspaceFeatureHost(QWidget):
         self._extent_update_scheduled = True
         # 定时器属于宿主，宿主销毁时 Qt 自动取消排队回调。
         self._extent_timer.start(0)
+
+    def _on_workspace_geometry_changed(self) -> None:
+        """当前页的动画帧直接提交滚动范围和叠页尺寸，避免异步测高短暂挤压字段。"""
+        page = self.stack.currentWidget()
+        if (self._shutting_down or self.sender() is not page
+                or self._content_frame_sync_active):
+            return
+        self._content_frame_sync_active = True
+        try:
+            self._sync_content_extent()
+            size = self.content_scroll.viewport().size().expandedTo(self.stack.minimumSize())
+            if self.stack.hasHeightForWidth():
+                size.setHeight(max(size.height(), self.stack.heightForWidth(size.width())))
+            self.stack.resize(size)
+            for widget in (self.stack, page):
+                if widget is not None and (layout := widget.layout()) is not None:
+                    layout.activate()
+        finally:
+            self._content_frame_sync_active = False
 
     def _finish_content_extent_sync(self) -> None:
         self._extent_update_scheduled = False

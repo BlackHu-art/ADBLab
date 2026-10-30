@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QObject, QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import EditableComboBox, HeaderCardWidget, PlainTextEdit, SmoothScrollArea
+from qfluentwidgets import (
+    EditableComboBox,
+    FluentIcon,
+    HeaderCardWidget,
+    PlainTextEdit,
+    SmoothScrollArea,
+)
 from shiboken6 import isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -30,8 +36,10 @@ from gui.dialogs.performance_launcher import (
     CurrentPackageWorker,
 )
 from gui.features.performance import PerformancePage
+from gui.pages.workspace_features import WorkspaceFeatureHost
 from gui.styles import BaseStyles
 from gui.widgets.collapsible_tools import CollapsibleTools
+from gui.widgets.frame_animation import FrameAnimation
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 from tests.ui_geometry_helpers import (
     assert_contained,
@@ -143,6 +151,12 @@ def _editor(field) -> QLineEdit:
     editor = field.findChild(QLineEdit)
     assert editor is not None
     return editor
+
+
+def _wait_for_monkey_reveal(app, dialog):
+    """终态布局断言先等待真实动画结束，中间帧测试仍单独推进时钟。"""
+    wait_until(app, lambda: dialog._monkey_reveal.animation.state()
+               == QAbstractAnimation.State.Stopped)
 
 
 def test_performance_numeric_aliases_use_original_dropdown_style_with_strict_values(
@@ -827,6 +841,7 @@ def test_performance_cards_reflow_without_horizontal_scroll_or_clipped_controls(
         dialog.resize(width, 720)
         dialog.show()
         dialog.monkey_check.setChecked(True)
+        _wait_for_monkey_reveal(qt_application, dialog)
         wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
         assert dialog.size() == QSize(width, 720)
         assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
@@ -904,6 +919,7 @@ def test_performance_cards_leave_overlay_scrollbar_clearance(
         owner.resize(width, 600)
         owner.show()
         dialog.monkey_check.setChecked(True)
+        _wait_for_monkey_reveal(qt_application, dialog)
         wait_for_stable_geometry(qt_application, (owner, dialog, dialog._config_group))
         bar = scroll.delegate.vScrollBar
         assert bar.maximum() > 0
@@ -919,6 +935,262 @@ def test_performance_cards_leave_overlay_scrollbar_clearance(
         dialog.close()
         if workspace is not None:
             workspace.close()
+
+
+@pytest.mark.parametrize(
+    "embedded,width,height,font_size",
+    [(False, 1100, 800, 12), (False, 640, 550, 22),
+     (True, 1100, 800, 12), (True, 640, 550, 22)],
+)
+def test_monkey_real_paint_frames_keep_workspace_plan_and_results_in_sync(
+    qt_application, monkeypatch, embedded, width, height, font_size,
+):
+    """独立页及真实工作区的每个绘制帧都不能先压缩再弹回采集计划。"""
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    host = WorkspaceFeatureHost("system", "系统工具", QWidget()) if embedded else None
+    records = []
+    probe = None
+
+    class PaintProbe(QObject):
+        def eventFilter(self, watched, event):
+            if (event.type() == QEvent.Type.Paint and isinstance(watched, QWidget)
+                    and (watched is scroll.viewport() or dialog.isAncestorOf(watched))):
+                offset = scroll.verticalScrollBar().value()
+                records.append((
+                    dialog._monkey_reveal.height(),
+                    dialog.monkey_check.mapTo(scroll.viewport(), QPoint()).y() + offset,
+                    dialog._results_group.mapTo(scroll.viewport(), QPoint()).y() + offset,
+                    offset,
+                ))
+            return False
+
+    try:
+        if host is not None:
+            host.set_external_device_controls(True)
+            host.feature_selector.hide()
+            host.register_feature(
+                "performance", "性能采集", FluentIcon.SPEED_HIGH,
+                lambda _key: _build_performance_page()[0],
+            )
+            host.set_device_context(["device-1"], ["device-1"])
+            host.resize(width, height)
+            host.show()
+            host.open_feature("performance")
+            dialog = host.stack.currentWidget()
+            scroll = host.content_scroll
+        else:
+            dialog, _runner = _build_performance_page()
+            dialog.resize(width, height)
+            dialog.show()
+            scroll = dialog._config_scroll
+        owner = host or dialog
+        wait_for_stable_geometry(qt_application, (owner, dialog, dialog._config_group))
+        scroll.ensureWidgetVisible(dialog.monkey_check, 0, 4)
+        qt_application.processEvents()
+        offset = scroll.verticalScrollBar().value()
+        check_top = dialog.monkey_check.mapTo(scroll.viewport(), QPoint()).y() + offset
+        result_top = dialog._results_group.mapTo(scroll.viewport(), QPoint()).y() + offset
+        probe = PaintProbe(owner)
+        # 独立页的 viewport 可被不透明内容完全覆盖，须观察页面实际参与绘制的子控件。
+        qt_application.installEventFilter(probe)
+        for _checked in (True, False):
+            records.clear()
+            previous_height = dialog._monkey_reveal.height()
+            previous_offset = scroll.verticalScrollBar().value()
+            QTest.mouseClick(
+                dialog.monkey_check, Qt.MouseButton.LeftButton,
+                pos=QPoint(8, dialog.monkey_check.height() // 2),
+            )
+            _wait_for_monkey_reveal(qt_application, dialog)
+            wait_for_stable_geometry(
+                qt_application, (owner, dialog, dialog._config_group),
+            )
+            assert len({row[0] for row in records}) >= 3, records
+            mismatches = [row for row in records
+                          if row[1] != check_top or row[2] - row[0] != result_top]
+            assert not mismatches, (check_top, result_top, mismatches[:8])
+            for current_height, _check, _result, current_offset in records:
+                assert abs(current_offset - previous_offset) <= abs(
+                    current_height - previous_height
+                )
+                previous_height, previous_offset = current_height, current_offset
+    finally:
+        if probe is not None:
+            qt_application.removeEventFilter(probe)
+        if host is not None:
+            host.shutdown()
+            host.close()
+        else:
+            dialog.close()
+
+
+@pytest.mark.parametrize("embedded,font_size", [(False, 12), (False, 22), (True, 12), (True, 22)])
+def test_monkey_reveal_boundaries_do_not_shift_content_outside_animation(
+    qt_application, monkeypatch, embedded, font_size,
+):
+    """首帧前及末帧隐藏时，结果区的移动必须完全由当前裁切高度解释。"""
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    dialog, _runner = _build_performance_page()
+    workspace = SmoothScrollArea() if embedded else None
+    if workspace is not None:
+        workspace.setWidgetResizable(True)
+        dialog.prepare_for_workspace()
+        workspace.setWidget(dialog)
+    owner = workspace or dialog
+    try:
+        owner.resize(780, 720)
+        owner.show()
+        wait_for_stable_geometry(qt_application, (owner, dialog._config_group))
+        reveal = dialog._monkey_reveal
+        animation = reveal.animation
+        # 尺寸重测会重新启动同一时钟，手动逐帧采样时不能混入真实经过时间。
+        def keep_clock_paused(state, _previous):
+            if state == QAbstractAnimation.State.Running:
+                animation.pause()
+
+        animation.stateChanged.connect(keep_clock_paused)
+        baseline = mapped_rect(dialog._results_group, dialog._config_group).top()
+        plan_geometry = mapped_rect(dialog.package_edit, dialog._config_group)
+        for checked in (True, False, True, False):
+            dialog.monkey_check.setChecked(checked)
+            animation.pause()
+            for time_ms in (0, 1, 40, 100, 190, 199, animation.duration()):
+                animation.setCurrentTime(time_ms)
+                wait_for_stable_geometry(qt_application, (reveal, dialog._results_group))
+                result_top = mapped_rect(dialog._results_group, dialog._config_group).top()
+                assert result_top - baseline == reveal.height(), (
+                    checked, time_ms, baseline, result_top, reveal.height(),
+                )
+                assert mapped_rect(dialog.package_edit, dialog._config_group) == plan_geometry
+        assert not dialog._monkey_details.isVisibleTo(dialog)
+        assert mapped_rect(dialog._results_group, dialog._config_group).top() == baseline
+    finally:
+        dialog.close()
+        if workspace is not None:
+            workspace.close()
+
+
+@pytest.mark.parametrize("embedded,width,font_size", [(False, 640, 12), (True, 780, 22)])
+def test_monkey_options_reveal_moves_following_content_through_intermediate_frames(
+    qt_application, monkeypatch, embedded, width, font_size,
+):
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    dialog, _runner = _build_performance_page()
+    workspace = QScrollArea() if embedded else None
+    if workspace is not None:
+        workspace.setWidgetResizable(True)
+        dialog.prepare_for_workspace()
+        workspace.setWidget(dialog)
+    owner = workspace or dialog
+    try:
+        owner.resize(width, 720)
+        owner.show()
+        wait_for_stable_geometry(qt_application, (owner, dialog._config_group))
+        (workspace or dialog._config_scroll).ensureWidgetVisible(dialog.monkey_check, 0, 4)
+        qt_application.processEvents()
+        QTest.mouseClick(
+            dialog.monkey_check, Qt.MouseButton.LeftButton,
+            pos=QPoint(8, dialog.monkey_check.height() // 2),
+        )
+        assert dialog.monkey_check.isChecked()
+        reveal = dialog._monkey_details.parentWidget()
+        animation = reveal.findChild(FrameAnimation)
+        assert animation is not None, "Monkey 参数不能直接切换显隐，必须具有展开中间帧"
+        animation.pause()
+        heights, following = [], []
+        for time_ms in (0, 40, 100, animation.duration()):
+            animation.setCurrentTime(time_ms)
+            wait_for_stable_geometry(qt_application, (reveal, dialog._results_group))
+            heights.append(reveal.height())
+            following.append(mapped_rect(dialog._results_group, dialog._config_group).top())
+            assert dialog._monkey_details.height() >= reveal.height()
+            assert dialog._monkey_details.y() == 0
+        assert heights[0] == 0
+        assert heights[0] < heights[1] < heights[2] < heights[3]
+        assert all(a < b for a, b in zip(following, following[1:])), following
+        assert_contained(dialog._monkey_details, reveal)
+        assert (workspace or dialog._config_scroll).horizontalScrollBar().maximum() == 0
+    finally:
+        dialog.close()
+        if workspace is not None:
+            workspace.close()
+
+
+def test_monkey_reversal_preserves_input_focus_and_stops_when_hidden(qt_application):
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.resize(780, 720)
+        dialog.show()
+        wait_for_stable_geometry(qt_application, dialog._config_group)
+        dialog.monkey_check.setChecked(True)
+        reveal = dialog._monkey_details.parentWidget()
+        animation = reveal.findChild(FrameAnimation)
+        assert animation is not None
+        animation.pause()
+        animation.setCurrentTime(80)
+        middle = reveal.height()
+        field = dialog.monkey_pct_inputs["pct_touch"]
+        field.setText("101")
+        field.setFocus()
+        assert field.hasFocus()
+        middle = reveal.height()
+        dialog.monkey_check.setChecked(False)
+        assert reveal.height() == middle
+        assert not field.isEnabled()
+        assert not field.hasFocus()
+        animation.pause()
+        animation.setCurrentTime(max(1, animation.duration() // 2))
+        smaller = reveal.height()
+        assert 0 < smaller < middle
+        dialog.monkey_check.setChecked(True)
+        assert reveal.height() == smaller
+        dialog.hide()
+        assert animation.state() == QAbstractAnimation.State.Stopped
+        assert not animation._timer.isActive()
+        dialog.show()
+        wait_for_stable_geometry(qt_application, (reveal, dialog._config_group))
+        assert field.text() == "101" and not field.input_is_acceptable()
+        assert_contained(dialog._monkey_details, reveal)
+        dialog.monkey_check.setChecked(False)
+        dialog.close()
+        assert animation.state() == QAbstractAnimation.State.Stopped
+        assert not animation._timer.isActive()
+    finally:
+        dialog.close()
+
+
+def test_monkey_reveal_remeasures_on_resize_and_finishes_on_deactivate(
+    qt_application, monkeypatch,
+):
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.resize(1100, 720)
+        dialog.show()
+        wait_for_stable_geometry(qt_application, dialog._config_group)
+        dialog.monkey_check.setChecked(True)
+        animation = dialog._monkey_reveal.animation
+        animation.setCurrentTime(80)
+        dialog.resize(640, 720)
+        monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 22)
+        dialog._apply_theme()
+        _wait_for_monkey_reveal(qt_application, dialog)
+        wait_for_stable_geometry(qt_application, (dialog._monkey_reveal, dialog._config_group))
+        assert_contained(dialog._monkey_details, dialog._monkey_reveal)
+        for field in dialog.monkey_pct_inputs.values():
+            assert_contained(field, dialog._monkey_details)
+        assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
+        dialog.monkey_check.setChecked(False)
+        animation.pause()
+        animation.setCurrentTime(40)
+        dialog.deactivate()
+        assert not dialog._monkey_details.isVisibleTo(dialog)
+        assert animation.state() == QAbstractAnimation.State.Stopped
+        assert not animation._timer.isActive()
+        dialog.activate()
+        assert not dialog.monkey_check.isChecked()
+        assert not dialog._monkey_details.isVisibleTo(dialog)
+    finally:
+        dialog.close()
 
 
 def test_performance_monkey_expansion_keeps_invalid_input_and_shared_scroll_owner(
@@ -939,8 +1211,10 @@ def test_performance_monkey_expansion_keeps_invalid_input_and_shared_scroll_owne
         field = dialog.monkey_pct_inputs["pct_touch"]
         field.setText("101")
         dialog.monkey_check.setChecked(False)
+        _wait_for_monkey_reveal(qt_application, dialog)
         assert not dialog._monkey_details.isVisibleTo(dialog)
         dialog.monkey_check.setChecked(True)
+        _wait_for_monkey_reveal(qt_application, dialog)
         wait_for_stable_geometry(qt_application, (workspace, dialog, dialog._config_group))
         assert dialog.monkey_pct_inputs["pct_touch"] is field
         assert field.text() == "101"

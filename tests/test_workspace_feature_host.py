@@ -612,6 +612,38 @@ def test_workspace_scroll_extent_tracks_current_page_layout_changes(qt_applicati
     assert host.content_scroll.verticalScrollBar().maximum() > initial_maximum
 
 
+def test_workspace_geometry_frame_syncs_current_page_and_ignores_hidden_session(qt_application):
+    class GeometryPage(_AdaptiveLifecyclePage):
+        workspace_geometry_changed = Signal()
+
+    host = WorkspaceFeatureHost("apps", "快捷操作", QWidget())
+    host.register_feature("adaptive", "自适应", FluentIcon.APPLICATION, GeometryPage)
+    host.set_device_context(["device-1"], ["device-1", "device-2"])
+    try:
+        host.resize(650, 320)
+        host.show()
+        host.open_feature("adaptive", preferred_device="device-1")
+        first = host.stack.currentWidget()
+        first.required_size = QSize(300, 700)
+        first.workspace_geometry_changed.emit()
+        assert host.stack.height() == host.stack.minimumHeight() == 700
+        assert first.height() == 700
+
+        host.open_feature("adaptive", preferred_device="device-2")
+        second = host.stack.currentWidget()
+        second.required_size = QSize(300, 500)
+        second.workspace_geometry_changed.emit()
+        assert host.stack.height() == host.stack.minimumHeight() == 500
+        assert second.height() == 500
+        first.required_size = QSize(300, 1200)
+        first.workspace_geometry_changed.emit()
+        assert host.stack.currentWidget() is second
+        assert host.stack.height() == host.stack.minimumHeight() == 500
+    finally:
+        host.shutdown()
+        host.close()
+
+
 def test_workspace_destruction_cancels_pending_layout_refresh(qt_application):
     refreshes = []
 
@@ -997,21 +1029,24 @@ def test_shutdown_registration_failure_does_not_skip_later_sessions(qt_applicati
 
 
 @pytest.mark.ui
-def test_dispose_failure_does_not_skip_later_sessions(qt_application):
+def test_dispose_failure_does_not_skip_later_sessions(qt_application, monkeypatch):
     registry = FeatureSessionRegistry()
     first_key = FeatureSessionKey("files", "device-1")
     second_key = FeatureSessionKey("files", "device-2")
     first, _ = registry.get_or_create(first_key, _LifecyclePage)
     second, _ = registry.get_or_create(second_key, _LifecyclePage)
-    first.request_dispose = Mock(side_effect=ValueError("private device details"))
+    # 故障只用于当前断言，窗口清理前恢复真实释放入口。
+    with monkeypatch.context() as local:
+        local.setattr(
+            first, "request_dispose", Mock(side_effect=ValueError("private device details")),
+        )
+        with pytest.raises(RuntimeError, match="1 session") as error:
+            registry.request_dispose_all()
 
-    with pytest.raises(RuntimeError, match="1 session") as error:
-        registry.request_dispose_all()
-
-    assert second.dispose_reasons == ["application_shutdown"]
-    assert registry.get(second_key) is None
-    assert registry.get(first_key) is first
-    assert "private device details" not in str(error.value)
+        assert second.dispose_reasons == ["application_shutdown"]
+        assert registry.get(second_key) is None
+        assert registry.get(first_key) is first
+        assert "private device details" not in str(error.value)
 
 
 def test_narrow_workspace_keeps_function_and_session_device_selection(qt_application):

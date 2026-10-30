@@ -175,9 +175,12 @@ def font_for_config(
     )
     font = QFont(family, requested_size)
     if role not in (FontRole.LOG, FontRole.MONO):
-        # 保留有效的用户字体为首选，再为缺失字形提供 Fluent 使用的中西文字体。
+        # 保留有效的用户字体为首选；只加入已安装的回退字体，避免跨平台缺失字体触发别名扫描。
         # points 仍是旧设置的单位，不把已保存的 12pt 误当成 Gallery 的 14px。
-        families = (family, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC")
+        available = _available_families()
+        fallbacks = ("Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC")
+        families = [family, *(available[name.casefold()] for name in fallbacks
+                              if name.casefold() in available)]
         font.setFamilies(list(dict.fromkeys(families)))
     font.setStyleHint(style_hint)
     font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
@@ -224,11 +227,16 @@ class TypographyManager(QObject):
         return changed
 
     def apply_application_font(self) -> None:
-        """把界面字体设为 QApplication 默认字体，使未单独设置的控件自动继承。"""
+        """同步应用与 Fluent 的字体族；只更新进程内状态，不另行持久化配置。"""
 
         app = QGuiApplication.instance()
         if app is not None:
-            cast(QGuiApplication, app).setFont(self.font_for_role(FontRole.UI))
+            from qfluentwidgets import setFontFamilies
+
+            font = self.font_for_role(FontRole.UI)
+            # Fluent 的显式 QFont 和 QSS 不继承应用字体，须在控件创建及字体变更通知前同步。
+            setFontFamilies(font.families(), save=False)
+            cast(QGuiApplication, app).setFont(font)
 
     def font_for_role(self, role: FontRole | str, size: int | None = None) -> QFont:
         """按角色创建字体，调用方可为少量特殊场景覆盖字号。"""

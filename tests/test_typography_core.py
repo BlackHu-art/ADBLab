@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from PySide6.QtGui import QFont
+import pytest
+from PySide6.QtGui import QFont, QFontDatabase
 
 from core import settings_manager
 from gui.styles import BaseStyles
@@ -41,7 +45,10 @@ def test_font_config_validates_sizes_and_falls_back_to_system_family():
     assert config.mono_family
 
 
-def test_role_fonts_preserve_point_sizes_user_family_and_monospace_separation():
+def test_role_fonts_preserve_point_sizes_user_family_and_monospace_separation(monkeypatch):
+    monkeypatch.setattr(
+        QFontDatabase, "families", lambda: ["Microsoft YaHei", "Segoe UI", "Microsoft YaHei UI"],
+    )
     config = FontConfig("Microsoft YaHei", 12, 9, "Consolas")
     body = font_for_config(config, FontRole.UI)
     small = font_for_config(config, FontRole.UI_SMALL)
@@ -62,6 +69,76 @@ def test_role_fonts_preserve_point_sizes_user_family_and_monospace_separation():
         assert font.hintingPreference() == QFont.HintingPreference.PreferDefaultHinting
 
 
+@pytest.mark.parametrize(
+    ("primary", "installed", "expected"),
+    [
+        (
+            ".AppleSystemUIFont",
+            [".AppleSystemUIFont", "PingFang SC"],
+            [".AppleSystemUIFont", "PingFang SC"],
+        ),
+        (
+            "Segoe UI",
+            ["Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei"],
+            ["Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei"],
+        ),
+        ("Custom UI", ["Custom UI"], ["Custom UI"]),
+    ],
+    ids=["macos", "windows", "no-cjk-fallback"],
+)
+def test_ui_roles_only_request_installed_fallbacks(monkeypatch, primary, installed, expected):
+    monkeypatch.setattr(QFontDatabase, "families", lambda: installed)
+    config = FontConfig(primary, 12, 9, "Custom Mono")
+    for role in (FontRole.UI, FontRole.UI_SMALL, FontRole.TITLE):
+        assert font_for_config(config, role).families() == expected
+
+
+def test_typography_syncs_fluent_font_and_styles_without_saving(qt_application, monkeypatch):
+    from qfluentwidgets import getFont, qconfig
+    from qfluentwidgets.common.style_sheet import renderQss
+
+    def unexpected_save():
+        pytest.fail("应用字体只同步进程内 Fluent 状态，不能另写配置")
+
+    # 局部管理器也会更新共享 Fluent 状态，登记原值供 monkeypatch 在用例结束后恢复。
+    monkeypatch.setattr(qconfig.fontFamilies, "value", qconfig.get(qconfig.fontFamilies).copy())
+    monkeypatch.setattr(qconfig, "save", unexpected_save)
+    manager = TypographyManager()
+    manager.apply(manager.config)
+    expected = manager.font_for_role(FontRole.UI).families()
+    assert getFont().families() == expected
+    assert renderQss("QWidget { font-family: --FontFamilies; }") == (
+        "QWidget { font-family: " + ",".join(f"'{family}'" for family in expected) + "; }"
+    )
+
+
+def test_fresh_process_renders_application_and_fluent_fonts_without_missing_family_warning():
+    environment = dict(os.environ)
+    if sys.platform == "darwin":
+        # 验证真实 macOS 字体别名；offscreen 的合成 Sans Serif 不代表原生系统字体。
+        environment["QT_QPA_PLATFORM"] = "cocoa"
+    result = subprocess.run(
+        [sys.executable, "-c", """
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFontMetrics
+app = QApplication([])
+from gui.styles.typography import TypographyManager
+from qfluentwidgets import PushButton
+manager = TypographyManager()
+manager.apply(manager.config)
+button = PushButton('ADBLab 中文')
+button.ensurePolished()
+assert QFontMetrics(app.font()).horizontalAdvance('ADBLab 中文') > 0
+assert button.fontMetrics().horizontalAdvance(button.text()) > 0
+button.grab()
+button.close()
+"""],
+        capture_output=True, text=True, timeout=15, env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "missing font family" not in result.stderr, result.stderr
+
+
 def test_legacy_font_factories_share_current_role_rendering_and_custom_size():
     assert BaseStyles.get_default_font() == BaseStyles.font_for_role(FontRole.UI)
     assert BaseStyles.get_default_font(11) == BaseStyles.font_for_role(FontRole.UI, size=11)
@@ -69,8 +146,11 @@ def test_legacy_font_factories_share_current_role_rendering_and_custom_size():
 
 
 def test_typography_manager_emits_only_changed_role_and_sets_application_font(
-    qt_application,
+    qt_application, monkeypatch,
 ):
+    from qfluentwidgets import qconfig
+
+    monkeypatch.setattr(qconfig.fontFamilies, "value", qconfig.get(qconfig.fontFamilies).copy())
     previous_application_font = QFont(qt_application.font())
     manager = TypographyManager()
     initial = manager.config
