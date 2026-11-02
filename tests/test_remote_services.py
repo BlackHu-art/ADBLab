@@ -876,7 +876,9 @@ def test_scrcpy_macos_keeps_path_priority_and_skips_non_executable_fallback(monk
     monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
     monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "arm64")
     monkeypatch.setattr("services.remote.scrcpy_service.shutil.which", lambda _name: "/path/scrcpy")
-    monkeypatch.setattr(os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(os.path, "isfile", lambda path: path in {
+        "/path/scrcpy", "/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy",
+    })
     monkeypatch.setattr(os, "access", lambda path, _mode: path.startswith("/usr/"))
     service = ScrcpyService()
     assert service.resolve_executable() == "/path/scrcpy"

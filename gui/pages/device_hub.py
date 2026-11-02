@@ -875,7 +875,7 @@ class DeviceHubPage(QWidget):
         self._toolbar_layout.addWidget(self._toolbar_actions, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.toolbar)
         # 工具栏后的基础间距常驻；连接区的额外间距随裁剪高度展开，避免显隐瞬跳。
-        layout.addSpacing(14)
+        layout.addSpacing(4)
         self.cards_container = QWidget(self)
         self._cards_layout = QVBoxLayout(self.cards_container)
         self._cards_layout.setContentsMargins(0, 0, 0, 0)

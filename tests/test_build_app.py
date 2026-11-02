@@ -65,6 +65,31 @@ def test_spec_and_cli_consume_the_same_resources_and_hidden_imports(monkeypatch,
     assert ("build/runtime-helpers", "runtime-helpers") in expected_data
 
 
+def test_macos_build_defaults_to_windowed_app_and_rejects_onefile():
+    from scripts.build_app import build_command
+
+    command = build_command(name="example", platform="darwin")
+    assert "--onedir" in command
+    assert "--windowed" in command
+    with pytest.raises(ValueError, match="onedir"):
+        build_command(name="example", platform="darwin", onefile=True)
+
+
+def test_macos_cli_rejects_onefile_before_preparing_tools(monkeypatch, capsys):
+    from scripts import build_app
+
+    monkeypatch.setattr(build_app.sys, "platform", "darwin")
+
+    def unexpected_subprocess(*args, **kwargs):
+        raise AssertionError("invalid mode must not prepare or build")
+
+    monkeypatch.setattr(build_app.subprocess, "run", unexpected_subprocess)
+    with pytest.raises(SystemExit) as failure:
+        build_app.main(["--onefile"])
+    assert failure.value.code == 2
+    assert "onedir" in capsys.readouterr().err
+
+
 def test_manifest_change_reaches_both_real_consumers(monkeypatch):
     from scripts import build_app, packaging_manifest
 
@@ -148,7 +173,8 @@ def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
 
     monkeypatch.setattr(build_app.subprocess, "run", run)
     monkeypatch.setattr(build_app.sys, "platform", platform)
-    result = build_app.main(["--name", "example", "--onefile", "--windowed", "--icon", "icon.ico"])
+    mode = "--onedir" if platform == "darwin" else "--onefile"
+    result = build_app.main(["--name", "example", mode, "--windowed", "--icon", "icon.ico"])
     assert result == (code if failed_stage in stages else 0)
     expected_calls = stages.index(failed_stage) + 1 if failed_stage in stages else len(stages)
     assert len(calls) == expected_calls
@@ -160,7 +186,7 @@ def test_build_cli_stops_on_helper_failure_and_preserves_build_exit_code(
     if len(calls) == len(stages):
         command = calls[-1][0]
         assert command[:3] == [sys.executable, "-m", "PyInstaller"]
-        assert "--onefile" in command and "--windowed" in command
+        assert mode in command and "--windowed" in command
         assert command[-1] == str(ROOT / "main.py")
         assert calls[-1][1]["cwd"] == ROOT
 

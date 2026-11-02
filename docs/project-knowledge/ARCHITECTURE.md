@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-29
+last_verified: 2026-11-02
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -25,8 +25,10 @@ ADBLab 通过 Qt Signal/Slot 连接桌面界面与异步设备操作。普通面
 设置规则位于 `core/settings/schema.py`，历史字典变换位于 `core/settings/migrations.py`，后者显式接收诊断回调。
 `core/settings_manager.py` 仍是唯一持久化与线程资源owner；`gui/i18n.py` 直接消费纯语言规则，无需加载该owner。
 
-Remote窗口契约和Win32/X11/事件订阅实现位于 `services/remote/windowing/`；原 `window_tracking.py` 保留实际
+Remote窗口契约和Win32/X11/macOS/事件订阅实现位于 `services/remote/windowing/`；原 `window_tracking.py` 保留实际
 跟踪策略和平台工厂。平台模块只依赖契约，不反向导入策略；旧X11和事件入口保留相同类/资源集合的兼容导出。
+macOS 后端只在 cocoa 界面线程创建，使用现有 PyObjC 的辅助功能接口验证会话窗口，AppKit
+仅定位本进程的侧栏；缺少辅助功能授权时保留便携工具栏，不自动请求或修改系统权限。
 
 ```mermaid
 flowchart LR

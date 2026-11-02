@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-30
+last_verified: 2026-11-02
 related: [ARCHITECTURE.md, MODULE_MAP.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md, ../guides/OPERATION_RESULTS.md, ../guides/TESTING_GUIDE.md]
 ---
 
@@ -165,6 +165,9 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 [WorkspaceSectionPage / GalleryPage](../../gui/pages/workspace_containers.py) 将滚动容器铺到内容区边界，
 阅读留白由内部 wrapper 承担。主列表、日志和图片画布保留专用滚动边界；不能为对齐文字同时把
 滚动轨道向内缩，也不能把横向溢出简单统一为始终隐藏。
+
+普通正文页、设置和任务中心使用 8px 顶部留白；主窗口业务宿主与设备栏底部不再叠加留白。
+首页头图保持贴顶，设备概览工具栏与设备列表之间保留 4px 间距，设备行内部留白独立维护。
 
 应用管理和文件管理嵌入工作区时，主列表的右边界与主窗口内容区对齐；筛选、路径、命令和状态
 行单独保留阅读留白。两页主列表左侧与正文的 32px 阅读起点对齐；视口和表头右侧同样保留

@@ -51,6 +51,20 @@ LINUX_BUNDLE = ToolBundle(
     "ad56ae8bfeedf41e824945c11dbf55fcb092b3e615b9b486f48a50e30d389635",
     "scrcpy-linux-x86_64-v4.1",
 )
+MACOS_ARM64_BUNDLE = ToolBundle(
+    "runtime-tools/macos-arm64", "adb", "scrcpy",
+    ("adb", "scrcpy", "scrcpy-server", "LICENSE", "scrcpy.png", "disconnected.png", "scrcpy.1"),
+    "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-aarch64-v4.1.tar.gz",
+    "20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3",
+    "scrcpy-macos-aarch64-v4.1",
+)
+MACOS_X64_BUNDLE = ToolBundle(
+    "runtime-tools/macos-x86_64", "adb", "scrcpy",
+    ("adb", "scrcpy", "scrcpy-server", "LICENSE", "scrcpy.png", "disconnected.png", "scrcpy.1"),
+    "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-macos-x86_64-v4.1.tar.gz",
+    "ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72",
+    "scrcpy-macos-x86_64-v4.1",
+)
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,12 @@ def get_tool_bundle(platform: str | None = None, machine: str | None = None) -> 
     """仅返回已交付架构的工具；其他环境沿用系统工具，绝不跨架构猜测。"""
     platform = sys.platform if platform is None else platform
     machine = (host_platform.machine() if machine is None else machine).lower()
+    if platform == "darwin":
+        if machine in {"arm64", "aarch64"}:
+            return MACOS_ARM64_BUNDLE
+        if machine in {"x86_64", "amd64"}:
+            return MACOS_X64_BUNDLE
+        return None
     if machine not in {"x86_64", "amd64"}:
         return None
     if platform == "win32":

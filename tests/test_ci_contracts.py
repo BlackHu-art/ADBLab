@@ -674,8 +674,9 @@ def test_frozen_checks_use_waiting_validator_before_compression(platform, execut
     assert "set -euo pipefail" in step["run"]
     command = next(shlex.split(line) for line in step["run"].splitlines()
                    if "scripts/check_build_artifacts.py frozen" in line)
+    interpreter = "$(command -v python)" if platform == "macOS" else "python"
     assert command == [
-        "python", "scripts/check_build_artifacts.py", "frozen", "--executable", executable,
+        interpreter, "scripts/check_build_artifacts.py", "frozen", "--executable", executable,
         "--timeout", "60",
     ]
     assert "--self-check packaging" not in step["run"]
@@ -742,8 +743,8 @@ def test_build_matrix_uses_native_python_and_preserves_platform_package_modes():
     rows = job["strategy"]["matrix"]["include"]
     expected = {
         "ADBLab-win-x64": ("windows-latest", "x64", "AMD64", "--onedir", "--windowed"),
-        "ADBLab-macos-x64": ("macos-15-intel", "x64", "x86_64", "--onefile", "--windowed"),
-        "ADBLab-macos-arm64": ("macos-15", "arm64", "arm64", "--onefile", "--windowed"),
+        "ADBLab-macos-x64": ("macos-15-intel", "x64", "x86_64", "--onedir", "--windowed"),
+        "ADBLab-macos-arm64": ("macos-15", "arm64", "arm64", "--onedir", "--windowed"),
         "ADBLab-linux-x64": ("ubuntu-latest", "x64", "x86_64", "--onefile", ""),
     }
     assert {row["artifact"] for row in rows} == set(expected)
@@ -818,8 +819,14 @@ def test_macos_checks_helper_and_app_architecture_before_archiving():
     assert "build/runtime-helpers/adblab-adb-bridge/adblab-adb-bridge" in helper["run"]
     assert 'name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"' in app["run"]
     assert 'dist/$name.app/Contents/MacOS/$name' in app["run"]
-    assert ('python scripts/check_build_artifacts.py frozen --executable "$executable" '
+    assert ('scripts/check_build_artifacts.py frozen --executable "$executable" '
             '--timeout 60') in app["run"]
+    assert ('python scripts/check_macos_package.py --app "dist/$name.app" '
+            '--machine "${{ matrix.machine }}"') in app["run"]
+    assert 'env -u ADB_PATH -u ADB -u SCRCPY_PATH PATH=/usr/bin:/bin:/usr/sbin:/sbin' in app["run"]
+    archive_command = commands[archive]
+    assert 'ditto -c -k --sequesterRsrc --keepParent "dist/$name.app"' in archive_command
+    assert 'elif [ -f "dist/$name" ]' not in archive_command
 
 
 @pytest.mark.parametrize("frozen", [False, True], ids=["source", "frozen"])
@@ -896,7 +903,7 @@ def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses(monkeypat
                 ("runtime-tools/linux-x86_64", "runtime-tools/linux-x86_64"),
                 ("runtime-tools/aapt2/linux-x86_64", "runtime-tools/aapt2/linux-x86_64"),
             },
-            "darwin": set(),
+            "darwin": {("runtime-tools/macos-x86_64", "runtime-tools/macos-x86_64")},
         }
         expected = common | tools[platform]
         assert set(resource_datas(platform)) == expected

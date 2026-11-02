@@ -10,7 +10,7 @@
 | 语法兼容目标 | 静态检查与格式配置目标为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6；精确版本见依赖清单 | `requirements.txt` |
-| ADB/scrcpy | Windows/Linux x86_64 提供内置工具；其他平台使用环境工具；macOS 补充默认 SDK 与 Homebrew 路径发现，具体顺序见下文配置 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows/Linux x86_64、macOS x86_64/arm64 提供内置工具；其他架构使用环境工具，具体顺序见下文配置 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | APK 解析与可选工具 | Windows/Linux x64 内置 AAPT2；其他平台兼容 PATH 中的 aapt/aapt2；Java 用于 chkbugreport JAR | [APK 解析工具](#apk-解析工具)、`models/adb_testing.py` |
 
 ## 安装
@@ -56,11 +56,12 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
   不完整根路径或安装资源内部目录；目录不可创建/写入时在 worker 启动前失败。不会改写历史配置
   或调用方对象；临时 INI、结果预测与归档使用同一个绝对路径快照。
 - ADB 解析器按平台和架构门控：Windows x64 使用 `runtime-tools/windows-x86_64/adb.exe`，Linux x86_64 使用
-  `runtime-tools/linux-x86_64/adb`；依次尝试当前平台内置工具、`ADB_PATH`
+  `runtime-tools/linux-x86_64/adb`，macOS x86_64/arm64 分别使用
+  `runtime-tools/macos-x86_64/adb` / `runtime-tools/macos-arm64/adb`；依次尝试当前平台内置工具、`ADB_PATH`
   环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
   再尝试 PATH；macOS 额外尝试 `~/Library/Android/sdk/platform-tools/adb`，随后检查
   `/opt/homebrew/bin/adb` 和 `/usr/local/bin/adb`，当前架构的标准 Homebrew 前缀优先。
-  macOS 和未提供内置包的架构使用环境工具，不执行其他平台二进制。
+  内置包未准备或未提供内置包的架构使用环境工具，不执行其他平台二进制。
 - 解析结果在进程内缓存，包含明确缺失结果；应用执行要求可用绝对路径，缺失时直接失败，
   不交给裸命令名重新搜索 PATH。设置页「重新检测」清空解析与执行两层缓存，并作废客户端
   探测缓存；安装或移除 platform-tools 后无需重启应用。重检合并、持久输入退休和子进程
@@ -78,7 +79,7 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
   后端已通过检测。执行模式、能力探测及失败后的接管条件统一见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - Remote 非空 `SCRCPY_PATH` 显式覆盖 scrcpy 路径，支持 `~` 和相对文件路径；该值是单个文件路径，
   不能附加启动参数。无效覆盖会报错，不会静默回退。未配置时优先使用当前平台内置 scrcpy；
-  Linux 内置包未准备时及未提供内置包的平台使用 PATH；macOS 最后检查两个 Homebrew 标准前缀。
+  Linux/macOS 内置包未准备时及未提供内置包的平台使用 PATH；macOS 最后检查两个 Homebrew 标准前缀。
   主应用启动 MobilePerf 和 scrcpy 时分别冻结
   `ADB_PATH` / `ADB` 子进程环境；所选 ADB 缺失会在启动前失败，详情见
   [Remote 投屏与输入](ADB_FAST.md#remote-投屏与输入) 与 [MobilePerf 采集进程](ADB_FAST.md#mobileperf-采集进程)。
@@ -188,8 +189,9 @@ glibc 2.35 及 libudev 等系统库。固定版本 AAPT2 的 Linux 归档经摘�
 整个 ADBLab 产物还受 Python、Qt 和其他依赖的 ABI 约束，不能沿用 AAPT2 的 glibc 下限；
 应在计划支持的最低 Ubuntu 版本上构建并验证产物，参见
 [PyInstaller 的 Linux 兼容性说明](https://pyinstaller.org/en/v6.22.2/usage.html#making-gnu-linux-apps-forward-compatible)。
-实际桌面显示、USB 权限与设备授权仍需按部署环境验证。Linux ARM/macOS
-未交付内置包，需要兼容的系统 ADB/scrcpy。Windows 开发环境按上一节准备工具。
+实际桌面显示、USB 权限与设备授权仍需按部署环境验证。Linux ARM
+未交付内置包，需要兼容的系统 ADB/scrcpy。Windows 开发环境按上一节准备工具，
+macOS 见 [macOS 工具发现](#macos-工具发现)。
 完整产物打包与自检可使用：
 
 ```bash
@@ -210,10 +212,38 @@ QT_QPA_PLATFORM=xcb timeout 15s xvfb-run -a ./dist/ADBLab-linux-x64 --self-check
 
 ### macOS 工具发现
 
-macOS 发行包不内置 ADB/scrcpy。终端 PATH 已配置的工具继续优先；从 Finder 启动时，
-程序也能发现上述默认 SDK 和 Homebrew 路径。安装或移除 ADB 后在设置页重新检测；
-特殊位置的 scrcpy 可在启动环境中指定 `SCRCPY_PATH`。双架构安装时分别显示 Homebrew 来源，
-不能用来源标签代替真实可执行性和版本检查。
+macOS x64 与 Apple Silicon 发行 ZIP 分别携带原生架构的 `.app`，内置官方 scrcpy 4.1、
+ADB 与配套 server；解压后运行完整 `.app`，不需要 Homebrew、Android SDK 或外部 PATH。
+不要只复制 `Contents/MacOS` 下的主程序；工具、helper 和许可属于应用包的一部分。
+默认优先使用内置工具；显式 `SCRCPY_PATH` 和设置页固定 ADB 客户端的选择仍生效。
+内置包未准备的源码环境继续发现 PATH、默认 SDK 与 Homebrew 位置。
+
+源码首次运行和本地构建使用项目虚拟环境；准备脚本只下载当前主机架构的固定官方包，
+校验归档 SHA256 后保留完整内容与收据，不修改全局工具配置：
+
+```bash
+.venv/bin/python scripts/prepare_runtime_tools.py
+.venv/bin/python scripts/prepare_runtime_tools.py --check
+.venv/bin/python scripts/build_app.py --name ADBLab --onedir --windowed
+.venv/bin/python scripts/check_macos_package.py --app dist/ADBLab.app --machine arm64
+env -u ADB_PATH -u ADB -u SCRCPY_PATH PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  .venv/bin/python scripts/check_build_artifacts.py frozen --executable dist/ADBLab.app/Contents/MacOS/ADBLab --timeout 60
+```
+
+Intel 主机将检查命令中的 `arm64` 改为 `x86_64`；构建和验收在对应架构的 Python 下执行。
+离线准备可用 `--archive <官方 tar.gz>`，摘要与归档根目录仍按共享清单校验。
+CLI 在 macOS 固定生成 windowed、onedir `.app`，拒绝 `--onefile`；工具从签名后的应用包运行。
+检查器验证主程序、helper、ADB 与 scrcpy 的架构及签名，允许 ADB 包含目标架构的 universal2，
+并拒绝 ADB/scrcpy 的非系统动态库依赖。随后冻结自检在受限 PATH 下校验随包资源及版本。
+PyInstaller 使用 ad-hoc 签名；当前流程不提供 Developer ID 签名或 Apple 公证。
+
+安装或移除环境 ADB 后可在设置页重新检测；双架构 Homebrew 安装会分别显示来源，
+来源标签不代替真实可执行性和版本检查。
+
+投屏侧栏自动跟随需要在 macOS「系统设置 → 隐私与安全性 → 辅助功能」中授权实际启动程序；
+源码运行通常是终端或 IDE，打包运行则是 ADBLab。授权后停止并重新启动本次镜像会话；系统要求
+重开启动程序时按系统提示操作。未授权时仍可使用便携工具栏，但不自动贴边或随镜像最小化。
+跟随只读取会话窗口的标题、位置和状态，不需要屏幕录制权限，也不会自动弹出权限申请。
 
 GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
@@ -488,14 +518,15 @@ GitHub 发布响应，提供该信任源下的完整性，当前没有发布者�
    该作业继续打包，发布仍要求全部构建成功。该选择包含 integration，并不等同于纯单元测试，
    GUI 与完整套件的本地验收条件见 [测试指南](TESTING_GUIDE.md#增量验证策略)。随后准备当前平台
    工具；macOS/Linux 运行 source packaging self-check。
-4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、
+4. PyInstaller 构建 Windows onedir、macOS onedir `.app`、Linux onefile。macOS 使用 `macos-15-intel` 构建 x64、
    `macos-15` 构建 arm64；Python 显式选择架构并核对 machine，helper 与主程序用 file/lipo 核对架构。
 5. 三平台通过 `scripts/check_build_artifacts.py frozen` 显式等待产物退出并校验退出码，避免 Windows
    windowed EXE 被 shell 启动后直接放行。探针依次检查 packaging 自检、worker `--help` 的 `--config`
    输出，以及未知中文参数的 UTF-8 错误输出和退出码 2；每项运行超时为 60 秒，另给清理最多 2 秒，超时会尝试清理进程树，
    清理未确认也判失败。随包工具检查文件、可执行权限及版本命令，系统工具不参与兜底。
    Linux 额外对源码和产物运行有超时保护的 Xvfb/xcb GUI 探针，启用 `QT_DEBUG_PLUGINS` 记录插件加载失败原因；
-   macOS 架构检查继续保留。
+   macOS 另外运行 `scripts/check_macos_package.py`，验证主程序、helper 和工具的实际架构、
+   嵌套签名及工具的系统动态依赖；冻结探针清除 ADB/scrcpy 覆盖变量，并将 PATH 限制为系统目录。
 6. Windows 在冻结探针之后、原 ZIP 压缩删除 onedir 之前准备固定 Inno 编译器、构建 setup，
    并执行安装验收。验收器的 `--iscc` 指向已准备的固定编译器；先编译独立身份的 A/B/C
    测试安装包并验证升级、降级拒绝、中断修复和精确卸载，再安装正式 setup，验证稳定入口、
@@ -539,7 +570,8 @@ CLI 与本地 spec 在构建前运行工具准备脚本，任一准备步骤失�
 | Windows x64 | Genymobile/scrcpy 的 v4.1 Release：`scrcpy-win64-v4.1.zip`，包含 ADB、scrcpy/server、DLL 与许可 | `runtime-tools/windows-x86_64/` |
 | Linux x64 | 同一 Release：`scrcpy-linux-x86_64-v4.1.tar.gz`，包含 ADB、scrcpy/server 与许可 | `runtime-tools/linux-x86_64/` |
 | Windows / Linux x64 | Google Maven 的 AAPT2，版本与摘要见 `utils/tool_manifest.py`；包含可执行文件和 `NOTICE` | `runtime-tools/aapt2/windows-x86_64/` 或 `runtime-tools/aapt2/linux-x86_64/` |
-| macOS x64 / arm64 | 不生成内置工具包；运行时发现用户安装的兼容工具 | 无 |
+| macOS x64 | Genymobile/scrcpy 的 v4.1 Release：`scrcpy-macos-x86_64-v4.1.tar.gz`，包含 ADB、scrcpy/server、许可及图标/手册 | `runtime-tools/macos-x86_64/` |
+| macOS arm64 | 同一 Release：`scrcpy-macos-aarch64-v4.1.tar.gz`，包含 ADB、scrcpy/server、许可及图标/手册 | `runtime-tools/macos-arm64/` |
 
 只有校验通过的已有工具目录可复用；网络、摘要或准备过程失败会停止构建。生成目录不进入 Git，
 资源收集只带入当前平台工具。应用运行时不联网下载；macOS 安装与发现方式见
@@ -611,5 +643,5 @@ pip 缓存按系统与架构隔离，同时考虑 requirements 和 constraints �
 | 找不到设备 | ADB 不可用、设备未授权/offline、网络 target 不完整；连接目标必须含 port |
 | APK 信息解析失败 | 检查 [APK 解析工具](#apk-解析工具) 是否完整，以及 APK 是否存在且能被工具读取；保留工具返回的实际错误 |
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
-| Remote 提示 scrcpy 不可用 | 检查 SCRCPY_PATH；Windows/Linux x86_64 检查准备后的工具包，macOS/其他架构需兼容的系统工具 |
+| Remote 提示 scrcpy 不可用 | 检查 SCRCPY_PATH；Windows/Linux x86_64、macOS x86_64/arm64 检查准备后的工具包，其他架构需兼容的系统工具 |
 | Linux 提示无法加载 xcb 插件 | 检查实际缺失的系统库；缺少 libxcb-cursor.so.0 时安装 libxcb-cursor0，再运行 GUI 自检 |

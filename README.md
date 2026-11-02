@@ -50,10 +50,10 @@ py -3.11 -m venv .venv
 - `requirements-dev.txt`：构建、测试、Lint、类型检查和 pre-commit 工具。
 
 开发时直接调用 `.venv\Scripts\python.exe`，避免把依赖安装到系统 Python。
-新检出的仓库不包含 `runtime-tools/`；首次使用设备功能前，Windows/Linux x64 还需按
+新检出的仓库不包含 `runtime-tools/`；首次使用设备功能前，Windows/Linux x64 与 macOS x64/arm64 需按
 [平台启动说明](docs/guides/BUILD_AND_RUN.md#启动)准备 ADB/scrcpy 工具；scrcpy 专用 helper
 供快速投屏与打包自检使用，未构建时源码投屏采用原生兼容模式。
-macOS 使用系统安装的工具，发现顺序见同一指南。
+上述平台的发行包内置 ADB/scrcpy；macOS 使用 onedir `.app`，无需另装 Homebrew 或投屏工具。
 
 ## 项目结构
 

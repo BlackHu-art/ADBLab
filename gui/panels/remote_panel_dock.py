@@ -241,7 +241,9 @@ class RemotePanelDock(QObject):
             size = (round(preferred.width() * scale), round(preferred.height() * scale))
             rect = dock_geometry(snapshot.rect, snapshot.work_area, size,
                                  gap=round(8 * scale), inset=round(12 * scale))
-            placement = (rect, snapshot.hwnd, snapshot.topmost, snapshot.dpi)
+            # macOS 无跨应用 owner 关系；原位置切回镜像时也须恢复侧栏的相对层级。
+            stacking = foreground if sys.platform == "darwin" else None
+            placement = (rect, snapshot.hwnd, snapshot.topmost, snapshot.dpi, stacking)
             if placement != entry.placement or not toolbar.isVisible():
                 tool_hwnd = int(toolbar.winId())
                 if not entry.screen_observed:

@@ -430,6 +430,36 @@ def test_more_dismisses_on_foreground_change_but_opens_for_background_target(qt_
         owner.close()
 
 
+@pytest.mark.parametrize("system,qt_platform", [
+    ("darwin", "cocoa"), ("win32", "windows"), ("linux", "xcb"),
+])
+def test_macos_reorders_on_foreground_change_without_moving_mirror(
+    qt_application, monkeypatch, system, qt_platform,
+):
+    module = _set_dock_platform(monkeypatch, system, qt_platform)
+    owner, frame = QWidget(), Frame()
+    frame._device_sessions = {"a": session("a")}
+    dock = module.RemotePanelDock(frame, owner, tracker_factory=Tracker)
+    try:
+        dock.sync()
+        entry = dock.entries["a"]
+        placements = len(entry.tracker.positions)
+        entry.tracker.current.foreground = False
+        entry.tracker.current.foreground_hwnd = 800
+        dock.tick()
+        assert len(entry.tracker.positions) == placements + (system == "darwin")
+        placements = len(entry.tracker.positions)
+        dock.tick()
+        assert len(entry.tracker.positions) == placements
+        entry.tracker.current.foreground = True
+        entry.tracker.current.foreground_hwnd = 100
+        dock.tick()
+        assert len(entry.tracker.positions) == placements + (system == "darwin")
+    finally:
+        dock.close()
+        owner.close()
+
+
 @pytest.mark.parametrize("code", ["rotate_portrait", "MEDIA_PLAY"])
 def test_more_mouse_click_delivers_to_its_session_across_tracking_tick(qt_application, code):
     from PySide6.QtCore import Qt

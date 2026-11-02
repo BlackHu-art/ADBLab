@@ -1219,7 +1219,8 @@ class MainFrame(FluentWindow):
         for host in (devices_host, apps_host, system_host):
             host_layout = host.layout()
             assert host_layout is not None
-            host_layout.setContentsMargins(0, 8, 0, 0)
+            # 正文页自带顶部留白；宿主不再叠加，设备栏下方保持同一阅读起点。
+            host_layout.setContentsMargins(0, 0, 0, 0)
             for state in (host.no_device_page, host.closing_page):
                 state_layout = state.layout()
                 assert state_layout is not None

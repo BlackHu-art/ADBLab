@@ -79,6 +79,69 @@ def test_bundled_tool_path_uses_onedir_bundle_without_copy(tmp_path, monkeypatch
     assert not (local_appdata / "ADBLab").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="macOS app 的资源跨目录链接")
+@pytest.mark.parametrize("linked", [False, True], ids=["direct", "resource-crosslink"])
+def test_macos_onedir_keeps_signed_tools_in_app_with_spaces(tmp_path, monkeypatch, linked):
+    from utils import runtime_tools
+
+    contents = tmp_path / "Application folder/ADBLab test.app/Contents"
+    executable = contents / "MacOS/ADBLab test"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"app")
+    frameworks = contents / "Frameworks"
+    frameworks.mkdir()
+    source = contents / ("Resources" if linked else "Frameworks") / "runtime-tools/macos-arm64"
+    source.mkdir(parents=True)
+    (source / "adb").write_bytes(b"signed adb")
+    if linked:
+        (frameworks / "runtime-tools").symlink_to(
+            "../Resources/runtime-tools", target_is_directory=True,
+        )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "_MEIPASS", str(frameworks), raising=False)
+    monkeypatch.setattr(runtime_tools, "resource_path", lambda relative: str(frameworks / relative))
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(runtime_tools, "_runtime_root", lambda: cache)
+
+    path = Path(runtime_tools.bundled_tool_path("runtime-tools/macos-arm64", "adb"))
+
+    assert path == frameworks / "runtime-tools/macos-arm64/adb"
+    assert path.read_bytes() == b"signed adb"
+    assert not cache.exists()
+
+
+@pytest.mark.parametrize("executable_path", [
+    "ADBLab.app/Contents/MacOS/ADBLab", "ADBLab.app/arbitrary/ADBLab", "dist/ADBLab",
+])
+def test_macos_legacy_onefile_still_uses_stable_tool_cache(
+    tmp_path, monkeypatch, executable_path,
+):
+    from utils import runtime_tools
+
+    executable = tmp_path / executable_path
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"app")
+    extracted = tmp_path / "_MEI123"
+    source = extracted / "runtime-tools/macos-arm64"
+    source.mkdir(parents=True)
+    (source / "adb").write_bytes(b"adb")
+    (source / "adb").chmod(0o755)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "_MEIPASS", str(extracted), raising=False)
+    monkeypatch.setattr(runtime_tools, "resource_path", lambda relative: str(extracted / relative))
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(runtime_tools, "_runtime_root", lambda: cache)
+
+    path = Path(runtime_tools.bundled_tool_path("runtime-tools/macos-arm64", "adb"))
+
+    assert path == cache / "runtime-tools/macos-arm64/adb"
+    assert path.read_bytes() == b"adb"
+
+
 def _clear_adb_candidates(monkeypatch):
     """隔离候选链依赖的环境变量，避免本机 Android SDK 影响解析断言。"""
 

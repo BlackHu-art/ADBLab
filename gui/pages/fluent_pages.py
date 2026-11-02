@@ -180,7 +180,7 @@ class SettingsPage(ScrollArea):
         self.expand_layout = _SettingsContentLayout(view)
         self.expand_layout.setSpacing(28)
         # 留白随内容滚动，滚动条保持原生定位及完整视口高度。
-        self.expand_layout.setContentsMargins(32, 16, 32, 44)
+        self.expand_layout.setContentsMargins(32, 8, 32, 44)
 
         general = SettingCardGroup(tr("常规"), view)
         self.save_card = PushSettingCard(

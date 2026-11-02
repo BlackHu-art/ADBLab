@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-24
+last_verified: 2026-11-02
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -126,7 +126,7 @@ INFO 中的纹理/录制就绪与 FPS 更新页面状态，错误与开发诊断
 输出 reader 使用启动计划冻结的设备与工具路径进行脱敏，保留已知路径后的上传统计和错误说明；
 scrcpy 的警告、错误和 `Aborted` 进入应用诊断，普通输出保持 DEBUG，不逐行触发 Remote 操作提示。
 启动诊断只记录后端和版本，便于区分能力探测通过与本次实际选择的执行路径。
-非空 `SCRCPY_PATH` 显式覆盖路径；默认 Windows/Linux x86_64 使用内置可执行文件，
+非空 `SCRCPY_PATH` 显式覆盖路径；默认 Windows/Linux x86_64 与 macOS x86_64/arm64 使用内置可执行文件，
 环境工具按 PATH/macOS Homebrew 策略发现，详见 [构建与运行](../guides/BUILD_AND_RUN.md#配置)；没有网络服务端暴露。
 满足 scrcpy 4.1、已验证快速设备、专用入口与服务端文件可用等条件的 direct 计划，才由
 `start_plan()` 通过子进程 `ADB` 指向随包独立 CLI；其他计划保留选定的原生 ADB。专用协议、

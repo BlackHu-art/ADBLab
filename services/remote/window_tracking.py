@@ -210,6 +210,15 @@ def create_window_tracker(
     X11 句柄。显式 SDL 非 x11 选择保留，原生连接由返回的跟踪器负责关闭。
     """
     api = None
+    if sys.platform == "darwin" and platform_name == "cocoa":
+        try:
+            from services.remote.windowing.macos import MacOSWindowApi
+
+            api = MacOSWindowApi(root_pid)
+        except (ImportError, OSError):
+            _LOGGER.warning(
+                "macOS 投屏窗口跟随不可用；请检查启动程序的辅助功能授权，当前使用便携工具栏",
+            )
     if sys.platform == "linux" and platform_name == "xcb":
         from utils.gui_platform import sdl_allows_x11
 

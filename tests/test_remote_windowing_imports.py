@@ -15,6 +15,7 @@ _STAGE_MODULES = {
     f"{_PACKAGE}.contracts",
     f"{_PACKAGE}.win32",
     f"{_PACKAGE}.x11",
+    f"{_PACKAGE}.macos",
     f"{_PACKAGE}.events",
     "services.remote.window_tracking",
     "services.remote.x11_window_tracking",
@@ -74,6 +75,7 @@ def test_legacy_exports_share_identity_in_either_import_order(legacy, leaf, name
         (f"{_PACKAGE}.contracts", {_PACKAGE, f"{_PACKAGE}.contracts"}),
         (f"{_PACKAGE}.win32", {_PACKAGE, f"{_PACKAGE}.contracts", f"{_PACKAGE}.win32"}),
         (f"{_PACKAGE}.x11", {_PACKAGE, f"{_PACKAGE}.contracts", f"{_PACKAGE}.x11"}),
+        (f"{_PACKAGE}.macos", {_PACKAGE, f"{_PACKAGE}.contracts", f"{_PACKAGE}.macos"}),
         (f"{_PACKAGE}.events", {_PACKAGE, f"{_PACKAGE}.events"}),
     ],
 )

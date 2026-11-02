@@ -49,7 +49,7 @@ class GalleryPage(QWidget):
             wrapper = QWidget(body)
             wrapper.setObjectName(f"{route_key}View")
             content_layout = QVBoxLayout(wrapper)
-            content_layout.setContentsMargins(32, 16, 32, 28)
+            content_layout.setContentsMargins(32, 8, 32, 28)
             content_layout.setSpacing(20)
             content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
             content.setParent(wrapper)

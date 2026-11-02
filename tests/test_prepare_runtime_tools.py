@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import tarfile
 from dataclasses import replace
 from zipfile import ZipFile
 
@@ -26,6 +27,45 @@ def test_windows_bundle_selects_verified_official_zip():
     assert bundle.url == (
         "https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win64-v4.1.zip"
     )
+
+
+@pytest.mark.parametrize("machine,archive_name,digest", [
+    ("arm64", "scrcpy-macos-aarch64-v4.1",
+     "20fd47c9014dd5e0fa77091f3cb7adbda8445a360c4584aeaa0150b5b3988ff3"),
+    ("x86_64", "scrcpy-macos-x86_64-v4.1",
+     "ee2a7223bc8dbdc4f482db1134bcf441178dafb833492b71ca4c22090c58ce72"),
+])
+def test_macos_offline_preparation_preserves_official_bundle(
+    tmp_path, monkeypatch, machine, archive_name, digest,
+):
+    monkeypatch.setattr(prepare.urllib.request, "urlopen", _forbid_network)
+    bundle = tool_manifest.get_tool_bundle("darwin", machine)
+    assert bundle is not None
+    assert bundle.url == (
+        f"https://github.com/Genymobile/scrcpy/releases/download/v4.1/{archive_name}.tar.gz"
+    )
+    assert bundle.sha256 == digest
+    contents = {name: name.encode() for name in (
+        "adb", "scrcpy", "scrcpy-server", "LICENSE", "scrcpy.png", "disconnected.png", "scrcpy.1",
+    )}
+    archive = tmp_path / "offline-package.bin"
+    with tarfile.open(archive, "w:gz") as package:
+        for name, data in contents.items():
+            info = tarfile.TarInfo(f"{archive_name}/{name}")
+            info.size = len(data)
+            info.mode = 0o755 if name in {"adb", "scrcpy"} else 0o644
+            package.addfile(info, io.BytesIO(data))
+    bundle = replace(bundle, sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
+    root = tmp_path / "project with spaces"
+    target = prepare.prepare_bundle(bundle, root=root, archive=archive)
+    assert target == root / f"runtime-tools/macos-{machine}"
+    assert _snapshot(target) == {
+        **contents, ".bundle.json": (target / ".bundle.json").read_bytes(),
+    }
+    assert prepare.prepare_bundle(bundle, root=root, check_only=True) == target
+    (target / "scrcpy-server").write_bytes(b"tampered")
+    with pytest.raises(ValueError):
+        prepare.prepare_bundle(bundle, root=root, check_only=True)
 
 
 def _windows_archive(tmp_path, *, omitted=(), unsafe=False):

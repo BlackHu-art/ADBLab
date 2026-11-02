@@ -241,6 +241,8 @@ def _prepare_macos(monkeypatch, tmp_path):
     _isolate_environment(monkeypatch)
     monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
     monkeypatch.setattr(tool_manifest.host_platform, "machine", lambda: "arm64")
+    # 环境工具用例显式隔离内置候选；完整包的优先级由平台工具测试覆盖。
+    monkeypatch.setattr(adb_resolver, "_bundled_candidate", lambda: None)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     _which(monkeypatch, None)

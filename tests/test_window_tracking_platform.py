@@ -18,7 +18,8 @@ from tests.test_remote_window_tracking import FakeWindowApi
         ("linux", "offscreen", {}, False),
         ("linux", "xcb", {"SDL_VIDEO_DRIVER": "wayland"}, False),
         ("linux", "xcb", {"SDL_VIDEODRIVER": "wayland"}, False),
-        ("darwin", "cocoa", {}, False),
+        ("darwin", "cocoa", {}, True),
+        ("darwin", "offscreen", {}, False),
         ("win32", "windows", {}, True),
     ],
 )
@@ -34,6 +35,9 @@ def test_factory_binds_only_for_compatible_window_backends(
         monkeypatch.setenv(key, value)
     monkeypatch.setitem(sys.modules, "services.remote.x11_window_tracking", SimpleNamespace(
         X11WindowApi=FakeWindowApi,
+    ))
+    monkeypatch.setitem(sys.modules, "services.remote.windowing.macos", SimpleNamespace(
+        MacOSWindowApi=lambda _root_pid: FakeWindowApi(),
     ))
     monkeypatch.setattr(window_tracking, "_Win32WindowApi", FakeWindowApi)
     create = getattr(window_tracking, "create_window_tracker", None)
@@ -86,5 +90,23 @@ def test_qt_backend_candidates_do_not_assume_scrcpy_uses_x11(monkeypatch):
     tracker = window_tracking.create_window_tracker(100, "session-title", platform_name="xcb")
     try:
         assert not tracker.supported
+    finally:
+        tracker.close()
+
+
+def test_macos_missing_accessibility_permission_preserves_portable_toolbar(monkeypatch):
+    import sys
+
+    def unavailable(_root_pid):
+        raise OSError("辅助功能未授权")
+
+    monkeypatch.setattr(window_tracking, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setitem(sys.modules, "services.remote.windowing.macos", SimpleNamespace(
+        MacOSWindowApi=unavailable,
+    ))
+    tracker = window_tracking.create_window_tracker(100, "session-title", platform_name="cocoa")
+    try:
+        assert not tracker.supported
+        assert tracker.snapshot() is None
     finally:
         tracker.close()

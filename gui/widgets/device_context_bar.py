@@ -1131,7 +1131,7 @@ class DeviceContextBar(QWidget):
         self._close_action.setEnabled(False)
         outer = QVBoxLayout(self)
         self._outer_layout = outer
-        outer.setContentsMargins(32, 12, 32, 6)
+        outer.setContentsMargins(32, 12, 32, 0)
         # 页头与列表的间距由裁剪层承担，避免展开第一帧凭空增加固定间隙。
         outer.setSpacing(0)
         self._surface = QWidget(self)

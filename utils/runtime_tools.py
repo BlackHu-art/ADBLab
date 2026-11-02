@@ -111,7 +111,16 @@ def _is_onefile_extraction() -> bool:
     if not meipass:
         return False
     try:
-        Path(meipass).resolve().relative_to(Path(sys.executable).resolve().parent)
+        resource_dir = Path(meipass).resolve()
+        executable_dir = Path(sys.executable).resolve().parent
+        # macOS onedir 的资源与入口分处 Contents 下的同级目录；目录内的跨链接
+        # 仍归签名 app 所有。临时 _MEI 目录不满足此结构，继续沿用 onefile 缓存。
+        if (sys.platform == "darwin" and executable_dir.name == "MacOS"
+                and executable_dir.parent.name == "Contents"
+                and executable_dir.parent.parent.suffix == ".app"
+                and resource_dir == (executable_dir.parent / "Frameworks").resolve()):
+            return False
+        resource_dir.relative_to(executable_dir)
         return False
     except ValueError:
         return True

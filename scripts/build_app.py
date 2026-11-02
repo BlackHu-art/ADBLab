@@ -17,15 +17,18 @@ def build_command(
     *, name: str, platform: str | None = None, onefile: bool = False,
     windowed: bool = False, icon: str = "",
 ) -> list[str]:
-    """生成当前解释器的构建参数，平台差异仅影响工具资源及参数分隔符。"""
+    """生成当前解释器的构建参数；macOS 固定为可保留嵌套签名的 onedir app。"""
     from scripts.packaging_manifest import collection_options
 
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin" and onefile:
+        raise ValueError("macOS 构建必须使用 onedir .app，请改用 --onedir。")
     command = [
         sys.executable, "-m", "PyInstaller", "--name", name,
         "--specpath", str(ROOT / "build/app-spec"),
         "--onefile" if onefile else "--onedir",
     ]
-    if windowed:
+    if windowed or platform == "darwin":
         command.append("--windowed")
     if icon:
         command.extend(("--icon", icon if icon == "NONE" else str(ROOT / icon)))
@@ -52,11 +55,13 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if sys.platform == "win32":
         commands.append([sys.executable, str(ROOT / "scripts/build_installer_update_handoff.py")])
-    commands.append(
-        build_command(
+    try:
+        app_command = build_command(
             name=args.name, onefile=args.onefile, windowed=args.windowed, icon=args.icon,
         )
-    )
+    except ValueError as error:
+        parser.error(str(error))
+    commands.append(app_command)
     if args.dry_run:
         print(json.dumps(commands, ensure_ascii=True))
         return 0

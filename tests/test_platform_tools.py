@@ -110,7 +110,52 @@ def test_unsupported_architecture_does_not_select_x64_tools():
     from utils.tool_manifest import get_tool_bundle
 
     assert get_tool_bundle("linux", "aarch64") is None
-    assert get_tool_bundle("darwin", "arm64") is None
+    assert get_tool_bundle("darwin", "ppc64") is None
+
+
+@pytest.mark.parametrize("machine,directory", [
+    ("arm64", "runtime-tools/macos-arm64"),
+    ("aarch64", "runtime-tools/macos-arm64"),
+    ("x86_64", "runtime-tools/macos-x86_64"),
+    ("AMD64", "runtime-tools/macos-x86_64"),
+])
+def test_macos_packaging_collects_native_tools_only(monkeypatch, machine, directory):
+    from scripts.packaging_manifest import resource_datas
+
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: machine)
+    resources = resource_datas("darwin")
+    assert [(source, target) for source, target in resources
+            if source.startswith("runtime-tools/")] == [(directory, directory)]
+
+
+@pytest.mark.parametrize("machine", ["arm64", "x86_64"])
+def test_macos_bundled_tools_work_without_path(tmp_path, monkeypatch, machine):
+    from services.remote.scrcpy_service import ScrcpyService
+    from utils import adb_resolver
+    from utils.tool_manifest import get_tool_bundle
+
+    bundle = get_tool_bundle("darwin", machine)
+    root = tmp_path / bundle.directory
+    root.mkdir(parents=True)
+    for name in ("adb", "scrcpy"):
+        (root / name).write_bytes(b"bundled tool")
+        (root / name).chmod(0o755)
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: machine)
+    monkeypatch.setattr(adb_resolver.sys, "platform", "darwin")
+    monkeypatch.setattr("services.remote.scrcpy_service.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("services.remote.scrcpy_service.bundled_tool_path",
+                        lambda directory, name: str(tmp_path / directory / name))
+    monkeypatch.setattr(adb_resolver, "bundled_tool_path",
+                        lambda directory, name: str(tmp_path / directory / name))
+    monkeypatch.setattr(adb_resolver, "resource_path", lambda name: str(tmp_path / name))
+    monkeypatch.setattr(adb_resolver.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("SCRCPY_PATH", raising=False)
+    adb_resolver.set_client_preference("auto")
+    try:
+        assert adb_resolver.resolve_adb_path() == str(root / "adb")
+        assert ScrcpyService().resolve_executable() == str(root / "scrcpy")
+    finally:
+        adb_resolver.set_client_preference("auto")
 
 
 def test_linux_scrcpy_prefers_bundle(tmp_path, monkeypatch):
@@ -178,7 +223,10 @@ def test_settings_builtin_selection_tracks_cache_source():
 
 
 @pytest.mark.parametrize(
-    "platform,names", [("linux", ("adb", "scrcpy")), ("win32", ("adb.exe", "scrcpy.exe"))],
+    "platform,names", [
+        ("linux", ("adb", "scrcpy")), ("win32", ("adb.exe", "scrcpy.exe")),
+        ("darwin", ("adb", "scrcpy")),
+    ],
 )
 def test_packaging_check_does_not_hide_missing_bundle_with_system_tools(
     tmp_path, monkeypatch, platform, names,

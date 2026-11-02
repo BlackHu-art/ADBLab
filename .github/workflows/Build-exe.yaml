@@ -98,7 +98,7 @@ jobs:
             archive_extension: zip
             python_architecture: x64
             machine: x86_64
-            package_mode: --onefile
+            package_mode: --onedir
             windowed: --windowed
             icon: ""
             pip_cache: ~/Library/Caches/pip
@@ -108,7 +108,7 @@ jobs:
             archive_extension: zip
             python_architecture: arm64
             machine: arm64
-            package_mode: --onefile
+            package_mode: --onedir
             windowed: --windowed
             icon: ""
             pip_cache: ~/Library/Caches/pip
@@ -323,12 +323,11 @@ jobs:
           set -euo pipefail
           name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
           executable="dist/$name.app/Contents/MacOS/$name"
-          if [ ! -f "$executable" ]; then
-            executable="dist/$name"
-          fi
           file "$executable"
           test "$(lipo -archs "$executable")" = "${{ matrix.machine }}"
-          python scripts/check_build_artifacts.py frozen --executable "$executable" --timeout 60
+          python scripts/check_macos_package.py --app "dist/$name.app" --machine "${{ matrix.machine }}"
+          env -u ADB_PATH -u ADB -u SCRCPY_PATH PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            "$(command -v python)" scripts/check_build_artifacts.py frozen --executable "$executable" --timeout 60
 
       - name: Zip macOS app artifact
         if: runner.os == 'macOS'
@@ -336,17 +335,9 @@ jobs:
         run: |
           set -euo pipefail
           name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
-          if [ -d "dist/$name.app" ]; then
-            ditto -c -k --sequesterRsrc --keepParent "dist/$name.app" "dist/$name.zip"
-            rm -rf "dist/$name.app"
-            rm -f "dist/$name"
-          elif [ -f "dist/$name" ]; then
-            (cd dist && zip -q "$name.zip" "$name")
-            rm -f "dist/$name"
-          else
-            ls -la dist
-            exit 1
-          fi
+          ditto -c -k --sequesterRsrc --keepParent "dist/$name.app" "dist/$name.zip"
+          rm -rf "dist/$name.app"
+          rm -rf "dist/$name"
 
       - name: Smoke test Linux package
         if: runner.os == 'Linux'
