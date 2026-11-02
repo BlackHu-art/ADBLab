@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtNetwork import QLocalSocket
@@ -14,6 +15,27 @@ from gui.widgets.startup_splash import StartupSplash
 
 _CANCEL_EXIT_CODE = 42
 _CANCEL_DRAIN_MS = 350
+
+
+def _configure_macos_splash_application() -> None:
+    """仅为 Cocoa 启动子进程配置辅助应用身份，不更改主进程或系统设置。"""
+    if sys.platform != "darwin":
+        return
+    requested = os.environ.get("QT_QPA_PLATFORM", "")
+    # Qt 可按候选列表回退；Cocoa 不在首位时，也必须先于 QApplication 准备身份。
+    if requested and not any(item.partition(":")[0] == "cocoa" for item in requested.split(";")):
+        return
+    # Qt 会在初始化和 applicationDidFinishLaunching 中把进程提升为普通前台应用。
+    # 此开关必须保留至子进程退出，否则独立动画会短暂产生第二个 Python Dock 图标。
+    os.environ["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
+    import AppKit
+
+    # AppKit 符号由 PyObjC 的运行时元数据提供，保持延迟解析，不在普通导入时创建 NSApp。
+    application = getattr(AppKit, "NSApplication").sharedApplication()
+    policy = getattr(AppKit, "NSApplicationActivationPolicyAccessory")
+    if not application.setActivationPolicy_(policy):
+        # 父端沿用现有启动失败降级，不让身份配置失败的子进程继续创建普通 Dock 应用。
+        raise OSError("无法配置 macOS 启动显示进程的辅助应用身份")
 
 
 class _SplashSession(QObject):
@@ -118,6 +140,7 @@ class _SplashSession(QObject):
 
 def run_startup_splash(server_name: str) -> int:
     """专用 CLI 入口；父连接是存活租约，断连后不保留独立启动窗口。"""
+    _configure_macos_splash_application()
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
     session = _SplashSession(app, server_name)

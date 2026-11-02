@@ -93,6 +93,10 @@ flowchart LR
   有界等待后仍通过专用退出码保留取消原因；父端不会把该退出误判为需要降级的故障。
   主窗交接时异步关闭并回收显示进程，
   应用事件循环退出后用有界等待兜底终止；冻结运行复用当前解包环境和缩放配置。
+  macOS Cocoa 显示子进程在创建 QApplication 前设为 Accessory，并禁用 Qt 的前台应用
+  自动转换，避免启动时多出 Python Dock 图标；只作用于该子进程，主程序策略不变。
+  Windows、Linux 和不含 Cocoa 的显式后端候选不加载此原生配置；Cocoa 候选回退也受保护。
+  配置失败沿用现有本地启动图标降级。
 - `MainFrame` 组合 SidePanel、ADBController、QtTaskSupervisor、RunLibraryController 和页面树。
   六个物理页面为 Home、Devices/Apps/System 三个业务宿主、Tasks、Settings；可见左栏功能通过
   `WorkspaceRoute` 映射到宿主，具体目录只在 [路由表](BUSINESS_FLOW.md#workspace-路由目录)维护。

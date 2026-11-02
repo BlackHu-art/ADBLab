@@ -1,6 +1,7 @@
 """启动显示进程独立绘制，并在异常、取消与退出时释放全部资源。"""
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -104,6 +105,46 @@ def test_source_cli_worker_starts_and_finishes_without_user_data(splash, tmp_pat
     assert process.exitStatus() == QProcess.ExitStatus.NormalExit
     assert painted == [True] and not cancelled
     assert not list(tmp_path.rglob("app_settings.json"))
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.environ.get("QT_QPA_PLATFORM") != "cocoa",
+    reason="macOS Dock 身份需显式 cocoa 验收，其余平台验证隔离和启动生命周期",
+)
+@pytest.mark.parametrize("worker_qpa", ["cocoa", "missing;cocoa"])
+def test_macos_splash_worker_is_accessory_without_changing_parent_policy(
+    splash, monkeypatch, worker_qpa,
+):
+    """启动辅助窗可正常绘制和退出，但不能注册为第二个普通 Dock 应用。"""
+    import AppKit
+    import Quartz
+
+    parent_policy = AppKit.NSApplication.sharedApplication().activationPolicy()
+    monkeypatch.setenv("QT_QPA_PLATFORM", worker_qpa)
+    painted, diagnostics = [], []
+    splash.first_painted.connect(lambda: painted.append(True))
+    splash.diagnostic.connect(diagnostics.append)
+    splash.show()
+    _wait_until(lambda: bool(painted))
+    process = splash.findChild(QProcess)
+    assert diagnostics[:3] == ["launch", "connected", "ready"]
+    assert process.state() == QProcess.ProcessState.Running
+    child = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(
+        process.processId(),
+    )
+    assert child is not None
+    assert child.activationPolicy() == AppKit.NSApplicationActivationPolicyAccessory
+    # Qt 的 applicationDidFinishLaunching 也可能改变策略，跨过该轮事件循环再核验。
+    QTest.qWait(150)
+    splash.set_progress(80, animate=False)
+    assert child.activationPolicy() == AppKit.NSApplicationActivationPolicyAccessory
+    windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, 0) or ()
+    assert any(window.get("kCGWindowOwnerPID") == process.processId() for window in windows)
+    assert AppKit.NSApplication.sharedApplication().activationPolicy() == parent_policy
+    splash.finish()
+    _wait_until(lambda: process.state() == QProcess.ProcessState.NotRunning)
+    assert process.exitCode() == 0
+    assert process.exitStatus() == QProcess.ExitStatus.NormalExit
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="仅 Unix 本地 socket 受临时目录路径长度限制")
