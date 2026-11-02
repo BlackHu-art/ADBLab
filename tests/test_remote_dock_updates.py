@@ -70,7 +70,7 @@ def test_window_event_burst_updates_latest_geometry_without_polling_other_sessio
         QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
         assert first.tracker.reads == before[0]
         _wait_events(qt_application, lambda: len(first.tracker.positions) > placements)
-        assert first.tracker.positions[-1][:2] == (918, 192)
+        assert first.tracker.positions[-1][:2] == (910, 180)
         assert first.tracker.reads == before[0] + 1
         assert second.tracker.reads == before[1]
         assert not dock.timer.isActive()
@@ -107,6 +107,46 @@ def test_event_sampling_follows_current_screen_and_stops_when_idle(qt_applicatio
         owner.close()
 
 
+def test_lightweight_motion_sampling_continues_between_coalesced_events_and_checks_lifecycle(
+    qt_application, monkeypatch,
+):
+    from gui.panels import remote_panel_dock as module
+
+    class LightweightTracker(EventTracker):
+        motion_sampling = True
+
+    now = [1.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    owner, frame = QWidget(), Frame()
+    frame._device_sessions = {"a": session("a")}
+    dock = module.RemotePanelDock(frame, owner, tracker_factory=LightweightTracker)
+    try:
+        dock.sync()
+        dock.timer.stop()
+        entry = dock.entries["a"]
+        entry.sample_until = 0
+        dock._queue_update(entry, continuing=True)
+        dock._motion_timer.stop()
+        now[0] = 2.0
+        entry.tracker.current.rect = (200, 180, 420, 620)
+        dock._flush_updates()
+        assert entry.tracker.positions[-1][:2] == (620, 180)
+        assert dock._motion_timer.isActive() and dock._motion_timer.interval() < 60
+        # 没有新 AX 通知仍能继续采样；静止后降为轻量低频，不能推迟生命周期核验。
+        dock._motion_timer.stop()
+        now[0] = 3.0
+        dock._flush_updates()
+        assert dock._motion_timer.interval() == 60
+        reads = entry.tracker.reads
+        dock.tick()
+        assert entry.tracker.reads == reads + 1
+        dock.close()
+        assert not dock._motion_timer.isActive() and not dock._pending
+    finally:
+        dock.close()
+        owner.close()
+
+
 def test_native_move_dpi_change_converges_without_another_owner_event(qt_application, monkeypatch):
     from gui.panels.remote_panel_dock import RemotePanelDock
 
@@ -117,6 +157,7 @@ def test_native_move_dpi_change_converges_without_another_owner_event(qt_applica
         dock.sync()
         dock.timer.stop()
         entry = dock.entries["a"]
+        expected_width = round(entry.toolbar.width() * 1.5)
         ratio = [1.0]
         monkeypatch.setattr(entry.toolbar, "devicePixelRatioF", lambda: ratio[0])
         original_position = entry.tracker.position_tool
@@ -130,8 +171,8 @@ def test_native_move_dpi_change_converges_without_another_owner_event(qt_applica
         entry.tracker.current.work_area = (-2160, -746, 2160, 3840)
         entry.tracker.current.dpi = 144
         entry.tracker.callback()
-        _wait_events(qt_application, lambda: entry.tracker.positions[-1][2] == 84)
-        assert entry.tracker.positions[-1][0] == -1368
+        _wait_events(qt_application, lambda: entry.tracker.positions[-1][2] == expected_width)
+        assert entry.tracker.positions[-1][0] == -1380
         assert entry.toolbar.isVisible()
     finally:
         dock.close()

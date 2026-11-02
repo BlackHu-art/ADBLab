@@ -40,6 +40,128 @@ def _show_more(toolbar, application):
     assert toolbar.popup_window.isVisible()
 
 
+@pytest.mark.parametrize("portable", [False, True])
+def test_toolbar_controls_fit_the_main_window_button_metrics(
+    qt_application, monkeypatch, portable,
+):
+    """侧栏及更多面板不额外放大主窗口的普通字号按钮和图标。"""
+    from qfluentwidgets import TransparentPushButton, TransparentToolButton
+
+    from gui.styles.fluent import configure_button
+    from gui.styles.fonts import FontMixin
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    monkeypatch.setattr(FontMixin, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: QFont("Arial", size or 12),
+    ))
+    reference_icon = configure_button(TransparentToolButton(), text="", tooltip="返回")
+    reference_text = configure_button(TransparentPushButton(), text="上滑", tooltip="上滑")
+    toolbar = RemoteToolbar(portable=portable)
+    try:
+        reference_icon.show()
+        reference_text.show()
+        toolbar.set_available(True)
+        toolbar.show()
+        _show_more(toolbar, qt_application)
+        for button in (*toolbar._common_buttons, _more_button(toolbar)):
+            assert button.isVisible()
+            assert button.height() <= reference_icon.height()
+            assert button.width() <= reference_icon.width()
+            assert button.iconSize() == reference_icon.iconSize()
+        assert toolbar._rail.width() <= reference_icon.width() + 12
+        for button in toolbar._popup_content.findChildren(QPushButton):
+            assert button.isVisible()
+            assert button.height() <= reference_text.height()
+            assert button.height() >= button.fontMetrics().height() + 10
+            assert button.iconSize() == reference_text.iconSize()
+    finally:
+        toolbar.dispose()
+        reference_icon.close()
+        reference_text.close()
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_sidebar_buttons_remeasure_and_shrink_with_the_ui_font(
+    qt_application, monkeypatch, portable,
+):
+    """大字号只参与一次安全高度计算，恢复字号后不保留旧点击面尺寸。"""
+    from gui.styles import BaseStyles
+    from gui.styles.fonts import FontMixin
+    from gui.widgets.remote_toolbar import RemoteToolbar
+
+    current_size = 12
+    monkeypatch.setattr(FontMixin, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: QFont("Arial", size or current_size),
+    ))
+    toolbar = RemoteToolbar(portable=portable)
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        qt_application.processEvents()
+        initial_size = toolbar.size()
+        for current_size in (12, 22, 12):
+            BaseStyles.fonts_changed.emit({})
+            qt_application.processEvents()
+            for button in (*toolbar._common_buttons, _more_button(toolbar)):
+                assert button.isVisible()
+                assert button.font().pointSize() == current_size
+                assert button.width() == button.height()
+                assert button.height() == max(28, button.fontMetrics().height() + 10)
+                assert button.iconSize().width() == button.iconSize().height() == 16
+            assert toolbar._rail.width() == toolbar._common_buttons[0].width() + 12
+        assert toolbar.size() == initial_size
+    finally:
+        toolbar.dispose()
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_open_more_popup_resizes_for_larger_font_and_restores_its_geometry(
+    qt_application, monkeypatch, portable,
+):
+    """已打开的更多面板必须使用本次字体的完整尺寸，字号往返后恢复原几何。"""
+    from gui.styles import BaseStyles
+    from gui.styles.fonts import FontMixin
+    from gui.widgets.remote_toolbar import RemoteToolbar
+    from tests.ui_geometry_helpers import wait_for_stable_geometry
+
+    current_size = 12
+    monkeypatch.setattr(FontMixin, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: QFont("Arial", size or current_size),
+    ))
+    screen = SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 1600, 1400))
+    monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: screen)
+    toolbar = RemoteToolbar(portable=portable)
+    try:
+        toolbar.set_available(True)
+        toolbar.show()
+        _show_more(toolbar, qt_application)
+        popup = toolbar.popup_window
+        content = toolbar._popup_content
+        buttons = content.findChildren(QPushButton)
+        wait_for_stable_geometry(qt_application, (toolbar, popup, content, *buttons))
+        initial_size = popup.size()
+        for current_size in (22, 12):
+            BaseStyles.fonts_changed.emit({})
+            wait_for_stable_geometry(qt_application, (toolbar, popup, content, *buttons))
+            assert popup.isVisible()
+            if current_size == 22:
+                assert popup.width() > initial_size.width()
+                assert popup.height() > initial_size.height()
+            else:
+                assert popup.size() == initial_size
+            for button in buttons:
+                assert button.font().pointSize() == current_size
+                assert button.height() >= button.minimumSizeHint().height()
+                assert button.width() >= button.minimumSizeHint().width()
+            last = buttons[-1]
+            toolbar._popup_scroll.ensureWidgetVisible(last)
+            qt_application.processEvents()
+            last_rect = QRect(last.mapTo(toolbar._popup_scroll.viewport(), QPoint()), last.size())
+            assert toolbar._popup_scroll.viewport().rect().contains(last_rect)
+    finally:
+        toolbar.dispose()
+
+
 @pytest.mark.parametrize("available", [False, True])
 def test_unchanged_availability_does_not_rewrite_button_state_or_tooltips(
     qt_application, monkeypatch, available,
@@ -187,13 +309,14 @@ def test_collapsing_changes_width_and_dismisses_popup_without_dispatch(qt_applic
     toolbar.set_available(True)
     toolbar.show()
     _show_more(toolbar, qt_application)
+    expanded_width = toolbar.width()
     layouts, requests = [], []
     toolbar.layout_changed.connect(lambda: layouts.append(toolbar.width()))
     toolbar.key_requested.connect(requests.append)
     toolbar.action_requested.connect(requests.append)
     collapse = toolbar.findChild(QToolButton, "remoteToolbarCollapse")
     assert collapse is not None
-    assert (collapse.iconSize().width(), collapse.iconSize().height()) == (20, 20)
+    assert (collapse.iconSize().width(), collapse.iconSize().height()) == (16, 16)
     assert collapse.text() == ""
     assert collapse.icon().pixmap(20, 20).toImage() == (
         ResourceIcon("caret-double-up.svg").qicon().pixmap(20, 20).toImage()
@@ -207,8 +330,8 @@ def test_collapsing_changes_width_and_dismisses_popup_without_dispatch(qt_applic
     )
     collapse.click()
     qt_application.processEvents()
-    assert not toolbar.collapsed and toolbar.width() == 56
-    assert layouts == [32, 56] and requests == []
+    assert not toolbar.collapsed and toolbar.width() == expanded_width
+    assert layouts == [32, expanded_width] and requests == []
     toolbar.dispose()
 
 
@@ -249,7 +372,7 @@ def test_target_label_is_plain_text_and_buttons_keep_accessible_names(qt_applica
     assert target.textFormat() == Qt.TextFormat.PlainText
     for button in _buttons(toolbar):
         assert button.accessibleName() and button.toolTip()
-        assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        assert button.focusPolicy() == Qt.FocusPolicy.TabFocus
     assert toolbar.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
     assert not toolbar.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
     toolbar.dispose()
@@ -270,9 +393,8 @@ def test_more_groups_keep_readable_rows_and_scroll_after_font_changes(
         lambda _cls, _role, size=None: QFont("Arial", size or current_font_size),
     ))
     bounds = QRect(0, 0, 1000, available_height)
-    monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: SimpleNamespace(
-        availableGeometry=lambda: bounds,
-    ))
+    screen = SimpleNamespace(availableGeometry=lambda: bounds)
+    monkeypatch.setattr(RemoteToolbar, "screen", lambda _self: screen)
     toolbar = RemoteToolbar()
     try:
         toolbar.set_available(True)
@@ -499,7 +621,7 @@ def test_mouse_click_has_no_accent_outline_but_keyboard_focus_does(qt_applicatio
     from gui.styles import BaseStyles
     from gui.widgets.remote_toolbar import RemoteToolbar
 
-    toolbar = RemoteToolbar()
+    toolbar = RemoteToolbar(portable=True)
     try:
         BaseStyles.switch_theme("Dark")
         toolbar.set_available(True)

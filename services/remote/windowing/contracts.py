@@ -52,3 +52,10 @@ class _EventWindowApi(Protocol):
     def subscribe_changes(
         self, hwnd: int, pid: int, callback: Callable[[], None],
     ) -> _WindowSubscription | None: ...
+
+
+@runtime_checkable
+class _MotionWindowApi(Protocol):
+    """仅供已绑定侧栏刷新几何；不能用于授权设备输入或取代周期身份核验。"""
+
+    def motion_snapshot(self, hwnd: int, pid: int) -> NativeWindowSnapshot | None: ...

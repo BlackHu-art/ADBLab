@@ -115,13 +115,12 @@ def _adjacent(probe):
     if owner is None or tool is None or popup is None:
         return False
     ratio = probe.toolbar.devicePixelRatioF()
-    gap = round(8 * ratio)
     if not (tool.visible and popup.visible and probe.popup.isVisible()):
         return False
     # 合成镜像在工作区左侧，侧栏和面板具有充分右侧空间。
-    if abs(tool.rect[0] - (owner.rect[0] + owner.rect[2] + gap)) > 2:
+    if abs(tool.rect[0] - (owner.rect[0] + owner.rect[2])) > 2:
         return False
-    if abs(tool.rect[1] - (owner.rect[1] + round(12 * ratio))) > 2:
+    if abs(tool.rect[1] - owner.rect[1]) > 2:
         return False
     return _popup_adjacent(tool, popup, ratio)
 

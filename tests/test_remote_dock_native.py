@@ -651,7 +651,8 @@ def test_native_dock_tracks_external_window_without_focus_or_geometry_drift(
         logical_width = max(preferred.width(), entry.toolbar.minimumWidth())
         assert abs(native_tool.rect[2] - round(logical_width * ratio)) <= 1, measurements
         assert abs(native_tool.rect[3] - round(preferred.height() * ratio)) <= 1, measurements
-        assert native_tool.rect[0] >= native_owner.rect[0] + native_owner.rect[2]
+        assert abs(native_tool.rect[0] - native_owner.rect[0] - native_owner.rect[2]) <= 1
+        assert abs(native_tool.rect[1] - native_owner.rect[1]) <= 1
 
     try:
         qt_application.processEvents()
@@ -670,8 +671,11 @@ def test_native_dock_tracks_external_window_without_focus_or_geometry_drift(
         assert user.SetWindowPos(info["hwnd"], 0, 240, 140, 390, 580, 0x0014)
         _wait(qt_application, lambda: api.snapshot(info["hwnd"]).rect == (240, 140, 390, 580),
               "合成外部窗口未移动")
-        _wait(qt_application, lambda: api.snapshot(int(entry.toolbar.winId())).rect[0] > 630,
-              "侧栏未跟随外部窗口")
+        _wait(
+            qt_application,
+            lambda: abs(api.snapshot(int(entry.toolbar.winId())).rect[0] - 630) <= 1,
+            "侧栏未跟随外部窗口",
+        )
         assert user.GetForegroundWindow() == foreground
         assert_position("moved-and-resized")
 

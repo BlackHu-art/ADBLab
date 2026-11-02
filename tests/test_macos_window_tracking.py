@@ -1,6 +1,7 @@
 """用原生接口替身验证 macOS 会话身份、坐标和无焦点定位。"""
 
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -117,11 +118,16 @@ def native(monkeypatch):
         NSWindowAbove=1,
     )
     quartz = SimpleNamespace(
-        kCGWindowListOptionAll=0, kCGNullWindowID=0,
+        kCGWindowListOptionAll=0, kCGWindowListOptionIncludingWindow=8, kCGNullWindowID=0,
         CGWindowListCopyWindowInfo=lambda *_: [{
             "kCGWindowOwnerPID": 200, "kCGWindowNumber": 333, "kCGWindowLayer": 0,
-            "kCGWindowBounds": {"X": 100, "Y": 100, "Width": 400, "Height": 600},
-            "kCGWindowIsOnscreen": True,
+            "kCGWindowBounds": dict(zip(
+                ("X", "Y", "Width", "Height"),
+                (*ax.data[22]["AXPosition"], *ax.data[22]["AXSize"]),
+            )),
+            "kCGWindowIsOnscreen": not (
+                ax.data[22]["AXMinimized"] or ax.data[200]["AXHidden"]
+            ),
         }],
     )
     monkeypatch.setattr("services.remote.windowing.macos._load_macos", lambda: (
@@ -170,6 +176,36 @@ def test_macos_negative_secondary_display_uses_its_scale_and_work_area(native):
     assert snapshot.rect == (-1400, 120, 400, 600)
     assert snapshot.work_area == (-1600, 24, 1600, 976)
     assert snapshot.dpi == 96
+
+
+def test_macos_bound_window_uses_targeted_cg_query_while_moving(native, monkeypatch):
+    queries = []
+    original = native.quartz.CGWindowListCopyWindowInfo
+
+    def query(option, number):
+        queries.append((option, number))
+        return original(option, number)
+
+    monkeypatch.setattr(native.quartz, "CGWindowListCopyWindowInfo", query)
+    tracker = WindowsWindowTracker(100, "session-title", api=native.api)
+    assert tracker.snapshot() is not None
+    native.ax.data[22]["AXPosition"] = (200, 200)
+    assert tracker.snapshot().rect[:2] == (400, 400)
+    assert queries == [(0, 0), (8, 333)]
+
+
+def test_macos_cached_window_number_cannot_order_relative_to_foreign_pid(native, monkeypatch):
+    tracker = WindowsWindowTracker(100, "session-title", api=native.api)
+    assert tracker.snapshot() is not None
+    monkeypatch.setattr(native.quartz, "CGWindowListCopyWindowInfo", lambda *_: [{
+        "kCGWindowOwnerPID": 900, "kCGWindowNumber": 333, "kCGWindowLayer": 10,
+        "kCGWindowIsOnscreen": True,
+    }])
+    snapshot = tracker.snapshot()
+    assert not snapshot.topmost
+    assert tracker.position_tool(88, snapshot, (1000, 200, 112, 680))
+    assert native.tool.orders[-1] == (1, 0)
+    assert native.tool.levels[-1] == 0
 
 
 def test_macos_places_only_owned_view_without_activating_mirror(native):
@@ -224,3 +260,61 @@ def test_macos_requires_explicit_existing_accessibility_authorization(monkeypatc
     ))
     with pytest.raises(OSError, match="辅助功能"):
         MacOSWindowApi(os.getpid())
+
+
+def test_macos_verified_window_subscribes_native_motion_and_releases_late_events(
+    native, monkeypatch,
+):
+    subscriptions = []
+
+    class Subscription:
+        def __init__(self, ax, pid, application, window, callback, **_kwargs):
+            assert ax is native.ax
+            assert (pid, application, window) == (200, 200, 22)
+            self.active = True
+            self.callback = callback
+            self.closes = 0
+            subscriptions.append(self)
+
+        def close(self):
+            self.active = False
+            self.closes += 1
+
+    monkeypatch.setitem(sys.modules, "services.remote.windowing.macos_events", SimpleNamespace(
+        MacOSWindowSubscription=Subscription,
+    ))
+    tracker = WindowsWindowTracker(100, "session-title", api=native.api)
+    changes = []
+    tracker.set_change_callback(lambda: changes.append(True))
+    assert not tracker.event_tracking
+    assert tracker.snapshot() is not None
+    assert tracker.event_tracking
+    subscriptions[0].callback()
+    assert changes == [True]
+    tracker.close()
+    subscriptions[0].callback()
+    assert changes == [True]
+    assert subscriptions[0].closes == 1
+
+
+def test_macos_motion_snapshot_reads_only_verified_cg_geometry(native, monkeypatch):
+    tracker = WindowsWindowTracker(100, "session-title", api=native.api)
+    first = tracker.snapshot()
+    data = native.quartz.CGWindowListCopyWindowInfo(0, 0)[0]
+    data["kCGWindowBounds"].update(X=200, Y=180, Width=420, Height=500)
+    monkeypatch.setattr(native.quartz, "CGWindowListCopyWindowInfo", lambda *_: [data])
+    native.ax.accessed.clear()
+    moved = native.api.motion_snapshot(first.hwnd, first.pid)
+    assert moved.rect == (400, 360, 840, 1000)
+    assert moved.visible and moved.dpi == 192
+    assert native.ax.accessed == []
+    assert native.api.motion_snapshot(first.hwnd, 900) is None
+
+
+def test_macos_motion_state_change_requires_complete_identity_refresh(native):
+    tracker = WindowsWindowTracker(100, "session-title", api=native.api)
+    first = tracker.snapshot()
+    native.api._windows[first.hwnd].needs_verification = True
+    assert native.api.motion_snapshot(first.hwnd, first.pid) is None
+    native.ax.data[22]["AXTitle"] = "replacement"
+    assert tracker.snapshot() is None and tracker.lost

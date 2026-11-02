@@ -17,6 +17,7 @@ from services.remote.windowing.contracts import (
 from services.remote.windowing.contracts import (
     _EventWindowApi as _EventWindowApi,
 )
+from services.remote.windowing.contracts import _MotionWindowApi
 from services.remote.windowing.contracts import (
     _WindowApi as _WindowApi,
 )
@@ -53,6 +54,7 @@ class WindowsWindowTracker:
         self._change_callback: Callable[[], None] | None = None
         self._event_subscription: _WindowSubscription | None = None
         self._event_generation = 0
+        self._next_event_attempt = float("-inf")
 
     @property
     def supported(self) -> bool:
@@ -69,6 +71,11 @@ class WindowsWindowTracker:
         """是否已订阅绑定窗口的变化；为假时调用方继续使用轮询兜底。"""
         return self._event_subscription is not None and self._event_subscription.active
 
+    @property
+    def motion_sampling(self) -> bool:
+        """原生几何读取足够轻量时，允许通知之间短时按屏幕刷新率采样。"""
+        return self.event_tracking and isinstance(self._api, _MotionWindowApi)
+
     def set_change_callback(self, callback: Callable[[], None] | None) -> None:
         """在 GUI 消息循环线程设置变更通知；通知只标记待刷新，不能同步定位。
 
@@ -79,6 +86,7 @@ class WindowsWindowTracker:
             return
         self._stop_event_tracking()
         self._change_callback = callback
+        self._next_event_attempt = float("-inf")
         self._start_event_tracking()
 
     def _start_event_tracking(self) -> None:
@@ -88,6 +96,10 @@ class WindowsWindowTracker:
         api = self._api
         if not isinstance(api, _EventWindowApi):
             return
+        if self.event_tracking or self._clock() < self._next_event_attempt:
+            return
+        # 明确不支持或已降级的订阅不重试，避免放大 Windows 撤销失败保留的原生 hook。
+        self._next_event_attempt = float("inf")
         generation = self._event_generation
 
         def changed() -> None:
@@ -105,6 +117,8 @@ class WindowsWindowTracker:
                 else:
                     subscription.close()
         except OSError:
+            # SDL 初始化或短时无响应可能使 AX 注册超时，恢复后节流重试。
+            self._next_event_attempt = self._clock() + 1.0
             _LOGGER.debug("订阅投屏窗口事件失败，继续轮询", exc_info=True)
 
     def _stop_event_tracking(self) -> None:
@@ -167,6 +181,7 @@ class WindowsWindowTracker:
                 return None
             if snapshot is None or snapshot.pid != pid:
                 return None
+            self._start_event_tracking()
             return snapshot
         except OSError:
             _LOGGER.debug("读取投屏窗口状态失败", exc_info=True)
@@ -188,6 +203,41 @@ class WindowsWindowTracker:
             return api.position_tool(tool_hwnd, current, rect)
         except OSError:
             _LOGGER.debug("定位投屏侧栏失败", exc_info=True)
+            return False
+
+    def motion_snapshot(self) -> NativeWindowSnapshot | None:
+        """事件刷新可只读绑定几何；身份、输入和周期检查继续走完整 snapshot。"""
+        api, bound = self._api, self._bound
+        if self._lost or api is None:
+            return None
+        if not self.event_tracking or bound is None or not isinstance(api, _MotionWindowApi):
+            return self.snapshot()
+        try:
+            snapshot = api.motion_snapshot(*bound)
+            if snapshot is None:
+                return self.snapshot()
+            return snapshot if (snapshot.hwnd, snapshot.pid) == bound else None
+        except OSError:
+            _LOGGER.debug("读取投屏窗口移动几何失败", exc_info=True)
+            return None
+
+    def position_motion_tool(
+        self, tool_hwnd: int, owner: NativeWindowSnapshot, rect: PhysicalRect,
+    ) -> bool:
+        """只移动自有侧栏；事件路径复核绑定几何，避免重复跨进程读取全部 AX 属性。"""
+        api = self._api
+        if not self.event_tracking or not isinstance(api, _MotionWindowApi):
+            return self.position_tool(tool_hwnd, owner, rect)
+        if (self._lost or self._bound != (owner.hwnd, owner.pid)
+                or tool_hwnd <= 0 or rect[2] <= 0 or rect[3] <= 0):
+            return False
+        current = self.motion_snapshot()
+        if current is None or not current.visible or current.minimized:
+            return False
+        try:
+            return api.position_tool(tool_hwnd, current, rect)
+        except OSError:
+            _LOGGER.debug("定位移动中的投屏侧栏失败", exc_info=True)
             return False
 
     def _belongs_to_session(self, pid: int, parents: dict[int, int]) -> bool:

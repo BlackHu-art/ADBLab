@@ -327,19 +327,16 @@ class RemoteToolbar(QWidget):
         self._more_button = QToolButton(self._rail)
         self._more_button.setObjectName("remoteToolbarMore")
         self._more_button.setCheckable(True)
-        self._more_button.setIconSize(QSize(20, 20))
+        self._more_button.setIconSize(QSize(16, 16))
         self._more_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._more_button.setFixedSize(44, 38)
         self._more_button.clicked.connect(self._toggle_popup)
         layout.addWidget(self._more_button)
         self._collapse_button = QToolButton(self._rail)
         self._collapse_button.setObjectName("remoteToolbarCollapse")
         self._collapse_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._collapse_button.setIconSize(QSize(20, 20))
-        self._collapse_button.setFixedSize(44, 28)
+        self._collapse_button.setIconSize(QSize(16, 16))
         self._collapse_button.clicked.connect(self._toggle_collapsed)
         layout.addWidget(self._collapse_button)
-        self._rail.setFixedWidth(56)
 
         self._popup = _MorePopup(self, embedded=portable)
         if portable:
@@ -398,6 +395,16 @@ class RemoteToolbar(QWidget):
         scroll.setWidget(self._popup_content)
         self._popup_scroll = scroll
         popup_layout.addWidget(scroll, 1)
+        if not portable:
+            # Qt 的 Tool 会共享主窗口激活状态；ClickFocus 会对不接收焦点的工具窗
+            # 发起 requestActivate。附着控件只保留原有 Tab 导航，鼠标操作不转移焦点。
+            for widget in self.findChildren(QWidget):
+                policy = widget.focusPolicy()
+                if policy & Qt.FocusPolicy.ClickFocus:
+                    widget.setFocusPolicy(
+                        Qt.FocusPolicy.TabFocus if policy & Qt.FocusPolicy.TabFocus
+                        else Qt.FocusPolicy.NoFocus,
+                    )
         self._button_focus_filter = _ButtonFocusFilter(self)
         for button in self.findChildren(QAbstractButton):
             button.installEventFilter(self._button_focus_filter)
@@ -491,10 +498,8 @@ class RemoteToolbar(QWidget):
         button.setAccessibleName(tr(command.label))
         button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setIconSize(QSize(20 if compact else 18, 20 if compact else 18))
-        if compact:
-            button.setFixedSize(44, 40)
-        else:
+        button.setIconSize(QSize(16, 16))
+        if not compact:
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.clicked.connect(lambda _checked=False, item=command: self._request(item))
         self._commands[command.code] = (command, button)
@@ -567,8 +572,7 @@ class RemoteToolbar(QWidget):
         self._indicator.setVisible(self._portable or not self._collapsed)
         for widget in (*self._common_buttons, self._more_button):
             widget.setVisible(not self._collapsed)
-        self._rail.setFixedWidth(32 if self._collapsed else 56)
-        self._collapse_button.setFixedWidth(20 if self._collapsed else 44)
+        self._refresh_control_metrics()
         self._update_collapse_label()
         if self._portable:
             self._refresh_portable_geometry()
@@ -655,6 +659,17 @@ class RemoteToolbar(QWidget):
         layout.activate()
         self.adjustSize()
 
+    def _refresh_control_metrics(self) -> None:
+        """沿用主窗口的字体安全高度；Qt 负责显示缩放，避免额外放大点击面。"""
+        height = BaseStyles.control_height()
+        for button in (*self._common_buttons, self._more_button):
+            button.setFixedSize(height, height)
+        self._collapse_button.setFixedSize(20 if self._collapsed else height, height)
+        self._rail.setFixedWidth(32 if self._collapsed else height + 12)
+        for _command, button in self._commands.values():
+            if isinstance(button, QPushButton):
+                button.setFixedHeight(max(height, button.minimumSizeHint().height()))
+
     @Slot()
     def _refresh_style(self) -> None:
         if self._disposed:
@@ -695,7 +710,7 @@ class RemoteToolbar(QWidget):
         QToolButton, QPushButton {{ color: {foreground}; background: transparent;
             border: 1px solid transparent; border-radius: 6px; padding: 4px; }}
         QToolButton#remoteToolbarCollapse {{ padding: 0; }}
-        QPushButton {{ text-align: left; padding: 7px 9px; border-color: {border}; }}
+        QPushButton {{ text-align: left; padding: 4px 9px; border-color: {border}; }}
         QToolButton:hover, QPushButton:hover {{ background: {hover}; border-color: {border}; }}
         QToolButton:pressed, QPushButton:pressed {{ background: {pressed}; }}
         QToolButton#remoteToolbarMore:checked {{ background: {selected}; }}
@@ -727,6 +742,9 @@ class RemoteToolbar(QWidget):
             button.setIcon(get_themed_icon(command.icon))
             button.ensurePolished()
             button.updateGeometry()
+        apply_font_role(self._more_button, FontRole.UI)
+        apply_font_role(self._collapse_button, FontRole.UI)
+        self._refresh_control_metrics()
         # 首次显示或字号变化时，嵌套网格仍可能保留旧样式的尺寸缓存。
         # 在计算浮窗尺寸前同步自然下限，避免首帧把系统操作三行挤成图标高度。
         for grid in self._group_grids:
@@ -735,6 +753,8 @@ class RemoteToolbar(QWidget):
         assert content_layout is not None
         content_layout.invalidate()
         content_layout.activate()
+        # 轨道改宽会同步触发 resizeEvent；丢弃其在按钮尺寸更新途中产生的测量。
+        self._popup_measurement = None
         self._sync_more_button()
         self._update_collapse_label()
         self.adjustSize()

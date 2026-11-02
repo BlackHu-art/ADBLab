@@ -13,11 +13,11 @@ pytestmark = pytest.mark.ui
 def test_dock_placement_prefers_right_then_left_and_clamps_negative_monitor():
     from gui.panels.remote_panel_dock import dock_geometry
 
-    assert dock_geometry((100, 100, 400, 600), (0, 0, 1200, 900), (56, 340)) == (508, 112, 56, 340)
-    assert dock_geometry((780, 100, 400, 600), (0, 0, 1200, 900), (56, 340)) == (716, 112, 56, 340)
+    assert dock_geometry((100, 100, 400, 600), (0, 0, 1200, 900), (56, 340)) == (500, 100, 56, 340)
+    assert dock_geometry((780, 100, 400, 600), (0, 0, 1200, 900), (56, 340)) == (724, 100, 56, 340)
     assert dock_geometry(
         (-1920, 0, 1920, 1080), (-1920, 0, 1920, 1040), (32, 80),
-    ) == (-40, 12, 32, 80)
+    ) == (-32, 0, 32, 80)
 
 
 class Frame(QObject):
@@ -303,7 +303,7 @@ def test_dock_lifecycle_keeps_target_and_hides_popup_on_minimize(qt_application)
         assert frame.calls == [(first, "HOME")]
         entry.tracker.current.rect = (200, 180, 420, 620)
         dock.tick()
-        assert entry.tracker.positions[-1][:2] == (628, 192)
+        assert entry.tracker.positions[-1][:2] == (620, 180)
         entry.tracker.current.minimized = True
         dock.tick()
         assert not entry.toolbar.isVisible()

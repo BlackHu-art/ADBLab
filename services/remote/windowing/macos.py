@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
 import psutil
 
-from services.remote.windowing.contracts import NativeWindowSnapshot, PhysicalRect
+from services.remote.windowing.contracts import (
+    NativeWindowSnapshot,
+    PhysicalRect,
+    _WindowSubscription,
+)
 
 
 def _load_macos() -> tuple[Any, Any, Any, Any]:
@@ -26,6 +31,17 @@ def _physical_rect(rect: tuple[float, float, float, float], scale: float) -> Phy
     return round(x * scale), round(y * scale), round(width * scale), round(height * scale)
 
 
+def _cg_rect(info: Any) -> tuple[float, float, float, float] | None:
+    if info is None:
+        return None
+    bounds = info.get("kCGWindowBounds", {})
+    x, y, width, height = (float(bounds.get(name, float("inf"))) for name in (
+        "X", "Y", "Width", "Height",
+    ))
+    rect = (x, y, width, height)
+    return rect if all(map(isfinite, rect)) and width > 0 and height > 0 else None
+
+
 @dataclass
 class _Window:
     pid: int
@@ -33,6 +49,8 @@ class _Window:
     element: Any
     number: int = 0
     level: int = 0
+    focused: bool = False
+    needs_verification: bool = False
 
 
 class MacOSWindowApi:
@@ -131,6 +149,20 @@ class MacOSWindowApi:
         title = self._attribute(window.element, "AXTitle")
         return (window.pid, title) if isinstance(title, str) else None
 
+    def subscribe_changes(
+        self, hwnd: int, pid: int, callback: Callable[[], None],
+    ) -> _WindowSubscription | None:
+        """仅为已发现且身份仍有效的会话窗口注册通知，调用方拥有并负责关闭订阅。"""
+        window = self._windows.get(hwnd)
+        if self._closed or window is None or window.pid != pid or self.identity(hwnd) is None:
+            return None
+        from services.remote.windowing.macos_events import MacOSWindowSubscription
+
+        return MacOSWindowSubscription(
+            self._ax, pid, window.application, window.element, callback,
+            state_changed=lambda: setattr(window, "needs_verification", True),
+        )
+
     def _rect(self, window: _Window) -> tuple[float, float, float, float] | None:
         position = self._attribute(window.element, "AXPosition")
         size = self._attribute(window.element, "AXSize")
@@ -168,8 +200,20 @@ class MacOSWindowApi:
         return max(screens, key=rank), primary_top
 
     def _window_info(self, window: _Window, rect: tuple[float, float, float, float]) -> Any:
-        """CG 只补充窗口编号、层级与当前桌面可见性，不依赖受保护的窗口标题。"""
+        """首次按 AX 几何匹配 CG 编号，移动期间只查该编号，避免逐帧枚举整个桌面。"""
         cg = self._quartz
+        if window.number:
+            infos = cg.CGWindowListCopyWindowInfo(
+                cg.kCGWindowListOptionIncludingWindow, window.number,
+            )
+            for info in infos or ():
+                if (info.get("kCGWindowOwnerPID") == window.pid
+                        and info.get("kCGWindowNumber") == window.number):
+                    window.level = int(info.get("kCGWindowLayer", 0))
+                    return info
+            # 编号失效或被别的进程复用时，不得继续据此排列侧栏层级。
+            window.number = window.level = 0
+            return None
         infos = cg.CGWindowListCopyWindowInfo(cg.kCGWindowListOptionAll, cg.kCGNullWindowID)
         for info in infos or ():
             if info.get("kCGWindowOwnerPID") != window.pid:
@@ -185,16 +229,22 @@ class MacOSWindowApi:
         return None
 
     def snapshot(self, hwnd: int) -> NativeWindowSnapshot | None:
-        """将 AX 左上原点的屏幕点按所属显示器倍率转换为契约中的物理坐标。"""
-        identity = self.identity(hwnd)
-        if identity is None:
+        """读取完整状态；跟踪器在调用前后验证 AX 身份，已绑定几何由 CG 提供。"""
+        window = self._windows.get(hwnd)
+        if self._closed or window is None:
             return None
-        window = self._windows[hwnd]
-        rect = self._rect(window)
+        info = self._window_info(window, (0, 0, 0, 0)) if window.number else None
+        rect = _cg_rect(info) or self._rect(window)
         if rect is None:
             return None
-        minimized = bool(self._attribute(window.element, "AXMinimized"))
-        hidden = bool(self._attribute(window.application, "AXHidden"))
+        if info is None:
+            info = self._window_info(window, rect)
+        onscreen = info is not None and bool(info.get("kCGWindowIsOnscreen"))
+        # 可见窗口不可能最小化；仅不可见时再问 AX，避免拖动中多次同步跨进程消息。
+        minimized = not onscreen and bool(self._attribute(window.element, "AXMinimized"))
+        hidden = not onscreen if info is not None else bool(
+            self._attribute(window.application, "AXHidden"),
+        )
         screen, primary_top = self._screen(rect)
         scale = float(screen.backingScaleFactor())
         work = screen.visibleFrame()
@@ -205,7 +255,8 @@ class MacOSWindowApi:
         foreground = front_pid == window.pid and (
             self._attribute(window.application, "AXFocusedWindow") == window.element
         )
-        info = self._window_info(window, rect)
+        window.focused = foreground
+        window.needs_verification = False
         return NativeWindowSnapshot(
             hwnd=hwnd, pid=window.pid,
             rect=_physical_rect(rect, scale),
@@ -213,6 +264,34 @@ class MacOSWindowApi:
             visible=not hidden and (info is None or bool(info.get("kCGWindowIsOnscreen"))),
             minimized=minimized, foreground=foreground, topmost=window.level > 0,
             dpi=round(96 * scale), foreground_hwnd=hwnd if foreground else -front_pid,
+        )
+
+    def motion_snapshot(self, hwnd: int, pid: int) -> NativeWindowSnapshot | None:
+        """移动只查已绑定 CG 编号；状态通知或编号失效交还完整 AX 核验，不授权输入。"""
+        window = self._windows.get(hwnd)
+        if (self._closed or window is None or window.pid != pid
+                or not window.number or window.needs_verification):
+            return None
+        info = self._window_info(window, (0, 0, 0, 0))
+        if info is None:
+            return None
+        rect = _cg_rect(info)
+        if rect is None:
+            return None
+        screen, primary_top = self._screen(rect)
+        scale = float(screen.backingScaleFactor())
+        work = screen.visibleFrame()
+        work_rect = (work.origin.x, primary_top - work.origin.y - work.size.height,
+                     work.size.width, work.size.height)
+        front = self._appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        front_pid = int(front.processIdentifier()) if front is not None else 0
+        foreground = front_pid == pid and window.focused
+        return NativeWindowSnapshot(
+            hwnd=hwnd, pid=pid, rect=_physical_rect(rect, scale),
+            work_area=_physical_rect(work_rect, scale),
+            visible=bool(info.get("kCGWindowIsOnscreen")), minimized=False,
+            foreground=foreground, topmost=window.level > 0, dpi=round(96 * scale),
+            foreground_hwnd=hwnd if foreground else -front_pid,
         )
 
     def _tool_window(self, tool_hwnd: int) -> Any:
@@ -253,7 +332,7 @@ class MacOSWindowApi:
         return True
 
     def close(self) -> None:
-        """幂等释放会话 AX 引用；没有额外线程、定时器或系统级订阅。"""
+        """幂等释放会话 AX 引用；调用方应先关闭其拥有的事件订阅。"""
         self._closed = True
         self._windows.clear()
         self._applications.clear()

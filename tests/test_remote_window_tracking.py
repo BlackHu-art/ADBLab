@@ -81,6 +81,107 @@ class EventWindowApi(FakeWindowApi):
         return subscription
 
 
+class MotionWindowApi(EventWindowApi):
+    def motion_snapshot(self, hwnd, pid):
+        snapshot = self.snapshots.get(hwnd)
+        return snapshot if snapshot is not None and snapshot.pid == pid else None
+
+
+def test_motion_geometry_does_not_read_identity_but_periodic_and_input_checks_still_do():
+    api = MotionWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    tracker.set_change_callback(lambda: None)
+    first = tracker.snapshot()
+    api.snapshots[21] = replace(first, rect=(100, 180, 400, 600))
+    original_identity = api.identity
+
+    def unexpected_identity(*_args):
+        pytest.fail("密集几何刷新不应阻塞在 AX 身份查询")
+
+    api.identity = unexpected_identity
+    moved = tracker.motion_snapshot()
+    assert moved.rect == (100, 180, 400, 600)
+    assert tracker.position_motion_tool(88, moved, (500, 180, 40, 300))
+    api.identity = original_identity
+    api.windows[21] = (200, "changed-title")
+    # 点击和生命周期使用同一完整入口，不能把几何缓存当成输入授权。
+    assert tracker.snapshot() is None and tracker.lost
+    assert not tracker.position_motion_tool(88, moved, (500, 180, 40, 300))
+    assert tracker.motion_snapshot() is None
+
+
+@pytest.mark.parametrize("visible,minimized", [(False, False), (True, True)])
+def test_motion_position_refuses_hidden_minimized_or_closed_binding(visible, minimized):
+    api = MotionWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    tracker.set_change_callback(lambda: None)
+    first = tracker.snapshot()
+    api.snapshots[21] = replace(first, visible=visible, minimized=minimized)
+    assert not tracker.position_motion_tool(88, first, (500, 180, 40, 300))
+    assert api.placements == []
+    tracker.close()
+    assert tracker.motion_snapshot() is None
+    assert not tracker.position_motion_tool(88, first, (500, 180, 40, 300))
+
+
+def test_missing_motion_geometry_falls_back_to_complete_identity_check():
+    api = MotionWindowApi()
+    tracker = WindowsWindowTracker(100, "session-title", api=api)
+    tracker.set_change_callback(lambda: None)
+    assert tracker.snapshot() is not None
+    api.snapshots.clear()
+    api.windows.clear()
+    assert tracker.motion_snapshot() is None and tracker.lost
+
+
+def test_transient_event_registration_failure_retries_after_throttle():
+    api = EventWindowApi()
+    now, attempts = [0.0], []
+    subscribe = api.subscribe_changes
+
+    def temporary_failure(*args):
+        attempts.append(now[0])
+        if len(attempts) == 1:
+            raise OSError("temporary AX timeout")
+        return subscribe(*args)
+
+    api.subscribe_changes = temporary_failure
+    tracker = WindowsWindowTracker(100, "session-title", api=api, clock=lambda: now[0])
+    tracker.set_change_callback(lambda: None)
+    assert tracker.snapshot() is not None and not tracker.event_tracking
+    now[0] = 0.5
+    assert tracker.snapshot() is not None and attempts == [0.0]
+    now[0] = 1.1
+    assert tracker.snapshot() is not None and tracker.event_tracking
+    assert attempts == [0.0, 1.1]
+    tracker.close()
+    now[0] = 3
+    assert tracker.snapshot() is None and attempts == [0.0, 1.1]
+
+
+@pytest.mark.parametrize("result", ["inactive", "unsupported"])
+def test_explicit_event_fallback_does_not_repeatedly_allocate_native_hooks(result):
+    api = EventWindowApi()
+    now, attempts = [0.0], []
+    subscription = FakeWindowSubscription(lambda: None)
+    subscription.active = False
+
+    def unavailable(*_args):
+        attempts.append(now[0])
+        return subscription if result == "inactive" else None
+
+    api.subscribe_changes = unavailable
+    tracker = WindowsWindowTracker(100, "session-title", api=api, clock=lambda: now[0])
+    tracker.set_change_callback(lambda: None)
+    assert tracker.snapshot() is not None
+    for moment in (2.0, 4.0):
+        now[0] = moment
+        assert tracker.snapshot() is not None and not tracker.event_tracking
+    assert attempts == [0.0]
+    assert subscription.closes == (1 if result == "inactive" else 0)
+    tracker.close()
+
+
 def test_event_callback_waits_for_verified_binding_and_only_marks_dirty():
     api = EventWindowApi()
     tracker = WindowsWindowTracker(100, "session-title", api=api)

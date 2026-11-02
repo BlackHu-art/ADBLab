@@ -1,6 +1,7 @@
 """把逐台遥控侧栏绑定到外部投屏窗口，并管理独立遥控器的视图寿命。"""
 
 import sys
+import time
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any
@@ -18,9 +19,9 @@ from services.remote.window_tracking import create_window_tracker
 
 def dock_geometry(
     window: tuple[int, int, int, int], work: tuple[int, int, int, int],
-    size: tuple[int, int], *, gap: int = 8, inset: int = 12,
+    size: tuple[int, int], *, gap: int = 0, inset: int = 0,
 ) -> tuple[int, int, int, int]:
-    """物理坐标内优先右侧、再左侧；全屏时退到工作区内侧并约束负坐标屏幕。"""
+    """默认沿镜像右侧贴边且顶部对齐；空间不足改左侧或约束到工作区内。"""
     x, y, width, _height = window
     left, top, available_width, available_height = work
     tool_width, tool_height = size
@@ -46,6 +47,7 @@ class _DockEntry:
     placement: object = None
     foreground_hwnd: int | None = None
     screen_observed: bool = False
+    sample_until: float = 0
 
 
 class RemotePanelDock(QObject):
@@ -71,7 +73,7 @@ class RemotePanelDock(QObject):
         self._motion_timer.setSingleShot(True)
         self._motion_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._motion_timer.timeout.connect(self._flush_updates)
-        # WinEvent 允许重入；通知必须先离开原生回调，再由 GUI 合并处理。
+        # 原生窗口通知允许重入；必须先离开回调，再由 GUI 合并处理。
         self._window_changed.connect(self._queue_update, Qt.ConnectionType.QueuedConnection)
         self.timer = QTimer(self)
         self.timer.setInterval(60)
@@ -159,29 +161,35 @@ class RemotePanelDock(QObject):
         if not self._closed:
             self._window_changed.emit(entry)
 
-    def _queue_update(self, entry: _DockEntry) -> None:
+    def _queue_update(self, entry: _DockEntry, *, continuing: bool = False) -> None:
         """密集通知只保留每台会话一次更新，不因后续事件延长已安排的截止时间。"""
         if self._closed or self.entries.get(entry.session.config.device) is not entry:
             return
+        if not continuing and getattr(entry.tracker, "motion_sampling", False):
+            # macOS 可合并 AXMoved 通知；短时只采样 CG 几何，避免通知空隙表现成停顿。
+            entry.sample_until = time.monotonic() + 0.15
         self._pending[entry.session.config.device] = entry
         screen = entry.toolbar.screen()
         rate = screen.refreshRate() if screen is not None else 60.0
         if not isfinite(rate) or rate < 24:
             rate = 60.0
         interval = max(1, round(1000 / min(360.0, rate)))
+        if (getattr(entry.tracker, "motion_sampling", False)
+                and time.monotonic() >= entry.sample_until):
+            interval = 60
         if not self._motion_timer.isActive() or self._motion_timer.remainingTime() > interval:
             self._motion_timer.start(interval)
 
     def _flush_updates(self) -> None:
         entries = tuple(self._pending.values())
         self._pending.clear()
-        self._update_entries(entries)
+        self._update_entries(entries, motion=True)
 
     def tick(self) -> None:
         """低频检查生命周期及漏报事件；无原生订阅的平台保留原轮询兼容路径。"""
         self._update_entries(tuple(self.entries.values()))
 
-    def _update_entries(self, entries: tuple[_DockEntry, ...]) -> None:
+    def _update_entries(self, entries: tuple[_DockEntry, ...], *, motion: bool = False) -> None:
         if self._closed:
             return
         if self._updating:
@@ -190,7 +198,7 @@ class RemotePanelDock(QObject):
             return
         self._updating = True
         try:
-            self._place_entries(entries)
+            self._place_entries(entries, motion=motion)
         finally:
             self._updating = False
         if not self.entries:
@@ -204,7 +212,7 @@ class RemotePanelDock(QObject):
             if self.timer.interval() != interval:
                 self.timer.setInterval(interval)
 
-    def _place_entries(self, entries: tuple[_DockEntry, ...]) -> None:
+    def _place_entries(self, entries: tuple[_DockEntry, ...], *, motion: bool = False) -> None:
         """仅读取发生变化的会话；几何或置顶状态未变时不重复原生定位。"""
         for entry in entries:
             device = entry.session.config.device
@@ -219,7 +227,9 @@ class RemotePanelDock(QObject):
             if entry.tracker is None:
                 # 便携浮窗只跟随进程和会话寿命；不伪造外部窗口的几何、焦点或最小化状态。
                 continue
-            snapshot = entry.tracker.snapshot()
+            read_snapshot = (getattr(entry.tracker, "motion_snapshot", entry.tracker.snapshot)
+                             if motion else entry.tracker.snapshot)
+            snapshot = read_snapshot()
             if entry.tracker.lost:
                 self._remove(device)
                 continue
@@ -239,11 +249,12 @@ class RemotePanelDock(QObject):
             scale = toolbar.devicePixelRatioF()
             preferred = toolbar.sizeHint().expandedTo(toolbar.minimumSize())
             size = (round(preferred.width() * scale), round(preferred.height() * scale))
-            rect = dock_geometry(snapshot.rect, snapshot.work_area, size,
-                                 gap=round(8 * scale), inset=round(12 * scale))
+            rect = dock_geometry(snapshot.rect, snapshot.work_area, size)
             # macOS 无跨应用 owner 关系；原位置切回镜像时也须恢复侧栏的相对层级。
             stacking = foreground if sys.platform == "darwin" else None
             placement = (rect, snapshot.hwnd, snapshot.topmost, snapshot.dpi, stacking)
+            if placement != entry.placement:
+                entry.sample_until = time.monotonic() + 0.15
             if placement != entry.placement or not toolbar.isVisible():
                 tool_hwnd = int(toolbar.winId())
                 if not entry.screen_observed:
@@ -254,18 +265,24 @@ class RemotePanelDock(QObject):
                         )
                         entry.screen_observed = True
                 # 原生物理坐标避免混合 DPI 桌面绝对坐标除以一个全局缩放比例。
-                if not entry.tracker.position_tool(tool_hwnd, snapshot, rect):
+                position = getattr(
+                    entry.tracker, "position_motion_tool", entry.tracker.position_tool,
+                )
+                if not position(tool_hwnd, snapshot, rect):
                     toolbar.hide()
                     toolbar.dismiss_popup()
                     entry.placement = None
                     continue
                 if not toolbar.isVisible():
                     toolbar.show()
-                    entry.tracker.position_tool(int(toolbar.winId()), snapshot, rect)
+                    position(int(toolbar.winId()), snapshot, rect)
                 entry.placement = placement
                 # 原生移动可能同步改变 Qt 的屏幕比例；即使镜像停下，也须补一帧新尺寸。
                 if toolbar.devicePixelRatioF() != scale:
                     self._queue_update(entry)
+            if getattr(entry.tracker, "motion_sampling", False):
+                # AXMoved 首次通知也可能延迟；空闲低频查 CG，检测到移动后临时提升频率。
+                self._queue_update(entry, continuing=True)
 
     def _remove(self, device: str) -> None:
         entry = self.entries.pop(device)
