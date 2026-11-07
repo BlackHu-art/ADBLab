@@ -94,7 +94,11 @@ def test_liquid_progress_preserves_original_art_and_alpha(splash):
         image = splash.grab().toImage()
         frames.append(image)
         # 瓶口、瓶身、白色符号和液体之外的下边缘不能被进度遮罩染色。
-        for x, y in ((128, 38), (89, 135), (151, 157), (20, 200), (128, 233)):
+        for x, y in (
+            (128, 38), (89, 135), (151, 157), (20, 200), (128, 233),
+            (64, 165), (80, 167), (96, 170), (208, 171),
+            (128, 230), (48, 230), (216, 230),
+        ):
             assert _pixel(image, x, y) == _pixel(original, x, y)
         assert image.pixelColor(0, 0).alpha() == 0
         actual_alpha = bytes(image.convertToFormat(QImage.Format.Format_RGBA8888).constBits())[3::4]
@@ -104,6 +108,8 @@ def test_liquid_progress_preserves_original_art_and_alpha(splash):
         assert actual_alpha == source_alpha
     assert _pixel(frames[0], 70, 200) != _pixel(original, 70, 200)
     assert _pixel(frames[0], 185, 200) != _pixel(original, 185, 200)
+    for x, y in ((70, 186), (185, 188), (128, 222)):
+        assert _pixel(frames[0], x, y) != _pixel(original, x, y)
     assert _pixel(frames[1], 70, 200) == _pixel(original, 70, 200)
     assert _pixel(frames[1], 185, 200) != _pixel(original, 185, 200)
     assert frames[2] == original
