@@ -58,6 +58,17 @@ class _UpdateCardPresentation(SettingsCardPresentation):
         return max(natural_height, line_height * (label.text().count("\n") + 1))
 
 
+class _SupportReveal(ContentReveal):
+    """由支持卡统一提交祖先高度，避免按旧卡高激活布局造成原生窗口漏画。"""
+
+    def _apply_height(self, value: object) -> None:
+        if self._alive and isinstance(value, (float, int)):
+            self.setFixedHeight(round(value))
+            # 同步回调会依次提交卡片、关于分组及页面滚动范围；不能提前
+            # 遍历祖先布局，否则旧约束会在 macOS 中短暂裁掉整个关于分组。
+            self.geometry_changed.emit()
+
+
 class _SupportCardPresentation(SettingsCardPresentation):
     """标题行独立测量，二维码仅增加下方裁剪区，避免展开时挤动标题和按钮。"""
 
@@ -168,9 +179,9 @@ class AboutPanel(SettingCardGroup):
         self.support_body_layout.setContentsMargins(0, 0, 0, 0)
         self.support_body_layout.setSpacing(32)
         self.support_copy = QWidget(self.support_body)
-        copy_layout = QVBoxLayout(self.support_copy)
-        copy_layout.setContentsMargins(0, 0, 0, 0)
-        copy_layout.setSpacing(12)
+        self.support_copy_layout = QVBoxLayout(self.support_copy)
+        self.support_copy_layout.setContentsMargins(0, 0, 0, 0)
+        self.support_copy_layout.setSpacing(12)
         self.support_heading = QLabel(tr("支付宝扫码支持"), self.support_copy)
         self.support_hint = QLabel(tr("打开支付宝「扫一扫」扫描二维码"), self.support_copy)
         self.support_thanks = QLabel(tr("感谢你支持 ADBLab 的开发与维护。"), self.support_copy)
@@ -178,7 +189,7 @@ class AboutPanel(SettingCardGroup):
             label.setWordWrap(True)
             label.setMinimumWidth(0)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            copy_layout.addWidget(label)
+            self.support_copy_layout.addWidget(label)
         self.support_body_layout.addWidget(self.support_copy, 1, Qt.AlignmentFlag.AlignVCenter)
         self.support_action_layout.addWidget(self.support_body, 0, Qt.AlignmentFlag.AlignHCenter)
         self.support_button = PushButton(tr("显示二维码"), self.support_card)
@@ -213,7 +224,7 @@ class AboutPanel(SettingCardGroup):
         self.support_qr.setFixedSize(QSize(196, 196))
         self.support_qr.setScaledContents(True)
         self.support_body_layout.addWidget(self.support_qr, 0, Qt.AlignmentFlag.AlignCenter)
-        self.support_reveal = ContentReveal(
+        self.support_reveal = _SupportReveal(
             self.support_actions, self.support_button, self.support_card,
         )
         self.support_button.toggled.connect(self._set_support_expanded)
@@ -288,9 +299,7 @@ class AboutPanel(SettingCardGroup):
         text = tr("收起二维码") if expanded else tr("显示二维码")
         self.support_button.setText(text)
         self.support_button.setAccessibleName(text)
-        # macOS 原生窗口在嵌套卡片逐帧改高时会短暂漏画、错裁上方内容。
-        # 二维码作为静态辅助信息一次提交完整状态，避免进入该绘制路径。
-        self.support_reveal.set_expanded(expanded, animated=False)
+        self.support_reveal.set_expanded(expanded)
         self._sync_support_geometry()
 
     def _sync_support_geometry(self) -> None:
@@ -508,12 +517,19 @@ class AboutPanel(SettingCardGroup):
                 else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
             label.ensurePolished()
-        self.support_body_layout.invalidate()
-        # 外层横排布局会用整行可用宽度询问换行高；正文已封顶，必须按实际
-        # 图文宽度落实自然高度，否则宽窗大字号会低估说明所需行数。
-        self.support_body.setFixedHeight(max(
-            self.support_qr.height(), self.support_body_layout.heightForWidth(body_width),
-        ))
+        # 多层 QWidget 的换行高度缓存可能晚于字体更新；直接按当前字体和真实
+        # 文字列宽度测量，避免动画中改字号后仍用旧高度裁掉二维码或说明。
+        copy_width = body_width if stacked else body_width - 196 - 32
+        labels = (self.support_heading, self.support_hint, self.support_thanks)
+        copy_height = sum(
+            max(label.fontMetrics().height(), label.heightForWidth(copy_width))
+            for label in labels
+        ) + self.support_copy_layout.spacing() * (len(labels) - 1)
+        self.support_copy.setFixedHeight(copy_height)
+        self.support_body.setFixedHeight(
+            copy_height + 20 + self.support_qr.height()
+            if stacked else max(copy_height, self.support_qr.height())
+        )
 
     def _sync_group_height(self) -> None:
         """让分组随可见卡片取高，不改变各卡片内部排布。"""

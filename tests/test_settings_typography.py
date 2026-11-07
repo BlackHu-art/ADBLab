@@ -932,7 +932,7 @@ def test_support_toggle_keeps_header_in_place_without_reflowing_other_cards(
     heights = []
     for expanded in (True, False, True, False):
         about.support_button.setChecked(expanded)
-        qt_application.processEvents()
+        _settle_settings(qt_application, page)
         heights.append(about.support_card.height())
         assert [widget.mapTo(about.support_card, QPoint()) for widget in header] == positions
     _settle_settings(qt_application, page)
@@ -940,7 +940,7 @@ def test_support_toggle_keeps_header_in_place_without_reflowing_other_cards(
     assert not calls, "二维码显隐只应同步局部高度，不能重排其他设置卡"
 
 
-def test_support_toggle_commits_complete_content_before_returning(
+def test_support_toggle_animates_both_directions_and_finishes_when_hidden(
     qt_application, make_page,
 ):
     page = make_page(1000, 15)
@@ -949,7 +949,16 @@ def test_support_toggle_commits_complete_content_before_returning(
     button = about.support_button
     collapsed_height = about.support_card.height()
     for expanded in (True, False, True, False, True):
+        start_height = about.support_reveal.height()
         button.setChecked(expanded)
+        animation = about.support_reveal.animation
+        assert animation.state() == QAbstractAnimation.State.Running
+        animation.pause()
+        animation.setCurrentTime(animation.duration() // 2)
+        target = about.support_actions.height() if expanded else 0
+        assert min(start_height, target) < about.support_reveal.height() < max(start_height, target)
+        assert about.support_card.height() == collapsed_height + about.support_reveal.height()
+        animation.setCurrentTime(animation.duration())
         assert about.support_reveal.animation.state() == QAbstractAnimation.State.Stopped
         assert about.support_reveal.height() == (about.support_actions.height() if expanded else 0)
         assert about.support_qr.isVisibleTo(page) is expanded
@@ -966,6 +975,58 @@ def test_support_toggle_commits_complete_content_before_returning(
     assert not about.support_qr.isVisibleTo(page)
 
 
+def test_support_toggle_reverses_from_current_height_without_jumping(qt_application, make_page):
+    page = make_page(1000, 15)
+    _settle_settings(qt_application, page)
+    about = page.about_panel
+    reveal = about.support_reveal
+    about.support_button.setChecked(True)
+    assert reveal.animation.state() == QAbstractAnimation.State.Running
+    for expanded in (False, True, False, True):
+        reveal.animation.pause()
+        reveal.animation.setCurrentTime(reveal.animation.duration() // 2)
+        before = reveal.height()
+        assert 0 < before < about.support_actions.height()
+        about.support_button.setChecked(expanded)
+        assert reveal.height() == before
+        assert reveal.animation.state() == QAbstractAnimation.State.Running
+    page.hide()
+    assert reveal.animation.state() == QAbstractAnimation.State.Stopped
+    assert reveal.height() == about.support_actions.height()
+    assert not reveal.animation._timer.isActive()
+
+
+def test_support_animation_remeasures_after_width_and_font_changes(qt_application, make_page):
+    from dataclasses import replace
+
+    from gui.styles.typography import typography_manager
+
+    page = make_page(1000, 12)
+    about = page.about_panel
+    about.support_button.setChecked(True)
+    animation = about.support_reveal.animation
+    assert animation.state() == QAbstractAnimation.State.Running
+    animation.setCurrentTime(animation.duration() // 3)
+    page.resize(420, 640)
+    config = replace(BaseStyles.current_font_config(), ui_size=22)
+    BaseStyles._sync_legacy_values(config)
+    typography_manager.apply(config)
+    _settle_settings(qt_application, page)
+    assert about.support_reveal.height() == about.support_actions.height()
+    assert about.support_qr.size().width() == about.support_qr.size().height() == 196
+    for widget in (
+        about.support_qr, about.support_heading, about.support_hint, about.support_thanks,
+    ):
+        assert_contained(widget, about.support_card)
+    for label in (about.support_heading, about.support_hint, about.support_thanks):
+        assert label.height() >= label.heightForWidth(label.width())
+    about.support_button.setChecked(False)
+    page.close()
+    assert animation.state() == QAbstractAnimation.State.Stopped
+    assert not animation._timer.isActive()
+    assert about.support_reveal.height() == 0
+
+
 @pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 22)])
 def test_support_toggle_never_moves_header_or_clip_through_intermediate_positions(
     qt_application, make_page, width, font_size,
@@ -973,7 +1034,7 @@ def test_support_toggle_never_moves_header_or_clip_through_intermediate_position
     page = make_page(width, font_size)
     about = page.about_panel
     about.support_button.setChecked(True)
-    qt_application.processEvents()
+    _settle_settings(qt_application, page)
     moved = []
 
     class PositionProbe(QObject):
@@ -989,10 +1050,14 @@ def test_support_toggle_never_moves_header_or_clip_through_intermediate_position
         widget.installEventFilter(probe)
     for expanded in (False, True, False, True, False):
         about.support_button.setChecked(expanded)
-        qt_application.processEvents()
+        animation = about.support_reveal.animation
+        assert animation.state() == QAbstractAnimation.State.Running
+        animation.pause()
+        animation.setCurrentTime(animation.duration() // 2)
         assert presentation.column.height() == (
             presentation.header.height() + about.support_reveal.height()
         )
+        animation.setCurrentTime(animation.duration())
         target = about.support_qr if expanded else about.support_button
         page.ensureWidgetVisible(target, 0, 0)
         qt_application.processEvents()
