@@ -171,7 +171,7 @@ class PerformancePage(QWidget):
         self._max_log_lines = self._configured_log_max_lines()
         self._pending_log_rows: list[str] = []
         self._pending_log_scroll_to_bottom = False
-        self._applied_theme_signature: tuple[str, str, int, int] | None = None
+        self._applied_theme_signature: tuple[str, str, float, int] | None = None
         self._configuration_locked = False
         self._committing_workspace_geometry = False
         self._view_active = False
@@ -791,11 +791,11 @@ class PerformancePage(QWidget):
         self.progress_display.refresh_geometry()
 
     @staticmethod
-    def _theme_signature() -> tuple[str, str, int, int]:
+    def _theme_signature() -> tuple[str, str, float, int]:
         return (
             BaseStyles.resolved_theme(),
             BaseStyles.DEFAULT_FONT_FAMILY,
-            int(BaseStyles.DEFAULT_FONT_SIZE),
+            float(BaseStyles.DEFAULT_FONT_SIZE),
             int(BaseStyles.LOG_FONT_SIZE_VAR),
         )
 

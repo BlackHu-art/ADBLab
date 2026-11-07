@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QProcess, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QProcess, QSize, QTimer
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
@@ -13,8 +13,8 @@ from shiboken6 import isValid
 from core.settings_manager import AppSettings
 from gui.main_frame import MainFrame
 from services.tasks.action_results import ActionResults
-from tests.test_main_window_layout import _MainFrameSettings
-from tests.ui_geometry_helpers import wait_until
+from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, _MainFrameSettings
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 STARTUP_POSITIONS = (40, 45, 50, 55, 60, 65, 70, 75, 78, 82, 85, 95)
 
@@ -69,6 +69,76 @@ def startup(qt_application, monkeypatch):
 def page_names(frame):
     return [frame.stackedWidget.widget(index).objectName()
             for index in range(frame.stackedWidget.count())]
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.parametrize("width,font_size,theme", [
+    (1280, 12, "Light"), (1120, 12, "Light"), (1000, 12, "Dark"),
+    (1280, 22, "Dark"), (860, 22, "Light"),
+    (1120, "Auto", "Light"), (1000, "Auto", "Dark"),
+])
+def test_home_first_paint_uses_final_navigation_and_card_geometry(
+    startup, qt_application, monkeypatch, deferred, width, font_size, theme,
+):
+    """首次显示就交付最终导航宽度与卡片排布，不把布局收敛暴露给用户。"""
+    from qfluentwidgets import NavigationDisplayMode
+
+    from gui.pages.home import ActionCard
+    from gui.styles import BaseStyles
+
+    settings = AppSettings.instance()
+    settings.values.update(
+        window_width=width, window_height=780, ui_font_size=font_size, mica_enabled=False,
+    )
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr("models.device_store.DeviceStore.get_full_devices_info", lambda *_: [])
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme(theme)
+    create, _bootstrap, _detection, _controllers = startup
+    frame = create(
+        deferred_startup=deferred,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("startup", QSize(1600, 1000))),
+    )
+    if deferred:
+        while frame.advance_startup() is not None:
+            qt_application.processEvents()
+    assert frame.width() == width
+    home = frame._home_page
+    cards = home.findChildren(ActionCard)
+
+    def geometry():
+        widgets = (home, home.viewport(), home.banner, *cards)
+        return (
+            frame.navigationInterface.width(),
+            tuple((widget.mapTo(frame, QPoint()), widget.size()) for widget in widgets),
+            home.widget().height(), home.verticalScrollBar().maximum(),
+        )
+
+    class FirstPaint(QObject):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.snapshots = []
+
+        def eventFilter(self, _watched, event):  # noqa: N802
+            if event.type() == QEvent.Type.Paint:
+                self.snapshots.append(geometry())
+            return False
+
+    probe = FirstPaint(home)
+    home.viewport().installEventFilter(probe)
+    frame.show()
+    wait_until(qt_application, lambda: bool(probe.snapshots))
+    panel = frame.navigationInterface.panel
+    wide = frame.width() >= frame.NAVIGATION_EXPAND_BREAKPOINT
+    expected_mode = NavigationDisplayMode.EXPAND if wide else NavigationDisplayMode.COMPACT
+    wait_until(qt_application, lambda: (
+        panel.displayMode == expected_mode
+        and not frame._navigation_layout_timer.isActive()
+        and not frame._navigation_reflow_timer.isActive()
+        and frame.left_panel._responsive_coordinator.diagnostics.stable
+    ))
+    wait_for_stable_geometry(qt_application, (home, home.banner, *cards))
+    assert all(snapshot == geometry() for snapshot in probe.snapshots)
 
 
 @pytest.mark.parametrize("deferred", [False, True])

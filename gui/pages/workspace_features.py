@@ -94,8 +94,9 @@ class _NoDevicePage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("workspaceFeatureNoDevice")
-        self.card = CardWidget(self)
-        self.card.setBorderRadius(10)
+        # 未选设备是页面空态，直接透出宿主材质；容器只负责原有居中布局。
+        self.card = QWidget(self)
+        self.card.setAutoFillBackground(False)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.card)

@@ -41,6 +41,7 @@ def test_result_font_changes_preserve_reading_and_keep_actions_reachable(
     )
     text = "first line\nreading-marker\nlast line"
     results.complete(job, {"success": True, "output": text})
+    assert page.select_request(job.request_id)
     view.detail_toggle.setChecked(True)
     view.search.setText("reading-marker")
     view._find()
@@ -57,6 +58,7 @@ def test_result_font_changes_preserve_reading_and_keep_actions_reachable(
             BaseStyles.reload_from_settings()
             wait_for_stable_geometry(qt_application, (page, view, view.export_button))
             assert view.summary.font().pointSize() == size
+            assert page.table.rows[f"action:{job.request_id}"].title.font().pointSize() == size
             assert view.message_label.font().pointSize() == size - 1
             for control in controls:
                 assert control.font().pointSize() == size
@@ -164,17 +166,21 @@ def test_artifact_actions_fit_narrow_main_window_after_font_changes(
         ),),
         finished_at=2,
     ))
-    page.history_views.set_current("operations")
+    assert page.select_request("artifact")
     view = page.action_results
+    assert view.artifact_section is not None
     view.detail_toggle.setChecked(True)
     opened = QSignalSpy(view.artifact_requested)
     try:
         frame.show()
         frame._bind_window_screen()
         frame._on_nav_requested("tasks")
+        view.artifact_section.toggle_button.setChecked(True)
+        view.artifact_section.reveal.finish()
         for size in (12, 22, 12):
             settings.values["ui_font_size"] = size
             BaseStyles.reload_from_settings()
+            view.artifact_section.reveal.finish()
             wait_for_stable_geometry(qt_application, (frame, page, view, view.folder_button))
             assert frame.width() == 452
             assert page._scroll.horizontalScrollBar().maximum() == 0

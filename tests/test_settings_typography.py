@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QPoint, Qt
+from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
@@ -15,10 +15,11 @@ from qfluentwidgets import FluentIcon, FluentWindow
 from core.diagnostics import DiagnosticJournal
 from core.settings_manager import DEFAULTS, AppSettings
 from gui.action_feedback import ActionFeedbackPresenter
-from gui.i18n import install_translators
+from gui.i18n import install_translators, tr
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
 from services.app_update import ReleaseInfo, UpdateSnapshot
+from tests.test_settings_expand_animation import make_page as make_page
 from tests.ui_geometry_helpers import assert_contained, wait_for_stable_geometry, wait_until
 
 
@@ -299,9 +300,77 @@ def test_setting_cards_keep_full_text_and_actions_inside_viewport(
         assert visible.y() + control.height() <= page.viewport().height()
 
 
-def test_settings_font_change_and_restore_preserve_values_and_signal_contract(
+@pytest.mark.parametrize("language,auto_label", [
+    ("zh_CN", "跟随系统"), ("zh_HK", "跟隨系統"), ("en_US", "Use system setting"),
+])
+@pytest.mark.parametrize("stored_size", ["Auto", 8, 12, 22])
+def test_settings_size_choices_show_raw_auto_or_saved_numeric_value_without_writing(
+    qt_application, settings_page, language, auto_label, stored_size,
+):
+    _original, values, writes, frame = settings_page
+    values["ui_font_size"] = stored_size
+    translators = install_translators(qt_application, language)
+    page = SettingsPage(frame)
+    try:
+        page.resize(420, 640)
+        page.show()
+        _settle_settings(qt_application, page)
+        combo = page.ui_size_card.combo_box
+        assert [combo.itemText(index) for index in range(combo.count())] == [
+            auto_label, *map(str, range(8, 23)),
+        ]
+        assert page.ui_size_card.value() == (
+            auto_label if stored_size == "Auto" else str(stored_size)
+        )
+        assert values["ui_font_size"] == stored_size
+        assert not writes
+    finally:
+        page.close()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
+
+
+def test_settings_auto_size_round_trip_preserves_raw_choice_when_other_fonts_change(
     qt_application, settings_page,
 ):
+    page, values, writes, _frame = settings_page
+    page.resize(420, 640)
+    page.show()
+    _settle_settings(qt_application, page)
+    original_path = values["save_directory"]
+    page.ui_size_card.combo_box.setCurrentText("22")
+    _settle_settings(qt_application, page)
+    assert values["ui_font_size"] == 22
+    assert page.mica_card.titleLabel.font().pointSizeF() == 22
+
+    page.ui_size_card.combo_box.setCurrentText(tr("跟随系统"))
+    _settle_settings(qt_application, page)
+    assert values["ui_font_size"] == "Auto"
+    assert writes[-1] == {
+        "font_family": "Microsoft YaHei", "ui_font_size": "Auto", "log_font_size": 9,
+    }
+    page.font_family_card.combo_box.setCurrentText(tr("系统默认"))
+    page.log_size_card.combo_box.setCurrentText("10")
+    _settle_settings(qt_application, page)
+    assert writes[-1] == {
+        "font_family": "", "ui_font_size": "Auto", "log_font_size": 10,
+    }
+    assert all(change["ui_font_size"] == "Auto" for change in writes[1:])
+    assert values["save_directory"] == original_path
+
+    page.ui_size_card.combo_box.setCurrentText("8")
+    _settle_settings(qt_application, page)
+    assert values["ui_font_size"] == 8
+    assert values["font_family"] == ""
+    assert values["log_font_size"] == 10
+    assert page.mica_card.titleLabel.font().pointSizeF() == 8
+
+
+def test_settings_font_change_and_restore_preserve_values_and_signal_contract(
+    qt_application, settings_page, monkeypatch,
+):
+    monkeypatch.setitem(DEFAULTS, "ui_font_size", "Auto")
     page, values, writes, frame = settings_page
     page.resize(420, 640)
     page.show()
@@ -323,10 +392,14 @@ def test_settings_font_change_and_restore_preserve_values_and_signal_contract(
 
     page._reset_settings()
     _settle_settings(qt_application, page)
-    assert page.ui_size_card.value() == "12"
+    assert values["ui_font_size"] == "Auto"
+    assert page.ui_size_card.value() == tr("跟随系统")
     assert page.log_size_card.value() == "9"
     assert page.scan_card.isChecked() is True
-    assert page.mica_card.titleLabel.font().pointSizeF() == 12
+    assert (
+        page.mica_card.titleLabel.font().pointSizeF()
+        == BaseStyles.font_for_role(FontRole.UI).pointSizeF()
+    )
     for card in (page.scan_card, page.mica_card, page.pin_card):
         assert card.switchButton.label.text() == ("开" if card.isChecked() else "关")
     # 恢复默认也会更换字体族；与同配置的新页比较，避免把原字体度量当成默认字体。
@@ -530,7 +603,7 @@ def test_about_cards_keep_metadata_and_actions_reachable_at_bottom_of_short_wind
             assert position.x() >= 0
             assert position.x() + control.width() <= page.viewport().width()
         assert page.horizontalScrollBar().maximum() == 0
-        assert about.support_qr.width() == about.support_qr.height() == 132
+        assert about.support_qr.width() == about.support_qr.height() == 196
         assert about.title_label.text() == "ADBLab"
         assert about.project_button.font().pointSizeF() == font_size
         for label in (about.support_card.titleLabel, about.support_card.contentLabel):
@@ -558,6 +631,7 @@ def test_about_support_qr_expands_on_click_and_collapses_with_keyboard(
     button = about.support_button
     assert button.isVisibleTo(page)
     assert button.text() == "显示二维码"
+    assert button.accessibleName() == button.text()
     collapsed_height = about.support_card.height()
     collapsed_scroll_maximum = page.verticalScrollBar().maximum()
 
@@ -832,3 +906,148 @@ def test_about_support_icon_stays_aligned_with_text_beside_tall_qr(
     title_top = card.titleLabel.mapTo(card, QPoint()).y()
     description_bottom = card.contentLabel.mapTo(card, card.contentLabel.rect().bottomLeft()).y()
     assert title_top <= center <= description_bottom
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 22)])
+@pytest.mark.parametrize("language", ["zh_CN", "en_US", "zh_HK"])
+def test_support_toggle_keeps_header_in_place_without_reflowing_other_cards(
+    qt_application, make_page, monkeypatch, width, font_size, language,
+):
+    page = make_page(width, font_size, language)
+    _settle_settings(qt_application, page)
+    about = page.about_panel
+    page.ensureWidgetVisible(about.support_button, 0, 0)
+    qt_application.processEvents()
+    header = (about.support_card.titleLabel, about.support_card.contentLabel, about.support_button)
+    positions = [widget.mapTo(about.support_card, QPoint()) for widget in header]
+    calls = []
+    for presentation in page._card_presentations:
+        original = presentation.reflow
+
+        def record(width, original=original):
+            calls.append(width)
+            original(width)
+
+        monkeypatch.setattr(presentation, "reflow", record)
+
+    heights = []
+    for expanded in (True, False, True, False):
+        about.support_button.setChecked(expanded)
+        qt_application.processEvents()
+        heights.append(about.support_card.height())
+        assert [widget.mapTo(about.support_card, QPoint()) for widget in header] == positions
+    _settle_settings(qt_application, page)
+    assert heights[0] == heights[2] > heights[1] == heights[3]
+    assert not calls, "二维码显隐只应同步局部高度，不能重排其他设置卡"
+
+
+def test_support_toggle_commits_complete_content_before_returning(
+    qt_application, make_page,
+):
+    page = make_page(1000, 15)
+    _settle_settings(qt_application, page)
+    about = page.about_panel
+    button = about.support_button
+    collapsed_height = about.support_card.height()
+    for expanded in (True, False, True, False, True):
+        button.setChecked(expanded)
+        assert about.support_reveal.animation.state() == QAbstractAnimation.State.Stopped
+        assert about.support_reveal.height() == (about.support_actions.height() if expanded else 0)
+        assert about.support_qr.isVisibleTo(page) is expanded
+        assert about.support_card.height() == collapsed_height + about.support_reveal.height()
+    page.hide()
+    qt_application.processEvents()
+    assert about.support_reveal.animation.state() == QAbstractAnimation.State.Stopped
+    assert about.support_reveal.height() == about.support_actions.height()
+    page.show()
+    _settle_settings(qt_application, page)
+    button.setChecked(False)
+    _settle_settings(qt_application, page)
+    assert about.support_card.height() == collapsed_height
+    assert not about.support_qr.isVisibleTo(page)
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 22)])
+def test_support_toggle_never_moves_header_or_clip_through_intermediate_positions(
+    qt_application, make_page, width, font_size,
+):
+    page = make_page(width, font_size)
+    about = page.about_panel
+    about.support_button.setChecked(True)
+    qt_application.processEvents()
+    moved = []
+
+    class PositionProbe(QObject):
+        def eventFilter(self, watched, event):
+            if (event.type() == QEvent.Type.Move and watched.isVisibleTo(page)
+                    and event.pos() != event.oldPos()):
+                moved.append((type(watched).__name__, event.oldPos(), event.pos()))
+            return False
+
+    probe = PositionProbe(page)
+    presentation = about._support_presentation
+    for widget in (presentation.column, presentation.header, about.support_reveal):
+        widget.installEventFilter(probe)
+    for expanded in (False, True, False, True, False):
+        about.support_button.setChecked(expanded)
+        qt_application.processEvents()
+        assert presentation.column.height() == (
+            presentation.header.height() + about.support_reveal.height()
+        )
+        target = about.support_qr if expanded else about.support_button
+        page.ensureWidgetVisible(target, 0, 0)
+        qt_application.processEvents()
+        assert not target.visibleRegion().isEmpty()
+    assert not moved, "单帧内往返位移也会造成闪烁，不能只检查事件循环结束后的坐标"
+
+
+def test_support_qr_shows_only_code_with_white_scan_margin(settings_page):
+    page, _values, _writes, _frame = settings_page
+    image = page.about_panel.support_qr.image
+    assert not image.isNull()
+    side = image.width()
+    assert image.height() == side
+    for y in range(side):
+        for x in range(side):
+            color = image.pixelColor(x, y)
+            assert not (color.blue() > 180 and color.red() < 80), "不应保留收款页蓝色外框"
+    for x, y in ((0, 0), (side // 2, 0), (0, side // 2), (side // 2, side - 1)):
+        assert image.pixelColor(x, y).lightness() >= 250
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
+@pytest.mark.parametrize("language,heading,hint,thanks", [
+    ("zh_CN", "支付宝扫码支持", "打开支付宝「扫一扫」扫描二维码",
+     "感谢你支持 ADBLab 的开发与维护。"),
+    ("zh_HK", "支付寶掃碼支持", "開啟支付寶「掃一掃」掃描二維碼",
+     "感謝你支持 ADBLab 的開發與維護。"),
+    ("en_US", "Support with Alipay", "Open Alipay and use Scan to scan this code.",
+     "Thank you for supporting ADBLab's development and maintenance."),
+])
+def test_support_details_explain_alipay_and_fit_responsive_layout(
+    qt_application, make_page, width, font_size, language, heading, hint, thanks,
+):
+    page = make_page(width, font_size, language)
+    about = page.about_panel
+    labels = {label.text(): label for label in about.support_actions.findChildren(QLabel)
+              if label.text()}
+    assert {heading, hint, thanks} <= labels.keys()
+    assert all(not labels[text].isVisibleTo(page) for text in (heading, hint, thanks))
+    about.support_button.click()
+    _settle_settings(qt_application, page)
+    for theme in ("Light", "Dark"):
+        BaseStyles.switch_theme(theme)
+        _settle_settings(qt_application, page)
+        for control in (labels[heading], labels[hint], labels[thanks], about.support_qr):
+            assert control.isVisibleTo(page)
+            assert_contained(control, about.support_card)
+            page.ensureWidgetVisible(control, 0, 0)
+            qt_application.processEvents()
+            point = control.mapTo(page.viewport(), QPoint())
+            assert point.x() >= 0 and point.x() + control.width() <= page.viewport().width()
+        for label in labels.values():
+            assert label.height() >= label.heightForWidth(label.width())
+        qr = about.support_qr.mapTo(about.support_card, QPoint())
+        instructions = labels[hint].mapTo(about.support_card, QPoint())
+        assert instructions.x() < qr.x() if width == 1000 else instructions.y() < qr.y()
+        assert page.horizontalScrollBar().maximum() == 0

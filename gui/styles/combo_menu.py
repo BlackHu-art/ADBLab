@@ -18,6 +18,7 @@ from qfluentwidgets.components.widgets.menu import (
 )
 
 from gui.styles.material import is_mica_active
+from gui.widgets.combo_menu_motion import configure_combo_menu_motion
 from gui.widgets.transient_menu import TransientMenuFocusGuard
 
 _WidgetT = TypeVar("_WidgetT", bound=QWidget)
@@ -99,6 +100,7 @@ def configure_combo_menu(widget: _WidgetT) -> _WidgetT:
         )
         if not menu.findChildren(TransientMenuFocusGuard):
             TransientMenuFocusGuard(menu)
+        configure_combo_menu_motion(menu)
         return menu
 
     setattr(widget, "_createComboMenu", create_menu)

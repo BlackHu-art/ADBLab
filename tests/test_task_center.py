@@ -6,14 +6,55 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QPoint, QSize, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QPushButton
 
 from gui.pages.tasks_page import TaskCenterPage
 from gui.styles import BaseStyles
 from services.task_history import TaskHistoryStore
 from services.tasks.operations import OperationManager
+
+
+@pytest.mark.parametrize("font_size,width", [(12, 1120), (22, 860)])
+def test_task_route_shows_one_title_without_device_controls(
+    qt_application, monkeypatch, font_size, width,
+):
+    from core.settings_manager import AppSettings
+    from gui.i18n import tr
+    from tests.test_main_window_layout import (
+        _FakeScreen,
+        _FakeScreenAdapter,
+        _MainFrameSettings,
+        build_main_frame,
+    )
+    from tests.ui_geometry_helpers import wait_for_stable_geometry
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
+
+    settings = _MainFrameSettings()
+    settings.values.update(ui_font_size=font_size, font_family="Arial", window_width=width)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr("models.device_store.DeviceStore.get_full_devices_info", lambda *_: [])
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
+    BaseStyles.reload_from_settings()
+    frame = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("task-title", QSize(1600, 1000))),
+    )
+    try:
+        frame.show()
+        frame._on_nav_requested("tasks")
+        page = frame._task_page
+        wait_for_stable_geometry(qt_application, (page, page.title_label, page.filters))
+        assert frame.stackedWidget.currentWidget() is frame._tasks_page
+        assert page.title_label.text() == tr("任务中心")
+        assert page.title_label.isVisibleTo(frame)
+        assert frame._global_device_bar.isHidden()
+        assert page.title_label.font() == frame._global_device_bar.page_title.font()
+    finally:
+        assert not cleanup_ui_windows((frame,), cleanup_records={})
 
 
 def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
@@ -34,31 +75,35 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
     manager = OperationManager()
     operation = manager.begin("batch_install")
     manager.mark_running(operation.operation_id)
+    manager.update_progress(operation.operation_id, 10, message="正在安装应用")
     stop_hook = Mock()
     page = TaskCenterPage(operation_manager=manager, stop_hook=stop_hook)
     try:
         page.resize(650, 600)
         page.show()
         qt_application.processEvents()
-        row = page._active_rows[operation.operation_id]
-        cancel = next(button for button in row.findChildren(QPushButton))
-        row._summary.setSelection(0, 2)
-        selected_text = row._summary.selectedText()
+        key = f"operation:{operation.operation_id}"
+        row = page.table.rows[key]
+        cancel = row.cancel
+        row.toggle.click()
+        cursor = page.operation_output.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(2, QTextCursor.MoveMode.KeepAnchor)
+        page.operation_output.setTextCursor(cursor)
+        selected_text = cursor.selectedText()
         for size in (22, 12):
             values["ui_font_size"] = size
             BaseStyles.reload_from_settings()
             page.refresh()
             qt_application.processEvents()
-            assert page._active_rows[operation.operation_id] is row
-            assert row._summary.selectedText() == selected_text
+            assert page.table.rows[key] is row
+            assert row.cancel is cancel
+            assert page.operation_output.textCursor().selectedText() == selected_text
             for widget, role in (
-                (row._summary, FontRole.UI),
-                (row._badge, FontRole.UI_SMALL),
-                (cancel, FontRole.UI),
-                (page._active_card.headerLabel, FontRole.TITLE),
-                (page._history_card.headerLabel, FontRole.TITLE),
-                (page.action_empty_label, FontRole.UI_SMALL),
-                (page.running_actions_button, FontRole.UI),
+                (row.title, FontRole.UI),
+                (row.status, FontRole.UI_SMALL),
+                (page.count_label, FontRole.UI_SMALL),
+                (page.table.header_cells[1], FontRole.UI_SMALL),
             ):
                 assert widget.font().pointSizeF() == BaseStyles.font_for_role(role).pointSizeF()
             assert_scroll_target_reachable(page._scroll, cancel)
@@ -126,25 +171,23 @@ def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
         assert frame.width() == width
         assert page._scroll.widget().width() <= page._scroll.viewport().width() + 2
         for operation in operations:
-            button = next(
-                button for button in page.findChildren(QPushButton)
-                if button.text() == tr("取消") and operation.operation_id in button.toolTip()
-            )
+            button = page.table.rows[f"operation:{operation.operation_id}"].cancel
+            assert button.accessibleName() == tr("取消任务")
             assert_scroll_target_reachable(page._scroll, button)
             assert_text_fits(button)
             QTest.mouseClick(button, Qt.MouseButton.LeftButton)
             assert manager.get(operation.operation_id).cancel_requested
             stop_hook.assert_any_call(operation.operation_id)
         assert stop_hook.call_count == 2
-        running_button = page.running_actions_button
-        full_text = tr("查看执行中的操作（{count}）").format(count=1)
-        assert running_button.toolTip() == full_text
-        assert running_button.accessibleName() == full_text
-        assert_scroll_target_reachable(page._scroll, running_button)
-        assert_text_fits(running_button)
-        clicked = QSignalSpy(running_button.clicked)
-        QTest.mouseClick(running_button, Qt.MouseButton.LeftButton)
+        running_row = page.table.rows[f"action:{job.request_id}"]
+        assert running_row.title.toolTip() == tr("查询")
+        assert running_row.title.accessibleName() == tr("查询")
+        assert_scroll_target_reachable(page._scroll, running_row.toggle)
+        assert_text_fits(running_row.toggle)
+        clicked = QSignalSpy(running_row.toggle.clicked)
+        QTest.mouseClick(running_row.toggle, Qt.MouseButton.LeftButton)
         assert clicked.count() == 1
+        assert page.table.expanded_key == f"action:{job.request_id}"
         assert page.action_results._selected == job.request_id
         assert page.action_results.isVisibleTo(page)
     finally:
@@ -173,19 +216,26 @@ def test_task_lists_share_page_background_without_an_outer_frame(qt_application,
     page.shutdown()
 
 
-def test_poll_diff_skips_rebuild_when_snapshot_unchanged():
+def test_poll_diff_preserves_existing_rows_when_snapshot_unchanged(qt_application):
     manager = OperationManager()
+    operation = manager.begin("install")
     page = TaskCenterPage(operation_manager=manager, history_store=TaskHistoryStore())
-    spy = Mock(wraps=page._render_active_rows)
-    page._render_active_rows = spy
+    key = f"operation:{operation.operation_id}"
+    row = page.table.rows[key]
+    title, cancel = row.title, row.cancel
 
     page.refresh()
     page.refresh()
-    assert spy.call_count == 1  # 快照未变，不重建控件
+    assert page.table.rows[key] is row
+    assert row.title is title
+    assert row.cancel is cancel
 
-    manager.begin("install")
+    added = manager.begin("install")
     page.refresh()
-    assert spy.call_count == 2  # 快照变化，才重建
+    assert f"operation:{added.operation_id}" in page.table.rows
+    assert page.table.rows[key] is row
+    assert row.title is title
+    assert row.cancel is cancel
 
     page.shutdown()
 
@@ -214,12 +264,10 @@ def test_cancel_button_triggers_dual_path():
     page = TaskCenterPage(operation_manager=manager, stop_hook=stop_hook)
     page.refresh()
 
-    cancel_buttons = [
-        button for button in page.findChildren(QPushButton) if button.text() == "取消"
-    ]
-    assert len(cancel_buttons) == 1
-    cancel_buttons[0].click()
-    assert not cancel_buttons[0].isEnabled()
+    cancel_button = page.table.rows[f"operation:{operation.operation_id}"].cancel
+    assert len(page.table.rows) == 1
+    cancel_button.click()
+    assert not cancel_button.isEnabled()
 
     snapshot = manager.get(operation.operation_id)
     assert snapshot is not None

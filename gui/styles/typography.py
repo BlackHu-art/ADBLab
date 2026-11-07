@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import platform
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from enum import Enum
 from typing import Any, cast
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics, QGuiApplication
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics, QGuiApplication
 
 UI_FONT_SIZE_MIN = 8
 UI_FONT_SIZE_MAX = 22
@@ -42,12 +43,12 @@ class FontConfig:
     """保存已经校验并解析为可用字体族的字体配置。"""
 
     ui_family: str
-    ui_size: int
+    ui_size: float
     log_size: int
     mono_family: str
 
 
-def _safe_size(value: object, default: int, minimum: int, maximum: int) -> int:
+def _safe_size(value: object, default: float, minimum: int, maximum: int) -> float:
     """将外部字号转换到安全范围，无法解析时回退到默认值。"""
 
     if isinstance(value, bool):
@@ -75,6 +76,27 @@ def system_ui_font_family() -> str:
     """返回当前系统建议的界面字体族。"""
 
     return _system_font_family(QFontDatabase.SystemFont.GeneralFont, _PLATFORM_UI_FONT)
+
+
+def system_ui_font_size() -> float:
+    """读取系统建议的逻辑 pt；像素字体由 Qt 解析，不能再乘屏幕 DPR。
+
+    不读取已被本应用覆盖的 QApplication 默认字体，避免自动模式沿用上次手动值。
+    启动早期或平台没有有效字号时使用 12pt，正常值沿用界面支持的字号范围。
+    """
+
+    if QGuiApplication.instance() is None:
+        return 12.0
+    try:
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+        points = font.pointSizeF()
+        if points <= 0 and font.pixelSize() > 0:
+            points = QFontInfo(font).pointSizeF()
+        if not math.isfinite(points) or points <= 0:
+            return 12.0
+    except (RuntimeError, TypeError, ValueError):
+        return 12.0
+    return max(float(UI_FONT_SIZE_MIN), min(float(UI_FONT_SIZE_MAX), points))
 
 
 def system_mono_font_family() -> str:
@@ -116,20 +138,22 @@ def resolve_ui_font_family(value: object) -> str:
 def font_config_from_mapping(values: Mapping[str, object]) -> FontConfig:
     """从设置映射创建不可变且经过边界校验的字体配置。"""
 
+    requested_size = values.get("ui_font_size", "Auto")
+    automatic_size = isinstance(requested_size, str) and requested_size.strip().casefold() == "auto"
     return FontConfig(
         ui_family=resolve_ui_font_family(values.get("font_family", "")),
-        ui_size=_safe_size(
-            values.get("ui_font_size", 12),
+        ui_size=system_ui_font_size() if automatic_size else _safe_size(
+            requested_size,
             default=12,
             minimum=UI_FONT_SIZE_MIN,
             maximum=UI_FONT_SIZE_MAX,
         ),
-        log_size=_safe_size(
+        log_size=int(_safe_size(
             values.get("log_font_size", 9),
             default=9,
             minimum=LOG_FONT_SIZE_MIN,
             maximum=LOG_FONT_SIZE_MAX,
-        ),
+        )),
         mono_family=system_mono_font_family(),
     )
 
@@ -173,7 +197,8 @@ def font_for_config(
             maximum=UI_FONT_SIZE_MAX + 4,
         )
     )
-    font = QFont(family, requested_size)
+    font = QFont(family)
+    font.setPointSizeF(requested_size)
     if role not in (FontRole.LOG, FontRole.MONO):
         # 保留有效的用户字体为首选；只加入已安装的回退字体，避免跨平台缺失字体触发别名扫描。
         # points 仍是旧设置的单位，不把已保存的 12pt 误当成 Gallery 的 14px。
@@ -270,5 +295,6 @@ __all__ = [
     "resolve_ui_font_family",
     "system_mono_font_family",
     "system_ui_font_family",
+    "system_ui_font_size",
     "typography_manager",
 ]

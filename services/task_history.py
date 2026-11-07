@@ -131,6 +131,17 @@ class TaskHistoryStore:
             count = max(0, int(limit))
             return tuple(items[:count])
 
+    def recent_with_ids(
+        self, limit: int | None = None,
+    ) -> tuple[tuple[int, TaskHistoryEntry], ...]:
+        """返回会话内稳定序号及历史；新增、重名记录和排序不改变既有记录身份。
+
+        序号只属于当前 store，不能持久化或作为设备、执行任务的标识。
+        """
+        with self._lock:
+            items = [(key, self._entries[key]) for key in reversed(self._entries)]
+            return tuple(items if limit is None else items[:max(0, int(limit))])
+
     def clear(self) -> None:
         """清空全部历史记录。"""
 

@@ -7936,5 +7936,177 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>继续使用</source>
             <translation>继续使用</translation>
         </message>
+        <message>
+            <source>Monkey</source>
+            <translation>Monkey</translation>
+        </message>
+        <message>
+            <source>Shell</source>
+            <translation>Shell</translation>
+        </message>
+        <message>
+            <source>{count} 项{state}</source>
+            <translation>{count} 项{state}</translation>
+        </message>
+        <message>
+            <source>{visible} / {total} 条记录 · {active} 项进行中 · {unread} 项异常待查看</source>
+            <translation>{visible} / {total} 条记录 · {active} 项进行中 · {unread} 项异常待查看</translation>
+        </message>
+        <message>
+            <source>任务</source>
+            <translation>任务</translation>
+        </message>
+        <message>
+            <source>任务名称</source>
+            <translation>任务名称</translation>
+        </message>
+        <message>
+            <source>任务提交时的目标</source>
+            <translation>任务提交时的目标</translation>
+        </message>
+        <message>
+            <source>任务状态</source>
+            <translation>任务状态</translation>
+        </message>
+        <message>
+            <source>任务类型</source>
+            <translation>任务类型</translation>
+        </message>
+        <message>
+            <source>取消 {task}</source>
+            <translation>取消 {task}</translation>
+        </message>
+        <message>
+            <source>取消任务</source>
+            <translation>取消任务</translation>
+        </message>
+        <message>
+            <source>展开 · 完整输出</source>
+            <translation>展开 · 完整输出</translation>
+        </message>
+        <message>
+            <source>展开任务详情</source>
+            <translation>展开任务详情</translation>
+        </message>
+        <message>
+            <source>已归档</source>
+            <translation>已归档</translation>
+        </message>
+        <message>
+            <source>已归档 · 关闭应用后仍可查看</source>
+            <translation>已归档 · 关闭应用后仍可查看</translation>
+        </message>
+        <message>
+            <source>搜索任务</source>
+            <translation>搜索任务</translation>
+        </message>
+        <message>
+            <source>搜索任务、设备、应用或日期</source>
+            <translation>搜索任务、设备、应用或日期</translation>
+        </message>
+        <message>
+            <source>收起 · 完整输出</source>
+            <translation>收起 · 完整输出</translation>
+        </message>
+        <message>
+            <source>收起任务详情</source>
+            <translation>收起任务详情</translation>
+        </message>
+        <message>
+            <source>时间</source>
+            <translation>时间</translation>
+        </message>
+        <message>
+            <source>暂无任务，执行操作或完成测试后会显示在这里。</source>
+            <translation>暂无任务，执行操作或完成测试后会显示在这里。</translation>
+        </message>
+        <message>
+            <source>有未查看的异常</source>
+            <translation>有未查看的异常</translation>
+        </message>
+        <message>
+            <source>未记录设备名称</source>
+            <translation>未记录设备名称</translation>
+        </message>
+        <message>
+            <source>本次</source>
+            <translation>本次</translation>
+        </message>
+        <message>
+            <source>本次会话 · 需要保留的正文请导出</source>
+            <translation>本次会话 · 需要保留的正文请导出</translation>
+        </message>
+        <message>
+            <source>查看本次操作生成的文件</source>
+            <translation>查看本次操作生成的文件</translation>
+        </message>
+        <message>
+            <source>查看本次测试保存的附件</source>
+            <translation>查看本次测试保存的附件</translation>
+        </message>
+        <message>
+            <source>正在取消</source>
+            <translation>正在取消</translation>
+        </message>
+        <message>
+            <source>没有匹配的任务，请调整筛选条件。</source>
+            <translation>没有匹配的任务，请调整筛选条件。</translation>
+        </message>
+        <message>
+            <source>生成文件</source>
+            <translation>生成文件</translation>
+        </message>
+        <message>
+            <source>目标</source>
+            <translation>目标</translation>
+        </message>
+        <message>
+            <source>进行中</source>
+            <translation>进行中</translation>
+        </message>
+        <message>
+            <source>部分成功 / 结果不完整</source>
+            <translation>部分成功 / 结果不完整</translation>
+        </message>
+        <message>
+            <source>部分完成</source>
+            <translation>部分完成</translation>
+        </message>
+        <message>
+            <source>暂无任务</source>
+            <translation>暂无任务</translation>
+        </message>
+        <message>
+            <source>执行操作或完成测试后，任务进度与结果会显示在这里。</source>
+            <translation>执行操作或完成测试后，任务进度与结果会显示在这里。</translation>
+        </message>
+        <message>
+            <source>没有匹配的任务</source>
+            <translation>没有匹配的任务</translation>
+        </message>
+        <message>
+            <source>请调整搜索或筛选条件。</source>
+            <translation>请调整搜索或筛选条件。</translation>
+        </message>
+        <message>
+            <source>清除筛选</source>
+            <translation>清除筛选</translation>
+        </message>
+        <message>
+            <source>支付宝扫码支持</source>
+            <translation>支付宝扫码支持</translation>
+        </message>
+        <message>
+            <source>打开支付宝「扫一扫」扫描二维码</source>
+            <translation>打开支付宝「扫一扫」扫描二维码</translation>
+        </message>
+        <message>
+            <source>感谢你支持 ADBLab 的开发与维护。</source>
+            <translation>感谢你支持 ADBLab 的开发与维护。</translation>
+        </message>
+        <message>
+            <source>默认跟随系统字号，也可手动选择；已有字号保持不变</source>
+            <translation>默认跟随系统字号，也可手动选择；已有字号保持不变</translation>
+        </message>
     </context>
 </TS>

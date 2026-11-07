@@ -65,9 +65,13 @@ class RunResultsWidget(QWidget):
 
     reuse_requested = Signal(object)
 
-    def __init__(self, library: RunLibraryController, parent: QWidget | None = None):
+    def __init__(
+        self, library: RunLibraryController, parent: QWidget | None = None, *,
+        detail_only: bool = False,
+    ):
         super().__init__(parent)
         self._library = library
+        self._detail_only = detail_only
         self._visible_records: tuple[RunRecord, ...] = ()
         self._selected: RunRecord | None = None
         self._layout_mode: tuple[bool, bool, bool, int, bool] | None = None
@@ -177,6 +181,15 @@ class RunResultsWidget(QWidget):
             tooltip="只载入参数，由您选择设备后开始测试",
         )
         detail_layout.addWidget(self.action_row)
+        self.artifact_section: CollapsibleTools | None = None
+        if detail_only:
+            detail_layout.removeWidget(self.action_row)
+            self.artifact_section = CollapsibleTools(
+                "生成文件", self.action_row, self.details,
+                tooltip="查看本次测试保存的附件",
+            )
+            detail_layout.addWidget(self.artifact_section)
+            detail_layout.addWidget(self.reuse_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.details)
 
         self._refresh_timer = QTimer(self)
@@ -197,6 +210,9 @@ class RunResultsWidget(QWidget):
         self.reuse_button.clicked.connect(self._reuse)
         library.changed.connect(self.refresh)
         BaseStyles.ui_font_changed.connect(self._apply_fonts)
+        if detail_only:
+            for widget in (self.filters, self.count_label, self.empty_label, self.table):
+                widget.hide()
         self._apply_fonts()
         self.refresh()
 
@@ -223,6 +239,11 @@ class RunResultsWidget(QWidget):
         self._refresh_timer.stop()
         selected_id = self._selected.run_id if self._selected is not None else ""
         records = self._library.records_view
+        if self._detail_only:
+            self.present_record(next(
+                (record for record in records if record.run_id == selected_id), None,
+            ))
+            return
         self._last_filter_text = self.search_edit.text()
         query = self._last_filter_text.strip().casefold()
         kind, state = self.kind_combo.currentData(), self.state_combo.currentData()
@@ -292,13 +313,17 @@ class RunResultsWidget(QWidget):
         )
 
     def _selection_changed(self) -> None:
-        previous_id = self._selected.run_id if self._selected is not None else ""
-        previous_path = self.artifact_combo.currentData()
         rows = self.table.selectionModel().selectedRows()
         row = rows[0].row() if rows else -1
-        self._selected = (
+        self.present_record(
             self._visible_records[row] if 0 <= row < len(self._visible_records) else None
         )
+
+    def present_record(self, record: RunRecord | None) -> None:
+        """展示宿主指定的记录快照；不选择设备、不启动测试，也不改变共享测试库。"""
+        previous_id = self._selected.run_id if self._selected is not None else ""
+        previous_path = self.artifact_combo.currentData()
+        self._selected = copy.deepcopy(record)
         self.details.setVisible(self._selected is not None)
         self.reuse_button.setEnabled(self._selected is not None)
         # 重建下拉时保留同一运行的附件路径，避免后台归档刷新改变用户的打开目标。
@@ -328,10 +353,12 @@ class RunResultsWidget(QWidget):
         ]
         if record.message:
             summary.append(record.message)
-        self.summary_edit.setPlainText("\n".join(summary))
-        self.parameters_edit.setPlainText(
-            json.dumps(record.parameters, ensure_ascii=False, indent=2)
-        )
+        summary_text = "\n".join(summary)
+        if self.summary_edit.toPlainText() != summary_text:
+            self.summary_edit.setPlainText(summary_text)
+        parameters_text = json.dumps(record.parameters, ensure_ascii=False, indent=2)
+        if self.parameters_edit.toPlainText() != parameters_text:
+            self.parameters_edit.setPlainText(parameters_text)
         self._update_artifact_actions()
 
     def _update_artifact_actions(self, *_args) -> None:
@@ -340,6 +367,8 @@ class RunResultsWidget(QWidget):
         self.artifact_combo.setEnabled(enabled)
         self.open_button.setEnabled(enabled)
         self.folder_button.setEnabled(enabled)
+        if self.artifact_section is not None:
+            self.artifact_section.setVisible(enabled)
         self.artifact_combo.setToolTip(
             path if isinstance(path, str) and enabled else tr("此记录没有保存附件")
         )
@@ -418,7 +447,10 @@ class RunResultsWidget(QWidget):
         stacked_filters = width < (
             self.kind_combo.sizeHint().width() + self.state_combo.sizeHint().width() + 8
         )
-        buttons = (self.open_button, self.folder_button, self.reuse_button)
+        buttons = (
+            (self.open_button, self.folder_button) if self._detail_only
+            else (self.open_button, self.folder_button, self.reuse_button)
+        )
         button_width = max(button.sizeHint().width() for button in buttons)
         columns = min(3, max(1, (width + 8) // (button_width + 8)))
         actions_inline = (

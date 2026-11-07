@@ -45,6 +45,95 @@ def test_font_config_validates_sizes_and_falls_back_to_system_family():
     assert config.mono_family
 
 
+@pytest.mark.parametrize("family,points", [
+    ("Segoe UI", 9.0), (".AppleSystemUIFont", 13.0), ("Arial", 12.5),
+])
+def test_auto_font_size_uses_system_points_and_preserves_manual_settings(
+    qt_application, monkeypatch, family, points,
+):
+    system_font = QFont(family)
+    system_font.setPointSizeF(points)
+    mono_font = QFont("Arial", 10)
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda role: (
+        system_font if role == QFontDatabase.SystemFont.GeneralFont else mono_font
+    ))
+    monkeypatch.setattr(QFontDatabase, "families", lambda: [family, "Arial"])
+    config = font_config_from_mapping({"font_family": "", "ui_font_size": "Auto"})
+    assert config.ui_family == family
+    assert config.ui_size == points
+    assert font_for_config(config, FontRole.UI).pointSizeF() == points
+    assert font_for_config(config, FontRole.MONO).pointSizeF() == points
+    assert font_for_config(config, FontRole.TITLE).pointSizeF() == points + 4
+    assert font_for_config(config, FontRole.UI_SMALL).pointSizeF() == max(8, points - 1)
+    assert font_for_config(config, FontRole.LOG).pointSizeF() == 9
+    manual = font_config_from_mapping({
+        "font_family": "Arial", "ui_font_size": 17, "log_font_size": 11,
+    })
+    assert (manual.ui_family, manual.ui_size, manual.log_size) == ("Arial", 17, 11)
+
+
+def test_auto_font_pixel_size_is_resolved_by_qt_in_points(qt_application, monkeypatch):
+    from gui.styles import typography
+
+    pixel_font = QFont("Arial")
+    pixel_font.setPixelSize(16)
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda _role: pixel_font)
+    monkeypatch.setattr(
+        typography, "QFontInfo", lambda font: SimpleNamespace(pointSizeF=lambda: 10.5),
+        raising=False,
+    )
+    config = font_config_from_mapping({"ui_font_size": "Auto"})
+    assert config.ui_size == 10.5
+    assert font_for_config(config, FontRole.UI).pixelSize() == -1
+
+
+@pytest.mark.parametrize("points,expected", [(5, 8), (40, 22)])
+def test_auto_font_size_respects_supported_bounds(qt_application, monkeypatch, points, expected):
+    font = QFont("Arial", points)
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda _role: font)
+    assert font_config_from_mapping({"ui_font_size": "Auto"}).ui_size == expected
+
+
+@pytest.mark.parametrize("points", [0, -1, float("nan"), float("inf")])
+def test_auto_font_invalid_system_size_falls_back_to_twelve(qt_application, monkeypatch, points):
+    font = SimpleNamespace(family=lambda: "Arial", pointSizeF=lambda: points, pixelSize=lambda: -1)
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda _role: font)
+    assert font_config_from_mapping({"ui_font_size": "Auto"}).ui_size == 12
+
+
+def test_auto_font_before_application_uses_safe_fallback(monkeypatch):
+    from gui.styles import typography
+
+    monkeypatch.setattr(typography, "QGuiApplication", SimpleNamespace(instance=lambda: None))
+    assert font_config_from_mapping({"ui_font_size": "Auto"}).ui_size == 12
+
+
+def test_auto_font_reload_keeps_fractional_points_and_returns_from_manual(
+    qt_application, monkeypatch,
+):
+    from core.settings_manager import AppSettings
+
+    system_font = QFont("Arial")
+    system_font.setPointSizeF(12.5)
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda _role: system_font)
+    values = {"font_family": "", "ui_font_size": "Auto", "log_font_size": 9}
+    monkeypatch.setattr(
+        AppSettings, "instance", classmethod(lambda _cls: SimpleNamespace(get=values.get)),
+    )
+    previous = BaseStyles.current_font_config()
+    try:
+        for requested, expected in (("Auto", 12.5), (17, 17), ("Auto", 12.5)):
+            values["ui_font_size"] = requested
+            BaseStyles.reload_from_settings()
+            assert BaseStyles.current_font_config().ui_size == expected
+            assert BaseStyles.font_for_role(FontRole.UI).pointSizeF() == expected
+            assert qt_application.font().pointSizeF() == expected
+            assert values["ui_font_size"] == requested
+    finally:
+        BaseStyles._sync_legacy_values(previous)
+        typography_manager.apply(previous)
+
+
 def test_role_fonts_preserve_point_sizes_user_family_and_monospace_separation(monkeypatch):
     monkeypatch.setattr(
         QFontDatabase, "families", lambda: ["Microsoft YaHei", "Segoe UI", "Microsoft YaHei UI"],

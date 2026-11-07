@@ -285,12 +285,13 @@ class SettingsPage(ScrollArea):
             configured_family,
             typography,
         )
+        configured_ui_size = self._settings.get("ui_font_size", "Auto")
         self.ui_size_card = ComboSettingCard(
             FluentIcon.FONT_SIZE,
             tr("界面字号（pt）"),
-            tr("即时调整正文大小；推荐 11 pt，已有字号保持不变"),
-            [str(value) for value in range(8, 23)],
-            str(self._settings.get("ui_font_size", 12)),
+            tr("默认跟随系统字号，也可手动选择；已有字号保持不变"),
+            [tr("跟随系统"), *[str(value) for value in range(8, 23)]],
+            tr("跟随系统") if configured_ui_size == "Auto" else str(configured_ui_size),
             typography,
         )
         self.log_size_card = ComboSettingCard(
@@ -355,7 +356,7 @@ class SettingsPage(ScrollArea):
         if not defer_startup_detection:
             self.start_startup_detection()
         self.about_panel = AboutPanel(view)
-        self.about_panel.layoutChanged.connect(self._reflow_settings)
+        self.about_panel.layoutChanged.connect(self._sync_about_geometry)
 
         self.expand_layout.addWidget(general)
         self.expand_layout.addWidget(appearance)
@@ -634,6 +635,10 @@ class SettingsPage(ScrollArea):
                 content + self._adb_group.titleLabel.sizeHint().height() + 12,
             )
         self.about_panel.reflow(width)
+        self._sync_about_geometry()
+
+    def _sync_about_geometry(self) -> None:
+        """关于分组已提交卡片高度时，仅更新页面滚动范围，避免逐帧重排设置卡。"""
         view = self.widget()
         if view is not None:
             view.resize(
@@ -718,11 +723,13 @@ class SettingsPage(ScrollArea):
         self._settings.set("log_max_lines", lines)
 
     def _apply_typography(self, _value: str) -> None:
+        """批量保存原始字号选择，自动模式不回写字体管理器解析出的实际字号。"""
         family = self.font_family_card.value()
+        ui_size = self.ui_size_card.value()
         self._settings.set_many(
             {
                 "font_family": "" if family == tr("系统默认") else family,
-                "ui_font_size": int(self.ui_size_card.value()),
+                "ui_font_size": "Auto" if ui_size == tr("跟随系统") else int(ui_size),
                 "log_font_size": int(self.log_size_card.value()),
             }
         )
@@ -772,8 +779,9 @@ class SettingsPage(ScrollArea):
         )
         family = str(self._settings.get("font_family", "") or tr("系统默认"))
         self.font_family_card.combo_box.setCurrentText(family)
+        ui_size = self._settings.get("ui_font_size", "Auto")
         self.ui_size_card.combo_box.setCurrentText(
-            str(self._settings.get("ui_font_size", 12))
+            tr("跟随系统") if ui_size == "Auto" else str(ui_size)
         )
         self.log_size_card.combo_box.setCurrentText(
             str(self._settings.get("log_font_size", 9))

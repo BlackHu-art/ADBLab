@@ -26,7 +26,7 @@ from gui.styles.fluent import (
     configure_fluent_control,
     set_function_tooltip,
 )
-from gui.widgets.collapsible_tools import ContentReveal
+from gui.widgets.collapsible_tools import CollapsibleTools, ContentReveal
 from gui.widgets.eliding_combo_box import ElidingComboBox
 from services.tasks.action_results import (
     ActionResult,
@@ -52,9 +52,10 @@ class ActionResultView(QWidget):
     artifact_requested = Signal(str, bool)
     export_requested = Signal(str, str)
     reveal_requested = Signal(object)
+    selection_changed = Signal(str)
     TEXT_BUDGET = 16 * 1024 * 1024
 
-    def __init__(self, parent=None, *, diagnostic: bool = False):
+    def __init__(self, parent=None, *, diagnostic: bool = False, inline: bool = False):
         super().__init__(parent)
         self.setObjectName("actionResultView")
         self._records: OrderedDict[str, ActionResult] = OrderedDict()
@@ -64,12 +65,13 @@ class ActionResultView(QWidget):
         self._search_query = ""
         self._search_offset = 0
         self._diagnostic = diagnostic
+        self._inline = inline
         self._latest_started = 0.0
         self._history_signature: tuple[tuple[str, str], ...] = ()
         self._target_signature: tuple[tuple[str, str], ...] = ()
         self._artifact_signature: tuple[str, ...] = ()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 12, 0, 4)
+        layout.setContentsMargins(0, 0 if inline else 12, 0, 0 if inline else 4)
         layout.setSpacing(8)
         self.summary = apply_label_role(BodyLabel(), FontRole.UI)
         self.summary.setWordWrap(True)
@@ -142,6 +144,19 @@ class ActionResultView(QWidget):
         artifact_layout.addWidget(self.open_button)
         artifact_layout.addWidget(self.folder_button)
         layout.addWidget(self.artifact_actions)
+        self.artifact_section: CollapsibleTools | None = None
+        if inline:
+            files = QWidget(self)
+            files_layout = QVBoxLayout(files)
+            files_layout.setContentsMargins(0, 0, 0, 0)
+            files_layout.setSpacing(8)
+            for widget in (self.artifacts, self.artifact_actions):
+                layout.removeWidget(widget)
+                files_layout.addWidget(widget)
+            self.artifact_section = CollapsibleTools(
+                "生成文件", files, self, tooltip="查看本次操作生成的文件",
+            )
+            layout.addWidget(self.artifact_section)
         self.history.currentIndexChanged.connect(self._choose_history)
         self.targets.currentIndexChanged.connect(self._render_detail)
         self.detail_toggle.toggled.connect(self._toggle_detail)
@@ -160,6 +175,10 @@ class ActionResultView(QWidget):
             self.history.hide()
             self.detail_toggle.hide()
             self.detail_toggle.setChecked(True)
+        if inline:
+            self.summary.hide()
+            self.history.hide()
+            self._toggle_detail(False)
         self.hide()
 
     def _refresh_font(self, *_args) -> None:
@@ -177,10 +196,15 @@ class ActionResultView(QWidget):
 
     def _toggle_detail(self, expanded: bool) -> None:
         self.detail_reveal.set_expanded(expanded)
-        self.detail_toggle.setText(tr("收起详情") if expanded else tr("查看详情"))
+        if self._inline:
+            self.detail_toggle.setText(
+                tr("收起 · 完整输出") if expanded else tr("展开 · 完整输出")
+            )
+        else:
+            self.detail_toggle.setText(tr("收起详情") if expanded else tr("查看详情"))
 
-    def present(self, result: ActionResult) -> None:
-        """新请求显示在原分区；同一请求的后台更新保持用户的设备和阅读位置。"""
+    def present(self, result: ActionResult, *, preserve_selection: bool = True) -> None:
+        """保存完整快照；更新相同正文保留选区，行内宿主可释放已收起的选择保护。"""
         self._latest_started = max(self._latest_started, result.started_at)
         ignored_diagnostic = self._diagnostic and (
             not result.items or result.started_at < self._latest_started
@@ -193,11 +217,11 @@ class ActionResultView(QWidget):
             # 仅新终态或说明更新推进顺序；从通知重新打开旧快照不改变其保留优先级。
             self._records.pop(result.request_id)
         self._records[result.request_id] = result
-        if fresh:
+        if (fresh and (not self._inline or not self._selected)) or not preserve_selection:
             self._selected = result.request_id
         for request_id in expired_action_results(
             self._records.values(), capacity=20, text_budget=self.TEXT_BUDGET,
-            protected=(self._selected,),
+            protected=(self._selected, result.request_id) if self._inline else (self._selected,),
         ):
             del self._records[request_id]
         if ignored_diagnostic:
@@ -221,12 +245,12 @@ class ActionResultView(QWidget):
         if index >= 0 and self.history.currentIndex() != index:
             self.history.setCurrentIndex(index)
         del blocker
-        if fresh and not self._diagnostic:
+        if fresh and not self._diagnostic and not self._inline:
             self.detail_toggle.setChecked(result.spec.presentation in ("text", "notes"))
         if self._selected == result.request_id:
             self._render()
         self.show()
-        if fresh:
+        if fresh and not self._inline:
             self.reveal_requested.emit(self)
 
     def _choose_history(self, *_args) -> None:
@@ -238,8 +262,15 @@ class ActionResultView(QWidget):
         index = self.history.findData(request_id)
         if index < 0:
             return False
+        previous = self._selected
         self.history.setCurrentIndex(index)
+        if self._selected != previous:
+            self.selection_changed.emit(self._selected)
         return True
+
+    def records_snapshot(self) -> tuple[ActionResult, ...]:
+        """返回保留顺序的不可变快照，供任务表投影；不改变阅读目标或结果归属。"""
+        return tuple(self._records.values())
 
     def running_results(self) -> tuple[ActionResult, ...]:
         """提供仍在执行的请求快照，供任务页定位；不改变选择或任务所有权。"""
@@ -324,7 +355,11 @@ class ActionResultView(QWidget):
             self._artifact_signature = paths
         self.artifacts.setVisible(bool(paths) and not self._diagnostic)
         self.artifact_actions.setVisible(bool(paths) and not self._diagnostic)
-        if result.state in ("failed", "partial") or (item and item.state == "failed"):
+        if self.artifact_section is not None:
+            self.artifact_section.setVisible(bool(paths))
+        if not self._inline and (
+            result.state in ("failed", "partial") or (item and item.state == "failed")
+        ):
             self.detail_toggle.setChecked(True)
 
     def _find(self) -> None:

@@ -55,6 +55,21 @@ def test_device_labels_are_frozen_and_duplicate_targets_keep_aligned_names():
     assert result.items[0].detail == "设备 3 · Phone result"
 
 
+def test_operation_associations_are_unique_and_preserve_submission_order():
+    store = ActionResults(lambda _result: None)
+    jobs = []
+
+    def submit():
+        for operation_id in ("batch-one", "batch-one", "batch-two"):
+            jobs.append(capture_action_job("query_async", "demo", operation_id=operation_id))
+
+    store.run(ActionSpec("query", "system.shell", "查询"), ("demo",), submit)
+    assert store.recent()[0].operation_ids == ("batch-one", "batch-two")
+    for job in jobs:
+        store.complete(job, {"success": True})
+    assert store.recent()[0].operation_ids == ("batch-one", "batch-two")
+
+
 def test_device_counts_group_chained_commands_and_preserve_mixed_outcomes():
     store = ActionResults(lambda _result: None)
     jobs = []
@@ -245,6 +260,38 @@ def test_text_result_uses_output_and_omits_unrelated_device_metadata():
     )
     assert events[-1].state == "succeeded"
     assert events[-1].items[0].detail == "Query result"
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("operation_id, expected", [(None, ()), ("batch-one", ("batch-one",))])
+def test_async_submission_publishes_operation_association_before_start(
+    qt_application, operation_id, expected,
+):
+    from models.adb_model import ADBModelCore, async_command
+
+    class Model(ADBModelCore):
+        @async_command
+        def query_async(self, target):
+            return {"success": True, "device_ip": target, "output": "answer"}
+
+    events = []
+    started_snapshots = []
+    store = ActionResults(events.append)
+
+    class Pool:
+        def start(self, task):
+            started_snapshots.append(events[-1])
+            task.run()
+
+    model = Model()
+    model.thread_pool = Pool()
+    store.run(
+        ActionSpec("query", "system.shell", "查询"), ("demo",),
+        lambda: model.query_async("demo", _operation_id=operation_id),
+    )
+    assert len(started_snapshots) == 1
+    assert started_snapshots[0].operation_ids == expected
+    assert store.recent()[0].operation_ids == expected
 
 
 @pytest.mark.ui

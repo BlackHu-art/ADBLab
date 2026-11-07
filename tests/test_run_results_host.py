@@ -1,4 +1,4 @@
-"""验证任务中心切换结果与操作记录时，隐藏长列表不参与当前页测高。"""
+"""统一任务表只挂载一处行内详情，后台记录不抢阅读位置。"""
 
 from PySide6.QtCore import QCoreApplication, QEvent
 
@@ -14,7 +14,7 @@ from tests.ui_geometry_helpers import (
 )
 
 
-def test_task_center_result_view_ignores_hidden_operation_history_height(
+def test_task_center_shared_inline_reader_ignores_hidden_archive_detail_height(
     qt_application, tmp_path,
 ):
     store = RunLibrary(tmp_path / "runs.json")
@@ -29,17 +29,18 @@ def test_task_center_result_view_ignores_hidden_operation_history_height(
     page.resize(900, 800)
     try:
         page.show()
-        wait_until(qt_application, lambda: page.run_results.table.rowCount() == 8)
+        wait_until(qt_application, lambda: len(page.table.rows) == 8)
         page.refresh()
-        wait_for_stable_geometry(qt_application, (page, page._scroll.widget(), page.history_views))
-        content_height = page._scroll.widget().height()
-        scroll_maximum = page._scroll.verticalScrollBar().maximum()
-        assert page.history_views.current_key == "test_results"
+        assert not page.table.expanded_key
+        assert not page.run_results.isVisibleTo(page)
+        assert not page.action_results.isVisibleTo(page)
+        page.table.rows["run:7"].toggle.click()
+        wait_for_stable_geometry(qt_application, (page, page._scroll.widget(), page.detail))
+        detail = page.detail
+        run_height = page.run_results.height()
         assert page.run_results.isVisibleTo(page)
-        assert not page._history_card.isVisibleTo(page)
-        assert not page._active_card.isVisibleTo(page)
-        assert page._idle_label.isVisibleTo(page)
         selected = page.run_results.selected_record
+        assert selected.run_id == "7"
         for index in range(80):
             page.present_action_result(ActionResult(
                 f"local-operation-{index}", ActionSpec("query", "system.shell", "查询", "text"),
@@ -51,41 +52,49 @@ def test_task_center_result_view_ignores_hidden_operation_history_height(
                 finished_at=101 + index,
             ))
         page.refresh()
-        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.history_views))
-        assert page.action_results.history.count() == 20
-        assert page._scroll.widget().height() == content_height
-        assert page._scroll.verticalScrollBar().maximum() == scroll_maximum
-        page.history_views.set_current("operations")
+        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.detail))
+        assert len(page.action_results.records_snapshot()) == 20
+        assert len(page.table.rows) == 28
+        assert page.table.expanded_key == "run:7"
+        assert page.detail is detail
+        assert page.run_results.selected_record == selected
+        assert page.run_results.height() == run_height
+        assert not page.action_results.isVisibleTo(page)
+        assert page.select_request("local-operation-79")
+        page.action_results.detail_toggle.setChecked(True)
         wait_until(qt_application, lambda: page.action_results.isVisibleTo(page))
-        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.history_views))
+        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.detail))
         assert not page.run_results.isVisibleTo(page)
-        assert page._history_card.isHidden()
+        assert page.detail is detail
+        assert page.table.expanded_key == "action:local-operation-79"
         assert page.action_results.output.isVisibleTo(page)
         assert page.action_results.output.toPlainText().startswith("本次操作 79\n")
         assert_scroll_target_reachable(page._scroll, page.action_results.export_button)
         operation_height = page._scroll.widget().height()
-        # 隐藏结果页展开参数后变高，也不能反过来撑高当前操作阅读器。
+        # 未挂载的归档详情改变高度，也不能撑高正在阅读的操作行。
         page.run_results.parameters_section.toggle_button.click()
-        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.history_views))
+        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.detail))
         assert not page.run_results.parameters_section.content.isHidden()
         assert page._scroll.widget().height() == operation_height
         page.run_results.parameters_section.toggle_button.click()
-        page.history_views.set_current("test_results")
+        page.table.rows["run:7"].toggle.click()
         wait_until(qt_application, lambda: page.run_results.isVisibleTo(page))
-        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.history_views))
-        assert not page._history_card.isVisibleTo(page)
+        wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.detail))
+        assert page.detail is detail
         assert not page.action_results.isVisibleTo(page)
-        assert page.run_results.table.rowCount() == 8
+        assert len([key for key in page.table.rows if key.startswith("run:")]) == 8
         assert page.run_results.selected_record == selected
         assert page.run_results.parameters_section.content.isHidden()
-        assert page._scroll.widget().height() == content_height
+        assert page.run_results.height() == run_height
         assert_scroll_target_reachable(page._scroll, page.run_results.reuse_button)
         operation = manager.begin("install")
         manager.mark_running(operation.operation_id)
         page.refresh()
-        assert page._active_card.isVisibleTo(page)
-        assert not page._idle_label.isVisibleTo(page)
-        assert page._active_card.viewLayout.count() == 1
+        assert len(page.table.rows) == 29
+        active_row = page.table.rows[f"operation:{operation.operation_id}"]
+        assert active_row.isVisibleTo(page)
+        assert active_row.cancel.isVisibleTo(page)
+        assert page.table.expanded_key == "run:7"
     finally:
         page.close()
         page.deleteLater()

@@ -220,6 +220,7 @@ class MainFrame(FluentWindow):
         self._connection_transition_active = False
         self._device_details_transition_active = False
         self._selector_transition_active = False
+        self._navigation_transition_active = False
         self._actions = MainFrameActions(self)
         self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
@@ -904,11 +905,22 @@ class MainFrame(FluentWindow):
         self._selector_transition_active = active
         self._sync_viewport_transition_gate()
 
+    def _on_navigation_transition_state_changed(
+        self, state: QAbstractAnimation.State, _previous_state: QAbstractAnimation.State,
+    ) -> None:
+        """导航宽度稳定后再规划网格，避免动画中间宽度触发多轮布局。"""
+        self._navigation_transition_active = state == QAbstractAnimation.State.Running
+        if getattr(self, "_closing", False):
+            # 关闭屏障仍可处理动画信号，不得重新启动已清理的布局计时器。
+            return
+        self._sync_viewport_transition_gate()
+
     def _sync_viewport_transition_gate(self) -> None:
         """等最后一个活动过渡结束，涵盖跨页时仍在收尾的旧页面。"""
         self.left_panel.set_viewport_transition_active(
             self._connection_transition_active or self._device_details_transition_active
             or self._selector_transition_active
+            or self._navigation_transition_active
         )
 
     def _sync_device_reveal_geometry(self) -> None:
@@ -1360,6 +1372,7 @@ class MainFrame(FluentWindow):
         except (RuntimeError, TypeError):
             pass
         panel.returnButton.clicked.connect(self._navigate_back)
+        panel.expandAni.stateChanged.connect(self._on_navigation_transition_state_changed)
         panel.expandAni.finished.connect(self._on_navigation_animation_finished)
         self.navigationInterface.setUpdateIndicatorPosOnCollapseFinished(True)
         self.navigationInterface.displayModeChanged.connect(
@@ -3187,7 +3200,14 @@ class MainFrame(FluentWindow):
         # 标题栏和导航壳层，否则“浅色 + 系统深色”首次启动会出现黑色侧栏。
         self._refresh_window_chrome_theme()
         QTimer.singleShot(0, self, self._refresh_window_chrome_theme)
-        self._navigation_layout_timer.start(0)
+        if getattr(self, "_layout_ready", False):
+            # show 返回后原生窗口可能立即绘制，零延时回调不能保证早于首帧。
+            # 先提交导航占宽，再让当前页承接真实宽度，避免首页先错排再恢复。
+            self._navigation_layout_timer.stop()
+            self._sync_navigation_width_mode()
+            settle_responsive_layout(
+                self.stackedWidget.currentWidget(), self._responsive_coordinator()
+            )
         if getattr(self, "_startup_complete", False):
             self._start_startup_services()
 

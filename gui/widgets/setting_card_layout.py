@@ -32,6 +32,9 @@ class SettingsCardPresentation:
         while card.hBoxLayout.count():
             card.hBoxLayout.takeAt(0)
         self.body = QWidget(card)
+        # 正文由卡片和滚动视口裁切；macOS 窗口安全区不能再次压缩视口外的正文，
+        # 否则滚入前的底部边距可能超过卡高，让标题与说明使用负高度网格。
+        self.body.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
         self.grid = QGridLayout(self.body)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(16)

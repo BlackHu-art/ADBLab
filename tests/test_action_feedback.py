@@ -295,16 +295,20 @@ def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
             (["synthetic-a", "synthetic-b"],),
         )
         assert len(jobs) == 2, spec
-        view = frame._task_page.action_results
+        page = frame._task_page
+        view = page.action_results
+        row = page.table.rows[f"action:{jobs[0].request_id}"]
         assert view._records[jobs[0].request_id].state == "running", spec
+        assert row.data.state == "运行中", spec
         store.complete(jobs[0], {"success": False, "error": "设备暂不可用，请重试"})
-        assert "执行中" in view.summary.text(), spec
+        assert row.data.state == "运行中", spec
         store.complete(jobs[1], {"success": True, "output": "second target answer"})
         snapshot = store.recent()[0]
         assert snapshot.state == "partial", spec
         assert view._records[snapshot.request_id] is snapshot
         assert frame._task_page.action_results._records[snapshot.request_id] is snapshot
-        assert "部分成功" in view.summary.text(), spec
+        assert row.data.state == "部分成功", spec
+        assert page.table.expanded_key == "", spec
         assert notices[-1]["level"] == "warning", spec
         assert notices[-1]["key"] == snapshot.request_id, spec
         assert frame.stackedWidget.currentWidget() is original_page
@@ -741,7 +745,7 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(
     frame = result_frame
     page = frame._task_page
     frame._on_nav_requested("tasks")
-    wait_for_stable_geometry(qt_application, [page, page.running_actions_button])
+    wait_for_stable_geometry(qt_application, [page, page.table])
     assert page.isVisibleTo(frame)
     page._operation_manager = None
     page.refresh()
@@ -751,16 +755,22 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(
         lambda devices: jobs.append(capture_action_job("bugreport_async", devices[0])),
         (["synthetic-a"],),
     )
-    wait_for_stable_geometry(qt_application, [page.running_actions_button])
-    assert not page.running_actions_button.isHidden()
-    assert "1" in page.running_actions_button.text()
-    assert page._idle_label.isHidden()
-    page.running_actions_button.click()
-    assert page.history_views.current_key == "operations"
+    key = f"action:{jobs[0].request_id}"
+    row = page.table.rows[key]
+    wait_for_stable_geometry(qt_application, [page.table, row])
+    assert row.isVisibleTo(page)
+    assert row.data.state == "运行中"
+    assert "1 项进行中" in page.count_label.text()
+    assert row.cancel.isHidden()
+    assert page.table.expanded_key == ""
+    assert page.detail.isHidden()
+    row.title.click()
+    assert page.table.expanded_key == key
     assert page.action_results._selected == jobs[0].request_id
     frame.adb_controller.action_results.complete(jobs[0], {"success": False, "error": "生成失败"})
-    assert page.running_actions_button.isHidden()
-    assert not page._idle_label.isHidden()
+    assert page.table.rows[key] is row
+    assert row.data.state == "失败"
+    assert "0 项进行中" in page.count_label.text()
     assert "失败" in page.action_results.summary.text()
 
 
@@ -980,7 +990,10 @@ def test_task_notes_keep_order_and_severity_without_pretending_to_complete(resul
     presenter = result_frame._action_feedback
     presenter.record_notice("probe", "记录", "第一条", "info")
     presenter.record_notice("probe", "记录", "第二条", "error")
+    result = result_frame.adb_controller.action_results.recent()[0]
+    assert result_frame._task_page.select_request(result.request_id)
     view = result_frame._task_page.action_results
+    view.detail_toggle.click()
     assert "[记录] 第一条" in view.output.toPlainText()
     assert "[失败] 第二条" in view.output.toPlainText()
     assert view.targets.isHidden()

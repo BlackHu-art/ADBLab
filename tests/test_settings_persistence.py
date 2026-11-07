@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -32,6 +33,99 @@ def isolated_settings(tmp_path, monkeypatch):
         if current is not None and current is not previous_instance:
             current.close()
         settings_manager.AppSettings._instance = previous_instance
+
+
+def test_new_settings_default_to_system_font_and_auto_size(isolated_settings):
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("font_family") == ""
+    assert settings.ui_font_size == "Auto"
+    assert settings.log_font_size == 9
+
+
+def test_first_install_seed_uses_system_font_and_auto_size(isolated_settings, monkeypatch):
+    seed_file = Path(__file__).resolve().parents[1] / "resources" / "app_settings.json"
+    original_seed = seed_file.read_bytes()
+    monkeypatch.setattr(settings_manager, "LEGACY_SETTINGS_FILE", str(seed_file))
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("font_family") == ""
+    assert settings.ui_font_size == "Auto"
+    assert settings.log_font_size == 9
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["font_family"] == ""
+    assert stored["ui_font_size"] == "Auto"
+    assert stored["schema_version"] == 3
+    assert seed_file.read_bytes() == original_seed
+
+
+@pytest.mark.parametrize("value,expected", [(" auto ", "Auto"), (12, 12), (17, 17)])
+def test_ui_font_choice_round_trips_without_resolving_auto(
+    isolated_settings, monkeypatch, value, expected,
+):
+    settings = settings_manager.AppSettings.instance()
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    settings.update({"font_family": "", "ui_font_size": value})
+    assert settings._save_atomic() is True
+    settings.close()
+    settings_manager.AppSettings._instance = None
+
+    reloaded = settings_manager.AppSettings.instance()
+
+    assert reloaded.get("font_family") == ""
+    assert reloaded.ui_font_size == expected
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["ui_font_size"] == expected
+    assert stored["schema_version"] == 3
+
+
+@pytest.mark.parametrize("family,size", [("Microsoft YaHei", 12), ("Arial", 17)])
+def test_existing_font_choice_is_preserved_without_guessing_migration(
+    isolated_settings, family, size,
+):
+    isolated_settings.parent.mkdir(parents=True)
+    source = json.dumps({
+        "schema_version": 3, "font_family": family, "ui_font_size": size, "log_font_size": 11,
+    })
+    isolated_settings.write_text(source, encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("font_family") == family
+    assert settings.ui_font_size == size
+    assert settings.log_font_size == 11
+    assert isolated_settings.read_text(encoding="utf-8") == source
+
+
+def test_current_settings_without_ui_size_use_auto_without_rewriting(isolated_settings):
+    isolated_settings.parent.mkdir(parents=True)
+    source = '{"schema_version": 3, "font_family": "Arial", "log_font_size": 11}'
+    isolated_settings.write_text(source, encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("font_family") == "Arial"
+    assert settings.ui_font_size == "Auto"
+    assert settings.log_font_size == 11
+    assert isolated_settings.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize("key", ["ui_font_size", None])
+def test_reset_restores_auto_ui_size_and_persists_raw_choice(
+    isolated_settings, monkeypatch, key,
+):
+    settings = settings_manager.AppSettings.instance()
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    settings.update({"font_family": "Arial", "ui_font_size": 17, "log_font_size": 11})
+
+    settings.reset(key)
+
+    assert settings.ui_font_size == "Auto"
+    assert settings.get("font_family") == ("" if key is None else "Arial")
+    assert settings.log_font_size == (9 if key is None else 11)
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["ui_font_size"] == "Auto"
 
 
 def test_deferred_migration_loads_values_before_writing_and_flushes_latest_update(

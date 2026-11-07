@@ -21,6 +21,10 @@ import pytest
     ("accent_color", "#1a2b3c", "#1A2B3C"), ("ui_font_size", 2, 8),
     ("ui_font_size", 40, 22), ("log_font_size", 1, 7),
     ("log_font_size", 99, 16), ("ui_font_size", True, 12),
+    ("ui_font_size", "Auto", "Auto"), ("ui_font_size", " auto ", "Auto"),
+    ("ui_font_size", "AUTO", "Auto"), ("ui_font_size", "17", 17),
+    ("ui_font_size", None, 12), ("ui_font_size", "invalid", 12),
+    ("ui_font_size", float("nan"), 12), ("ui_font_size", float("inf"), 12),
     ("panel_split_ratio", -1, 0.2), ("device_log_split_ratio", 1.0, 0.7),
     ("panel_split_ratio", True, 0.5), ("font_family", " x ", "x"),
     ("font_family", "System Default", ""), ("font_family", "x" * 140, "x" * 128),
@@ -105,6 +109,7 @@ from core.settings.schema import normalise_language, normalise_ui_scale, normali
 assert normalise_language("zh_HK") == "zh_HK"
 assert normalise_ui_scale(1.5) == 1.5
 assert normalise_setting("log_max_lines", "2500") == 2500
+assert normalise_setting("ui_font_size", " auto ") == "Auto"
 assert not any(
     name == item or name.startswith(item + ".")
     for name in sys.modules for item in blocked

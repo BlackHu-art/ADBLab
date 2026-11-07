@@ -45,7 +45,10 @@ class CommandTask(QRunnable):
         self.queued_at = queued_at
         self.metadata = metadata
         self.result_context = dict(kwargs.pop("_result_context", {}) or {})
-        self.action_job = capture_action_job(method_ref.__name__, args[0] if args else "")
+        self.action_job = capture_action_job(
+            method_ref.__name__, args[0] if args else "",
+            operation_id=metadata.operation_id if metadata is not None else None,
+        )
         self.args = args
         self.kwargs = kwargs
         if self.action_job is not None and callable(kwargs.get("callback")):

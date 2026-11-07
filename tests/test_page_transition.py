@@ -43,7 +43,9 @@ def test_routes_keep_final_geometry_through_shared_content_transition(
             assert page.geometry() == geometry
             assert frame._global_device_bar.geometry() == bar_geometry
             image = frame.grab().toImage()
-            point = frame.stackedWidget.mapTo(frame, QPoint(frame.stackedWidget.width() // 2, 2))
+            # 无设备卡片贴顶，顶部中点属于应淡入的正文；左侧 32px 阅读留白
+            # 才透出共享材质，16px 取样也避开内容壳左上圆角。
+            point = frame.stackedWidget.mapTo(frame, QPoint(16, 2))
             ratio = image.devicePixelRatio()
             samples.append(image.pixelColor(round(point.x() * ratio), round(point.y() * ratio)))
         assert samples == [samples[-1]] * len(samples), (key, samples)

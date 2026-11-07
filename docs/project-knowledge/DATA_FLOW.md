@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-29
+last_verified: 2026-11-07
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -168,7 +168,7 @@ DeviceStore 使用持久化锁串行化加载与保存，内存状态由独立�
 | 存储 | 类型/位置 | 数据结构 | 主要读写入口 | 一致性机制 | 风险 |
 | --- | --- | --- | --- | --- | --- |
 | 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；受支持版本的未知键加载时剔除并记录 WARNING；未来版本在加载时不立即改写，未知字段经 `_future_extra` 在保存时合并回写 |
-| 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；不含本机保存路径，但仍带字体、主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
+| 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；字体族和界面字号已与当前系统默认模式对齐，仍含主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 部分字段仍与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
 | IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<ip>` | `DeviceStore.load/save/upsert_devices` | 持久化锁串行加载／保存，独立内存锁；临时文件 + fsync + `os.replace`；未读未备份文件写保护 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | 启动失败诊断 | 用户数据根目录 `logs/startup-diagnostics.log` | 最近一次失败启动的阶段、耗时和错误类型；最多 200 条脱敏摘要 | `core/startup_diagnostics.py`、`main.py` | 退出时以临时文件和 `os.replace` 原子替换；写入失败保留原始启动异常 | 成功启动不覆盖上次失败；正常启动诊断复用现有 application-diagnostics 日志，不含启动器及 onefile 解包时间 |
@@ -208,7 +208,7 @@ DeviceStore 使用持久化锁串行化加载与保存，内存状态由独立�
 
 | 分类 | 配置键 | 使用位置 |
 | --- | --- | --- |
-| 外观 | `theme`、`accent_color`、`mica_enabled`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、qfluentwidgets、MainFrame、SettingsPage、日志/功能页/瞬态对话框；主题为 System/Light/Dark，强调色规范化为 `#RRGGBB`，Mica 为布尔值；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
+| 外观 | `theme`、`accent_color`、`mica_enabled`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、qfluentwidgets、MainFrame、SettingsPage、日志/功能页/瞬态对话框；主题为 System/Light/Dark，强调色规范化为 `#RRGGBB`，Mica 为布尔值；空字体族表示系统默认，UI 字号为 Auto 或 8–22 整数，日志字号为 7–16 整数 |
 | 显示缩放 | `ui_scale` | GUI 创建 QApplication 前读取；Auto 保留系统/外部环境，数值接受 1、1.25、1.5、1.75、2，无效值回退 Auto；设置后重启生效，不修改 schema v3 |
 | 界面语言 | `language` | Auto、zh_CN、zh_HK、en_US；无效值回退 Auto。设置页保存后提示重启，恢复默认回填 Auto；启动时按系统中文脚本/地区选择简繁中文，其他系统语言回退英文。只增加正式默认键，沿用 schema v3 |
 | 窗口 | `window_width`、`window_height`、`always_on_top`；旧分栏键仅在设置层保留 | MainFrame、SettingsPage；默认 1250×700、设计最小 860×500；屏幕工作区不足时由 `gui/window_layout.py` 下调实际最小尺寸 |
@@ -220,6 +220,12 @@ DeviceStore 使用持久化锁串行化加载与保存，内存状态由独立�
 | Monkey | `monkey_params` | AppPanel/Controller |
 | 旧分栏兼容 | `panel_split_ratio`、`left_panel_width`、`right_panel_width`、`device_log_split_ratio` | 仅为旧配置 schema 兼容保留；新 FluentWindow 运行时不创建 splitter，也不再写入这些键 |
 | Remote | `scrcpy_preset`、`scrcpy_maxsize`、`scrcpy_fps`、`scrcpy_codec`、`scrcpy_buffer`、`scrcpy_bitrate`、`scrcpy_orientation` | RemotePanel；这些键由 `SCRCPY_SETTING_DEFAULTS` 白名单纳入 `DEFAULTS`，运行时可写且重启可载入 |
+
+新配置及恢复默认保存空字体族和 `ui_font_size="Auto"`，日志默认仍为 9pt。
+Auto 持久化的是选择模式，实际系统 pt 只在字体层解析，不回写为固定数字；旧配置中的字体名和
+数字字号均保持，缺失字段使用当前默认。Auto 大小写与首尾空白规范化；无效手动字号仍安全回退
+12，原有数字范围校验保持。此为既有字段的模式扩展，沿用 schema v3；显示解析见
+[字体更新](UI_IMPLEMENTATION.md#字体更新)。
 
 正式配置键及默认值以 `core/settings/schema.py::DEFAULTS` 为准，旧manager出口引用同一对象。Remote 键经字符串
 规范化后保存；未知运行时键不会因此自动进入加载白名单。`AppSettings.reset()` 深复制默认值，

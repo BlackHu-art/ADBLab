@@ -48,7 +48,7 @@ def normalise_ui_scale(value: Any) -> str | float:
 DEFAULTS = {
     # 空字符串表示跟随 Qt 提供的系统默认界面字体。
     "font_family": "",
-    "ui_font_size": 12,
+    "ui_font_size": "Auto",
     "ui_scale": "Auto",
     "language": "Auto",
     "log_font_size": 9,
@@ -204,6 +204,9 @@ def normalise_setting(key: str, value: Any) -> Any:
         return family[:128]
 
     if key in _FONT_SIZE_RULES:
+        if key == "ui_font_size" and isinstance(value, str) and value.strip().casefold() == "auto":
+            # 自动选择只保存原始模式，由界面字体管理器解析系统实际字号。
+            return "Auto"
         minimum, maximum, default = _FONT_SIZE_RULES[key]
         if isinstance(value, bool):
             return default

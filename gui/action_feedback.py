@@ -241,13 +241,11 @@ class ActionFeedbackPresenter(QObject):
             return
         page = self.frame._task_page
         self.frame._on_nav_requested("tasks")
-        page.history_views.set_current("operations")
         result = next((item for item in self.frame.adb_controller.action_results.recent()
                        if item.request_id == request_id), None)
         if result is not None:
             page.present_action_result(result)
-        page.action_results.select_request(request_id)
-        self._reveal(page.action_results)
+        page.select_request(request_id)
 
     def open_section(self, section: str, request_id: str = "") -> None:
         """以稳定功能位置返回原分区，使用当次结果而不是当前设备重新执行。"""

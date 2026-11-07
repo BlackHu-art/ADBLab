@@ -495,10 +495,10 @@ class AppSettings:
         return os.path.join(os.path.expanduser("~"), "ADBLab")
 
     @property
-    def ui_font_size(self) -> int:
-        """返回已校验的界面字号。"""
+    def ui_font_size(self) -> int | str:
+        """返回已校验的手动字号或 Auto 原始选择，不在设置层解析系统字体。"""
 
-        return self.get("ui_font_size", 12)
+        return self.get("ui_font_size", "Auto")
 
     @property
     def log_font_size(self) -> int:

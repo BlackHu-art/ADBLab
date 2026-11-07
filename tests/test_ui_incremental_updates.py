@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QWidget
 from qfluentwidgets import RoundMenu
 from shiboken6 import isValid
 
@@ -27,18 +27,19 @@ def test_progress_refresh_preserves_pressed_cancel_and_unaffected_rows(qt_applic
     page.show()
     page.refresh()
     qt_application.processEvents()
-    layout = page._active_card.viewLayout
-    rows = [layout.itemAt(i).widget() for i in range(layout.count())]
-    button = rows[0].findChild(QPushButton)
-    assert button is not None
+    keys = [f"operation:{operation.operation_id}" for operation in operations]
+    rows = [page.table.rows[key] for key in keys]
+    rows[0].toggle.click()
+    button = rows[0].cancel
     QTest.mousePress(button, Qt.MouseButton.LeftButton)
-    manager.update_progress(operations[0].operation_id, 35)
+    manager.update_progress(operations[0].operation_id, 35, message="正在安装应用")
     page.refresh()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     try:
         assert all(isValid(row) for row in rows)
-        assert [layout.itemAt(i).widget() for i in range(layout.count())] == rows
-        assert rows[0]._progress.value() == 35
+        assert [page.table.rows[key] for key in keys] == rows
+        assert rows[0].cancel is button
+        assert page.operation_output.toPlainText() == "正在安装应用"
         QTest.mouseRelease(button, Qt.MouseButton.LeftButton)
         assert manager.get(operations[0].operation_id).cancel_requested
         stop.assert_called_once_with(operations[0].operation_id)
@@ -52,21 +53,23 @@ def test_task_rows_leave_and_return_without_replacing_survivors(qt_application):
     first, second = manager.begin("install"), manager.begin("screenshot")
     page = TaskCenterPage(operation_manager=manager)
     try:
+        page.show()
         page.refresh()
-        first_row = page._active_rows[first.operation_id]
-        survivor = page._active_rows[second.operation_id]
+        first_row = page.table.rows[f"operation:{first.operation_id}"]
+        survivor = page.table.rows[f"operation:{second.operation_id}"]
         manager.finish(first.operation_id, OperationState.CANCELLED)
         page.refresh()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         assert not isValid(first_row)
-        assert page._active_rows[second.operation_id] is survivor
+        assert page.table.rows[f"operation:{second.operation_id}"] is survivor
         manager.finish(second.operation_id, OperationState.CANCELLED)
         page.refresh()
-        assert page._active_card.viewLayout.count() == 1
+        assert not page.table.rows
+        assert page.empty_label.isVisibleTo(page)
         replacement = manager.begin("install")
         page.refresh()
-        assert list(page._active_rows) == [replacement.operation_id]
-        assert page._active_card.viewLayout.count() == 1
+        assert list(page.table.rows) == [f"operation:{replacement.operation_id}"]
+        assert len(page.table.rows) == 1
     finally:
         page.shutdown()
         page.close()

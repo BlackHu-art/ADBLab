@@ -17,7 +17,7 @@ from .typography import (
 # 旧 QSS 模板仍按映射读取字体；该映射仅作为兼容投影，由字体核心统一更新。
 _font = {
     "FAMILY": system_ui_font_family(),
-    "UI": 12,
+    "UI": typography_manager.config.ui_size,
     "LOG": 9,
 }
 
@@ -32,7 +32,7 @@ class FontMixin:
     DEFAULT_FONT_FAMILY: str = DEFAULT_FONT_FAMILY
     LOG_FONT: str = LOG_FONT
     LOG_FONT_SIZE: int = LOG_FONT_SIZE
-    DEFAULT_FONT_SIZE: int = _font["UI"]
+    DEFAULT_FONT_SIZE: float = _font["UI"]
     LOG_FONT_SIZE_VAR: int = _font["LOG"]
 
     ui_font_changed = typography_manager.ui_font_changed
@@ -49,7 +49,7 @@ class FontMixin:
         config = font_config_from_mapping(
             {
                 "font_family": settings.get("font_family", ""),
-                "ui_font_size": settings.get("ui_font_size", 12),
+                "ui_font_size": settings.get("ui_font_size", "Auto"),
                 "log_font_size": settings.get("log_font_size", 9),
             }
         )
@@ -90,7 +90,7 @@ class FontMixin:
         # 还可兼容少量旧代码和测试直接覆写类属性的行为。
         config = FontConfig(
             ui_family=cls.DEFAULT_FONT_FAMILY,
-            ui_size=int(cls.DEFAULT_FONT_SIZE),
+            ui_size=float(cls.DEFAULT_FONT_SIZE),
             log_size=int(cls.LOG_FONT_SIZE_VAR),
             mono_family=cls.LOG_FONT,
         )

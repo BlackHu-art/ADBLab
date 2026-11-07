@@ -69,6 +69,25 @@ def _feature_page_set(qt_application):
             qt_application.setFont(previous_application_font)
 
 
+def test_performance_font_fallback_refresh_keeps_fractional_system_size(
+    qt_application, monkeypatch,
+):
+    """系统小数字号变化时，定时外观兜底仍能发现并刷新，不能按整数缓存。"""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 12.0)
+    owner = SimpleNamespace(
+        _closing=False,
+        _applied_theme_signature=PerformancePage._theme_signature(),
+        _theme_signature=PerformancePage._theme_signature,
+        _apply_theme=Mock(),
+    )
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 12.5)
+    PerformancePage._sync_theme_state(owner)
+    owner._apply_theme.assert_called_once_with(BaseStyles.current_theme())
+
+
 def test_permission_lists_refresh_font_without_losing_choices(qt_application, monkeypatch):
     """权限列表实际绘制跟随字号往返变化，选中和勾选状态不被重建丢失。"""
     font_size = 12
@@ -250,6 +269,7 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
     monkeypatch.setattr(AppSettings, "instance", staticmethod(lambda: _Settings()))
 
     with _feature_page_set(qt_application) as pages:
+        qr_size_before = pages["about"].support_qr.size()
         try:
             BaseStyles.reload_from_settings()
             qt_application.processEvents()
@@ -279,7 +299,8 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             )
             assert all(button.maximumHeight() > 1_000_000 for button in adaptive_buttons)
 
-            assert about.support_qr.size().width() == 132
+            assert qr_size_before.width() == qr_size_before.height() > 0
+            assert about.support_qr.size() == qr_size_before
             assert about.maximumWidth() > 1_000_000
             assert logcat.btn_get_pkg.minimumWidth() >= logcat.btn_get_pkg.sizeHint().width()
             assert logcat.btn_get_pkg.width() >= logcat.btn_get_pkg.sizeHint().width()

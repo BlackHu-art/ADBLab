@@ -98,14 +98,18 @@ def test_action_results_belong_to_section_and_survive_navigation(frame, qt_appli
     )
     frame._action_feedback.present(result)
     frame._on_nav_requested("tasks")
-    frame._task_page.history_views.set_current("operations")
+    assert frame._task_page.select_request(result.request_id)
     view = frame._task_page.action_results
     assert view.isVisibleTo(frame._tasks_page)
+    view.detail_toggle.click()
     assert "示例操作失败" in view.output.toPlainText()
-    view.detail_toggle.setChecked(False)
+    row = frame._task_page.table.rows[f"action:{result.request_id}"]
+    row.toggle.click()
+    assert frame._task_page.table.expanded_key == ""
     frame._on_nav_requested("home")
     frame._on_nav_requested("tasks")
-    view.detail_toggle.setChecked(True)
+    assert frame._task_page.select_request(result.request_id)
+    assert view.detail_toggle.isChecked()
     assert "示例操作失败" in view.output.toPlainText()
     assert frame._action_feedback._diagnostics._records["synthetic"] is result
 

@@ -1,11 +1,11 @@
 """卡片在实际云母宿主、重挂与主题变化时保持统一材质和交互。"""
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QRegion
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import SettingCard
+from qfluentwidgets import FluentWindow, SettingCard
 
 from gui.styles import BaseStyles
 from gui.widgets.adb_client_card import AdbEnvironmentSettingCard
@@ -31,10 +31,21 @@ def _over(background, alpha):
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("material_support", ["native", "supported", "refused"])
 def test_settings_and_about_cards_follow_actual_host_material(
-    qt_application, theme_probe_frame, theme,
+    qt_application, monkeypatch, theme_probe_frame, theme, material_support,
 ):
-    """普通卡、关于卡及折叠标题统一低覆盖，关闭云母后恢复原生填充。"""
+    """材质按实际宿主状态绘制，支持、拒绝及真实平台均保持正确回退。"""
+    if material_support != "native":
+        # 仅替换平台能力边界，卡片绘制和材质观察器仍走实际实现。
+        def set_native_mica(window, enabled):
+            window._isMicaEnabled = bool(enabled and material_support == "supported")
+            window.setBackgroundColor(window._normalBackgroundColor())
+
+        monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", set_native_mica)
+        monkeypatch.setattr(
+            "gui.window_effects.sync_mica_backdrop", lambda *_: material_support == "supported",
+        )
     frame = theme_probe_frame(theme, True, width=1000)
     frame._on_nav_requested("settings")
     wait_until(qt_application, lambda: (
@@ -43,10 +54,17 @@ def test_settings_and_about_cards_follow_actual_host_material(
     cards = frame._settings_page.findChildren(SettingCard)
     assert len(cards) >= 20
     QTest.mouseMove(frame, QPoint(2, 2))
-    for mica in (True, False, True):
-        frame.setMicaEffectEnabled(mica)
+    for requested in (True, False, True):
+        frame.setMicaEffectEnabled(requested)
+        wait_until(qt_application, lambda: (
+            frame.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+        ))
         qt_application.processEvents()
+        mica = frame.isMicaEffectEnabled()
+        if material_support != "native":
+            assert mica is (requested and material_support == "supported")
         background = _expected_content_color(frame)
+        # 请求开启不代表平台已应用；macOS、旧 Windows 或 DWM 拒绝时使用原生填充。
         alpha = 13 if theme == "Dark" else (64 if mica else 170)
         expected = _over(background, alpha)
         mismatches = []
@@ -59,28 +77,54 @@ def test_settings_and_about_cards_follow_actual_host_material(
             if actual != expected:
                 mismatches.append((card.titleLabel.text(), actual.name(), expected.name()))
         assert not mismatches, (theme, mica, mismatches)
+        # 单卡渲染与用户实际看到的整窗合成必须一致，不能只验证离屏取样。
+        visible_card = frame._settings_page.save_card
+        assert visible_card.isVisibleTo(frame)
+        point = visible_card.mapTo(frame, QPoint(20, visible_card.height() - 8))
+        assert frame.rect().contains(point)
+        image = frame.grab().toImage()
+        scale = image.devicePixelRatio()
+        assert image.pixelColor(round(point.x() * scale), round(point.y() * scale)) == expected
 
 
 @pytest.mark.parametrize("section,feature", [
     ("devices", "files"), ("apps", "manager"), ("system", "logcat"), ("system", "performance"),
 ])
-def test_no_device_cards_use_the_same_mica_surface(
-    qt_application, theme_probe_frame, section, feature,
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_no_device_pages_leave_shared_surface_uncovered(
+    qt_application, theme_probe_frame, section, feature, theme,
 ):
-    """没有设备时的大卡片也透出宿主，保持入口与空态文本。"""
-    frame = theme_probe_frame("Light", True, width=1000)
-    frame._open_workspace_feature(section, feature)
-    wait_until(qt_application, lambda: (
-        frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
-    ))
-    pages = [page for page in frame.findChildren(QWidget, "workspaceFeatureNoDevice")
-             if page.isVisibleTo(frame)]
-    assert pages, (section, feature)
-    for page in pages:
-        card = page.card
-        QTest.mouseMove(frame, QPoint(2, 2))
-        qt_application.processEvents()
-        assert card.backgroundColor == QColor(255, 255, 255, 64)
+    """无候选和候选未选两类空态均不叠底板，主题与材质往返保持原设备入口。"""
+    frame = theme_probe_frame(theme, True, width=1000)
+    host = frame._workspace_feature_hosts[section]
+    for candidates in ([], ["surface-demo-a", "surface-demo-b"]):
+        frame._on_devices_updated(candidates)
+        frame.left_panel.set_selected_devices([])
+        assert frame._open_workspace_feature(section, feature)
+        page = host.no_device_page
+        wait_until(qt_application, lambda: (
+            frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
+        ))
+        assert page.isVisibleTo(frame)
+        assert host.stack.currentWidget() is page
+        assert host.current_feature == feature
+        assert page.title_label.text()
+        assert page.message_label.text()
+        assert page.choose_button.isVisibleTo(frame) is (not candidates)
+        assert page.choose_button.focusPolicy() != Qt.FocusPolicy.NoFocus
+        point = QPoint(16, 16)
+        assert page.card.childAt(point) is None
+        for mica in (False, True, False):
+            frame.setMicaEffectEnabled(mica)
+            wait_until(qt_application, lambda: (
+                frame.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
+            ))
+            qt_application.processEvents()
+            image = frame.grab().toImage()
+            scale = image.devicePixelRatio()
+            sample = page.card.mapTo(frame, point)
+            actual = image.pixelColor(round(sample.x() * scale), round(sample.y() * scale))
+            assert actual == _expected_content_color(frame), (theme, mica, section, feature)
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

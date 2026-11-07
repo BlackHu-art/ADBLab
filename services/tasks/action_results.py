@@ -54,6 +54,7 @@ class ActionResult:
     finished_at: float | None = None
     target_names: tuple[str, ...] = ()
     target_labels: tuple[str, ...] = ()
+    operation_ids: tuple[str, ...] = ()
 
 
 def expired_action_results(
@@ -119,13 +120,15 @@ _scope: ContextVar[tuple[ActionResults, str, ActionJob | None] | None] = Context
 )
 
 
-def capture_action_job(method: str, target: object = "") -> ActionJob | None:
-    """在异步提交点登记任务；未由用户操作作用域提交的后台查询保持原协议。"""
+def capture_action_job(
+    method: str, target: object = "", *, operation_id: str | None = None,
+) -> ActionJob | None:
+    """登记异步任务及显式操作归属；作用域外的后台查询保持原协议。"""
     scope = _scope.get()
     if scope is None:
         return None
     store, request_id, _job = scope
-    return store.add_job(request_id, method, str(target))
+    return store.add_job(request_id, method, str(target), operation_id=operation_id)
 
 
 def report_action_message(success: bool, message: str) -> bool:
@@ -231,11 +234,17 @@ class ActionResults:
                 request.sealed = True
                 self._settle(request_id)
 
-    def add_job(self, request_id: str, method: str, target: str) -> ActionJob:
-        """登记尚未执行的命令，异常结果也能通过此处的目标快照归属设备。"""
+    def add_job(
+        self, request_id: str, method: str, target: str, *, operation_id: str | None = None,
+    ) -> ActionJob:
+        """命令启动前登记目标和已校验的操作身份，供展示层精确合并同一次操作。"""
         request = self._requests[request_id]
         job = ActionJob(request_id, uuid.uuid4().hex, target, method.removesuffix("_async"))
         request.jobs[job.job_id] = job
+        if operation_id is not None and operation_id not in request.result.operation_ids:
+            request.result = replace(
+                request.result, operation_ids=(*request.result.operation_ids, operation_id),
+            )
         self._update(request_id)
         return job
 

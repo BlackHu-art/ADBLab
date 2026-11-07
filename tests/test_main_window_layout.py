@@ -10,19 +10,17 @@ from unittest.mock import Mock, patch
 import pytest
 from PySide6.QtCore import (
     QAbstractAnimation,
-    QCoreApplication,
-    QDeadlineTimer,
     QEvent,
-    QEventLoop,
     QObject,
     QPoint,
+    QRect,
     QSignalBlocker,
     QSize,
     Qt,
 )
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
 from qfluentwidgets import (
     CardWidget,
     ComboBox,
@@ -576,12 +574,19 @@ def test_device_medium_compact_transition_does_not_collapse_wide_right_panel_row
         classmethod(lambda _cls, _role, size=None: QFont("Arial", size or 10)),
     )
     monkeypatch.setattr(MainFrame, "_start_scan_thread", lambda _self: None)
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=1400, window_height=900)
     frame = build_main_frame(
-        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 1000)))
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 1000))),
+        settings=settings,
     )
     try:
         frame.resize(1400, 900)
         frame.show()
+        wait_until(qt_application, lambda: (
+            frame.width() == 1400
+            and frame.navigationInterface.panel.displayMode == NavigationDisplayMode.EXPAND
+        ))
         frame._on_nav_requested("devices")
         assert frame.stackedWidget.currentWidget() is frame._devices_page
         assert frame._devices_page.isVisibleTo(frame)
@@ -1967,6 +1972,53 @@ def test_workspace_navigation_has_nine_flat_features_and_three_persistent_pages(
         frame.close()
 
 
+def test_navigation_animation_keeps_device_transition_gate_closed_until_both_finish(
+    qt_application,
+):
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=860, window_height=640)
+    frame = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("navigation-gate", QSize(1600, 1000))),
+    )
+    try:
+        frame.show()
+        frame._on_connection_transition_changed(True)
+        frame._expand_navigation_panel(use_animation=True)
+        panel = frame.navigationInterface.panel
+        assert panel.expandAni.state() == QAbstractAnimation.State.Running
+        coordinator = frame.left_panel._responsive_coordinator
+        frame._on_connection_transition_changed(False)
+        assert coordinator._geometry_transition_active
+        panel.expandAni.stop()
+        wait_until(qt_application, lambda: not coordinator._geometry_transition_active)
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_animation_stop_during_shutdown_does_not_restart_layout(qt_application):
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=860, window_height=640)
+    frame = build_main_frame(settings=settings)
+    try:
+        frame.show()
+        frame._expand_navigation_panel(use_animation=True)
+        animation = frame.navigationInterface.panel.expandAni
+        assert animation.state() == QAbstractAnimation.State.Running
+        frame._closing = True
+        frame._prepare_ui_for_shutdown()
+        timer = frame.left_panel._responsive_settle_timer
+        assert not timer.isActive()
+        animation.stop()
+        assert not timer.isActive()
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
 def test_short_navigation_scrolls_current_workspace_item_into_view(qt_application):
     """短窗口切换到领域末项时，选中入口不能留在左栏视口之外。"""
 
@@ -2888,9 +2940,11 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
     small = _FakeScreen("small", QSize(720, 420), logical_dpi=144.0)
     adapter = _FakeScreenAdapter(large)
     settings = _MainFrameSettings()
+    settings.values["ui_font_size"] = "Auto"
     mouse_buttons = _FakeMouseButtons()
 
     with patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)):
+        BaseStyles.reload_from_settings()
         frame = build_main_frame(
             screen_adapter=adapter,
             settings=settings,
@@ -2902,6 +2956,7 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
         wait_until(qt_application, lambda: adapter.token_count() == 3)
         coordinator = frame.left_panel._responsive_coordinator
         wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+        font_points = frame.font().pointSizeF()
 
         begin_native_user_resize(frame, qt_application)
         frame.resize(1000, 600)
@@ -2934,6 +2989,8 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
         wait_until(qt_application, lambda: coordinator.diagnostics.stable)
         assert settings.writes == writes_after_user_resize
         assert coordinator.diagnostics.generation == before_small_metrics + 1
+        assert frame.font().pointSizeF() == font_points
+        assert settings.values["ui_font_size"] == "Auto"
 
         adapter.emit_screen_changed(large)
         wait_until(qt_application, lambda: frame._effective_window_size == QSize(1000, 600))
@@ -2944,6 +3001,7 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
 
         assert frame._preferred_window_size == QSize(1000, 600)
         assert frame.size() == QSize(1000, 600)
+        assert frame.font().pointSizeF() == font_points
         restored_minimum = frame._workspace_design_minimum()
         assert frame.minimumSize() == restored_minimum
         assert restored_minimum.width() == 860
@@ -3165,7 +3223,7 @@ def test_settings_reset_syncs_reference_cards_and_runtime(qt_application):
         assert page.pin_card.isChecked() is False
         assert page.log_lines_card.value() == "2000"
         assert page.font_family_card.value() == "系统默认"
-        assert page.ui_size_card.value() == "12"
+        assert page.ui_size_card.value() == "跟随系统"
         assert page.log_size_card.value() == "9"
         assert page.theme_card.value() == "跟随系统"
         assert page.accent_card.color_button.color.name().upper() == "#0F6CBD"
@@ -3424,14 +3482,19 @@ def test_minimum_window_keeps_task_result_reachable_with_large_font(
             state="succeeded",
             items=(ActionItem("job", "demo", "设备 1", "succeeded", "完整结果"),), finished_at=2,
         )
-        frame._task_page.history_views.set_current("operations")
         frame._action_feedback.present(result)
+        assert frame._task_page.table.expanded_key == ""
+        assert frame._task_page.select_request(result.request_id)
+        frame._task_page.action_results.detail_toggle.click()
         scroll = frame._task_page._scroll
         output = frame._task_page.action_results.output
         wait_until(
             qt_application,
-            lambda: scroll.viewport().rect().contains(mapped_rect(output, scroll.viewport())),
+            lambda: frame._task_page.action_results.detail_reveal.animation.state()
+            == QAbstractAnimation.State.Stopped,
         )
+        wait_for_stable_geometry(qt_application, (scroll.viewport(), scroll.widget(), output))
+        assert_scroll_target_reachable(scroll, output)
         wait_for_stable_geometry(qt_application, (scroll.viewport(), scroll.widget(), output))
 
         assert not hasattr(frame, "_device_log_splitter")
@@ -3446,25 +3509,82 @@ def test_minimum_window_keeps_task_result_reachable_with_large_font(
         frame.close()
 
 
-def _visible_content_height(page: QWidget) -> int:
-    """用同一把尺子量页面内的可见内容，隐藏子树的历史几何不参与比较。"""
+@pytest.mark.parametrize("system_points", [13, 12.5])
+def test_auto_font_settings_cards_keep_title_and_description_separate_after_scroll(
+    qt_application, monkeypatch, system_points,
+):
+    """真实主窗滚入字体及关于分组时，自动字号不能让标题和说明重叠。"""
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
 
-    return sum(child.height() for child in page.findChildren(QWidget) if child.isVisible())
+    settings = _MainFrameSettings()
+    settings.values.update(font_family="", ui_font_size="Auto", window_width=1120)
+    system_font = QFont("Arial")
+    system_font.setPointSizeF(system_points)
+    original_system_font = QFontDatabase.systemFont
+    monkeypatch.setattr(QFontDatabase, "systemFont", lambda role: (
+        system_font if role == QFontDatabase.SystemFont.GeneralFont else original_system_font(role)
+    ))
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr("models.device_store.DeviceStore.get_full_devices_info", lambda *_: [])
+    BaseStyles.reload_from_settings()
+    frame = build_main_frame(settings=settings)
+    try:
+        frame.show()
+        frame._on_nav_requested("settings")
+        wait_until(qt_application, lambda: (
+            frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
+        ))
+        page = frame._settings_page
+        page.ensureWidgetVisible(page.ui_size_card, 0, 24)
+        cards = (page.font_family_card, page.ui_size_card, page.log_size_card)
+        wait_for_stable_geometry(qt_application, (page, *cards))
+
+        def assert_separate_text(cards):
+            for card in cards:
+                title = mapped_rect(card.titleLabel, card)
+                description = mapped_rect(card.contentLabel, card)
+                assert title.height() > 0 and description.height() > 0
+                assert title.bottom() < description.top(), (
+                    card.titleLabel.text(), title, description,
+                )
+                assert card.rect().contains(title)
+                assert card.rect().contains(description)
+
+        assert_separate_text(cards)
+        about = page.about_panel
+        about_cards = (about.project_card, about.installer_card, about.support_card)
+        for expanded in (False, True):
+            about.support_button.setChecked(expanded)
+            wait_until(qt_application, lambda: (
+                about.support_reveal.animation.state() == QAbstractAnimation.State.Stopped
+            ))
+            page.ensureWidgetVisible(about.support_button, 0, 24)
+            wait_for_stable_geometry(qt_application, (page, *about_cards))
+            assert_separate_text(about_cards)
+    finally:
+        assert not cleanup_ui_windows((frame,), cleanup_records={})
 
 
-def _settled_visible_content_height(app: QApplication, page: QWidget) -> int:
-    """推进事件循环直到可见内容高度连续稳定，返回稳定值。"""
+def _visible_content_geometry(page: QWidget) -> dict[QWidget, tuple[QRect, QRect]]:
+    """记录实际可见区域，滚动视口外的后代不代表用户看到的首帧。"""
 
-    previous = _visible_content_height(page)
-    stable_rounds = 0
-    deadline = QDeadlineTimer(3000)
-    while stable_rounds < 3 and not deadline.hasExpired():
-        QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
-        current = _visible_content_height(page)
-        stable_rounds = stable_rounds + 1 if current == previous else 0
-        previous = current
-    del app
-    return previous
+    frame = page.window()
+    snapshot = {}
+    for child in (page, *page.findChildren(QWidget)):
+        if not child.isVisible():
+            continue
+        rect = mapped_rect(child, frame)
+        clipped = QRect(rect)
+        ancestor = child.parentWidget()
+        while ancestor is not None:
+            clipped = clipped.intersected(mapped_rect(ancestor, frame))
+            if clipped.isEmpty() or ancestor is frame:
+                break
+            ancestor = ancestor.parentWidget()
+        if not clipped.isEmpty():
+            snapshot[child] = (rect, clipped)
+    return snapshot
 
 
 # 概览页与功能页共享同一套隐藏期规划：首次可见必须已经落实最终宽度计划。
@@ -3505,11 +3625,35 @@ def test_first_visible_frame_already_uses_final_responsive_layout(
         populate_device_workbench(frame, 8)
         wait_for_stable_geometry(qt_application, frame.stackedWidget)
 
-        assert frame._open_workspace_feature(section, feature) is True
-        page = frame.stackedWidget.currentWidget()
-        first_frame = _visible_content_height(page)
+        page = frame._workspace_pages[section]
 
-        assert _settled_visible_content_height(qt_application, page) == first_frame
+        class PaintGeometry(QObject):
+            def __init__(self):
+                super().__init__(page)
+                self.snapshots = []
+
+            def eventFilter(self, _watched, event):  # noqa: N802
+                if event.type() == QEvent.Type.Paint:
+                    self.snapshots.append(_visible_content_geometry(page))
+                return False
+
+        probe = PaintGeometry()
+        page.installEventFilter(probe)
+        assert frame._open_workspace_feature(section, feature) is True
+        assert frame.stackedWidget.currentWidget() is page
+        # 切页函数返回时尚可能有未绘制的 LayoutRequest；以真实 Paint 为首帧边界。
+        wait_until(qt_application, lambda: bool(probe.snapshots))
+        wait_until(qt_application, lambda: (
+            frame.left_panel._responsive_coordinator.diagnostics.stable
+            and not frame._navigation_layout_timer.isActive()
+            and not frame._navigation_reflow_timer.isActive()
+            and not frame._workspace_constraint_refresh_timer.isActive()
+            and frame._page_transition.animation.state() == QAbstractAnimation.State.Stopped
+        ))
+        wait_for_stable_geometry(qt_application, (page, *page.findChildren(QWidget)))
+        final_frame = _visible_content_geometry(page)
+        assert final_frame
+        assert all(snapshot == final_frame for snapshot in probe.snapshots)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

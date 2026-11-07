@@ -579,6 +579,9 @@ def localized_tools(qt_application, monkeypatch, request):
     monkeypatch.setattr(MainFrame, "_start_scan_thread", lambda _self: None)
     monkeypatch.setattr(DeviceStore, "get_basic_devices_info", lambda: [])
     monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda _devices: [])
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
 
     def unexpected_command(*_args, **_kwargs):
         pytest.fail("语言控件测试不应执行外部命令")
@@ -748,9 +751,6 @@ def test_english_device_states_translate_around_original_metadata(localized_tool
 def test_english_task_states_and_cancel_preserve_operation_identity(
     localized_tools, qt_application,
 ):
-    from qfluentwidgets import BodyLabel
-
-    from gui.pages.tasks_page import _StatusBadge
     from services.task_history import TaskHistoryEntry
     from services.tasks.operations import OperationManager
 
@@ -760,6 +760,7 @@ def test_english_task_states_and_cancel_preserve_operation_identity(
     manager.mark_running(operation.operation_id)
     page = window._task_page
     page._operation_manager = manager
+    page._library = None
     raw_detail = "device-output: 原始诊断"
     page._history_store.record(TaskHistoryEntry(
         "known-task", "screenshot", "screenshot", True, state="succeeded",
@@ -770,21 +771,23 @@ def test_english_task_states_and_cancel_preserve_operation_identity(
     ))
     window.navigationInterface.widget("tasksPage").click()
     wait_for_stable_geometry(qt_application, (window, page))
-    badges = page._active_card.findChildren(_StatusBadge)
-    assert [badge.text() for badge in badges if badge.isVisible()] == ["Running"]
-    active_labels = page._active_card.findChildren(BodyLabel)
-    assert any(label.text().startswith("Install app · ") for label in active_labels)
-    history_labels = page._history_card.findChildren(BodyLabel)
-    assert any(label.text().startswith("Screenshot · ") for label in history_labels)
-    unknown = next(
-        label for label in history_labels if label.text().startswith("plugin_extension · ")
+    active_row = page.table.rows[f"operation:{operation.operation_id}"]
+    assert active_row.data.state == "Running"
+    assert active_row.data.title == "Install app"
+    assert active_row.isVisibleTo(page)
+    known = next(
+        row for key, row in page.table.rows.items() if key.startswith("history:known-task:")
     )
-    assert unknown.toolTip() == raw_detail
+    assert known.data.title == "Screenshot"
+    unknown = next(
+        row for key, row in page.table.rows.items() if key.startswith("history:plugin-task:")
+    )
+    assert unknown.data.title == "plugin_extension"
+    unknown.title.click()
+    assert page.operation_output.toPlainText() == raw_detail
     assert manager.get(operation.operation_id).kind == "install"
-    buttons = [button for button in page.findChildren(QPushButton) if button.text() == "Cancel"]
-    assert len(buttons) == 1
-    assert buttons[0].isVisible()
-    buttons[0].click()
+    assert active_row.cancel.isVisible()
+    active_row.cancel.click()
     assert manager.get(operation.operation_id).cancel_requested
 
 

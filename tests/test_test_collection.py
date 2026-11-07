@@ -8,7 +8,7 @@ import textwrap
 from pathlib import Path
 
 
-def _run_pytest(tmp_path, arguments, *, block_qt=False):
+def _run_pytest(tmp_path, arguments, *, block_qt=False, native_window=False):
     """在独立解释器中执行项目夹具，并捕获真实选择结果及成功用例。"""
     root = Path(__file__).resolve().parents[1]
     capture = tmp_path / "pytest_result.json"
@@ -59,8 +59,10 @@ def _run_pytest(tmp_path, arguments, *, block_qt=False):
         }), encoding="utf-8")
         raise SystemExit(result)
     """)
+    # macOS 无边框窗口直接访问 NSView；真实窗口探针必须使用 Cocoa，不能伪造离屏 winId。
+    qpa_platform = "cocoa" if native_window and sys.platform == "darwin" else "offscreen"
     environment = dict(
-        os.environ, QT_QPA_PLATFORM="offscreen", PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        os.environ, QT_QPA_PLATFORM=qpa_platform, PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
         PYTHONDONTWRITEBYTECODE="1",
     )
     for name in (
@@ -90,6 +92,18 @@ def test_monkey_preparation_fixture_isolates_settings_and_restores_singleton(tmp
     assert len(result["passed"]) == 1
     assert not result["has_settings_singleton"]
     assert not list((tmp_path / "user-environment").rglob("app_settings.json"))
+
+
+def test_task_and_font_widget_files_are_classified_as_ui(tmp_path):
+    files = (
+        "test_task_table.py", "test_task_inline_readers.py", "test_task_filter_sizing.py",
+        "test_task_center_empty_state.py", "test_task_center_module_effects.py",
+        "test_task_center_spacing.py", "test_task_center_unified.py",
+        "test_combo_menu_motion.py", "test_system_font_display.py",
+    )
+    result = _run_pytest(tmp_path, ["--collect-only", "-q", *(f"tests/{name}" for name in files)])
+    assert result["collected"]
+    assert all("ui" in markers for markers in result["collected"].values())
 
 
 def test_packaging_tls_check_preserves_application_for_later_gui_test(tmp_path):
@@ -135,6 +149,13 @@ def test_action_markers_select_gui_feedback_and_only_qt_result_nodes(tmp_path):
             "test_automatic_recording_pull_creates_one_media_result_per_device",
         )
     }
+    association_nodes = {
+        node for node in all_nodes if node.startswith(
+            files[1] + "::test_async_submission_publishes_operation_association_before_start[",
+        )
+    }
+    assert len(association_nodes) == 2
+    qt_results |= association_nodes
     assert feedback
     expected_ui = feedback | qt_results
     assert {node for node, marks in all_nodes.items() if "ui" in marks} == expected_ui
@@ -310,7 +331,7 @@ def test_ui_fixture_keeps_preferences_and_late_theme_callbacks_inside_test_stora
     """), encoding="utf-8")
     result = _run_pytest(tmp_path, [
         "-q", "-p", "tests.conftest", "--confcutdir", str(tmp_path), str(probe),
-    ])
+    ], native_window=True)
     assert len(result["passed"]) == 5
     assert not result["has_settings_singleton"]
 

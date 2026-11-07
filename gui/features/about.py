@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QRect, QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
-from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     FluentIcon,
     HyperlinkCard,
@@ -29,6 +37,50 @@ from utils.resource_path import resource_path
 
 if TYPE_CHECKING:
     from gui.adapters.installer_update import InstallerSnapshot
+
+
+class _SupportCardPresentation(SettingsCardPresentation):
+    """标题行独立测量，二维码仅增加下方裁剪区，避免展开时挤动标题和按钮。"""
+
+    def __init__(self, card: SettingCard, button: QAbstractButton, reveal: ContentReveal) -> None:
+        super().__init__(card, button)
+        button.setAccessibleName(button.text())
+        self.reveal = reveal
+        self.header = QWidget(card)
+        self.header_layout = QHBoxLayout(self.header)
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.setSpacing(16)
+        while card.hBoxLayout.count():
+            item = card.hBoxLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                self.header_layout.addWidget(widget, 1 if widget is self.body else 0)
+        self.column = QWidget(card)
+        # 裁剪高先于卡高变化；纵向布局会在这一瞬间压缩或居中子项，再把
+        # 二维码和标题移回。两段内容固定自然起点，只让外层卡片改变高度。
+        self.header.setParent(self.column)
+        reveal.setParent(self.column)
+        card.hBoxLayout.addWidget(self.column, 1, Qt.AlignmentFlag.AlignTop)
+
+    def reflow(self, width: int) -> None:
+        super().reflow(width)
+        self.header.setFixedHeight(self.card.height() - 32)
+        self.header.setFixedWidth(max(1, width - 32))
+        self.reveal.setFixedWidth(max(1, width - 32))
+        self.header.move(0, 0)
+        self.reveal.move(0, self.header.height())
+        self.header_layout.setAlignment(
+            self.card.iconLabel,
+            Qt.AlignmentFlag.AlignTop if self.compact else Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.sync_height()
+
+    def sync_height(self) -> None:
+        """只提交外层卡高，不重新挂载标题行控件或测量其他设置卡。"""
+        height = self.header.height() + self.reveal.height()
+        self.column.setFixedHeight(height)
+        self.card.setFixedHeight(height + 32)
+        self.card.updateGeometry()
 
 
 class AboutPanel(SettingCardGroup):
@@ -90,47 +142,61 @@ class AboutPanel(SettingCardGroup):
             self,
         )
         self.support_actions = QWidget(self.support_card)
-        self.support_action_layout = QVBoxLayout(self.support_actions)
-        self.support_action_layout.setContentsMargins(0, 0, 0, 0)
-        self.support_action_layout.setSpacing(12)
-        self.support_button = PushButton(tr("显示二维码"), self.support_actions)
+        self.support_action_layout = QHBoxLayout(self.support_actions)
+        self.support_action_layout.setContentsMargins(24, 24, 24, 8)
+        self.support_body = QWidget(self.support_actions)
+        self.support_body_layout = QHBoxLayout(self.support_body)
+        self.support_body_layout.setContentsMargins(0, 0, 0, 0)
+        self.support_body_layout.setSpacing(32)
+        self.support_copy = QWidget(self.support_body)
+        copy_layout = QVBoxLayout(self.support_copy)
+        copy_layout.setContentsMargins(0, 0, 0, 0)
+        copy_layout.setSpacing(12)
+        self.support_heading = QLabel(tr("支付宝扫码支持"), self.support_copy)
+        self.support_hint = QLabel(tr("打开支付宝「扫一扫」扫描二维码"), self.support_copy)
+        self.support_thanks = QLabel(tr("感谢你支持 ADBLab 的开发与维护。"), self.support_copy)
+        for label in (self.support_heading, self.support_hint, self.support_thanks):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            copy_layout.addWidget(label)
+        self.support_body_layout.addWidget(self.support_copy, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.support_action_layout.addWidget(self.support_body, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.support_button = PushButton(tr("显示二维码"), self.support_card)
         self.support_button.setCheckable(True)
         configure_button(
             self.support_button,
             text=tr("显示二维码"),
             tooltip=tr("展开或收起作者支持二维码"),
         )
-        self.support_qr = ImageLabel(self.support_actions)
+        self.support_qr = ImageLabel(self.support_body)
         self.support_qr.setObjectName("aboutSupportQr")
+        self.support_qr.setBorderRadius(8, 8, 8, 8)
         source = QPixmap(resource_path("resources/ZFB.jpg"))
         if not source.isNull():
-            # ImageLabel 绘制时按 IgnoreAspectRatio 铺满；先等比缩放并居中到方形
-            # 画布，既避免二维码纵向拉伸，也避免每次重绘缩放整张 1706x1815 原图。
+            # 原收款截图的码区为 41×41 模块；只裁掉装饰，不重新生成付款内容。
+            # 四周保留四个模块的白色静区，196px 下每模块恰好占四个逻辑像素。
+            code = source.copy(QRect(335, 215, 1036, 1036))
             dpr = max(1.0, self.support_qr.devicePixelRatioF())
-            side = max(1, round(132 * dpr))
+            module = max(1, round(4 * dpr))
+            side = 49 * module
             square = QPixmap(side, side)
             square.fill(Qt.GlobalColor.white)
             painter = QPainter(square)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            scaled = source.scaled(
-                square.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
             painter.drawPixmap(
-                (side - scaled.width()) // 2, (side - scaled.height()) // 2, scaled,
+                4 * module, 4 * module,
+                code.scaled(41 * module, 41 * module, Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.FastTransformation),
             )
             painter.end()
             square.setDevicePixelRatio(dpr)
             self.support_qr.setPixmap(square)
-        self.support_qr.setFixedSize(QSize(132, 132))
+        self.support_qr.setFixedSize(QSize(196, 196))
         self.support_qr.setScaledContents(True)
-        self.support_action_layout.addWidget(self.support_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.support_body_layout.addWidget(self.support_qr, 0, Qt.AlignmentFlag.AlignCenter)
         self.support_reveal = ContentReveal(
-            self.support_qr, self.support_button, self.support_actions,
+            self.support_actions, self.support_button, self.support_card,
         )
-        self.support_reveal.setFixedWidth(132)
-        self.support_action_layout.addWidget(self.support_reveal, 0, Qt.AlignmentFlag.AlignRight)
         self.support_button.toggled.connect(self._set_support_expanded)
         self.installer_card = SettingCard(
             FluentIcon.DOWNLOAD, tr("安装版更新"), tr("检查到可用安装包后可在此下载"), self,
@@ -152,10 +218,13 @@ class AboutPanel(SettingCardGroup):
             self.installer_action_layout.addWidget(button)
             button.clicked.connect(signal)
             configure_button(button, text=button.text(), tooltip=button.text())
+        self._support_presentation = _SupportCardPresentation(
+            self.support_card, self.support_button, self.support_reveal,
+        )
         self._presentations = (
             SettingsCardPresentation(self.project_card, self.update_actions),
             SettingsCardPresentation(self.installer_card, self.installer_actions),
-            SettingsCardPresentation(self.support_card, self.support_actions),
+            self._support_presentation,
         )
         self.support_reveal.geometry_changed.connect(self._sync_support_geometry)
         self.support_qr.setAccessibleName(tr("作者支持二维码"))
@@ -174,30 +243,41 @@ class AboutPanel(SettingCardGroup):
         for presentation in self._presentations:
             apply_setting_text_style(presentation.card.titleLabel, FontRole.UI)
             apply_setting_text_style(presentation.card.contentLabel, FontRole.UI_SMALL)
+        apply_setting_text_style(self.support_heading, FontRole.TITLE, bold=True)
+        for label in (self.support_hint, self.support_thanks):
+            apply_setting_text_style(label, FontRole.UI_SMALL)
+            label.setStyleSheet(
+                label.styleSheet() + f"color: {BaseStyles.get_color('TEXT_SECONDARY').name()};"
+            )
         for button in (
             self.project_button, self.check_update_button, self.release_button, self.support_button,
             self.installer_download_button, self.installer_cancel_button,
             self.installer_install_button,
         ):
             self._style_action_button(button)
+        # 两种译文共用尺寸，避免英文 Show/Hide 的字宽差使按钮在切换时横移。
+        self.support_button.setFixedWidth(max(
+            self.support_button.fontMetrics().horizontalAdvance(tr(text))
+            for text in ("显示二维码", "收起二维码")
+        ) + 28)
         self.reflow(self.width())
         self.layoutChanged.emit()
 
     def _set_support_expanded(self, expanded: bool) -> None:
         """只切换本页二维码的可见性，并同步卡片高度与设置页滚动范围。"""
 
-        self.support_reveal.set_expanded(expanded)
-        configure_button(
-            self.support_button,
-            text=tr("收起二维码") if expanded else tr("显示二维码"),
-            tooltip=tr("展开或收起作者支持二维码"),
-        )
-        self._style_action_button(self.support_button)
+        text = tr("收起二维码") if expanded else tr("显示二维码")
+        self.support_button.setText(text)
+        self.support_button.setAccessibleName(text)
+        # macOS 原生窗口在嵌套卡片逐帧改高时会短暂漏画、错裁上方内容。
+        # 二维码作为静态辅助信息一次提交完整状态，避免进入该绘制路径。
+        self.support_reveal.set_expanded(expanded, animated=False)
         self._sync_support_geometry()
 
     def _sync_support_geometry(self) -> None:
-        """固定高度设置卡随裁剪范围同步取高，保留二维码原始尺寸。"""
-        self.reflow(self.width())
+        """显隐只更新本卡与分组高度，标题行布局保持不动。"""
+        self._support_presentation.sync_height()
+        self._sync_group_height()
         self.layoutChanged.emit()
 
     @staticmethod
@@ -388,10 +468,36 @@ class AboutPanel(SettingCardGroup):
             else QBoxLayout.Direction.LeftToRight
         )
         self.installer_action_layout.invalidate()
-        # 隐藏图片后重新测量容器，避免沿用展开时的 sizeHint 留下空白。
-        self.support_action_layout.invalidate()
+        self._reflow_support_content(width)
         for presentation in self._presentations:
             presentation.reflow(width)
+        self._sync_group_height()
+
+    def _reflow_support_content(self, width: int) -> None:
+        """图文组按可读列宽切换横排与竖排；动画帧只裁剪已布局的完整内容。"""
+        body_width = max(196, min(640, width - 32 - 48))
+        self.support_body.setFixedWidth(body_width)
+        text_width = max(220, self.support_hint.fontMetrics().averageCharWidth() * 24)
+        stacked = body_width < 196 + 32 + text_width
+        self.support_body_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
+        )
+        self.support_body_layout.setSpacing(20 if stacked else 32)
+        for label in (self.support_heading, self.support_hint, self.support_thanks):
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignCenter if stacked
+                else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            label.ensurePolished()
+        self.support_body_layout.invalidate()
+        # 外层横排布局会用整行可用宽度询问换行高；正文已封顶，必须按实际
+        # 图文宽度落实自然高度，否则宽窗大字号会低估说明所需行数。
+        self.support_body.setFixedHeight(max(
+            self.support_qr.height(), self.support_body_layout.heightForWidth(body_width),
+        ))
+
+    def _sync_group_height(self) -> None:
+        """让分组随可见卡片取高，不改变各卡片内部排布。"""
         visible = [item for item in self._presentations if not item.card.isHidden()]
         cards_height = sum(item.card.height() for item in visible)
         self.setFixedHeight(
@@ -401,7 +507,7 @@ class AboutPanel(SettingCardGroup):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if hasattr(self, "_presentations"):
+        if hasattr(self, "_presentations") and event.size().width() != event.oldSize().width():
             self.reflow(self.width())
 
 

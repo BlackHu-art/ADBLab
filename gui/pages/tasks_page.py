@@ -1,30 +1,19 @@
-"""任务中心页：在途任务、可持久化测试结果与本次操作记录。
-
-可取消任务读取 ``OperationManager.active_snapshot()``；通用命令由组合根推送
-ActionResult 快照，包含普通长命令的在途入口与本次操作历史。Monkey/性能的跨会话
-结果由共享测试库异步更新；未注入测试库时保留 TaskHistoryStore 兼容入口。页面可见时
-以 1000ms ``QTimer`` 轮询并做不可变快照 diff，无变化
-不更新控件；活动行按任务身份复用，隐藏时停表。取消按钮走双路径：
-``OperationManager.request_cancel`` + 注入的资源停止回调 ``stop_hook``。
-
-构造契约：``panel`` 预留为 SidePanel 兼容入口；在途视图
-需要注入 ``operation_manager`` 才能读取可取消任务，普通命令快照不依赖此注入。
-``refresh()`` 是本页对组合根的稳定契约：同步重读在途快照与历史并按 diff 更新。
-"""
+"""单页任务中心：投影既有任务与归档，行内阅读，不接管执行资源。"""
 
 from __future__ import annotations
 
+import logging
+from collections import Counter, deque
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QHideEvent, QResizeEvent, QShowEvent
+from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFontMetrics, QHideEvent, QPalette, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
-    QAbstractButton,
-    QBoxLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
-    QLayout,
     QSizePolicy,
     QStyle,
     QStyleOptionButton,
@@ -33,84 +22,137 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
-    HeaderCardWidget,
-    InfoBadge,
-    InfoLevel,
-    PrimaryPushButton,
-    ProgressBar,
+    FluentIcon,
+    IconWidget,
+    PlainTextEdit,
     PushButton,
+    SearchLineEdit,
     SmoothScrollArea,
+    StrongBodyLabel,
+    getFont,
 )
 
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_font_role, apply_label_role, configure_button, use_smooth_scroll
-from gui.widgets.category_stack import AdaptiveCategoryStack
-from gui.widgets.content_section import ContentSection
+from gui.styles.fluent import (
+    apply_label_role,
+    apply_reading_surface,
+    configure_fluent_control,
+    use_smooth_scroll,
+)
+from gui.widgets.action_result_view import ActionResultView
+from gui.widgets.eliding_combo_box import ElidingComboBox
 from gui.widgets.run_results import RunResultsWidget
+from gui.widgets.task_table import TaskRowData, TaskTable
+from services.run_library import RunRecord
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
-from services.tasks.action_results import ActionResult
-from services.tasks.operations import OperationManager, OperationSnapshot, OperationState
+from services.tasks.action_results import ActionResult, ActionResults
+from services.tasks.operations import OperationManager, OperationSnapshot
 
-# 在途视图轮询间隔（毫秒）。
 POLL_INTERVAL_MS = 1000
-
-# 历史视图默认展示条数。
 DEFAULT_HISTORY_LIMIT = 50
 
-# 状态 → 中文标签。
 _STATE_LABELS = {
-    OperationState.QUEUED: "排队中",
-    OperationState.RUNNING: "运行中",
-    OperationState.FINALIZING: "收尾中",
-    OperationState.SUCCEEDED: "成功",
-    OperationState.PARTIAL: "部分成功",
-    OperationState.FAILED: "失败",
-    OperationState.CANCELLED: "已取消",
+    "queued": "排队中",
+    "running": "运行中",
+    "finalizing": "收尾中",
+    "succeeded": "成功",
+    "partial": "部分成功",
+    "failed": "失败",
+    "cancelled": "已取消",
+    "recorded": "记录",
+    "warning": "注意",
 }
-
-# 状态 → 徽标语义配色。
 _STATE_TONES = {
-    OperationState.QUEUED: "neutral",
-    OperationState.RUNNING: "accent",
-    OperationState.FINALIZING: "accent",
-    OperationState.SUCCEEDED: "success",
-    OperationState.PARTIAL: "warning",
-    OperationState.FAILED: "danger",
-    OperationState.CANCELLED: "danger",
+    "running": "accent",
+    "queued": "neutral",
+    "finalizing": "accent",
+    "succeeded": "success",
+    "partial": "warning",
+    "failed": "danger",
+    "warning": "warning",
 }
 
-
-# 操作类型只在展示边界映射，历史记录、取消路由和未知扩展类型保留原始标识。
 _OPERATION_LABELS = {
-    "apk_info": "APK 信息", "batch_install": "批量安装", "install": "安装应用",
-    "battery_reset": "重置电池状态", "battery_set": "设置电池状态", "bugreport": "错误报告",
-    "cleanup_device_logs": "清理设备日志", "clear_data": "清除应用数据", "connect": "连接设备",
-    "content_query": "查询内容提供者", "cpu_info": "CPU 信息", "current_activity": "当前 Activity",
-    "deep_link": "打开链接", "device_uptime": "设备运行时间", "disable_app": "禁用应用",
-    "disable_app_for_user": "对当前用户禁用应用", "disconnect": "断开设备",
-    "dumpsys_battery": "电池信息", "dumpsys_cpuinfo": "CPU 使用情况",
-    "dumpsys_meminfo": "内存信息", "dumpsys_service": "查询系统服务", "emu_call": "模拟来电",
-    "emu_geo": "模拟位置", "emu_sms": "模拟短信", "enable_app": "启用应用",
-    "file_list": "列出文件", "file_pull": "下载文件", "file_push": "上传文件",
-    "force_stop": "强行停止应用", "forward_port": "添加端口转发", "get_info": "获取设备信息",
-    "get_package": "获取前台应用", "gfxinfo": "图形渲染信息", "grant_permission": "授予权限",
-    "ime_list": "列出输入法", "ime_set": "设置输入法", "input_keyevent": "发送按键事件",
-    "input_swipe": "发送滑动手势", "input_tap": "发送点击", "input_text": "发送文本",
-    "installed_packages": "已安装应用", "kernel_version": "内核版本",
-    "kill_monkey": "停止 Monkey", "kill_process": "结束进程", "list_forwards": "列出端口转发",
-    "list_processes": "进程列表", "list_reverse": "列出反向转发", "logcat_filtered": "筛选 Logcat",
-    "monkey": "Monkey 测试", "netstats_detail": "网络统计", "pair_device": "配对设备",
-    "pm_features": "设备功能", "pull_anr": "获取 ANR", "pull_recording": "下载录屏",
-    "quick_setting": "快捷设置", "reboot_mode": "重启设备", "refresh": "刷新设备",
-    "remove_forwards": "移除端口转发", "remove_reverse": "移除反向转发", "restart": "重启设备",
-    "restart_adb": "重启 ADB", "restart_app": "重启应用", "retrieve_device_logs": "获取设备日志",
-    "reverse_port": "添加反向转发", "revoke_permission": "撤销权限", "screen_record": "录制屏幕",
-    "screenshot": "截图", "send_broadcast": "发送广播", "settings_get": "读取系统设置",
-    "settings_list": "列出系统设置", "settings_put": "写入系统设置", "shell_command": "执行 Shell",
-    "start_activity": "启动 Activity", "stop_recording": "停止录屏", "tcpip_mode": "开启 TCP/IP",
-    "top_snapshot": "进程快照", "uninstall": "卸载应用", "wakelocks": "唤醒锁",
+    "apk_info": "APK 信息",
+    "batch_install": "批量安装",
+    "install": "安装应用",
+    "battery_reset": "重置电池状态",
+    "battery_set": "设置电池状态",
+    "bugreport": "错误报告",
+    "cleanup_device_logs": "清理设备日志",
+    "clear_data": "清除应用数据",
+    "connect": "连接设备",
+    "content_query": "查询内容提供者",
+    "cpu_info": "CPU 信息",
+    "current_activity": "当前 Activity",
+    "deep_link": "打开链接",
+    "device_uptime": "设备运行时间",
+    "disable_app": "禁用应用",
+    "disable_app_for_user": "对当前用户禁用应用",
+    "disconnect": "断开设备",
+    "dumpsys_battery": "电池信息",
+    "dumpsys_cpuinfo": "CPU 使用情况",
+    "dumpsys_meminfo": "内存信息",
+    "dumpsys_service": "查询系统服务",
+    "emu_call": "模拟来电",
+    "emu_geo": "模拟位置",
+    "emu_sms": "模拟短信",
+    "enable_app": "启用应用",
+    "file_list": "列出文件",
+    "file_pull": "下载文件",
+    "file_push": "上传文件",
+    "force_stop": "强行停止应用",
+    "forward_port": "添加端口转发",
+    "get_info": "获取设备信息",
+    "get_package": "获取前台应用",
+    "gfxinfo": "图形渲染信息",
+    "grant_permission": "授予权限",
+    "ime_list": "列出输入法",
+    "ime_set": "设置输入法",
+    "input_keyevent": "发送按键事件",
+    "input_swipe": "发送滑动手势",
+    "input_tap": "发送点击",
+    "input_text": "发送文本",
+    "installed_packages": "已安装应用",
+    "kernel_version": "内核版本",
+    "kill_monkey": "停止 Monkey",
+    "kill_process": "结束进程",
+    "list_forwards": "列出端口转发",
+    "list_processes": "进程列表",
+    "list_reverse": "列出反向转发",
+    "logcat_filtered": "筛选 Logcat",
+    "monkey": "Monkey 测试",
+    "netstats_detail": "网络统计",
+    "pair_device": "配对设备",
+    "pm_features": "设备功能",
+    "pull_anr": "获取 ANR",
+    "pull_recording": "下载录屏",
+    "quick_setting": "快捷设置",
+    "reboot_mode": "重启设备",
+    "refresh": "刷新设备",
+    "remove_forwards": "移除端口转发",
+    "remove_reverse": "移除反向转发",
+    "restart": "重启设备",
+    "restart_adb": "重启 ADB",
+    "restart_app": "重启应用",
+    "retrieve_device_logs": "获取设备日志",
+    "reverse_port": "添加反向转发",
+    "revoke_permission": "撤销权限",
+    "screen_record": "录制屏幕",
+    "screenshot": "截图",
+    "send_broadcast": "发送广播",
+    "settings_get": "读取系统设置",
+    "settings_list": "列出系统设置",
+    "settings_put": "写入系统设置",
+    "shell_command": "执行 Shell",
+    "start_activity": "启动 Activity",
+    "stop_recording": "停止录屏",
+    "tcpip_mode": "开启 TCP/IP",
+    "top_snapshot": "进程快照",
+    "uninstall": "卸载应用",
+    "wakelocks": "唤醒锁",
 }
 
 
@@ -119,168 +161,21 @@ def _operation_label(kind: str) -> str:
     return tr(source) if source is not None else kind
 
 
-def _resolve_state(state: str, success: bool) -> OperationState:
-    """把历史条目的状态值还原为 :class:`OperationState`；空或非法值按 success 回退。"""
+@dataclass(frozen=True)
+class _Entry:
+    """来源身份与展示字段分离，单调时钟只在原 Operation 内部使用。"""
 
-    if state:
-        try:
-            return OperationState(state)
-        except ValueError:
-            pass
-    return OperationState.SUCCEEDED if success else OperationState.FAILED
-
-
-class _StatusBadge(InfoBadge):
-    """带语义配色的状态徽标，用于在途状态与历史结果展示。"""
-
-    # 语义色调 → InfoBadge 级别（InfoLevel 五级与业务五色一一对应）。
-    _TONE_LEVELS = {
-        "neutral": InfoLevel.INFOAMTION,
-        "accent": InfoLevel.ATTENTION,
-        "success": InfoLevel.SUCCESS,
-        "warning": InfoLevel.WARNING,
-        "danger": InfoLevel.ERROR,
-    }
-
-    def __init__(
-        self,
-        text: str = "",
-        *,
-        tone: str = "neutral",
-        parent: QWidget | None = None,
-    ) -> None:
-        # InfoBadge 的 singledispatchmethod 会按 text 分发到 str 重载，该重载又回调
-        # self.__init__，与子类重载冲突；这里走 parent 默认重载后再 setText。
-        super().__init__(parent)
-        self.setText(text)
-        self.setObjectName("statusBadge")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setProperty("fontRole", FontRole.UI_SMALL.value)
-        self.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
-        self._tone = "neutral"
-        self.set_status(text, tone)
-
-    def set_status(self, text: str, tone: str = "neutral") -> None:
-        """更新徽标文字与语义级别。"""
-
-        self._tone = tone if tone in self._TONE_LEVELS else "neutral"
-        self.setText(text)
-        self.setAccessibleName(text)
-        self._sync_theme_state()
-
-    def _sync_theme_state(self) -> None:
-        """按当前语义级别同步 InfoBadge 配色（主题色由 qfluentwidgets 自管理）。"""
-
-        self.setLevel(self._TONE_LEVELS.get(self._tone, InfoLevel.INFOAMTION))
-
-
-class _RunningActionsButton(PushButton):
-    """窄页省略在途入口文字，完整动作和计数仍可悬停或辅助读取。"""
-
-    def __init__(self, parent=None) -> None:
-        self._full_text = ""
-        super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-
-    def setText(self, text: str) -> None:
-        self._full_text = text
-        self.setToolTip(text)
-        self.setAccessibleName(text)
-        self.refresh_text()
-
-    def refresh_text(self) -> None:
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-        contents = self.style().subElementRect(
-            QStyle.SubElement.SE_PushButtonContents, option, self,
-        )
-        super().setText(self.fontMetrics().elidedText(
-            self._full_text, Qt.TextElideMode.ElideRight, max(0, contents.width()),
-        ))
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self.refresh_text()
-
-
-class _ActiveTaskRow(QWidget):
-    """窄宽度下把任务信息和取消控件分行，保留原控件及任务身份。"""
-
-    def __init__(
-        self, summary: BodyLabel, badge: _StatusBadge,
-        progress: ProgressBar, cancel: PrimaryPushButton,
-    ) -> None:
-        super().__init__()
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self._summary = summary
-        self._badge = badge
-        self._progress = progress
-        self._cancel = cancel
-        self._snapshot: OperationSnapshot | None = None
-        summary.setWordWrap(True)
-        summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self._controls = QWidget(self)
-        controls_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self._controls)
-        self._controls_layout = controls_layout
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(8)
-        controls_layout.addStretch(1)
-        for control in (badge, progress, cancel):
-            controls_layout.addWidget(control)
-        self._row_layout = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
-        self._row_layout.setContentsMargins(0, 2, 0, 2)
-        self._row_layout.setSpacing(8)
-        self._row_layout.addWidget(summary, 1)
-        self._row_layout.addWidget(self._controls)
-
-    def mark_cancelling(self) -> None:
-        """提交取消后立即锁定按钮，避免重复请求；终态由下一次快照刷新。"""
-        self._cancel.setEnabled(False)
-
-    def restore_cancel(self) -> None:
-        """取消未被受理时恢复按钮，允许用户重新尝试。"""
-        self._cancel.setEnabled(True)
-
-    def update_snapshot(self, snapshot: OperationSnapshot) -> None:
-        """原位更新变化字段，避免轮询销毁正在按下或聚焦的取消按钮。"""
-        previous = self._snapshot
-        if previous is None or previous.state != snapshot.state:
-            self._badge.set_status(
-                tr(_STATE_LABELS.get(snapshot.state, snapshot.state.value)),
-                _STATE_TONES.get(snapshot.state, "neutral"),
-            )
-        if previous is None or previous.progress != snapshot.progress:
-            self._progress.setValue(int(snapshot.progress))
-        self._snapshot = snapshot
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self.refresh_layout()
-
-    def refresh_layout(self) -> None:
-        """字号改变后立即重新分行，保留原任务控件和正在选择的文本。"""
-        controls_width = sum(
-            control.sizeHint().width() for control in (self._badge, self._progress, self._cancel)
-        ) + self._controls_layout.spacing() * 2
-        self._controls_layout.setDirection(
-            QBoxLayout.Direction.TopToBottom if self.width() < controls_width
-            else QBoxLayout.Direction.LeftToRight
-        )
-        required = (
-            self._summary.fontMetrics().horizontalAdvance(self._summary.text())
-            + self._controls.sizeHint().width() + self._row_layout.spacing()
-        )
-        direction = (
-            QBoxLayout.Direction.LeftToRight if self.width() >= required
-            else QBoxLayout.Direction.TopToBottom
-        )
-        if self._row_layout.direction() != direction:
-            self._row_layout.setDirection(direction)
-            self.updateGeometry()
+    row: TaskRowData
+    payload: ActionResult | OperationSnapshot | RunRecord | TaskHistoryEntry
+    state: str
+    kind: str
+    active: bool
+    operation_ids: tuple[str, ...] = ()
+    search_text: str = ""
 
 
 class TaskCenterPage(QWidget):
-    """任务中心：在途列表 + 历史列表 + 取消双路径。"""
+    """统一列表、条件筛选和共享行内阅读器；隐藏与退出停止轮询。"""
 
     def __init__(
         self,
@@ -296,253 +191,507 @@ class TaskCenterPage(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("taskCenterPage")
-        # 保留 SidePanel 调用入口，活动任务通过独立的 operation_manager 注入。
+        self.setAccessibleName(tr("任务中心"))
         self._panel = panel
         self._operation_manager = operation_manager
         self._history_store = history_store if history_store is not None else TaskHistoryStore()
-        self._stop_hook = stop_hook
         self._history_limit = history_limit
-
-        # diff 缓存：首次为 None，保证首帧必渲染；活动行仅随任务进入或退出创建/释放。
-        self._active_cache: tuple[OperationSnapshot, ...] | None = None
-        self._active_rows: dict[str, _ActiveTaskRow] = {}
-        self._active_empty_state: QWidget | None = None
-        self._history_cache: tuple[TaskHistoryEntry, ...] | None = None
-
-        self._active_card = self._make_card(tr("在途任务"))
-        self._history_card = self._make_card(tr("历史记录"))
-
+        self._stop_hook = stop_hook
+        self._library = run_library
+        self._entries: dict[str, _Entry] = {}
+        self._ordered_keys: tuple[str, ...] = ()
+        self._frozen_order: tuple[str, ...] = ()
+        self._detail_signature: object = None
+        self._cancel_pending: set[str] = set()
+        self._read_versions: dict[str, tuple] = {}
+        self._closed = False
+        self._rendering = False
+        self._layout_mode: tuple[bool, bool] | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._scroll = use_smooth_scroll(SmoothScrollArea())
+        layout.setSpacing(0)
+        # 任务页不显示设备栏，自有页头沿用设备任务标题的字体与阅读边界。
+        self.page_header = QWidget(self)
+        header_layout = QVBoxLayout(self.page_header)
+        header_layout.setContentsMargins(32, 12, 32, 0)
+        self.title_label = StrongBodyLabel(tr("任务中心"), self.page_header)
+        header_layout.addWidget(self.title_label)
+        layout.addWidget(self.page_header)
+        self._scroll = use_smooth_scroll(SmoothScrollArea(self))
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidgetResizable(True)
-        self._scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         content = QWidget()
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(32, 8, 32, 32)
-        content_layout.setSpacing(20)
-        content_layout.addWidget(self._active_card)
-        from gui.widgets.action_result_view import ActionResultView
-
-        self.action_results = ActionResultView(content)
-        self.action_empty_label = apply_label_role(
-            BodyLabel(tr("本次运行尚无操作结果，执行功能后会在此显示。"), content),
-            FontRole.UI_SMALL, color_key="TEXT_SECONDARY",
+        content_layout.setContentsMargins(32, 8, 32, 24)
+        content_layout.setSpacing(6)
+        self.filters = QWidget(content)
+        self.filters.installEventFilter(self)
+        self.filters.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._filter_layout = QGridLayout(self.filters)
+        self._filter_layout.setContentsMargins(0, 0, 0, 0)
+        self._filter_layout.setSpacing(8)
+        self.search_edit = SearchLineEdit(self.filters)
+        self.search_edit.setMinimumWidth(0)
+        self.search_edit.setPlaceholderText(tr("搜索任务、设备、应用或日期"))
+        self.search_edit.setAccessibleName(tr("搜索任务"))
+        self.state_combo = ElidingComboBox(self.filters)
+        self.state_combo.setAccessibleName(tr("任务状态"))
+        for label, value in (
+            ("全部状态", ""),
+            ("进行中", "active"),
+            ("成功", "succeeded"),
+            ("部分完成", "partial"),
+            ("失败", "failed"),
+            ("已取消", "cancelled"),
+            ("注意", "warning"),
+            ("记录", "recorded"),
+        ):
+            self.state_combo.addItem(tr(label), userData=value)
+        self.kind_combo = ElidingComboBox(self.filters)
+        self.kind_combo.setAccessibleName(tr("任务类型"))
+        for label, value in (
+            ("全部类型", ""),
+            ("设备", "device"),
+            ("应用", "app"),
+            ("Shell", "shell"),
+            ("文件", "file"),
+            ("系统", "system"),
+            ("Monkey", "monkey"),
+            ("性能", "performance"),
+            ("其他", "other"),
+        ):
+            self.kind_combo.addItem(tr(label), userData=value)
+        content_layout.addWidget(self.filters)
+        self.count_label = apply_label_role(
+            BodyLabel(content), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
-        self.action_empty_label.setWordWrap(True)
-        self.running_actions_button = _RunningActionsButton(content)
-        self.running_actions_button.hide()
-        self.running_actions_button.clicked.connect(self._open_running_action)
-        content_layout.insertWidget(0, self.running_actions_button)
-        self._idle_label: BodyLabel | None = None
-        self.run_results: RunResultsWidget | None = None
-        if run_library is not None:
-            self._history_card.setParent(self)
-            self._history_card.hide()
-            self._idle_label = apply_label_role(
-                BodyLabel(tr("暂无在途任务"), content), FontRole.UI_SMALL,
-                color_key="TEXT_SECONDARY",
-            )
-            content_layout.insertWidget(0, self._idle_label)
-            self.run_results = RunResultsWidget(run_library, content)
-            self._history_card.headerView.hide()
-            self.history_views = AdaptiveCategoryStack("taskHistory", content)
-            self.history_views.add_category("test_results", tr("测试结果"), (self.run_results,))
-            self.history_views.add_category(
-                "operations", tr("本次操作"), (self.action_empty_label, self.action_results),
-            )
-            content_layout.addWidget(self.history_views)
-        else:
-            content_layout.addWidget(self.action_results)
-            content_layout.addWidget(self._history_card)
-        content_layout.addStretch(1)
+        self.count_label.setWordWrap(True)
+        content_layout.addWidget(self.count_label)
+        self.table = TaskTable(content)
+        content_layout.addWidget(self.table, 1)
+        self.empty_state = QWidget(content)
+        self.empty_state.setMinimumWidth(0)
+        self.empty_state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        empty_layout = QVBoxLayout(self.empty_state)
+        empty_layout.setContentsMargins(24, 24, 24, 24)
+        empty_layout.setSpacing(10)
+        empty_layout.addStretch(1)
+        # 文字组通过横向布局居中；标签铺满组宽，换行高度按实际宽度计算。
+        # 直接给标签加水平居中对齐会让布局按更宽的预算估高，裁掉窄窗的后续行。
+        empty_center = QHBoxLayout()
+        empty_center.setContentsMargins(0, 0, 0, 0)
+        empty_center.addStretch()
+        self.empty_content = QWidget(self.empty_state)
+        self.empty_content.setMaximumWidth(560)
+        self.empty_content.setMinimumWidth(0)
+        text_layout = QVBoxLayout(self.empty_content)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(10)
+        empty_center.addWidget(self.empty_content, 1)
+        empty_center.addStretch()
+        empty_layout.addLayout(empty_center)
+        self.empty_icon = IconWidget(FluentIcon.HISTORY, self.empty_content)
+        self.empty_icon.setFixedSize(24, 24)
+        text_layout.addWidget(self.empty_icon, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.empty_title = StrongBodyLabel(self.empty_content)
+        self.empty_label = BodyLabel(self.empty_content)
+        for label in (self.empty_title, self.empty_label):
+            label.setMinimumWidth(0)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            text_layout.addWidget(label)
+        self.clear_filters_button = PushButton(tr("清除筛选"), self.empty_content)
+        self.clear_filters_button.clicked.connect(self._clear_filters)
+        text_layout.addWidget(self.clear_filters_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        empty_layout.addStretch(1)
+        content_layout.addWidget(self.empty_state, 1)
         self._scroll.setWidget(content)
         content.setAutoFillBackground(False)
         layout.addWidget(self._scroll)
-
+        self.detail = QWidget(self.table)
+        self.detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        detail_layout = QVBoxLayout(self.detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(10)
+        self.detail_meta = apply_label_role(
+            BodyLabel(self.detail), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self.detail_meta.setWordWrap(True)
+        self.detail_meta.setTextFormat(Qt.TextFormat.PlainText)
+        detail_layout.addWidget(self.detail_meta)
+        self.device_summary = apply_label_role(BodyLabel(self.detail), FontRole.UI_SMALL)
+        self.device_summary.setWordWrap(True)
+        self.device_summary.setTextFormat(Qt.TextFormat.PlainText)
+        detail_layout.addWidget(self.device_summary)
+        self.action_results = ActionResultView(self.detail, inline=True)
+        detail_layout.addWidget(self.action_results)
+        self.run_results = (
+            RunResultsWidget(run_library, self.detail, detail_only=True)
+            if run_library is not None
+            else None
+        )
+        if self.run_results is not None:
+            detail_layout.addWidget(self.run_results)
+            assert run_library is not None
+            run_library.changed.connect(self.refresh)
+        self.operation_output = PlainTextEdit(self.detail)
+        self.operation_output.setReadOnly(True)
+        self.operation_output.setMinimumHeight(120)
+        self.operation_output.setMaximumHeight(200)
+        apply_reading_surface(self.operation_output)
+        detail_layout.addWidget(self.operation_output)
+        self.detail.hide()
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(max(0, int(poll_interval_ms)))
         self._poll_timer.timeout.connect(self.refresh)
-
-        self._sync_theme_state()
+        self.search_edit.textChanged.connect(self._render)
+        for control in (self.state_combo, self.kind_combo):
+            control.currentIndexChanged.connect(self._render)
+        self.table.expanded_changed.connect(self._expanded)
+        self.table.cancel_requested.connect(self._cancel_entry)
+        self.action_results.selection_changed.connect(self._select_reader_request)
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
+        BaseStyles.theme_changed.connect(self._sync_theme_state)
+        self._sync_theme_state()
         self._refresh_typography()
-    # ── 数据刷新契约 ────────────────────────────────────────────────────
+        self.refresh()
 
     def present_action_result(self, result: ActionResult) -> None:
-        """普通命令也呈现在途入口，避免仅有 Operation 任务才能被观察。"""
-        self.action_empty_label.hide()
-        self.action_results.present(result)
-        self._refresh_action_status()
-        if result.state != "running":
-            # 完成态正文可能高于最小窗口；等布局落定后把正文滚入可视区。
-            QTimer.singleShot(30, self, self._reveal_action_output)
-
-    def _reveal_action_output(self) -> None:
-        output = getattr(self.action_results, "output", None)
-        if output is not None and output.isVisibleTo(self):
-            self._scroll.ensureWidgetVisible(output, 0, 12)
-
-    def _refresh_action_status(self) -> None:
-        running = self.action_results.running_results()
-        self.running_actions_button.setText(
-            tr("查看执行中的操作（{count}）").format(count=len(running))
+        """后台推送只更新原记录，不主动展开、切换阅读项或滚动页面。"""
+        if self._closed:
+            return
+        self.action_results.present(
+            result,
+            preserve_selection=self.table.expanded_key.startswith("action:"),
         )
-        self.running_actions_button.setVisible(bool(running))
-        if self._idle_label is not None:
-            self._idle_label.setVisible(not self._active_cache and not running)
+        self.refresh()
+        if not self.table.expanded_key.startswith("action:"):
+            self.action_results.hide()
 
-    def _open_running_action(self) -> None:
-        running = self.action_results.running_results()
-        if not running:
+    def select_request(self, request_id: str) -> bool:
+        """通知精确定位请求；撤销阻挡目标的条件，不提交设备动作。"""
+        key = f"action:{request_id}"
+        if self._closed or key not in self._entries:
+            return False
+        with (
+            QSignalBlocker(self.search_edit),
+            QSignalBlocker(self.kind_combo),
+            QSignalBlocker(self.state_combo),
+        ):
+            self.search_edit.clear()
+            self.kind_combo.setCurrentIndex(0)
+            self.state_combo.setCurrentIndex(0)
+        self._render()
+        self.table.set_expanded(key)
+        self._show_detail(key)
+        self._scroll.ensureWidgetVisible(self.table.rows[key].header, 0, 12)
+        return True
+
+    def _select_reader_request(self, request_id: str) -> None:
+        key = f"action:{request_id}"
+        if self.table.expanded_key != key:
+            self.select_request(request_id)
+
+    def refresh(self, *_args) -> None:
+        """读取不可变快照并合并明确关联，普通操作正文与列表共用同一有界缓存。"""
+        if self._closed:
             return
-        if self.run_results is not None:
-            self.history_views.set_current("operations")
-        self.action_results.select_request(running[-1].request_id)
-        self._scroll.ensureWidgetVisible(self.action_results, 0, 12)
-
-    def refresh(self) -> None:
-        """重读在途快照与历史，原位更新活动行并按需重建历史。"""
-
-        active = (
-            self._operation_manager.active_snapshot() if self._operation_manager is not None else ()
-        )
-        self._apply_active(active)
-        history = self._history_store.recent(self._history_limit)
-        self._apply_history(history)
-
-    def _apply_active(self, active: tuple[OperationSnapshot, ...]) -> None:
-        if active == self._active_cache:
-            return
-        self._active_cache = active
-        self._render_active_rows(active)
-        self._refresh_action_status()
-
-    def _apply_history(self, history: tuple[TaskHistoryEntry, ...]) -> None:
-        if history == self._history_cache:
-            return
-        self._history_cache = history
-        self._render_history_rows(history)
-
-    # ── 在途视图 ────────────────────────────────────────────────────────
-
-    def _render_active_rows(self, active: tuple[OperationSnapshot, ...]) -> None:
-        layout = self._active_card.viewLayout
-        current_ids = {snapshot.operation_id for snapshot in active}
-        for operation_id in self._active_rows.keys() - current_ids:
-            row = self._active_rows.pop(operation_id)
-            layout.removeWidget(row)
-            row.hide()
-            row.deleteLater()
-        if active and self._active_empty_state is not None:
-            layout.removeWidget(self._active_empty_state)
-            self._active_empty_state.hide()
-            self._active_empty_state.deleteLater()
-            self._active_empty_state = None
-        if self._idle_label is not None:
-            # 测试结果是常驻内容；空在途状态只占一行，避免把结果操作推到首屏之外。
-            self._active_card.setVisible(bool(active))
-            self._idle_label.setVisible(not active)
-            if not active:
-                return
-        if not active:
-            if self._active_empty_state is None:
-                self._active_empty_state = self._empty_state(
-                    tr("暂无在途任务"),
-                    tr("执行过程与完整结果在本次操作中回看，完成时通过右上角通知提示。"),
+        active = self._operation_manager.active_snapshot() if self._operation_manager else ()
+        operations = {op.operation_id: op for op in active}
+        results = self.action_results.records_snapshot()
+        pending_ids = {
+            oid for result in results if result.state == "running" for oid in result.operation_ids
+        }
+        # Operation 可先移入终态缓存；底层 worker 的结果回调到达前仍保留取消意图。
+        self._cancel_pending.intersection_update(set(operations) | pending_ids)
+        entries = []
+        linked = set()
+        for result in reversed(results):
+            operation_ids = tuple(oid for oid in result.operation_ids if oid in operations)
+            linked.update(operation_ids)
+            snapshots = [operations[oid] for oid in operation_ids]
+            cancelling = (
+                any(
+                    op.cancel_requested or op.operation_id in self._cancel_pending
+                    for op in snapshots
                 )
-                layout.addWidget(self._active_empty_state)
-            return
-        for index, snapshot in enumerate(active):
-            row = self._active_rows.get(snapshot.operation_id)
-            if row is None:
-                row = self._make_active_row(snapshot)
-                self._active_rows[snapshot.operation_id] = row
-            row.update_snapshot(snapshot)
-            if layout.indexOf(row) != index:
-                layout.insertWidget(index, row)
-
-    def _make_active_row(self, snapshot: OperationSnapshot) -> _ActiveTaskRow:
-        summary = apply_label_role(
-            BodyLabel(
-                f"{_operation_label(snapshot.kind)} · {self._short_id(snapshot.operation_id)}"
-            ),
-            FontRole.UI,
-        )
-        summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        summary.setToolTip(snapshot.operation_id)
-
-        badge = _StatusBadge(
-            tr(_STATE_LABELS.get(snapshot.state, snapshot.state.value)),
-            tone=_STATE_TONES.get(snapshot.state, "neutral"),
-        )
-
-        progress = ProgressBar()
-        progress.setRange(0, 100)
-        progress.setValue(int(snapshot.progress))
-        progress.setFixedWidth(120)
-
-        cancel = PrimaryPushButton()
-        configure_button(
-            cancel,
-            text=tr("取消"),
-            tooltip=tr("取消任务 {operation_id}").format(operation_id=snapshot.operation_id),
-            danger=True,
-        )
-        cancel.clicked.connect(lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid))
-        return _ActiveTaskRow(summary, badge, progress, cancel)
-
-    # ── 历史视图 ────────────────────────────────────────────────────────
-
-    def _render_history_rows(self, history: tuple[TaskHistoryEntry, ...]) -> None:
-        self._clear_layout(self._history_card.viewLayout)
-        if not history:
-            self._history_card.viewLayout.addWidget(
-                self._empty_state(tr("暂无历史记录"), tr("已完成的任务会显示在这里。"))
+                or result.state == "running"
+                and any(oid in self._cancel_pending for oid in result.operation_ids)
             )
+            state = result.state
+            if state == "recorded":
+                states = {item.state for item in result.items}
+                state = (
+                    "failed"
+                    if "failed" in states
+                    else "warning"
+                    if "warning" in states
+                    else "recorded"
+                )
+            active_result = result.state == "running" or bool(snapshots)
+            state_text = tr("正在取消") if cancelling else tr(_STATE_LABELS.get(state, state))
+            target = " · ".join(
+                ActionResults.target_label(result, target) for target in result.targets
+            ) or tr("本机")
+            kind, kind_label = self._kind(result.spec.key, result.spec.section)
+            row = TaskRowData(
+                f"action:{result.request_id}",
+                tr(result.spec.title),
+                kind_label,
+                target,
+                state_text,
+                _STATE_TONES.get(state, "neutral"),
+                self._date(result.finished_at or result.started_at),
+                tr("本次"),
+                bool(operation_ids) or cancelling,
+                cancelling,
+                state in ("failed", "partial", "warning")
+                and self._read_versions.get(result.request_id) != self._version(result),
+                round(sum(op.progress for op in snapshots) / len(snapshots)) if snapshots else None,
+            )
+            entries.append(
+                _Entry(
+                    row,
+                    result,
+                    state,
+                    kind,
+                    active_result,
+                    operation_ids,
+                    f"{row.title} {target} {row.time_text} "
+                    f"{self._date(result.started_at, full=True)}",
+                )
+            )
+        for op in active:
+            if op.operation_id in linked:
+                continue
+            state = op.state.value
+            cancelling = op.cancel_requested or op.operation_id in self._cancel_pending
+            kind, kind_label = self._kind(op.kind)
+            row = TaskRowData(
+                f"operation:{op.operation_id}",
+                _operation_label(op.kind),
+                kind_label,
+                tr("任务提交时的目标"),
+                tr("正在取消") if cancelling else tr(_STATE_LABELS[state]),
+                _STATE_TONES.get(state, "neutral"),
+                tr("进行中"),
+                tr("本次"),
+                True,
+                cancelling,
+                progress=round(op.progress),
+            )
+            entries.append(_Entry(row, op, state, kind, True, (op.operation_id,), row.title))
+        if self._library is not None:
+            for record in self._library.records_view:
+                title = tr("性能采集") if record.kind == "performance" else tr("Monkey 测试")
+                kind_label = tr("性能") if record.kind == "performance" else "Monkey"
+                target = record.device_label or tr("未记录设备名称")
+                row = TaskRowData(
+                    f"run:{record.run_id}",
+                    title,
+                    kind_label,
+                    target,
+                    tr("结果不完整")
+                    if record.state == "partial"
+                    else tr(_STATE_LABELS.get(record.state, record.state)),
+                    _STATE_TONES.get(record.state, "neutral"),
+                    self._date(record.finished_at),
+                    tr("已归档"),
+                )
+                entries.append(
+                    _Entry(
+                        row,
+                        record,
+                        record.state,
+                        record.kind,
+                        False,
+                        search_text=f"{title} {target} {record.package_name} "
+                        f"{self._date(record.finished_at, full=True)}",
+                    )
+                )
+        else:
+            for sequence, entry in self._history_store.recent_with_ids(self._history_limit):
+                kind, kind_label = self._kind(entry.kind)
+                state = entry.state or ("succeeded" if entry.success else "failed")
+                row = TaskRowData(
+                    f"history:{entry.task_id}:{sequence}",
+                    _operation_label(entry.kind),
+                    kind_label,
+                    tr("任务提交时的目标"),
+                    tr(_STATE_LABELS.get(state, state)),
+                    _STATE_TONES.get(state, "neutral"),
+                    self._date(entry.finished_at),
+                    tr("本次"),
+                )
+                entries.append(
+                    _Entry(
+                        row, entry, state, kind, False, search_text=f"{row.title} {row.time_text}"
+                    )
+                )
+        entries = self._order_entries(entries)
+        self._entries = {entry.row.key: entry for entry in entries}
+        retained = {item.request_id for item in self.action_results.records_snapshot()}
+        self._read_versions = {
+            key: version for key, version in self._read_versions.items() if key in retained
+        }
+        natural = tuple(self._entries)
+        self._ordered_keys = (
+            tuple(key for key in self._frozen_order if key in self._entries)
+            + tuple(key for key in natural if key not in self._frozen_order)
+            if self._frozen_order
+            else natural
+        )
+        self._render()
+        if self.table.expanded_key:
+            self._show_detail(self.table.expanded_key)
+
+    def _render(self, *_args) -> None:
+        if self._rendering:
             return
-        for entry in history:
-            self._history_card.viewLayout.addWidget(self._make_history_row(entry))
+        self._rendering = True
+        try:
+            query = self.search_edit.text().strip().casefold()
+            kind, state = self.kind_combo.currentData(), self.state_combo.currentData()
+            description = (
+                tr("部分成功 / 结果不完整")
+                if state == "partial"
+                else self.state_combo.currentText()
+            )
+            self.state_combo.setToolTip(description)
+            self.state_combo.setAccessibleDescription(description)
+            rows = tuple(
+                self._entries[key].row
+                for key in self._ordered_keys
+                if (not kind or self._entries[key].kind == kind)
+                and (
+                    not state
+                    or (
+                        self._entries[key].active
+                        if state == "active"
+                        else self._entries[key].state == state
+                    )
+                )
+                and (not query or query in self._entries[key].search_text.casefold())
+            )
+            self.table.set_rows(rows)
+            self.count_label.setText(
+                tr("{visible} / {total} 条记录 · {active} 项进行中 · {unread} 项异常待查看").format(
+                    visible=len(rows),
+                    total=len(self._entries),
+                    active=sum(entry.active for entry in self._entries.values()),
+                    unread=sum(entry.row.unread for entry in self._entries.values()),
+                )
+            )
+            self.table.setVisible(bool(rows))
+            self.empty_state.setVisible(not rows)
+            self.empty_title.setText(
+                tr("没有匹配的任务") if self._entries else tr("暂无任务")
+            )
+            self.empty_label.setText(
+                tr("请调整搜索或筛选条件。")
+                if self._entries
+                else tr("执行操作或完成测试后，任务进度与结果会显示在这里。")
+            )
+            self.clear_filters_button.setVisible(bool(self._entries) and not rows)
+        finally:
+            self._rendering = False
 
-    def _make_history_row(self, entry: TaskHistoryEntry) -> QWidget:
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(8)
+    def _clear_filters(self) -> None:
+        """只撤销查看条件，不改变任务、设备选择或任务执行状态。"""
 
-        time_label = apply_label_role(
-            BodyLabel(self._format_time(entry.finished_at)),
-            FontRole.UI_SMALL,
-            color_key="TEXT_SECONDARY",
+        with (
+            QSignalBlocker(self.search_edit), QSignalBlocker(self.state_combo),
+            QSignalBlocker(self.kind_combo),
+        ):
+            self.search_edit.clear()
+            self.state_combo.setCurrentIndex(0)
+            self.kind_combo.setCurrentIndex(0)
+        self._render()
+        self.search_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _expanded(self, key: str) -> None:
+        self._frozen_order = self._ordered_keys if key else ()
+        self._detail_signature = None
+        if key:
+            self._show_detail(key)
+        else:
+            self.detail.hide()
+            if not self._rendering:
+                self.refresh()
+
+    def _show_detail(self, key: str) -> None:
+        entry = self._entries.get(key)
+        if entry is None or entry.payload == self._detail_signature:
+            return
+        self._detail_signature = entry.payload
+        result = entry.payload
+        self.action_results.setVisible(isinstance(result, ActionResult))
+        self.operation_output.setVisible(isinstance(result, (OperationSnapshot, TaskHistoryEntry)))
+        if self.run_results is not None:
+            self.run_results.setVisible(isinstance(result, RunRecord))
+        self.detail_meta.setText(
+            tr("已归档 · 关闭应用后仍可查看")
+            if isinstance(result, RunRecord)
+            else tr("本次会话 · 需要保留的正文请导出")
         )
-        layout.addWidget(time_label)
+        self.device_summary.hide()
+        if isinstance(result, ActionResult):
+            self._read_versions[result.request_id] = self._version(result)
+            if entry.row.unread:
+                updated = replace(entry, row=replace(entry.row, unread=False))
+                self._entries[key] = updated
+                self.table.rows[key].update_data(updated.row)
+                self._render()
+            self.action_results.select_request(result.request_id)
+            lines = []
+            for target in result.targets:
+                items = [item for item in result.items if item.target == target]
+                states = Counter(item.state for item in items)
+                status = (
+                    " · ".join(
+                        tr("{count} 项{state}").format(
+                            count=count,
+                            state=tr(_STATE_LABELS.get(state, state)),
+                        )
+                        for state, count in states.items()
+                    )
+                    if items
+                    else tr(_STATE_LABELS.get(result.state, result.state))
+                )
+                lines.append(f"{ActionResults.target_label(result, target)}  ·  {status}")
+            self.device_summary.setText("\n".join(lines))
+            self.device_summary.setVisible(bool(lines))
+        elif isinstance(result, RunRecord) and self.run_results is not None:
+            self.run_results.present_record(result)
+        elif isinstance(result, (OperationSnapshot, TaskHistoryEntry)):
+            message = result.message if isinstance(result, OperationSnapshot) else result.detail
+            text = (
+                message or tr("正在执行，请等待结果。")
+                if entry.active
+                else message or tr("操作已结束，无文本输出。")
+            )
+            if self.operation_output.toPlainText() != text:
+                self.operation_output.setPlainText(text[:64000])
+        self.table.set_expanded(key, self.detail)
 
-        summary = apply_label_role(
-            BodyLabel(f"{_operation_label(entry.kind)} · {self._short_id(entry.task_id)}"),
-            FontRole.UI,
-        )
-        summary.setToolTip(entry.detail or entry.task_id)
-        layout.addWidget(summary, 1)
-
-        state = _resolve_state(entry.state, entry.success)
-        badge = _StatusBadge(
-            tr(_STATE_LABELS.get(state, state.value)),
-            tone=_STATE_TONES.get(state, "danger"),
-        )
-        layout.addWidget(badge)
-        return row
-
-    # ── 取消双路径 ──────────────────────────────────────────────────────
+    def _cancel_entry(self, key: str) -> None:
+        entry = self._entries.get(key)
+        if entry is not None:
+            for operation_id in entry.operation_ids:
+                self._cancel(operation_id)
 
     def _cancel(self, task_id: str) -> None:
-        """取消双路径：先登记协作式取消意图，再调用注入的资源停止入口。"""
-
-        row = self._active_rows.get(task_id)
+        """登记原任务取消意图并调用资源停止入口；受理不等同于资源已经退出。"""
+        if self._closed or task_id in self._cancel_pending:
+            return
         accepted = False
         if self._operation_manager is not None:
-            accepted = bool(self._operation_manager.request_cancel(task_id))
+            accepted = self._operation_manager.request_cancel(task_id)
             snapshot = self._operation_manager.get(task_id)
             accepted = accepted or bool(snapshot and snapshot.cancel_requested)
         if self._stop_hook is not None:
@@ -550,127 +699,203 @@ class TaskCenterPage(QWidget):
                 self._stop_hook(task_id)
                 accepted = True
             except Exception:
-                accepted = False
-        if row is not None:
-            if accepted:
-                row.mark_cancelling()
-            else:
-                row.restore_cancel()
+                logging.getLogger(__name__).exception("任务取消资源请求失败")
+        if accepted:
+            self._cancel_pending.add(task_id)
+        self.refresh()
 
     def record_history(self, entry: TaskHistoryEntry) -> None:
-        """写入一条终态记录并立即刷新（供组合根订阅终态事件时调用）。"""
-
+        """保留未注入测试库的兼容历史入口。"""
         self._history_store.record(entry)
         self.refresh()
 
-    # ── 可见性与清理 ────────────────────────────────────────────────────
-
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self.refresh()
-        self._poll_timer.start()
+        if not self._closed:
+            self.refresh()
+            self._poll_timer.start()
 
     def hideEvent(self, event: QHideEvent) -> None:
         self._poll_timer.stop()
         super().hideEvent(event)
 
     def shutdown(self) -> None:
-        """停止轮询定时器，供窗口关闭清理调用。"""
-
+        """停止轮询并封闭晚到结果准入；共享测试库仍由主窗口负责释放。"""
+        self._closed = True
         self._poll_timer.stop()
 
-    # ── 主题与辅助 ──────────────────────────────────────────────────────
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._reflow_filters()
 
-    def _refresh_typography(self, _config=None) -> None:
-        """只刷新页面自有文字，嵌入的结果组件继续拥有各自的字体与选择状态。"""
-        for card in (self._active_card, self._history_card):
-            for widget in card.findChildren(QWidget):
-                role = widget.property("fontRole")
-                if role:
-                    apply_font_role(
-                        widget, role, ensure_height=isinstance(widget, QAbstractButton),
-                    )
-        for label in (self.action_empty_label, self._idle_label):
-            if label is not None:
-                apply_font_role(label, FontRole.UI_SMALL)
-        apply_font_role(self.running_actions_button, FontRole.UI, ensure_height=True)
-        self.running_actions_button.refresh_text()
-        for row in self._active_rows.values():
-            row.refresh_layout()
-        output = getattr(getattr(self, "action_results", None), "output", None)
-        if output is not None:
-            # 最小窗口 + 最大字号时正文不能继续挤占滚动页；保持既有 160px
-            # 下限，正文超出时在 PlainTextEdit 内部滚动。
-            output.setMaximumHeight(160)
-        self.updateGeometry()
+    def _refresh_typography(self, *_args) -> None:
+        apply_label_role(self.title_label, FontRole.TITLE, bold=True)
+        apply_label_role(self.empty_title, FontRole.UI, bold=True)
+        for control in (
+            self.search_edit, self.state_combo, self.kind_combo, self.clear_filters_button,
+        ):
+            configure_fluent_control(control)
+        for label in (self.count_label, self.empty_label, self.detail_meta, self.device_summary):
+            apply_label_role(label, FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
+        self.operation_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
+        self._layout_mode = None
+        self._reflow_filters()
 
-    def _sync_theme_state(self) -> None:
-        """按当前主题重建页面内全部主题化控件样式。"""
+    def _sync_theme_state(self, *_args) -> None:
+        """独立页面使用主题底色；嵌入主窗口时继续透出既有共享材质。"""
+        if self.isWindow():
+            palette = self.palette()
+            palette.setColor(QPalette.ColorRole.Window, QColor(BaseStyles.color("WINDOW_BG")))
+            self.setPalette(palette)
+            self.setAutoFillBackground(True)
 
-        for widget in self.findChildren(QWidget):
-            sync = getattr(widget, "_sync_theme_state", None)
-            if callable(sync):
-                sync()
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "filters", None) and event.type() == QEvent.Type.Resize:
+            self._reflow_filters()
+        return super().eventFilter(watched, event)
+
+    def _reflow_filters(self) -> None:
+        width = max(0, min(self.width() - 64, self.filters.width()))
+        state_size = self._filter_preferred_size(self.state_combo)
+        kind_size = self._filter_preferred_size(self.kind_combo)
+        state_width, kind_width = state_size.width(), kind_size.width()
+        height = max(state_size.height(), kind_size.height())
+        combo_width = state_width + kind_width + 8
+        inline = width >= combo_width + 240
+        stacked = width < combo_width
+        # 固定预算不随当前选项变化；同一排布模式下缩窗也必须更新封顶宽度。
+        self.state_combo.setFixedSize(min(state_width, width), height)
+        self.kind_combo.setFixedSize(min(kind_width, width), height)
+        self.search_edit.setFixedHeight(height)
+        if self._layout_mode == (inline, stacked):
+            return
+        self._layout_mode = (inline, stacked)
+        while self._filter_layout.count():
+            self._filter_layout.takeAt(0)
+        for column in range(3):
+            self._filter_layout.setColumnStretch(column, 0)
+        if inline:
+            self._filter_layout.addWidget(self.search_edit, 0, 0)
+            self._filter_layout.addWidget(self.state_combo, 0, 1)
+            self._filter_layout.addWidget(self.kind_combo, 0, 2)
+            self._filter_layout.setColumnStretch(0, 1)
+        else:
+            self._filter_layout.addWidget(self.search_edit, 0, 0, 1, 3)
+            self._filter_layout.addWidget(
+                self.state_combo,
+                1,
+                0,
+                1,
+                3 if stacked else 1,
+                Qt.AlignmentFlag.AlignLeft,
+            )
+            self._filter_layout.addWidget(
+                self.kind_combo,
+                2 if stacked else 1,
+                0 if stacked else 1,
+                1,
+                3 if stacked else 1,
+                Qt.AlignmentFlag.AlignLeft,
+            )
+            self._filter_layout.setColumnStretch(2, 1)
 
     @staticmethod
-    def _make_card(title: str) -> HeaderCardWidget:
-        """以标题和间距区分任务列表，复用原分区的布局与行生命周期。"""
-
-        card = ContentSection(title)
-        card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        card.viewLayout.setContentsMargins(0, 8, 0, 8)
-        card.viewLayout.setSpacing(6)
-        apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
-        return card
-
-    @staticmethod
-    def _empty_state(title: str, description: str) -> QWidget:
-        """用 qfluentwidgets 标签组合轻量空状态。"""
-
-        host = QWidget()
-        layout = QVBoxLayout(host)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(6)
-        title_label = apply_label_role(BodyLabel(title), FontRole.TITLE, color_key="TITLE_COLOR")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        description_label = apply_label_role(
-            BodyLabel(description), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+    def _filter_preferred_size(combo: ElidingComboBox) -> QSize:
+        """按完整选项与实际按钮样式测量，不临时选择选项或触发业务信号。"""
+        option = QStyleOptionButton()
+        combo.initStyleOption(option)
+        popup_metrics = QFontMetrics(getFont())
+        sizes = []
+        for index in range(combo.count()):
+            text = combo.itemText(index)
+            setattr(option, "text", text)
+            text_size = combo.fontMetrics().size(Qt.TextFlag.TextShowMnemonic, text)
+            styled = combo.style().sizeFromContents(
+                QStyle.ContentsType.CT_PushButton,
+                option,
+                text_size,
+                combo,
+            )
+            # 省略控件为箭头预留 48px，部分主题的原生边距更小，须同时满足两种预算。
+            # 弹层沿用 Fluent 的 14px 字体和左右 40px 留白、2px 边框；低 DPI 下
+            # 它可能比用户的按钮字体更大，不能只按按钮字体计算展开宽度。
+            popup_width = popup_metrics.boundingRect(text).width() + 42
+            sizes.append(
+                QSize(
+                    max(styled.width(), text_size.width() + 48, popup_width),
+                    styled.height(),
+                )
+            )
+        return QSize(
+            max((size.width() for size in sizes), default=0),
+            max((size.height() for size in sizes), default=0),
         )
-        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        description_label.setWordWrap(True)
-        layout.addWidget(title_label)
-        layout.addWidget(description_label)
-        return host
 
     @staticmethod
-    def _short_id(task_id: str) -> str:
-        """把长标识截断为列表可读的摘要。"""
-
-        if len(task_id) <= 12:
-            return task_id
-        return task_id[:12] + "…"
+    def _order_entries(entries: list[_Entry]) -> list[_Entry]:
+        """在途优先；按墙钟插入归档，同时保留普通结果的实际完成/更新顺序。"""
+        active = [entry for entry in entries if entry.active]
+        actions = deque(
+            entry
+            for entry in entries
+            if not entry.active and isinstance(entry.payload, ActionResult)
+        )
+        others = deque(
+            sorted(
+                (
+                    entry
+                    for entry in entries
+                    if not entry.active and isinstance(entry.payload, (RunRecord, TaskHistoryEntry))
+                ),
+                key=lambda entry: entry.payload.finished_at or 0,
+                reverse=True,
+            )
+        )
+        while actions and others:
+            action = actions[0].payload
+            assert isinstance(action, ActionResult)
+            other = others[0].payload
+            assert isinstance(other, (RunRecord, TaskHistoryEntry))
+            active.append(
+                actions.popleft()
+                if (action.finished_at or action.started_at) >= other.finished_at
+                else others.popleft()
+            )
+        return [*active, *actions, *others]
 
     @staticmethod
-    def _format_time(timestamp: float) -> str:
-        """把墙钟时间格式化为列表可读的时间。"""
+    def _version(result: ActionResult) -> tuple:
+        """已读仅按事件身份与终态保存，不延长大段正文的保留周期。"""
+        return (
+            result.state,
+            result.finished_at,
+            tuple((item.job_id, item.state) for item in result.items),
+        )
 
+    @staticmethod
+    def _kind(key: str, section: str = "") -> tuple[str, str]:
+        if section == "apps.monkey" or key in ("monkey", "run_monkey_test", "kill_monkey"):
+            return "monkey", "Monkey"
+        if section == "system.shell" or key == "shell_command":
+            return "shell", "Shell"
+        if key.startswith("file_") or "file" in section:
+            return "file", tr("文件")
+        if section.startswith("devices") or key in ("connect", "disconnect", "get_info", "refresh"):
+            return "device", tr("设备")
+        if section.startswith("apps") or key in ("batch_install", "install", "uninstall"):
+            return "app", tr("应用")
+        if section.startswith("system"):
+            return "system", tr("系统")
+        return "other", tr("其他")
+
+    @staticmethod
+    def _date(timestamp: float, *, full: bool = False) -> str:
         try:
-            return datetime.fromtimestamp(timestamp).strftime("%m-%d %H:%M:%S")
+            return datetime.fromtimestamp(timestamp).strftime(
+                "%Y-%m-%d %H:%M:%S" if full else "%m-%d %H:%M"
+            )
         except (OSError, OverflowError, ValueError):
             return ""
-
-    @staticmethod
-    def _clear_layout(layout: QLayout) -> None:
-        """移除布局内全部控件与子布局，并通过 ``deleteLater`` 延迟释放。"""
-
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-            child_layout = item.layout()
-            if child_layout is not None:
-                TaskCenterPage._clear_layout(child_layout)
 
 
 __all__ = ["DEFAULT_HISTORY_LIMIT", "POLL_INTERVAL_MS", "TaskCenterPage"]
