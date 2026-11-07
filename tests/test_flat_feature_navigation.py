@@ -611,40 +611,43 @@ def localized_tools(qt_application, monkeypatch, request):
 
 
 @pytest.mark.parametrize(
-    ("localized_tools", "quality", "default_size", "recovery"),
+    ("localized_tools", "quality", "default_size", "recovery", "automatic_codec"),
     [
-        ("en_US", "Quality", "Default", "Recovery"),
-        ("zh_CN", "画质优先", "默认", "恢复模式"),
-        ("zh_HK", "畫質優先", "預設", "恢復模式"),
+        ("en_US", "Quality", "Default", "Recovery", "Automatic video encoding"),
+        ("zh_CN", "画质优先", "默认", "恢复模式", "自动视频编码"),
+        ("zh_HK", "畫質優先", "預設", "恢復模式", "自動視訊編碼"),
     ],
     indirect=["localized_tools"],
 )
 def test_localized_options_preserve_remote_settings_and_system_commands(
-    localized_tools, quality, default_size, recovery,
+    localized_tools, quality, default_size, recovery, automatic_codec,
 ):
     from services.remote.scrcpy_args import build_scrcpy_args
 
     window, settings = localized_tools
+    settings.values["scrcpy_codec"] = "h265"
     window._on_devices_updated(["demo-a"])
     window._global_device_bar.selection_requested.emit(["demo-a"])
     window.navigationInterface.widget("remotePage").click()
     remote = window.left_panel._scrcpy_tab
-    for preset, maximum, fps, bitrate, codec, buffer in (
-        ("Smooth", "1024", "30", "4", "h264", "50"),
-        ("Balanced", "1280", "30", "8", "h264", "20"),
-        ("Quality", "1920", "60", "12", "h265", "50"),
-        ("Low Latency", "720", "24", "2", "h264", "0"),
+    for preset, maximum, fps, bitrate, buffer in (
+        ("Smooth", "1024", "30", "4", "50"),
+        ("Balanced", "1280", "30", "8", "20"),
+        ("Quality", "1920", "60", "12", "50"),
+        ("Low Latency", "720", "24", "2", "0"),
     ):
         remote.preset.setCurrentIndex(remote.preset.findData(preset))
         config = remote._scrcpy_config("scrcpy", "demo-a")
         assert all(getattr(remote, key).currentData() for key in (
-            "maxsize", "fps", "bitrate", "codec", "buffer", "orientation",
+            "maxsize", "fps", "bitrate", "buffer", "orientation",
         ))
         args = build_scrcpy_args(config)
         assert args[args.index("-m") + 1] == maximum
         assert (config.fps, config.bitrate, config.codec, config.buffer) == (
-            fps, bitrate, codec, buffer,
+            fps, bitrate, "auto", buffer,
         )
+        assert remote.codec.text() == automatic_codec
+        assert settings.get("scrcpy_codec") == "h265"
         assert settings.get("scrcpy_preset") == preset
         assert settings.get("scrcpy_maxsize") == config.maxsize
     remote.preset.setCurrentIndex(remote.preset.findData("Quality"))
@@ -658,7 +661,7 @@ def test_localized_options_preserve_remote_settings_and_system_commands(
     config = remote._scrcpy_config("scrcpy", "demo-a")
     assert config.maxsize == "Default"
     assert config.device == "demo-a"
-    assert config.codec == "h265"
+    assert config.codec == "auto"
     settings.values.update(scrcpy_preset="Quality", scrcpy_maxsize="1280")
     assert remote.reload_from_settings()
     assert remote.preset.currentText() == quality

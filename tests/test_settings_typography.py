@@ -20,7 +20,12 @@ from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
 from services.app_update import ReleaseInfo, UpdateSnapshot
 from tests.test_settings_expand_animation import make_page as make_page
-from tests.ui_geometry_helpers import assert_contained, wait_for_stable_geometry, wait_until
+from tests.ui_geometry_helpers import (
+    assert_contained,
+    mapped_rect,
+    wait_for_stable_geometry,
+    wait_until,
+)
 
 
 def _setting_card_controls(page):
@@ -766,18 +771,12 @@ def test_update_card_keeps_existing_height_and_button_positions_across_checks(
     release = ReleaseInfo(
         "3.2.14", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.14", checked_at,
     )
-    # 由 Qt 度量修改前的四行文案；分数缩放下标签测高与整数字体高度可差 1px。
-    original_content = QLabel(
-        "版本 3.2.11 · 开源项目\nAndroid 设备管理、应用操作与诊断工作台\n"
-        "发现新版本 3.2.14 · 发布于 2026-09-11\n检查时间：2026-09-11 15:15", page,
-    )
-    original_content.setFont(about.project_card.contentLabel.font())
-    original_content.setWordWrap(True)
-    original_content.hide()
-    original_height = (
-        about.project_card.titleLabel.heightForWidth(1000) + 6
-        + original_content.heightForWidth(1000) + 32
-    )
+    _settle_settings(qt_application, page)
+    # 以真实初始显示为基线；历史文案的字体回退不代表当前卡片的行高。
+    original_height = about.project_card.height()
+    buttons = (about.project_button, about.check_update_button, about.release_button)
+    original_positions = tuple((button.mapTo(about.project_card, QPoint()), button.size())
+                               for button in buttons)
     snapshots = [
         UpdateSnapshot(status="available", release=release, checked_at=checked_at),
         UpdateSnapshot(),
@@ -795,19 +794,19 @@ def test_update_card_keeps_existing_height_and_button_positions_across_checks(
             )
         ],
     ]
-    original_positions = None
     for snapshot in snapshots:
         about.set_update_snapshot(snapshot)
         _settle_settings(qt_application, page)
         card = about.project_card
-        # 保留原四行版本说明的高度，检查过程不能撑高或收缩卡片。
+        # 四行状态的回退字体可能使用不同字形高度；状态通知不能推移操作按钮。
         assert card.height() == original_height
+        assert card.contentLabel.height() >= card.contentLabel.heightForWidth(
+            card.contentLabel.width(),
+        )
+        assert card.rect().contains(mapped_rect(card.contentLabel, card))
         if snapshot.status == "idle":
             assert "更新状态：尚未检查" in card.contentLabel.text()
-        buttons = (about.project_button, about.check_update_button, about.release_button)
         positions = tuple((button.mapTo(card, QPoint()), button.size()) for button in buttons)
-        if original_positions is None:
-            original_positions = positions
         assert positions == original_positions
         assert len({button.height() for button in buttons}) == 1
         assert about.release_button.text() == "前往下载"

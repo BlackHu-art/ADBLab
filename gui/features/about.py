@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from math import ceil
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QRect, QSize, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QTextLayout
 from PySide6.QtWidgets import (
     QAbstractButton,
     QBoxLayout,
@@ -37,6 +38,24 @@ from utils.resource_path import resource_path
 
 if TYPE_CHECKING:
     from gui.adapters.installer_update import InstallerSnapshot
+
+
+class _UpdateCardPresentation(SettingsCardPresentation):
+    """状态说明共用包含回退字体的行高，避免相同四行文字切换时推移按钮。"""
+
+    def _label_height(self, label: QLabel, width: int) -> int:
+        natural_height = super()._label_height(label, width)
+        if label is not self.card.contentLabel:
+            return natural_height
+        # QLabel 的末行字形会影响总高度；用同一说明中全部字形的回退字体
+        # 测量单行上限，不能只用主字体的 QFontMetrics 或硬补一个像素。
+        text_layout = QTextLayout(label.text().replace("\n", " "), label.font())
+        text_layout.beginLayout()
+        line = text_layout.createLine()
+        line.setLineWidth(16777215)
+        line_height = ceil(line.height())
+        text_layout.endLayout()
+        return max(natural_height, line_height * (label.text().count("\n") + 1))
 
 
 class _SupportCardPresentation(SettingsCardPresentation):
@@ -222,7 +241,7 @@ class AboutPanel(SettingCardGroup):
             self.support_card, self.support_button, self.support_reveal,
         )
         self._presentations = (
-            SettingsCardPresentation(self.project_card, self.update_actions),
+            _UpdateCardPresentation(self.project_card, self.update_actions),
             SettingsCardPresentation(self.installer_card, self.installer_actions),
             self._support_presentation,
         )

@@ -1,8 +1,8 @@
 """卡片在实际云母宿主、重挂与主题变化时保持统一材质和交互。"""
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QRegion
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QEnterEvent, QImage, QPainter, QRegion
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import FluentWindow, SettingCard
@@ -179,18 +179,20 @@ def test_material_card_keeps_hover_on_theme_change_and_native_reparent(qt_applic
     card.setGeometry(10, 10, 200, 100)
     mica.show()
     try:
+        wait_until(qt_application, lambda: mica.windowHandle().isExposed())
         qt_application.processEvents()
-        # 先经过卡片外部，避免前例遗留相同鼠标坐标时离屏平台省略 Enter。
-        QTest.mouseMove(mica, QPoint(230, 150))
-        qt_application.processEvents()
-        QTest.mouseMove(card, QPoint(50, 50))
+        # 本例验证材质跟随交互态；用正常 Enter 事件避免 Cocoa 原生指针异步调度。
+        point = QPoint(50, 50)
+        QCoreApplication.sendEvent(card, QEnterEvent(
+            QPointF(point), QPointF(card.mapTo(mica, point)),
+            QPointF(card.mapToGlobal(point)),
+        ))
         wait_until(qt_application, lambda: (
             card.isHover and card.backgroundColorAni.state() == QAbstractAnimation.State.Stopped
         ))
         assert card.backgroundColor == QColor(255, 255, 255, 40)
         BaseStyles.switch_theme("Dark")
         assert card.backgroundColor == QColor(255, 255, 255, 21)
-        QTest.mouseMove(mica, QPoint(230, 150))
         card.setParent(plain)
         card.show()
         # 新宿主保持隐藏，模拟页面换宿主；避免离屏平台自动投递跨窗 Enter。

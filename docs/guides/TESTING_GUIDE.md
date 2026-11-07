@@ -8,6 +8,10 @@
   Qt 用例结束后恢复主题、字体、Timer 和顶层窗口状态。纯逻辑用例不会因全局夹具提前创建 Qt 应用。
 - Windows 离屏测试夹具注册系统中已有的中文及常用字体，即使平台能枚举部分字体也补齐，确保
   中文字形和实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
+- macOS 的真实 MainFrame / FluentWindow 测试使用 Cocoa：
+  `QT_QPA_PLATFORM=cocoa .venv/bin/python -m pytest -q <测试节点>`。
+  无边框适配会把原生窗口句柄作为 NSView 访问，不能使用 offscreen 的模拟句柄；仅普通 QWidget
+  的测试仍可显式选择 offscreen。
 - 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
 - `ui` 与 `integration` marker 以 `tests/conftest.py` 的集中登记为主：`_UI_TEST_FILES` 标记整份
   Qt 测试文件，`_UI_TEST_FUNCTIONS` 标记混合文件中的 Qt 节点，`_INTEGRATION_TEST_FILES` 标记集成文件；

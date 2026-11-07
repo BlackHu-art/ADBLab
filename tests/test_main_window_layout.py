@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import os
+import sys
 import warnings
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -271,7 +272,24 @@ def test_main_title_bar_shows_brand_with_live_font_and_window_metadata(
                 qt_application.processEvents()
                 assert title.font().pointSizeF() == size
                 assert bar.rect().contains(title.geometry())
-        assert all(button.isVisibleTo(frame) for button in (bar.minBtn, bar.maxBtn, bar.closeBtn))
+        buttons = (bar.minBtn, bar.maxBtn, bar.closeBtn)
+        if sys.platform == "darwin":
+            import objc
+            from AppKit import (
+                NSWindowCloseButton,
+                NSWindowMiniaturizeButton,
+                NSWindowZoomButton,
+            )
+
+            # macOS 使用真实系统按钮，Fluent 按钮须隐藏以免出现两套操作入口。
+            assert frame.isSystemButtonVisible()
+            assert all(button.isHidden() for button in buttons)
+            native_window = objc.objc_object(c_void_p=int(frame.winId())).window()
+            for kind in (NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton):
+                native_button = native_window.standardWindowButton_(kind)
+                assert native_button is not None and not native_button.isHidden()
+        else:
+            assert all(button.isVisibleTo(frame) for button in buttons)
         frame._bind_window_screen()
         for notification in (
             frame._screen_adapter.emit_logical_dpi_changed,
@@ -1377,12 +1395,18 @@ def test_app_manager_fits_inside_small_workspace_page(qt_application):
 
         page = host.stack.currentWidget()
         assert isinstance(page, AppManagerPage)
+        viewport = host.content_scroll.viewport()
+        wait_for_stable_geometry(
+            qt_application, (frame, viewport, host.stack, page, page._master_panel),
+        )
         assert page.minimumSize() == QSize(0, 0)
         assert page.geometry() == host.stack.rect()
         content_minimum = page.workspace_content_minimum_size()
         assert page.width() >= content_minimum.width()
         assert page.height() >= content_minimum.height()
-        assert host.content_scroll.verticalScrollBar().maximum() > 0
+        scroll_bar = host.content_scroll.verticalScrollBar()
+        # 平台字体决定实际内容高度；完整容纳时不应凭固定屏幕尺寸要求滚动。
+        assert scroll_bar.maximum() == max(0, page.height() - viewport.height())
 
         layout = page._master_panel.layout()
         visible_rects = sorted(
@@ -1398,6 +1422,12 @@ def test_app_manager_fits_inside_small_workspace_page(qt_application):
             current.bottom() < following.top()
             for current, following in zip(visible_rects, visible_rects[1:])
         )
+        assert_scroll_target_reachable(host.content_scroll, page.status_bar)
+        # 再制造确定溢出，仍严格验证外层滚动和底部状态可达，不能只覆盖无滚条分支。
+        host.content_scroll.setFixedHeight(max(1, content_minimum.height() - 40))
+        wait_for_stable_geometry(qt_application, (viewport, host.stack, page, page._master_panel))
+        assert viewport.height() < content_minimum.height()
+        assert scroll_bar.maximum() == page.height() - viewport.height() > 0
         assert_scroll_target_reachable(host.content_scroll, page.status_bar)
         assert frame.minimumSizeHint().width() <= 720
         assert frame.minimumSizeHint().height() <= 420
@@ -3306,10 +3336,21 @@ def test_settings_page_applies_typography_in_one_batch(qt_application):
         frame.close()
 
 
-@pytest.mark.parametrize("family", ["Segoe UI", "Microsoft YaHei UI"])
+@pytest.mark.parametrize("family", [
+    "Segoe UI", "Microsoft YaHei UI", "ADBLab Missing Font 604ecaf4",
+    pytest.param(None, id="installed-family"),
+])
 def test_navigation_items_follow_font_settings_through_expand_and_collapse(
     qt_application, monkeypatch, family,
 ):
+    installed_families = QFontDatabase.families()
+    assert installed_families
+    if family is None:
+        family = installed_families[0]
+    # 独立从 Qt 字体库判断预期；缺失字体回退后，用户保存的偏好仍需保留。
+    expected_family = family if family in installed_families else (
+        QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
+    )
     settings = _MainFrameSettings()
     settings.values.update(font_family=family, ui_font_size=12)
     monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
@@ -3336,7 +3377,7 @@ def test_navigation_items_follow_font_settings_through_expand_and_collapse(
                 for key in frame._navigation_labels:
                     item = frame._navigation_widget(key)
                     text_item = getattr(item, "itemWidget", item)
-                    assert text_item.font().family() == family
+                    assert text_item.font().family() == expected_family
                     assert text_item.font().pointSizeF() == size
                     assert text_item.height() >= text_item.fontMetrics().height()
                     if expanded:
@@ -3344,6 +3385,7 @@ def test_navigation_items_follow_font_settings_through_expand_and_collapse(
                         assert text_item.width() - 57 - margins.left() - margins.right() >= (
                             text_item.fontMetrics().horizontalAdvance(text_item.text())
                         )
+        assert settings.values["font_family"] == family
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -3403,6 +3445,14 @@ def test_inline_selector_reallocates_workspace_height_and_restores_after_collaps
         stack = frame.stackedWidget
         for height in (540, 800, 540):
             frame.resize(1017, height)
+            # 缩到此宽度还会收起主导航，不能拿动画中间的正文宽度作设备栏基线。
+            wait_until(qt_application, lambda: (
+                frame.navigationInterface.panel.displayMode == NavigationDisplayMode.COMPACT
+                and frame.navigationInterface.panel.expandAni.state()
+                == QAbstractAnimation.State.Stopped
+                and not frame._navigation_layout_timer.isActive()
+                and not frame._navigation_reflow_timer.isActive()
+            ))
             wait_for_stable_geometry(qt_application, (frame, bar, stack, surface))
             collapsed_height = bar.height()
             collapsed_body = stack.geometry()

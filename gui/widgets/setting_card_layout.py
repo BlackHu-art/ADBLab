@@ -1,7 +1,7 @@
 """让原生 SettingCard 按项目字号换行，并保持操作控件可达。"""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QWidget
 from qfluentwidgets import SettingCard
 
 from gui.styles import BaseStyles, FontRole
@@ -56,6 +56,10 @@ class SettingsCardPresentation:
         control.setAccessibleDescription(card.contentLabel.text())
         self.compact = False
 
+    def _label_height(self, label: QLabel, width: int) -> int:
+        """按实际文本列宽测量；特定卡片可在自然高度之上预留稳定的行高。"""
+        return max(label.fontMetrics().height(), label.heightForWidth(width))
+
     def reflow(self, width: int) -> None:
         """窄卡片把操作移至说明下方；完整保留说明和按钮的可读尺寸。"""
 
@@ -95,7 +99,7 @@ class SettingsCardPresentation:
             label.ensurePolished()
             label.setMinimumHeight(0)
             label.setMaximumHeight(16777215)
-            height = max(label.fontMetrics().height(), label.heightForWidth(text_width))
+            height = self._label_height(label, text_width)
             label.setFixedHeight(height)
             # 本层已按实际列宽测高；文本更新会重新启用 QLabel 的自动测高，
             # 关闭该提示，避免布局项缓存的旧行高覆盖本次固定高度。

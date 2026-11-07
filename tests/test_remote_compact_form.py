@@ -21,6 +21,18 @@ pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
+def all_controls_tab_focus(qt_application):
+    """在 Qt 进程内启用完整控件链，结束后恢复原生 Tab 偏好，不修改系统设置。"""
+    hints = qt_application.styleHints()
+    previous = hints.tabFocusBehavior()
+    hints.setTabFocusBehavior(Qt.TabFocusBehavior.TabFocusAllControls)
+    try:
+        yield
+    finally:
+        hints.setTabFocusBehavior(previous)
+
+
+@pytest.fixture
 def compact_remote(qt_application, monkeypatch, isolated_app_settings):
     panel, remote, scroll, content = _show_feature_panel(
         "remote", 780, 12, qt_application, monkeypatch,
@@ -33,6 +45,35 @@ def compact_remote(qt_application, monkeypatch, isolated_app_settings):
         yield remote, scroll, content
     finally:
         _close_feature_panel(panel)
+
+
+def test_control_queue_header_follows_font_size_and_releases_large_height(
+    compact_remote, qt_application,
+):
+    from gui.styles.typography import FontConfig, typography_manager
+
+    remote, _scroll, _content = compact_remote
+    _window, _scroll, content = _show_remote_controller(qt_application, remote, 780)
+    header = content.headerView
+    label = remote._remote_queue_label
+    current = BaseStyles.current_font_config()
+    heights = []
+    for size in (12, 22, 12):
+        config = FontConfig(
+            ui_family="Arial", ui_size=size,
+            log_size=current.log_size, mono_family=current.mono_family,
+        )
+        BaseStyles._sync_legacy_values(config)
+        typography_manager.apply(config)
+        wait_for_stable_geometry(qt_application, (content, header, label))
+        assert label.font().pointSizeF() == size
+        assert header.height() >= header.sizeHint().height()
+        assert label.height() >= label.fontMetrics().height()
+        assert header.rect().contains(mapped_rect(label, header))
+        heights.append(header.height())
+    # 原生 DPI 较低时大字号仍可落在既有最小行高内，但不能反而压低标题。
+    assert heights[1] >= heights[0]
+    assert heights[2] == heights[0]
 
 
 def test_compact_form_keeps_primary_action_above_configuration(compact_remote):
@@ -131,6 +172,8 @@ def test_remote_transparent_buttons_only_outline_for_keyboard(
     if scope == "media":
         _show_remote_controller(qt_application, remote, 780)
     button.window().activateWindow()
+    # Cocoa 的原生激活请求异步返回；键盘状态断言先建立 Qt 活动窗口前提。
+    qt_application.setActiveWindow(button.window())
     QTest.mouseClick(button, Qt.MouseButton.LeftButton)
     qt_application.processEvents()
     size = button.size()
@@ -274,6 +317,7 @@ def test_swipe_toolbar_pairs_directions_below_primary_navigation(compact_remote,
 
 
 @pytest.mark.parametrize("width", (320, 780))
+@pytest.mark.usefixtures("all_controls_tab_focus")
 def test_tab_from_mirror_start_visits_settings_without_controller_entry(
     compact_remote, qt_application, width,
 ):
@@ -281,6 +325,7 @@ def test_tab_from_mirror_start_visits_settings_without_controller_entry(
     _resize_feature_viewport(qt_application, remote.panel, remote, scroll, width)
     remote.set_target_devices(["synthetic-device"])
     assert not hasattr(remote, "btn_open_controller")
+    qt_application.setActiveWindow(remote.btn_start.window())
     remote.btn_start.setFocus(Qt.FocusReason.TabFocusReason)
     assert remote.btn_start.hasFocus()
     visited = []
@@ -299,6 +344,7 @@ def test_tab_from_mirror_start_visits_settings_without_controller_entry(
         assert switch.indicator in visited
 
 
+@pytest.mark.usefixtures("all_controls_tab_focus")
 def test_remote_keyboard_order_follows_navigation_controls_and_system_keys(
     compact_remote, qt_application,
 ):
@@ -316,6 +362,7 @@ def test_remote_keyboard_order_follows_navigation_controls_and_system_keys(
         *(keys[code] for code in ("MENU", "ENTER", "DEL", "SETTINGS", "CAMERA", "SEARCH")),
         *(keys[code] for code in ("VOL_DOWN", "MEDIA_PREV", "MEDIA_PLAY", "MEDIA_NEXT", "VOL_UP")),
     )
+    qt_application.setActiveWindow(order[0].window())
     order[0].setFocus(Qt.FocusReason.TabFocusReason)
     assert order[0].hasFocus()
     for before, after in zip(order, order[1:]):
@@ -490,6 +537,7 @@ def test_remote_scroll_ends_at_media_and_tall_viewport_preserves_content_height(
         for width in (780, 320, 1280, 780):
             # 工具窗仅保留操作区，使用更短视口继续实际覆盖滚动末端。
             resize_viewport(width, 150)
+            assert content.headerView.height() >= content.headerView.sizeHint().height()
             bar = scroll.verticalScrollBar()
             assert bar.maximum() > 0, "短视口必须实际验证纵向滚动末端"
             assert all(button.isVisibleTo(content) for button in buttons)

@@ -400,6 +400,10 @@ class RemotePanelForm(QObject):
                 section.headerView.setFixedHeight(frame._remote_queue_label.fontMetrics().height())
             else:
                 section.headerView.setMinimumHeight(height)
+        # 独立操作区的队列头不属于参数分区；按当前字体重新取自然高度，
+        # 避免短视口压到旧下限、富余视口再长高，缩小字号时也须释放旧高度。
+        control_header = frame._standalone_remote.control_content.headerView
+        control_header.setFixedHeight(max(36, control_header.layout().sizeHint().height()))
         frame.codec.setMinimumHeight(height)
 
     @Slot()

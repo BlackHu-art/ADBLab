@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-11-07
+last_verified: 2026-11-08
 related: [ARCHITECTURE.md, MODULE_MAP.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md, ../guides/OPERATION_RESULTS.md, ../guides/TESTING_GUIDE.md]
 ---
 
@@ -230,6 +230,8 @@ QAction 保存状态，开启时图标使用应用强调色，文字和底色沿
 
 [SettingsPage](../../gui/pages/fluent_pages.py) 记录最近布局的实际视口宽度，纯高度变化不再遍历
 普通设置卡。实际宽度变化和文案、字体、主题等显式刷新仍执行重排，不能只按宽度缓存所有内容变化。
+版本检查卡按说明中实际回退字体的单行高度预留四行空间，避免未换行的状态文字因末行字形不同
+改变卡高和按钮位置；窄列的自然换行高度仍保留。
 [设置卡布局](../../gui/widgets/setting_card_layout.py) 在测量标签前完成 `ensurePolished()`，让新建
 路径标签首次使用最终字体度量，避免展开诊断或二维码后才改变原始卡片高度。
 正文容器由卡片和滚动视口约束，不再额外扣除窗口安全区；避免 macOS 为视口外正文加入
