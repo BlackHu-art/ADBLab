@@ -1,4 +1,4 @@
-"""验证全部入口的任务记录、分级通知与专用业务结果阅读。"""
+"""验证全部入口的共享任务抽屉、导航反馈与专用业务结果阅读。"""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -41,6 +41,29 @@ def result_frame(qt_application, monkeypatch):
     frame._unbind_window_screen()
     frame._close_ready = True
     frame.close()
+
+
+def _assert_drawer_request(frame, result):
+    """共享阅读器必须呈现原请求，不能只让核心存储通过断言。"""
+    page = frame._task_page
+    drawer = frame._task_feedback.drawer
+    key = f"action:{result.request_id}"
+    assert drawer.opened
+    assert drawer.selected_key == key
+    assert page.selected_key == key
+    assert page.action_results._selected == result.request_id
+    assert drawer.isAncestorOf(page.detail)
+    assert page.action_results.isVisibleTo(frame)
+    assert page.detail_source(key) == result.spec.section
+    assert drawer.target_label.text() == page.detail_row(key).target
+    return page.action_results
+
+
+def _drawer_output(frame, result):
+    view = _assert_drawer_request(frame, result)
+    view.detail_toggle.setChecked(True)
+    assert view.output.isVisibleTo(frame)
+    return view.output.toPlainText()
 
 
 @pytest.fixture
@@ -277,7 +300,7 @@ def test_runtime_info_preserves_warning_summary_without_repeating_warning_toast(
     assert "新的保存失败" in frame._settings_page.diagnostics_card.contentLabel.text()
 
 
-def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
+def test_all_declared_actions_record_tasks_in_drawer_without_changing_page(
     result_frame, monkeypatch,
 ):
     frame = result_frame
@@ -286,6 +309,7 @@ def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
     notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
     for spec in ACTION_SIGNALS.values():
+        frame._task_feedback.drawer.close_drawer(animated=False)
         jobs = []
         frame._action_feedback.dispatch(
             spec,
@@ -297,7 +321,8 @@ def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
         assert len(jobs) == 2, spec
         page = frame._task_page
         view = page.action_results
-        row = page.table.rows[f"action:{jobs[0].request_id}"]
+        key = f"action:{jobs[0].request_id}"
+        row = page.table.rows[key]
         assert view._records[jobs[0].request_id].state == "running", spec
         assert row.data.state == "运行中", spec
         store.complete(jobs[0], {"success": False, "error": "设备暂不可用，请重试"})
@@ -306,52 +331,154 @@ def test_all_declared_actions_record_tasks_and_notify_without_changing_page(
         snapshot = store.recent()[0]
         assert snapshot.state == "partial", spec
         assert view._records[snapshot.request_id] is snapshot
-        assert frame._task_page.action_results._records[snapshot.request_id] is snapshot
         assert row.data.state == "部分成功", spec
-        assert page.table.expanded_key == "", spec
-        assert notices[-1]["level"] == "warning", spec
-        assert notices[-1]["key"] == snapshot.request_id, spec
+        assert row.data.unread, spec
+        assert _assert_drawer_request(frame, snapshot) is view
+        assert frame._task_feedback.drawer.status_label.text() == "部分成功", spec
+        assert "设备暂不可用，请重试" in _drawer_output(frame, snapshot), spec
+        view.targets.setCurrentIndex(1)
+        assert view.output.toPlainText() == "second target answer", spec
+        assert snapshot.targets == ("synthetic-a", "synthetic-b"), spec
         assert frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
     assert not hasattr(frame.left_panel._apps_tab, "action_result_views")
     assert not hasattr(frame.left_panel._advanced_tab, "action_result_views")
     assert not hasattr(frame._settings_page, "action_results")
 
-
-@pytest.mark.parametrize("payload,level", [
-    ({"success": True}, "success"),
-    ({"success": False, "error": "failed"}, "error"),
-    ({"cancelled": True}, "info"),
+@pytest.mark.parametrize("payload,state", [
+    ({"success": True}, "succeeded"),
+    ({"success": False, "error": "failed"}, "failed"),
+    ({"cancelled": True}, "cancelled"),
 ])
-def test_notice_compaction_keeps_running_completion_and_does_not_rearm_timer(
-    result_frame, monkeypatch, payload, level,
+def test_feedback_compaction_keeps_running_request_quiet_and_terminal_notice_idempotent(
+    result_frame, monkeypatch, payload, state,
 ):
     frame = result_frame
     store = frame.adb_controller.action_results
-    scheduled, notices = [], []
-    monkeypatch.setattr("gui.action_feedback.QTimer", SimpleNamespace(
-        singleShot=lambda _ms, _owner, callback: scheduled.append(callback),
-    ))
+    notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
-    monkeypatch.setattr(frame._task_page, "present_action_result", lambda _result: None)
+    present = frame._task_page.present_action_result
+    # 小请求只用于触发去重集合压缩；长请求仍经过真实页面和抽屉阅读器。
+    monkeypatch.setattr(frame._task_page, "present_action_result", lambda result: (
+        present(result) if result.spec.key == "long" else None
+    ))
+    open_request = Mock(wraps=frame._task_feedback.open_request)
+    monkeypatch.setattr(frame._task_feedback, "open_request", open_request)
+    original_page = frame.stackedWidget.currentWidget()
 
     def start(name):
         return store.run(ActionSpec(name, "system.shell", name), (),
                          lambda: capture_action_job("query_async"))
 
     long_job = start("long")
+    assert not frame._task_feedback.drawer.opened
     for _ in range(161):
         store.complete(start("short"), {"success": True})
-    timers_before = len(scheduled)
     store.progress(long_job, "still running")
-    assert len(scheduled) == timers_before
+    assert not frame._task_feedback.drawer.opened
+    snapshot = next(result for result in store.recent()
+                    if result.request_id == long_job.request_id)
+    assert snapshot.state == "running"
+    assert frame._task_page.detail_row(f"action:{long_job.request_id}") is not None
+    frame._action_feedback.open_task(long_job.request_id)
+    _assert_drawer_request(frame, snapshot)
+    assert frame._task_page.selected_key == f"action:{long_job.request_id}"
+    frame._task_feedback.drawer.close_drawer(animated=False)
     store.complete(long_job, payload)
     snapshot = next(result for result in store.recent()
                     if result.request_id == long_job.request_id)
+    calls_after_terminal = open_request.call_count
     frame._action_feedback.present(snapshot)
-    terminal = [notice for notice in notices if notice["key"] == long_job.request_id]
-    assert len(terminal) == 1
-    assert terminal[0]["level"] == level
-    assert callable(terminal[0]["on_action"])
+    assert open_request.call_count == calls_after_terminal
+    assert not frame._task_feedback.drawer.opened
+    assert snapshot.state == state
+    row = frame._task_page.detail_row(f"action:{snapshot.request_id}")
+    assert row.unread == (state == "failed")
+    frame._action_feedback.open_task(snapshot.request_id)
+    _assert_drawer_request(frame, snapshot)
+    assert frame._task_page.navigation_snapshot().unread_count == 0
+    assert frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
+
+
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_slow_screenshot_stays_quiet_until_failure_and_success_updates_media(
+    result_frame, qt_application, tmp_path, succeeded,
+):
+    from PySide6.QtGui import QImage
+
+    frame = result_frame
+    original_page = frame.stackedWidget.currentWidget()
+    path = tmp_path / "synthetic-screenshot.png"
+    image = QImage(8, 8, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.blue)
+    assert image.save(str(path))
+    jobs = []
+    frame._action_feedback.dispatch(
+        ACTION_SIGNALS["screenshot_requested"],
+        lambda devices: jobs.append(capture_action_job("screenshot_async", devices[0])),
+        (["synthetic-device"],),
+    )
+    page = frame._task_page
+    key = f"action:{jobs[0].request_id}"
+    assert page.navigation_snapshot().active_count == 1
+    success_before = page.navigation_snapshot().success_event_id
+    QTest.qWait(650)
+    assert not frame._task_feedback.drawer.opened
+    assert page.selected_key == ""
+    assert frame.stackedWidget.currentWidget() is original_page
+    if succeeded:
+        frame.adb_controller.signals.screenshot_batch_ready.emit([str(path)])
+    frame.adb_controller.action_results.complete(jobs[0], {
+        "success": succeeded,
+        "screenshot_path": str(path) if succeeded else "",
+        "error": "" if succeeded else "截图失败",
+    })
+    result = frame.adb_controller.action_results.recent()[0]
+    assert result.request_id == jobs[0].request_id
+    assert page.detail_row(key).state == ("成功" if succeeded else "失败")
+    assert frame._task_feedback.drawer.opened is (not succeeded)
+    assert page.navigation_snapshot().active_count == 0
+    assert page.navigation_snapshot().unread_count == int(not succeeded)
+    assert (page.navigation_snapshot().success_event_id != success_before) is succeeded
+    assert frame.stackedWidget.currentWidget() is original_page
+    if succeeded:
+        host = frame._workspace_feature_hosts["apps"]
+        media = next(p for k, p in zip(host.registry.keys(), host.registry.pages(), strict=True)
+                     if k.feature == "media")
+        assert media.image_paths == (str(path),)
+        assert result.items[0].artifacts == (str(path),)
+    frame._action_feedback.open_task(result.request_id)
+    _assert_drawer_request(frame, result)
+    assert page.navigation_snapshot().unread_count == 0
+
+
+@pytest.mark.parametrize("history,level,notify,opens,unread", [
+    (None, "success", True, False, 0),
+    (None, "info", True, False, 0),
+    (None, "warning", True, False, 1),
+    (None, "error", False, False, 1),
+    (None, "error", True, True, 1),
+    ("error", "success", True, False, 1),
+    ("error", "info", True, False, 1),
+    ("error", "warning", True, False, 1),
+    ("success", "error", True, True, 1),
+])
+def test_notice_only_new_notifying_failure_opens_and_preserves_unread(
+    result_frame, history, level, notify, opens, unread,
+):
+    presenter = result_frame._action_feedback
+    if history:
+        presenter.record_notice("probe", "记录", "旧事件", history)
+    presenter.record_notice("probe", "记录", "当前事件", level, notify=notify)
+    result = result_frame.adb_controller.action_results.recent()[0]
+    assert len(result.items) == (2 if history else 1)
+    assert result.items[-1].detail == "当前事件"
+    assert result_frame._task_feedback.drawer.opened is opens
+    assert result_frame._task_page.navigation_snapshot().unread_count == unread
+    presenter.open_task(result.request_id)
+    _assert_drawer_request(result_frame, result)
+    assert result_frame._task_page.navigation_snapshot().unread_count == 0
 
 
 def test_result_view_retains_recent_completions_when_wall_clock_ties(qt_application, monkeypatch):
@@ -419,10 +546,12 @@ def test_long_text_copy_export_search_and_artifacts_keep_complete_payload(qt_app
         assert QApplication.clipboard().text() == raw
         export = QSignalSpy(view.export_requested)
         view.export_button.click()
+        assert export.count() == 1
         assert export.at(0)[1] == raw
         opened = QSignalSpy(view.artifact_requested)
         view.open_button.click()
         view.folder_button.click()
+        assert opened.count() == 2
         assert opened.at(0) == [path, False]
         assert opened.at(1) == [path, True]
         view.search.setText("first line")
@@ -565,6 +694,7 @@ def test_result_view_byte_budget_preserves_selected_text_and_inflight(qt_applica
         assert QApplication.clipboard().text() == raw
         exported = QSignalSpy(view.export_requested)
         view.export_button.click()
+        assert exported.count() == 1
         assert exported.at(0)[1] == raw
         view.search.setText("end-marker")
         view._find()
@@ -605,11 +735,10 @@ def test_diagnostic_history_receives_old_terminal_without_reviving_running_recor
         view.close()
 
 
-def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkeypatch):
+def test_settings_adb_restart_opens_exact_drawer_without_navigation(result_frame, monkeypatch):
     frame = result_frame
     frame._on_nav_requested("settings")
-    jobs = []
-    notices = []
+    jobs, notices = [], []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
     frame._action_feedback.dispatch(
         ACTION_SIGNALS["restart_adb_requested"],
@@ -618,15 +747,18 @@ def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkey
     )
     store = frame.adb_controller.action_results
     store.complete(jobs[0], {"success": False, "error": "请重新检测 ADB 环境"})
-    assert store.recent()[0].spec.section == "settings.maintenance"
-    assert notices[-1][1]["level"] == "error"
-    assert "请重新检测" not in notices[-1][0][2]
-    assert "请重新检测 ADB 环境" in store.recent()[0].items[0].detail
-    assert notices[-1][1]["action_text"] == "查看任务"
+    result = store.recent()[0]
+    assert result.spec.section == "settings.maintenance"
+    assert notices == []
+    assert frame._task_feedback.drawer.source_label.text() == "设置"
+    assert frame._task_feedback.drawer.status_label.text() == "失败"
+    assert frame._task_page.navigation_snapshot().unread_count == 1
+    assert "请重新检测 ADB 环境" in _drawer_output(frame, result)
     assert frame.stackedWidget.currentWidget() is frame._settings_page
-    notices[-1][1]["on_action"]()
-    assert frame._task_page.isVisibleTo(frame)
-    assert frame._task_page.action_results._selected == jobs[0].request_id
+    frame._action_feedback.open_task(result.request_id)
+    _assert_drawer_request(frame, result)
+    assert frame._task_page.navigation_snapshot().unread_count == 0
+    assert frame.stackedWidget.currentWidget() is frame._settings_page
 
 
 @pytest.fixture
@@ -745,6 +877,7 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(
     frame = result_frame
     page = frame._task_page
     frame._on_nav_requested("tasks")
+    original_page = frame.stackedWidget.currentWidget()
     wait_for_stable_geometry(qt_application, [page, page.table])
     assert page.isVisibleTo(frame)
     page._operation_manager = None
@@ -762,11 +895,12 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(
     assert row.data.state == "运行中"
     assert "1 项进行中" in page.count_label.text()
     assert row.cancel.isHidden()
-    assert page.table.expanded_key == ""
-    assert page.detail.isHidden()
+    assert not frame._task_feedback.drawer.opened
     row.title.click()
-    assert page.table.expanded_key == key
-    assert page.action_results._selected == jobs[0].request_id
+    result = frame.adb_controller.action_results.recent()[0]
+    _assert_drawer_request(frame, result)
+    assert page.selected_key == key
+    assert frame.stackedWidget.currentWidget() is original_page
     frame.adb_controller.action_results.complete(jobs[0], {"success": False, "error": "生成失败"})
     assert page.table.rows[key] is row
     assert row.data.state == "失败"
@@ -774,21 +908,25 @@ def test_task_center_exposes_running_plain_commands_without_native_operation(
     assert "失败" in page.action_results.summary.text()
 
 
-def test_remote_feedback_records_in_task_center_and_notifies(result_frame, monkeypatch):
+def test_remote_feedback_records_in_drawer_without_exposing_device_id(result_frame, monkeypatch):
     notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
+    original_page = result_frame.stackedWidget.currentWidget()
     remote = result_frame.left_panel._scrcpy_tab
     remote._active_device = "synthetic-a"
     remote._log("ERROR", "synthetic-a: 远程启动失败，请检查连接")
     assert not hasattr(remote._form_controller, "feedback")
     result = result_frame.adb_controller.action_results.recent()[0]
     assert result.spec.section == "remote"
-    assert "远程启动失败" in result.items[-1].detail
+    assert "远程启动失败，请检查连接" in _drawer_output(result_frame, result)
     assert "synthetic-a" not in result.items[-1].detail
-    assert notices[-1]["level"] == "error"
+    assert result_frame._task_feedback.drawer.status_label.text() == "失败"
+    assert result_frame._task_page.navigation_snapshot().unread_count == 1
+    assert result_frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
 
 
-def test_toast_counts_devices_and_task_labels_survive_new_selection(result_frame, monkeypatch):
+def test_drawer_counts_devices_and_task_labels_survive_new_selection(result_frame, monkeypatch):
     frame = result_frame
     frame._on_devices_updated(["demo-a", "demo-b", "demo-c"])
     frame._global_device_bar.set_device_labels({"demo-c": "Phone"})
@@ -806,23 +944,31 @@ def test_toast_counts_devices_and_task_labels_survive_new_selection(result_frame
     result = frame.adb_controller.action_results.recent()[0]
     assert result.items[0].label == "设备 3 · Phone"
     assert result.targets == ("demo-c", "demo-a")
-    assert notices[-1][1]["level"] == "warning"
-    assert "成功 1 台 · 失败 1 台" in notices[-1][0][2]
-    assert "0 台" not in notices[-1][0][2]
+    _assert_drawer_request(frame, result)
+    assert frame._task_page.device_summary.isVisibleTo(frame)
+    assert "成功 1 台 · 失败 1 台" in frame._task_page.device_summary.text()
+    assert "0 台" not in frame._task_page.device_summary.text()
+    assert frame._task_feedback.drawer.status_label.text() == "部分成功"
+    assert "设备 3 · Phone" in frame._task_feedback.drawer.target_label.text()
+    assert frame.left_panel.selected_devices == ["demo-b"]
+    assert notices == []
     assert "设备 3 · Phone" in frame.left_panel._apps_tab.diagnostic_results.targets.itemText(0)
 
 
-@pytest.mark.parametrize("payload,level,summary", [
-    ({"success": True}, "success", "成功 2 台"),
-    ({"success": False, "error": "adb: transport error"}, "error", "失败 2 台"),
-    ({"success": False, "cancelled": True}, "info", "未完成 2 台"),
+@pytest.mark.parametrize("payload,state,summary", [
+    ({"success": True}, "succeeded", "成功 2 台"),
+    ({"success": False, "error": "adb: transport error"}, "failed", "失败 2 台"),
+    ({"success": False, "cancelled": True}, "cancelled", "未完成 2 台"),
 ])
-def test_terminal_toast_reports_only_relevant_device_counts(
-    result_frame, monkeypatch, payload, level, summary,
+def test_terminal_drawer_reports_only_relevant_device_counts(
+    result_frame, monkeypatch, payload, state, summary,
 ):
+    frame = result_frame
     notices, jobs = [], []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
-    result_frame._action_feedback.dispatch(
+    original_page = frame.stackedWidget.currentWidget()
+    success_before = frame._task_page.navigation_snapshot().success_event_id
+    frame._action_feedback.dispatch(
         ActionSpec("probe", "system.shell", "查询"),
         lambda devices: jobs.extend(
             capture_action_job("query_async", device) for device in devices
@@ -830,14 +976,25 @@ def test_terminal_toast_reports_only_relevant_device_counts(
         (["demo-a", "demo-b"],),
     )
     for job in jobs:
-        result_frame.adb_controller.action_results.complete(job, payload)
-
-    message = notices[-1][0][2]
+        frame.adb_controller.action_results.complete(job, payload)
+    result = frame.adb_controller.action_results.recent()[0]
+    assert result.state == state
+    assert frame._task_feedback.drawer.opened == (state == "failed")
+    snapshot = frame._task_page.navigation_snapshot()
+    assert snapshot.active_count == 0
+    assert snapshot.unread_count == int(state == "failed")
+    assert (snapshot.success_event_id != success_before) == (state == "succeeded")
+    frame._action_feedback.open_task(result.request_id)
+    _assert_drawer_request(frame, result)
+    message = frame._task_page.device_summary.text()
+    assert frame._task_page.device_summary.isVisibleTo(frame)
     assert summary in message
     assert "0 台" not in message
     assert "adb: transport error" not in message
-    assert notices[-1][1]["level"] == level
-    assert notices[-1][1]["key"] == jobs[0].request_id
+    if state == "failed":
+        assert "adb: transport error" in _drawer_output(frame, result)
+    assert frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
 
 
 def test_dispatch_copies_and_deduplicates_targets_before_handler(result_frame):
@@ -865,6 +1022,7 @@ def test_intent_signal_uses_result_routing_duplicate_guard_and_close_boundary(
     from services.intent_request import IntentRequest
 
     frame = result_frame
+    original_page = frame.stackedWidget.currentWidget()
     jobs = []
     received = []
     notices = []
@@ -886,10 +1044,21 @@ def test_intent_signal_uses_result_routing_duplicate_guard_and_close_boundary(
     store = frame.adb_controller.action_results
     assert store.recent()[0].spec.section == "system.intent"
     assert store.recent()[0].state == "running"
+    pending = store.recent()[0]
+    assert pending.targets == ("demo-a", "demo-b")
+    assert len(store.recent()) == 1
+    assert not frame._task_feedback.drawer.opened
+    assert frame._task_page.selected_key == ""
+    frame._action_feedback.open_task(pending.request_id)
+    _assert_drawer_request(frame, pending)
+    assert frame.stackedWidget.currentWidget() is original_page
     for job in jobs:
         store.complete(job, payload)
     assert store.recent()[0].state == state
     assert frame._task_page.action_results._records[jobs[0].request_id].state == state
+    _assert_drawer_request(frame, store.recent()[0])
+    assert frame._task_page.navigation_snapshot().unread_count == int(state == "failed")
+    assert notices == []
 
     frame._closing = True
     signal.emit(["demo-a"], request)
@@ -910,8 +1079,14 @@ def test_request_level_failure_does_not_claim_all_devices_succeeded(result_frame
 
     store.run(ActionSpec("probe", "system.shell", "查询"), ("demo-a",), submit)
     assert store.recent()[0].state == "partial"
-    assert "成功 1 台" not in notices[-1][2]
-    assert "部分操作失败" in notices[-1][2]
+    result = store.recent()[0]
+    _assert_drawer_request(result_frame, result)
+    assert result_frame._task_page.device_summary.isVisibleTo(result_frame)
+    assert "成功 1 台" not in result_frame._task_page.device_summary.text()
+    assert "部分操作失败" in result_frame._task_page.device_summary.text()
+    assert "收尾未完成" in result_frame._task_page.action_results.message_label.text()
+    assert result_frame._task_page.navigation_snapshot().unread_count == 1
+    assert notices == []
 
 
 def test_app_manager_records_process_silently_and_notifies_explicit_result(
@@ -926,12 +1101,19 @@ def test_app_manager_records_process_silently_and_notifies_explicit_result(
     try:
         page.log("正在读取应用列表")
         assert not notices
+        assert not result_frame._task_feedback.drawer.opened
+        process = result_frame.adb_controller.action_results.recent()[0]
+        assert process.spec.section == "apps.manager"
+        assert "正在读取应用列表" in process.items[-1].detail
         page._on_operation_feedback("error", "设备连接已断开，请重试")
         assert not hasattr(page, "log_output")
         result = result_frame.adb_controller.action_results.recent()[0]
         assert result.spec.section == "apps.manager"
-        assert "设备连接已断开" in result.items[-1].detail
-        assert notices[-1]["level"] == "error"
+        assert result.request_id == process.request_id
+        assert "设备连接已断开，请重试" in _drawer_output(result_frame, result)
+        assert result_frame._task_feedback.drawer.status_label.text() == "失败"
+        assert result_frame._task_page.navigation_snapshot().unread_count == 1
+        assert notices == []
     finally:
         page.close()
 
@@ -975,6 +1157,7 @@ def test_reports_show_only_generated_files_without_steps_or_empty_cleanup_result
     opened = QSignalSpy(view.artifact_requested)
     view.open_button.click()
     view.folder_button.click()
+    assert opened.count() == 2
     assert opened.at(0) == ["C:/sample/report.zip", False]
     assert opened.at(1) == ["C:/sample/report.zip", True]
 
@@ -1016,7 +1199,17 @@ def test_file_result_records_task_notifies_and_refreshes_only_remote_changes(
         result = result_frame.adb_controller.action_results.recent()[0]
         assert result.spec.section == "devices.files"
         assert result.items[-1].state == ("failed" if failed else "succeeded")
-        assert notices[-1]["level"] == ("error" if failed else "success")
+        assert result_frame._task_feedback.drawer.opened is failed
+        if not failed:
+            result_frame._action_feedback.open_task(result.request_id)
+        assert ("Permission denied" if failed else "文件已传输") in _drawer_output(
+            result_frame, result,
+        )
+        assert result_frame._task_feedback.drawer.status_label.text() == (
+            "失败" if failed else "记录"
+        )
+        assert result_frame._task_page.navigation_snapshot().unread_count == int(failed)
+        assert notices == []
         assert page._refresh.call_count == int(handler == "_on_file_op_done" and not failed)
     finally:
         page.close()
@@ -1052,26 +1245,43 @@ def test_app_manager_worker_feedback_reaches_page_before_worker_cleanup(
         page.close()
 
 
-def test_later_success_does_not_replace_an_independent_failure_notice(result_frame):
-    from gui.notifications import ToastNotification
-
+def test_later_success_does_not_replace_an_independent_failure_reader(result_frame, monkeypatch):
+    notices = []
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
     presenter = result_frame._action_feedback
-    presenter.record_notice("probe", "操作", "first item failed", "error", notify=True)
-    presenter.record_notice("probe", "操作", "second item succeeded", "success", notify=True)
-    notices = [n for n in result_frame.findChildren(ToastNotification) if n.isVisible()]
-    assert {notice.level for notice in notices} == {"error", "success"}
+    original_page = result_frame.stackedWidget.currentWidget()
+    presenter.record_notice("probe.failure", "操作", "first item failed", "error", notify=True)
+    store = result_frame.adb_controller.action_results
+    failure = store.recent()[0]
+    assert "first item failed" in _drawer_output(result_frame, failure)
+    presenter.record_notice(
+        "probe.success", "操作", "second item succeeded", "success", notify=True,
+    )
+    success = store.recent()[0]
+    assert success.request_id != failure.request_id
+    assert len(store.recent()) == 2
+    assert "first item failed" in _drawer_output(result_frame, failure)
+    assert result_frame._task_page.navigation_snapshot().unread_count == 1
+    presenter.open_task(success.request_id)
+    assert "second item succeeded" in _drawer_output(result_frame, success)
+    assert result_frame._task_page.navigation_snapshot().unread_count == 1
+    presenter.open_task(failure.request_id)
+    assert "first item failed" in _drawer_output(result_frame, failure)
+    assert result_frame._task_page.navigation_snapshot().unread_count == 0
+    assert result_frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
 
 
-@pytest.mark.parametrize("content,summarized", [
-    ("请先填写应用包名，再启动测试。", False),
-    ("设备连接已断开，请重新连接后重试。", False),
-    ("  请先选择应用。\n", False),
-    ("x" * 160, False),
-    ("x" * 161, True),
-    ("ADB 执行失败\nPermission denied", True),
+@pytest.mark.parametrize("content", [
+    "请先填写应用包名，再启动测试。",
+    "设备连接已断开，请重新连接后重试。",
+    "  请先选择应用。\n",
+    "x" * 160,
+    "x" * 161,
+    "ADB 执行失败\nPermission denied",
 ])
-def test_page_notice_keeps_short_guidance_and_moves_long_details_to_exact_task(
-    result_frame, monkeypatch, content, summarized,
+def test_page_notice_keeps_complete_guidance_in_exact_drawer(
+    result_frame, monkeypatch, content,
 ):
     notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
@@ -1082,16 +1292,17 @@ def test_page_notice_keeps_short_guidance_and_moves_long_details_to_exact_task(
 
     result = result_frame.adb_controller.action_results.recent()[0]
     assert content.strip() == result.items[-1].detail.strip()
-    message, options = notices[-1][0][2], notices[-1][1]
-    assert options["level"] == "warning"
-    assert options["action_text"] == "查看任务"
-    if summarized:
-        assert message == "详情已记录，可在任务中心查看。"
-        assert content not in message
-    else:
-        assert message == content.strip()
+    assert not result_frame._task_feedback.drawer.opened
+    assert result_frame._task_page.navigation_snapshot().unread_count == 1
+    result_frame._action_feedback.open_task(result.request_id)
+    assert "[注意] " + content in _drawer_output(result_frame, result)
+    assert result_frame._task_feedback.drawer.title_label.text() == "应用操作"
+    assert result_frame._task_feedback.drawer.status_label.text() == "注意"
+    assert result_frame._task_page.navigation_snapshot().unread_count == 0
     assert result_frame.stackedWidget.currentWidget() is original_page
+    assert notices == []
 
-    options["on_action"]()
-    assert result_frame._task_page.isVisibleTo(result_frame)
-    assert result_frame._task_page.action_results._selected == result.request_id
+    result_frame._action_feedback.open_task(result.request_id)
+    _assert_drawer_request(result_frame, result)
+    assert result_frame._task_page.navigation_snapshot().unread_count == 0
+    assert result_frame.stackedWidget.currentWidget() is original_page

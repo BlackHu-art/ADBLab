@@ -7196,7 +7196,6 @@ Android device management, apps and diagnostics</translation>
             <source>MIME不能包含控制字符</source>
             <translation>MIME cannot contain control characters</translation>
         </message>
-
         <message>
             <source>当前用户未安装此应用</source>
             <translation>This app is not installed for the current user</translation>
@@ -7709,7 +7708,6 @@ Android device management, apps and diagnostics</translation>
             <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
             <translation>Control the online devices selected in the main window; mirroring is not required</translation>
         </message>
-
         <message>
             <source>此项不能为空，请输入内容</source>
             <translation>This field is required. Enter a value.</translation>
@@ -8107,6 +8105,134 @@ If shutdown or saving fails, the installer will not run. The downloaded installe
         <message>
             <source>默认跟随系统字号，也可手动选择；已有字号保持不变</source>
             <translation>Default to the system text size or choose a size; existing settings are preserved.</translation>
+        </message>
+        <message>
+            <source>任务详情</source>
+            <translation>Task details</translation>
+        </message>
+        <message>
+            <source>在任务中心查看</source>
+            <translation>View in Task Center</translation>
+        </message>
+        <message>
+            <source>收起</source>
+            <translation>Collapse</translation>
+        </message>
+        <message>
+            <source>收起任务详情，任务继续执行</source>
+            <translation>Close task details; keep the task running</translation>
+        </message>
+        <message>
+            <source>未读异常 {count} 项</source>
+            <translation>Unread issues: {count}</translation>
+        </message>
+        <message>
+            <source>返回来源页面</source>
+            <translation>Back to source page</translation>
+        </message>
+        <message>
+            <source>进行中 {count} 项</source>
+            <translation>Running: {count}</translation>
+        </message>
+        <message>
+            <source>全部</source>
+            <translation>All</translation>
+        </message>
+        <message>
+            <source>异常</source>
+            <translation>Issues</translation>
+        </message>
+        <message>
+            <source>已结束</source>
+            <translation>Ended</translation>
+        </message>
+        <message>
+            <source>查看任务详情</source>
+            <translation>View task details</translation>
+        </message>
+        <message>
+            <source>停止 {task}</source>
+            <translation>Stop {task}</translation>
+        </message>
+        <message>
+            <source>停止会话</source>
+            <translation>Stop session</translation>
+        </message>
+        <message>
+            <source>完整会话内容请返回来源页面查看。</source>
+            <translation>Return to the source page for the full session content.</translation>
+        </message>
+        <message>
+            <source>性能采集已停止</source>
+            <translation>Performance capture stopped</translation>
+        </message>
+        <message>
+            <source>性能采集已完成</source>
+            <translation>Performance capture completed</translation>
+        </message>
+        <message>
+            <source>性能采集运行中</source>
+            <translation>Performance capture running</translation>
+        </message>
+        <message>
+            <source>持续会话</source>
+            <translation>Live session</translation>
+        </message>
+        <message>
+            <source>日志采集或清理失败，请返回来源查看原因</source>
+            <translation>Log capture or cleanup failed. Return to the source for details.</translation>
+        </message>
+        <message>
+            <source>日志采集运行中</source>
+            <translation>Log capture running</translation>
+        </message>
+        <message>
+            <source>正在停止</source>
+            <translation>Stopping</translation>
+        </message>
+        <message>
+            <source>正在停止日志采集并等待资源释放</source>
+            <translation>Stopping log capture and waiting for resources to be released</translation>
+        </message>
+        <message>
+            <source>正在停止采集或等待资源清理</source>
+            <translation>Stopping capture or waiting for cleanup</translation>
+        </message>
+        <message>
+            <source>正在停止镜像并等待批次资源释放</source>
+            <translation>Stopping mirroring and waiting for batch resources to be released</translation>
+        </message>
+        <message>
+            <source>正在准备镜像批次</source>
+            <translation>Preparing mirroring sessions</translation>
+        </message>
+        <message>
+            <source>正在启动性能采集</source>
+            <translation>Starting performance capture</translation>
+        </message>
+        <message>
+            <source>设备 {count}</source>
+            <translation>Device {count}</translation>
+        </message>
+        <message>
+            <source>采集已停止，正在整理结果</source>
+            <translation>Capture stopped; preparing results</translation>
+        </message>
+        <message>
+            <source>采集或资源清理未完成，请返回来源查看原因</source>
+            <translation>Capture or resource cleanup is incomplete. Return to the source for details.</translation>
+        </message>
+        <message>
+            <source>镜像或资源清理失败，请返回来源查看原因</source>
+            <translation>Mirroring or resource cleanup failed. Return to the source for details.</translation>
+        </message>
+        <message>
+            <source>镜像批次已停止</source>
+            <translation>Mirroring sessions stopped</translation>
+        </message>
+        <message>
+            <source>镜像批次运行中</source>
+            <translation>Mirroring sessions running</translation>
         </message>
     </context>
 </TS>

@@ -127,14 +127,18 @@ def _set_dock_platform(monkeypatch, system, qt_platform):
     "system, qt_platform, tracker_factory, independent",
     [
         ("linux", "xcb", Tracker, True),
+        ("darwin", "cocoa", Tracker, True),
+        ("darwin", "cocoa", UnsupportedTracker, False),
+        ("darwin", "offscreen", Tracker, False),
         ("win32", "windows", Tracker, False),
         ("linux", "offscreen", Tracker, False),
         ("linux", "wayland", UnsupportedTracker, False),
         ("linux", "xcb", UnsupportedTracker, False),
     ],
-    ids=("linux-xcb", "windows", "offscreen", "wayland", "xcb-portable"),
+    ids=("linux-xcb", "cocoa", "cocoa-portable", "darwin-offscreen", "windows",
+         "offscreen", "wayland", "xcb-portable"),
 )
-def test_toolbar_owner_is_isolated_only_for_linux_xcb_native_tracking(
+def test_toolbar_ownership_follows_native_tracking_platform(
     qt_application, monkeypatch, system, qt_platform, tracker_factory, independent,
 ):
     module = _set_dock_platform(monkeypatch, system, qt_platform)
@@ -151,15 +155,58 @@ def test_toolbar_owner_is_isolated_only_for_linux_xcb_native_tracking(
         owner.close()
 
 
+@pytest.mark.integration
+def test_cocoa_mirror_toolbar_preserves_workspace_and_resize_hit_zones(qt_application):
+    from PySide6.QtCore import Qt
+
+    from gui.panels.remote_panel_dock import RemotePanelDock
+    from gui.widgets.frameless_resize import FramelessResizeController
+    from gui.widgets.task_detail_drawer import TaskDetailDrawer
+
+    if qt_application.platformName() != "cocoa":
+        pytest.skip("需要 Cocoa 的真实窗口句柄与子视图")
+
+    window = QWidget()
+    surface = QWidget(window)
+    owner = QWidget(surface)
+    # 镜像页的分类内容与工具窗原来共用父控件，须保留同级控件才能观测句柄对主树的影响。
+    content = QWidget(owner)
+    drawer = TaskDetailDrawer(surface)
+    resize = FramelessResizeController(window)
+    watched = (surface, owner, content, drawer, *resize.zones)
+    frame = Frame()
+    current = session("a")
+    frame._device_sessions = {"a": current}
+    dock = RemotePanelDock(frame, owner, tracker_factory=Tracker)
+    try:
+        window.show()
+        assert all(widget.windowHandle() is None for widget in watched)
+        dock.sync()
+        entry = dock.entries["a"]
+        assert entry.session is current
+        assert entry.toolbar.isVisible() and entry.toolbar.windowHandle() is not None
+        # 工具窗已经取得独立句柄，工作区、抽屉与八个缩放热区仍应由同一表面合成。
+        assert all(widget.windowHandle() is None for widget in watched)
+        assert not any(
+            widget.testAttribute(Qt.WidgetAttribute.WA_NativeWindow) for widget in watched
+        )
+    finally:
+        dock.close()
+        drawer.shutdown()
+        window.close()
+        window.deleteLater()
+
+
 @pytest.mark.parametrize("reason", ["exit", "cancel", "close", "owner_destroyed"])
-def test_independent_xcb_toolbar_retires_popup_and_rejects_late_input(
-    qt_application, monkeypatch, reason,
+@pytest.mark.parametrize("system, qt_platform", [("linux", "xcb"), ("darwin", "cocoa")])
+def test_independent_toolbar_retires_popup_and_rejects_late_input(
+    qt_application, monkeypatch, reason, system, qt_platform,
 ):
     from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QToolButton
     from shiboken6 import delete, isValid
 
-    module = _set_dock_platform(monkeypatch, "linux", "xcb")
+    module = _set_dock_platform(monkeypatch, system, qt_platform)
     closed = []
 
     class OwnedTracker(Tracker):

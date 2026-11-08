@@ -13,7 +13,12 @@ from services.run_library import RunLibrary, RunRecord
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
 from services.tasks.operations import OperationManager, OperationState
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import (
+    assert_contained,
+    mapped_rect,
+    wait_for_stable_geometry,
+    wait_until,
+)
 
 
 def _result(request_id="query", **kwargs):
@@ -41,7 +46,7 @@ def test_sources_share_one_table_and_filters_apply_to_both(qt_application, tmp_p
         page.search_edit.setText("com.example")
         assert set(page.table.rows) == {"run:run"}
         page.search_edit.clear()
-        page.state_combo.setCurrentIndex(page.state_combo.findData("failed"))
+        page.kind_combo.setCurrentIndex(page.kind_combo.findData("shell"))
         assert set(page.table.rows) == {"action:query"}
         assert not hasattr(page, "history_views")
     finally:
@@ -57,7 +62,6 @@ def test_incomplete_archive_keeps_incomplete_result_label(qt_application, tmp_pa
     try:
         wait_until(qt_application, lambda: bool(library.records_view))
         assert page.table.rows["run:run"].data.state == "结果不完整"
-        page.state_combo.setCurrentIndex(page.state_combo.findData("partial"))
         assert "run:run" in page.table.rows
     finally:
         page.close()
@@ -126,6 +130,44 @@ def test_notification_selection_clears_filters_and_reveals_exact_request(qt_appl
     page.shutdown()
 
 
+def test_select_request_reveals_distant_inline_row_without_moving_focus(qt_application):
+    page = TaskCenterPage()
+    page.resize(1024, 300)
+    try:
+        for index in range(16):
+            result = _result(f"request-{index}", state="succeeded")
+            page.present_action_result(replace(result, started_at=100 + index))
+        page.show()
+        page.search_edit.setFocus()
+        key = "action:request-0"
+        assert page.table.record_keys[-1] == key
+        row = page.table.rows[key]
+        reader, output = page.action_results, page.action_results.output
+        controls = (row.title, row.cancel)
+        inner, outer = page.table.view.viewport(), page._scroll.viewport()
+        wait_for_stable_geometry(qt_application, (inner, outer, row))
+        assert page.search_edit.hasFocus()
+        assert page.table.view.verticalScrollBar().value() == 0
+        assert mapped_rect(row.header, inner).top() >= inner.height()
+
+        assert page.select_request("request-0")
+        wait_for_stable_geometry(qt_application, (inner, outer, row, page.detail))
+        assert page.table.expanded_key == key
+        assert reader._selected == "request-0"
+        assert (page.action_results, page.action_results.output) == (reader, output)
+        assert page.table.rows[key] is row
+        assert (row.title, row.cancel) == controls
+        assert row.detail_host.isAncestorOf(reader)
+        assert page.search_edit.hasFocus()
+        assert_contained(row.header, inner)
+        assert_contained(row.header, outer)
+        assert_contained(page.detail_meta, inner)
+        assert_contained(page.detail_meta, outer)
+    finally:
+        page.shutdown()
+        page.close()
+
+
 def test_notes_exception_is_unread_until_opened_and_new_note_becomes_unread(qt_application):
     page = TaskCenterPage()
     result = replace(
@@ -181,7 +223,7 @@ def test_device_summary_preserves_actual_item_state(qt_application, state, label
 
 
 @pytest.mark.parametrize("language", ["zh_CN", "zh_HK", "en_US"])
-def test_long_state_filter_fits_narrow_page_at_large_font(qt_application, monkeypatch, language):
+def test_type_filter_fits_narrow_page_at_large_font(qt_application, monkeypatch, language):
     from core.settings_manager import AppSettings
     from gui.i18n import install_translators
     from gui.styles import BaseStyles
@@ -195,9 +237,8 @@ def test_long_state_filter_fits_narrow_page_at_large_font(qt_application, monkey
     page.resize(360, 600)
     page.show()
     try:
-        page.state_combo.setCurrentIndex(page.state_combo.findData("partial"))
-        wait_for_stable_geometry(qt_application, (page, page.filters, page.state_combo))
-        assert page.filters.rect().contains(page.state_combo.geometry())
+        wait_for_stable_geometry(qt_application, (page, page.filters, page.kind_combo))
+        assert page.filters.rect().contains(page.kind_combo.geometry())
         assert page._scroll.horizontalScrollBar().maximum() == 0
         count_rect = page.count_label.contentsRect()
         needed = page.count_label.fontMetrics().boundingRect(

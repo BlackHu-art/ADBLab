@@ -6,6 +6,7 @@ import os
 import re
 import threading
 import time
+from uuid import uuid4
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
@@ -37,6 +38,7 @@ from gui.dialogs.lifecycle import (
     safe_disconnect,
 )
 from gui.i18n import tr
+from gui.session_tasks import SessionTaskSnapshot
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.reading_surface import stop_reading_surface
@@ -48,7 +50,7 @@ from gui.widgets.performance_sessions import PerformanceSnapshot
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from gui.widgets.run_preset_bar import RunPresetBar
 from models.base.focus_detector import detect_current_package
-from services.mobileperf_runner import MobilePerfRunner
+from services.mobileperf_runner import MobilePerfResourceSnapshot, MobilePerfRunner
 from services.performance.config import MobilePerfRunConfig
 
 from .form import (
@@ -155,6 +157,10 @@ class PerformancePage(QWidget):
         self._device_selected = True
         self._device_admission_revision = 0
         self._runner = MobilePerfRunner()
+        self._session_task_key = f"session:performance:{uuid4().hex}"
+        self._session_task_run_id: str | None = None
+        self._session_task_terminal: tuple[int, str] | None = None
+        self._session_task_resources: tuple[int, MobilePerfResourceSnapshot] | None = None
         self._package_worker: CurrentPackageWorker | None = None
         self._package_query_succeeded = False
         self._stop_thread: threading.Thread | None = None
@@ -668,6 +674,9 @@ class PerformancePage(QWidget):
         QDesktopServices.openUrl(QUrl("https://ui.perfetto.dev/"))
 
     def _set_progress(self, percent: int):
+        active = self._library_controller._active
+        if active is not None:
+            self._session_task_run_id = active.run_id
         value = max(0, min(100, int(percent)))
         self.progress_bar.setValue(value)
         self.progress_bar.setFormat(f"{value}%")
@@ -683,6 +692,102 @@ class PerformancePage(QWidget):
             percent=self.progress_bar.value(), elapsed=self._run_elapsed_seconds,
             duration=self._run_duration_seconds, detail=self.progress_display.detail_label.text(),
         )
+
+    def task_snapshot(self) -> SessionTaskSnapshot | None:
+        """投影全部资源代次与本次归档屏障，最新报告完成不能解除旧残留义务。"""
+        generation = self._run_controller._generation
+        active = self._library_controller._active
+        if active is not None:
+            self._session_task_run_id = active.run_id
+        starting = self._run_controller.starting
+        provider = getattr(self._runner, "resource_snapshot", None)
+        candidate = provider() if callable(provider) else None
+        resources = candidate if isinstance(candidate, MobilePerfResourceSnapshot) else None
+        if (resources is None and not starting and self._session_task_resources is not None
+                and self._session_task_resources[0] == generation):
+            resources = self._session_task_resources[1]
+        terminal = (
+            self._session_task_terminal[1]
+            if self._session_task_terminal is not None
+            and self._session_task_terminal[0] == generation else None
+        )
+        # 兼容注入 runner 尚无纯内存接口时，不执行可能阻塞或访问文件的旧查询。
+        runner_owned = bool(resources.resource_owned) if resources is not None else (
+            generation > 0 and terminal is None
+        )
+        runner_running = bool(resources.running) if resources is not None else False
+        stop_thread = self._stop_thread
+        stopping = stop_thread is not None and stop_thread.is_alive()
+        # 页面承担所有代次的归档直到交付且实际 join；图表和资源探测没有归档身份。
+        archives = {worker.active.run_id for worker in self._result_loader._workers
+                    if worker.active is not None}
+        finalizing = self._session_task_run_id in archives or (
+            generation > 0 and not self._runner_finished_handled
+        )
+        owned = starting or runner_owned or stopping or finalizing or bool(archives)
+        if generation == 0 and not owned:
+            return None
+        if owned and self._status_state == "warning":
+            state = "failed"
+        elif starting:
+            state = "stopping" if self._run_cancel_requested else "starting"
+        elif owned and (self._stopping or stopping):
+            state = "stopping"
+        elif runner_owned:
+            state = "running" if runner_running else "stopping"
+        elif finalizing:
+            state = "finalizing"
+        elif terminal == "succeeded" and self._run_cancel_requested:
+            state = "cancelled"
+        elif terminal is not None:
+            state = terminal
+        else:
+            state = "cancelled"
+        stop_enabled = not self._closing and not self._stopping and not stopping and (
+            starting and not self._run_cancel_requested or runner_owned
+        )
+        detail = {
+            "starting": tr("正在启动性能采集"),
+            "running": tr("性能采集运行中"),
+            "stopping": tr("正在停止采集或等待资源清理"),
+            "finalizing": tr("采集已停止，正在整理结果"),
+            "failed": tr("采集或资源清理未完成，请返回来源查看原因"),
+            "succeeded": tr("性能采集已完成"),
+            "cancelled": tr("性能采集已停止"),
+        }[state]
+        return SessionTaskSnapshot(
+            self._session_task_key, str(generation), "performance", state, owned,
+            bool(stop_enabled), (tr("设备"),), detail, self._session_task_run_id,
+        )
+
+    def _record_session_task_terminal(self, state: str) -> None:
+        """只接受采集结果控制器交付的运行终态，设备在线状态不能改写历史。"""
+        self._session_task_terminal = (self._run_controller._generation, state)
+
+    def refresh_task_snapshot(self) -> None:
+        """请求现有队列后台取证；GUI 不读取目录，不等待启动或资源清理。"""
+        if not self._closing and not self._run_controller.starting:
+            snapshot = self.task_snapshot()
+            cached = self._session_task_resources
+            if (snapshot is not None and snapshot.resource_owned and snapshot.state != "running"
+                    and (cached is None or cached[0] != self._run_controller._generation)):
+                self._result_loader.request_resource_probe()
+
+    def _accept_session_resource_snapshot(
+        self, snapshot: MobilePerfResourceSnapshot, generation: int,
+    ) -> None:
+        """仅在 GUI 线程接收同代后台证据，旧查询不能把新运行覆盖为空闲。"""
+        if not self._closing and generation == self._run_controller._generation:
+            self._session_task_resources = (generation, snapshot)
+
+    def request_task_stop(self, expected_revision: str) -> bool:
+        """仅对原页面当前代次调用既有停止入口；受理不等同于释放完成。"""
+        snapshot = self.task_snapshot()
+        if (snapshot is None or snapshot.revision != expected_revision
+                or not snapshot.resource_owned or not snapshot.stop_enabled):
+            return False
+        self.stop_mobileperf()
+        return True
 
     def _reset_progress(self):
         self._run_started_at = None
@@ -915,6 +1020,7 @@ class PerformancePage(QWidget):
         """隔离界面回调并发起停止，页面对象保留到所有资源退出。"""
 
         self._closing = True
+        self._run_controller.cancel_stop_delivery()
         self._monkey_reveal.finish()
         self._result_loader.invalidate()
         self._view_active = False

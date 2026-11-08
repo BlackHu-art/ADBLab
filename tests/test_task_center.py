@@ -15,6 +15,21 @@ from services.task_history import TaskHistoryStore
 from services.tasks.operations import OperationManager
 
 
+def _assert_table_control_reachable(page, key, column, control):
+    from PySide6.QtCore import QCoreApplication, QRect
+
+    view = page.table.view
+    assert key in page.table.record_keys
+    assert page.table.rows[key].cells[column].isAncestorOf(control)
+    view.ensureWidgetVisible(control, 0, 4)
+    QCoreApplication.processEvents()
+    assert (
+        view.viewport()
+        .rect()
+        .contains(QRect(control.mapTo(view.viewport(), QPoint()), control.size()))
+    )
+
+
 @pytest.mark.parametrize("font_size,width", [(12, 1120), (22, 860)])
 def test_task_route_shows_one_title_without_device_controls(
     qt_application, monkeypatch, font_size, width,
@@ -65,7 +80,7 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
 
     from core.settings_manager import DEFAULTS, AppSettings
     from gui.styles import FontRole
-    from tests.ui_geometry_helpers import assert_scroll_target_reachable, assert_text_fits
+    from tests.ui_geometry_helpers import assert_text_fits
 
     values = dict(DEFAULTS, ui_font_size=12, font_family="Arial")
     monkeypatch.setattr(
@@ -85,7 +100,7 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
         key = f"operation:{operation.operation_id}"
         row = page.table.rows[key]
         cancel = row.cancel
-        row.toggle.click()
+        row.title.click()
         cursor = page.operation_output.textCursor()
         cursor.setPosition(0)
         cursor.setPosition(2, QTextCursor.MoveMode.KeepAnchor)
@@ -103,10 +118,10 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
                 (row.title, FontRole.UI),
                 (row.status, FontRole.UI_SMALL),
                 (page.count_label, FontRole.UI_SMALL),
-                (page.table.header_cells[1], FontRole.UI_SMALL),
+                (page.table.header_cells[0], FontRole.UI_SMALL),
             ):
                 assert widget.font().pointSizeF() == BaseStyles.font_for_role(role).pointSizeF()
-            assert_scroll_target_reachable(page._scroll, cancel)
+            _assert_table_control_reachable(page, key, 3, cancel)
             assert_text_fits(cancel)
         QTest.mouseClick(cancel, Qt.MouseButton.LeftButton)
         assert manager.get(operation.operation_id).cancel_requested
@@ -120,6 +135,8 @@ def test_existing_task_rows_follow_font_round_trip_without_rebuilding(
 def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
     qt_application, monkeypatch, width, language,
 ):
+    from PySide6.QtCore import QAbstractAnimation
+
     from core.settings_manager import AppSettings
     from gui.i18n import install_translators, tr
     from services.tasks.action_results import ActionResults, ActionSpec, capture_action_job
@@ -130,6 +147,7 @@ def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
         build_main_frame,
     )
     from tests.ui_geometry_helpers import (
+        assert_contained,
         assert_scroll_target_reachable,
         assert_text_fits,
         wait_for_stable_geometry,
@@ -173,7 +191,7 @@ def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
         for operation in operations:
             button = page.table.rows[f"operation:{operation.operation_id}"].cancel
             assert button.accessibleName() == tr("取消任务")
-            assert_scroll_target_reachable(page._scroll, button)
+            _assert_table_control_reachable(page, f"operation:{operation.operation_id}", 3, button)
             assert_text_fits(button)
             QTest.mouseClick(button, Qt.MouseButton.LeftButton)
             assert manager.get(operation.operation_id).cancel_requested
@@ -182,14 +200,28 @@ def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
         running_row = page.table.rows[f"action:{job.request_id}"]
         assert running_row.title.toolTip() == tr("查询")
         assert running_row.title.accessibleName() == tr("查询")
-        assert_scroll_target_reachable(page._scroll, running_row.toggle)
-        assert_text_fits(running_row.toggle)
-        clicked = QSignalSpy(running_row.toggle.clicked)
-        QTest.mouseClick(running_row.toggle, Qt.MouseButton.LeftButton)
+        _assert_table_control_reachable(page, f"action:{job.request_id}", 0, running_row.title)
+        assert_text_fits(running_row.title)
+        reader = page.action_results
+        clicked = QSignalSpy(running_row.title.clicked)
+        QTest.mouseClick(running_row.title, Qt.MouseButton.LeftButton)
         assert clicked.count() == 1
-        assert page.table.expanded_key == f"action:{job.request_id}"
-        assert page.action_results._selected == job.request_id
-        assert page.action_results.isVisibleTo(page)
+        key = f"action:{job.request_id}"
+        drawer = frame._task_feedback.drawer
+        assert page.selected_key == key
+        assert drawer.opened and drawer.selected_key == key
+        wait_until(qt_application, lambda: (
+            drawer.isVisibleTo(frame)
+            and drawer.animation.state() == QAbstractAnimation.State.Stopped
+        ))
+        assert drawer.parentWidget() is frame._content_surface
+        assert_contained(drawer, frame._content_surface)
+        assert drawer.isAncestorOf(page.detail)
+        assert page.action_results is reader
+        assert drawer.isAncestorOf(reader)
+        assert reader._selected == job.request_id
+        assert reader.isVisibleTo(frame)
+        assert_scroll_target_reachable(drawer.scroll_area, reader.summary)
     finally:
         results.close()
         page.shutdown()

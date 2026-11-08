@@ -15,7 +15,11 @@ from tests.ui_geometry_helpers import wait_for_stable_geometry
 @pytest.mark.parametrize("width,font_size", [(360, 12), (360, 22), (900, 12), (900, 22)])
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_task_header_aligns_with_workspace_without_clipping(
-    qt_application, monkeypatch, width, font_size, theme,
+    qt_application,
+    monkeypatch,
+    width,
+    font_size,
+    theme,
 ):
     settings = {"ui_font_size": font_size, "font_family": "Arial", "log_font_size": 11}
     monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
@@ -44,7 +48,7 @@ def test_task_header_aligns_with_workspace_without_clipping(
         table_top = page.table.mapTo(page, QPoint()).y()
         assert 0 < count_top - filters_bottom <= 9
         assert 0 < table_top - count_bottom <= 9
-        for control in (page.search_edit, page.kind_combo, page.state_combo):
+        for control in (page.search_edit, page.kind_combo):
             assert page.filters.rect().contains(control.geometry())
             assert control.height() >= control.fontMetrics().height()
         assert page._scroll.horizontalScrollBar().maximum() == 0

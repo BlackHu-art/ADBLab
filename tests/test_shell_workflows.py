@@ -104,7 +104,7 @@ def test_action_results_belong_to_section_and_survive_navigation(frame, qt_appli
     view.detail_toggle.click()
     assert "示例操作失败" in view.output.toPlainText()
     row = frame._task_page.table.rows[f"action:{result.request_id}"]
-    row.toggle.click()
+    row.title.click()
     assert frame._task_page.table.expanded_key == ""
     frame._on_nav_requested("home")
     frame._on_nav_requested("tasks")

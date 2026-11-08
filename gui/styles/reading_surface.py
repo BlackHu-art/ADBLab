@@ -33,6 +33,7 @@ class ReadingSurfaceMaterial(QObject):
         # Fluent 完成 polish 后会改变视口填充属性，必须记录完成后的原生状态。
         output.ensurePolished()
         self._native_auto_fill = output.autoFillBackground(), output.viewport().autoFillBackground()
+        self._document_mode = False
         self._applying = False
         self._stopped = False
         setattr(output, _CONTROLLER_ATTRIBUTE, self)
@@ -42,6 +43,12 @@ class ReadingSurfaceMaterial(QObject):
             output.installEventFilter(self)
         ThemeMixin.theme_changed.connect(self.refresh)
         self.refresh()
+
+    def set_document_mode(self, enabled: bool) -> None:
+        """让当前只读正文透出宿主底板；退出后恢复该窗口的普通阅读材质。"""
+        if enabled != self._document_mode:
+            self._document_mode = enabled
+            self.refresh(force=True)
 
     def refresh(self, _value=None, *, force: bool = False) -> None:
         """在 GUI 线程同步材质，重复窗口重绘不会重建相同样式。"""
@@ -69,7 +76,7 @@ class ReadingSurfaceMaterial(QObject):
         self._signature = signature
         self._applying = True
         try:
-            self._apply_surface(mica and readonly)
+            self._apply_surface((mica or self._document_mode) and readonly)
         finally:
             self._applying = False
 
@@ -109,9 +116,10 @@ class ReadingSurfaceMaterial(QObject):
         if output is None or not isValid(output):
             return
         selector = "PlainTextEdit" if isinstance(output, QPlainTextEdit) else "TextEdit"
+        border = " border: none; padding: 0;" if self._document_mode else ""
         style = (
             f"{selector}, {selector}:hover, {selector}:focus, {selector}:disabled "
-            "{ background-color: transparent; }"
+            f"{{ background-color: transparent;{border} }}"
         ) if transparent else ""
         # 空调色板解除显式颜色，恢复当前主题继承，不能恢复创建时的旧主题快照。
         palette = QPalette()

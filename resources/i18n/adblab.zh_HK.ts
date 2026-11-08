@@ -7196,7 +7196,6 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>MIME不能包含控制字符</source>
             <translation>MIME不能包含控制字元</translation>
         </message>
-
         <message>
             <source>当前用户未安装此应用</source>
             <translation>目前用戶未安裝此應用程式</translation>
@@ -7709,7 +7708,6 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
             <translation>操作主視窗目前已選的在線裝置，無需啟動鏡像</translation>
         </message>
-
         <message>
             <source>此项不能为空，请输入内容</source>
             <translation>此項不能為空，請輸入內容</translation>
@@ -8107,6 +8105,134 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>默认跟随系统字号，也可手动选择；已有字号保持不变</source>
             <translation>預設跟隨系統字號，也可手動選擇；保留現有字號</translation>
+        </message>
+        <message>
+            <source>任务详情</source>
+            <translation>任務詳情</translation>
+        </message>
+        <message>
+            <source>在任务中心查看</source>
+            <translation>在任務中心查看</translation>
+        </message>
+        <message>
+            <source>收起</source>
+            <translation>收起</translation>
+        </message>
+        <message>
+            <source>收起任务详情，任务继续执行</source>
+            <translation>收起任務詳情，任務繼續執行</translation>
+        </message>
+        <message>
+            <source>未读异常 {count} 项</source>
+            <translation>未讀異常 {count} 項</translation>
+        </message>
+        <message>
+            <source>返回来源页面</source>
+            <translation>返回來源頁面</translation>
+        </message>
+        <message>
+            <source>进行中 {count} 项</source>
+            <translation>進行中 {count} 項</translation>
+        </message>
+        <message>
+            <source>全部</source>
+            <translation>全部</translation>
+        </message>
+        <message>
+            <source>异常</source>
+            <translation>異常</translation>
+        </message>
+        <message>
+            <source>已结束</source>
+            <translation>已結束</translation>
+        </message>
+        <message>
+            <source>查看任务详情</source>
+            <translation>查看任務詳情</translation>
+        </message>
+        <message>
+            <source>停止 {task}</source>
+            <translation>停止 {task}</translation>
+        </message>
+        <message>
+            <source>停止会话</source>
+            <translation>停止工作階段</translation>
+        </message>
+        <message>
+            <source>完整会话内容请返回来源页面查看。</source>
+            <translation>完整工作階段內容請返回來源頁面查看。</translation>
+        </message>
+        <message>
+            <source>性能采集已停止</source>
+            <translation>效能擷取已停止</translation>
+        </message>
+        <message>
+            <source>性能采集已完成</source>
+            <translation>效能擷取已完成</translation>
+        </message>
+        <message>
+            <source>性能采集运行中</source>
+            <translation>效能擷取執行中</translation>
+        </message>
+        <message>
+            <source>持续会话</source>
+            <translation>持續工作階段</translation>
+        </message>
+        <message>
+            <source>日志采集或清理失败，请返回来源查看原因</source>
+            <translation>日誌擷取或清理失敗，請返回來源查看原因</translation>
+        </message>
+        <message>
+            <source>日志采集运行中</source>
+            <translation>日誌擷取執行中</translation>
+        </message>
+        <message>
+            <source>正在停止</source>
+            <translation>正在停止</translation>
+        </message>
+        <message>
+            <source>正在停止日志采集并等待资源释放</source>
+            <translation>正在停止日誌擷取並等待資源釋放</translation>
+        </message>
+        <message>
+            <source>正在停止采集或等待资源清理</source>
+            <translation>正在停止擷取或等待資源清理</translation>
+        </message>
+        <message>
+            <source>正在停止镜像并等待批次资源释放</source>
+            <translation>正在停止鏡像並等待批次資源釋放</translation>
+        </message>
+        <message>
+            <source>正在准备镜像批次</source>
+            <translation>正在準備鏡像批次</translation>
+        </message>
+        <message>
+            <source>正在启动性能采集</source>
+            <translation>正在啟動效能擷取</translation>
+        </message>
+        <message>
+            <source>设备 {count}</source>
+            <translation>裝置 {count}</translation>
+        </message>
+        <message>
+            <source>采集已停止，正在整理结果</source>
+            <translation>擷取已停止，正在整理結果</translation>
+        </message>
+        <message>
+            <source>采集或资源清理未完成，请返回来源查看原因</source>
+            <translation>擷取或資源清理未完成，請返回來源查看原因</translation>
+        </message>
+        <message>
+            <source>镜像或资源清理失败，请返回来源查看原因</source>
+            <translation>鏡像或資源清理失敗，請返回來源查看原因</translation>
+        </message>
+        <message>
+            <source>镜像批次已停止</source>
+            <translation>鏡像批次已停止</translation>
+        </message>
+        <message>
+            <source>镜像批次运行中</source>
+            <translation>鏡像批次執行中</translation>
         </message>
     </context>
 </TS>

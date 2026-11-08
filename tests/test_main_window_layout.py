@@ -21,7 +21,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton, QWidget
 from qfluentwidgets import (
     CardWidget,
     ComboBox,
@@ -184,7 +184,17 @@ class _FakeMouseButtons:
 def build_main_frame(
     *, screen_adapter=None, settings=None, mouse_buttons_provider=None, controller=None
 ):
-    """用本地依赖替身构造 MainFrame，不访问 ADB 或外部 helper。"""
+    """先验证 Qt 原生平台，再用本地依赖替身构造窗口，不访问 ADB。"""
+
+    application = QApplication.instance()
+    if application is None:
+        raise RuntimeError("build_main_frame 需要 QApplication；请使用 qt_application 夹具。")
+    if sys.platform == "darwin" and application.platformName() != "cocoa":
+        raise RuntimeError(
+            "macOS MainFrame 需要 Cocoa 原生窗口；请使用 "
+            "QT_QPA_PLATFORM=cocoa .venv/bin/python -m pytest -q <测试节点> "
+            "启动新的测试进程。"
+        )
 
     settings = settings or _MainFrameSettings()
     if controller is None:

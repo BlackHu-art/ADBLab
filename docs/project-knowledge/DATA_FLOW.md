@@ -29,7 +29,8 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 确认进程、reader 和清理义务全部释放后才清理；停止未确认时保留临时目录 |
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
-| 操作结果 | 用户入口、异步命令原始返回、已验证 Operation 单元 | ActionResults 固定请求与目标，完成全部命令后汇总；正文不依赖日志截断 | 任务中心保存快照；Toast 通知终态；报告和诊断呈现专用内容 | 当前会话有界保留，导出才写入用户指定文件 |
+| 操作结果 | 用户入口、异步命令原始返回、已验证 Operation 单元 | ActionResults 固定请求与目标，完成全部命令后汇总；正文不依赖日志截断 | 任务中心保存快照；共享右侧抽屉呈现任务详情；报告和诊断呈现专用内容 | 当前会话有界保留，导出才写入用户指定文件 |
+| 持续会话投影 | 性能、Logcat、镜像原资源 owner | SessionTaskRegistry 弱路由读取公开快照；key/revision 复核后停止原 owner；resource_owned 独立于显示状态 | 统一任务列表、右侧抽屉和导航活动数 | 只在内存；停止受理、离线或取消勾选不解除活动；原 owner 真实释放资源后才结束，不复制持续日志 |
 | 测试结果与方案 | Monkey 设备终态、性能采集退出快照、用户保存的参数 | `RunRecord` / `RunPreset` 经 `RunLibraryController` 后台串行校验和原子写入；Qt 信号更新页面 | 用户配置 `test_runs.json`、任务中心测试结果、两页方案栏 | 跨重启；索引有界，原始产物由用户保管；不自动绑定或执行历史设备 |
 | 运行时工具缓存 | PyInstaller onefile bundle | 按版本校验并复制，普通工具与 scrcpy 桥接使用不同校验深度，见下方文件型存储表 | 平台 cache 目录 `runtime/<version>` | 跨进程复用；开发/onedir 不复制 |
 

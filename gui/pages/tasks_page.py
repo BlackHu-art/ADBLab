@@ -1,4 +1,4 @@
-"""单页任务中心：投影既有任务与归档，行内阅读，不接管执行资源。"""
+"""单页任务中心：投影既有任务与归档，共享阅读器，不接管执行资源。"""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import cast
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QHideEvent, QPalette, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -34,6 +35,7 @@ from qfluentwidgets import (
 
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
+from gui.session_tasks import SessionTaskSnapshot
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
     apply_label_role,
@@ -41,9 +43,12 @@ from gui.styles.fluent import (
     configure_fluent_control,
     use_smooth_scroll,
 )
-from gui.widgets.action_result_view import ActionResultView
+from gui.widgets.action_result_view import STATE_LABELS as ITEM_STATE_LABELS
+from gui.widgets.action_result_view import ActionResultView, result_target_caption
 from gui.widgets.eliding_combo_box import ElidingComboBox
+from gui.widgets.reader_interaction import ReaderInteraction
 from gui.widgets.run_results import RunResultsWidget
+from gui.widgets.task_navigation import TaskNavigationSnapshot
 from gui.widgets.task_table import TaskRowData, TaskTable
 from services.run_library import RunRecord
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
@@ -54,6 +59,8 @@ POLL_INTERVAL_MS = 1000
 DEFAULT_HISTORY_LIMIT = 50
 
 _STATE_LABELS = {
+    "starting": "启动中",
+    "stopping": "停止中",
     "queued": "排队中",
     "running": "运行中",
     "finalizing": "收尾中",
@@ -166,7 +173,7 @@ class _Entry:
     """来源身份与展示字段分离，单调时钟只在原 Operation 内部使用。"""
 
     row: TaskRowData
-    payload: ActionResult | OperationSnapshot | RunRecord | TaskHistoryEntry
+    payload: ActionResult | OperationSnapshot | RunRecord | TaskHistoryEntry | SessionTaskSnapshot
     state: str
     kind: str
     active: bool
@@ -175,7 +182,13 @@ class _Entry:
 
 
 class TaskCenterPage(QWidget):
-    """统一列表、条件筛选和共享行内阅读器；隐藏与退出停止轮询。"""
+    """统一列表与共享阅读器；外部宿主固定挂载详情，独立使用时保留行内入口。"""
+
+    session_stop_requested = Signal(str, str)
+    detail_requested = Signal(str)
+    detail_changed = Signal(str)
+    detail_closed = Signal()
+    navigation_snapshot_changed = Signal(object)
 
     def __init__(
         self,
@@ -188,6 +201,7 @@ class TaskCenterPage(QWidget):
         poll_interval_ms: int = POLL_INTERVAL_MS,
         history_limit: int | None = DEFAULT_HISTORY_LIMIT,
         run_library: RunLibraryController | None = None,
+        external_details: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("taskCenterPage")
@@ -198,12 +212,23 @@ class TaskCenterPage(QWidget):
         self._history_limit = history_limit
         self._stop_hook = stop_hook
         self._library = run_library
+        self._external_details = external_details
+        self._reader_hosted = False
+        self._reader_interaction_guard: Callable[[], bool] | None = None
+        self._operation_action_key = ""
+        self._selected_key = ""
+        self._selecting_entry = False
+        self._navigation = TaskNavigationSnapshot()
+        self._success_sequence = 0
         self._entries: dict[str, _Entry] = {}
+        self._recent_ranks: dict[str, int] = {}
         self._ordered_keys: tuple[str, ...] = ()
         self._frozen_order: tuple[str, ...] = ()
         self._detail_signature: object = None
         self._cancel_pending: set[str] = set()
         self._read_versions: dict[str, tuple] = {}
+        self._session_snapshots: tuple[SessionTaskSnapshot, ...] = ()
+        self._session_read_versions: dict[str, tuple] = {}
         self._closed = False
         self._rendering = False
         self._layout_mode: tuple[bool, bool] | None = None
@@ -238,19 +263,6 @@ class TaskCenterPage(QWidget):
         self.search_edit.setMinimumWidth(0)
         self.search_edit.setPlaceholderText(tr("搜索任务、设备、应用或日期"))
         self.search_edit.setAccessibleName(tr("搜索任务"))
-        self.state_combo = ElidingComboBox(self.filters)
-        self.state_combo.setAccessibleName(tr("任务状态"))
-        for label, value in (
-            ("全部状态", ""),
-            ("进行中", "active"),
-            ("成功", "succeeded"),
-            ("部分完成", "partial"),
-            ("失败", "failed"),
-            ("已取消", "cancelled"),
-            ("注意", "warning"),
-            ("记录", "recorded"),
-        ):
-            self.state_combo.addItem(tr(label), userData=value)
         self.kind_combo = ElidingComboBox(self.filters)
         self.kind_combo.setAccessibleName(tr("任务类型"))
         for label, value in (
@@ -271,7 +283,7 @@ class TaskCenterPage(QWidget):
         )
         self.count_label.setWordWrap(True)
         content_layout.addWidget(self.count_label)
-        self.table = TaskTable(content)
+        self.table = TaskTable(content, external_details=external_details)
         content_layout.addWidget(self.table, 1)
         self.empty_state = QWidget(content)
         self.empty_state.setMinimumWidth(0)
@@ -341,6 +353,12 @@ class TaskCenterPage(QWidget):
             run_library.changed.connect(self.refresh)
         self.operation_output = PlainTextEdit(self.detail)
         self.operation_output.setReadOnly(True)
+        self._operation_interaction = ReaderInteraction(
+            self.operation_output,
+            lambda: self._reader_interaction_guard is None or self._reader_interaction_guard(),
+            lambda: self.selected_key,
+        )
+        self._operation_interaction.watch_editor(self.operation_output)
         self.operation_output.setMinimumHeight(120)
         self.operation_output.setMaximumHeight(200)
         apply_reading_surface(self.operation_output)
@@ -350,10 +368,11 @@ class TaskCenterPage(QWidget):
         self._poll_timer.setInterval(max(0, int(poll_interval_ms)))
         self._poll_timer.timeout.connect(self.refresh)
         self.search_edit.textChanged.connect(self._render)
-        for control in (self.state_combo, self.kind_combo):
-            control.currentIndexChanged.connect(self._render)
+        self.kind_combo.currentIndexChanged.connect(self._render)
         self.table.expanded_changed.connect(self._expanded)
+        self.table.detail_requested.connect(self.select_entry)
         self.table.cancel_requested.connect(self._cancel_entry)
+        self.table.stop_requested.connect(self.request_session_stop)
         self.action_results.selection_changed.connect(self._select_reader_request)
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._sync_theme_state)
@@ -361,41 +380,195 @@ class TaskCenterPage(QWidget):
         self._refresh_typography()
         self.refresh()
 
+    @property
+    def selected_key(self) -> str:
+        """返回阅读身份；外部详情不依赖筛选后是否仍有对应记录行。"""
+        return self._selected_key if self._external_details else self.table.expanded_key
+
+    def detail_row(self, key: str) -> TaskRowData | None:
+        """读取未筛选记录的已脱敏元数据，不改变选择与阅读状态。"""
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if self._reader_hosted and isinstance(entry.payload, ActionResult):
+            # 列表仍需本机占位；详情只显式列出实际提交的设备，即使其显示名恰为“本机”。
+            result = entry.payload
+            targets = [result_target_caption(result, t) for t in result.targets if t]
+            caption = " · ".join(targets)
+            if len(targets) > 1:
+                caption += tr(" · {count} 台目标设备").format(count=len(targets))
+            return replace(entry.row, target=caption)
+        return entry.row
+
+    def allows_automatic_details(self, key: str) -> bool:
+        """只允许机器状态可证明的失败自动呈现，不改变选择、筛选或异常已读。
+
+        notes 只判断最新事件，避免历史失败让后续成功重新弹出。普通 partial 的
+        非空条目全成功时，依据 ActionResults._settle 的完整归并规则可确认请求级失败。
+        """
+        entry = self._entries.get(key)
+        if self._closed or entry is None:
+            return False
+        result = entry.payload
+        if isinstance(result, ActionResult):
+            if result.spec.presentation == "notes":
+                return (result.state == "recorded" and bool(result.items)
+                        and result.items[-1].state == "failed")
+            if result.state == "failed":
+                return True
+            if result.state != "partial":
+                return False
+            states = {item.state for item in result.items}
+            return "failed" in states or states == {"succeeded"}
+        return entry.state == "failed"
+
+    def reader_for_drawer(self, *, interaction_guard: Callable[[], bool] | None = None) -> QWidget:
+        """固定挂载单例正文；宿主可约束用户动作，页面继续拥有身份与后台内容。"""
+        self._reader_hosted = True
+        self._reader_interaction_guard = interaction_guard
+        self.action_results.set_hosted_full_results(True)
+        self.action_results.set_interaction_guard(
+            (lambda: interaction_guard() and self.action_results.isVisible())
+            if interaction_guard is not None else None
+        )
+        if self.run_results is not None:
+            reader = self.run_results
+            reader.set_hosted_full_results(True)
+            reader.set_interaction_guard(
+                (lambda: interaction_guard() and reader.isVisible())
+                if interaction_guard is not None else None
+            )
+        return self.detail
+
+    def revoke_reader_interactions(self) -> None:
+        """关闭或宿主撤销呈现时停止未完用户动作，正文仍由既有末帧协议持有。"""
+        self.action_results.revoke_interactions()
+        if self.run_results is not None:
+            self.run_results.revoke_interactions()
+        self._operation_interaction.revoke()
+
+    def detail_source(self, key: str) -> str:
+        """仅返回已有稳定来源；不依据当前目标猜测执行入口。"""
+        entry = self._entries.get(key)
+        if entry is not None:
+            if isinstance(entry.payload, ActionResult):
+                return entry.payload.spec.section
+            if isinstance(entry.payload, SessionTaskSnapshot):
+                return {"performance": "system.performance", "logcat": "system.logcat",
+                        "remote": "devices.remote"}.get(entry.payload.kind, "")
+            if isinstance(entry.payload, RunRecord):
+                return (
+                    "system.performance" if entry.payload.kind == "performance" else "apps.monkey"
+                )
+        return ""
+
+    def recent_rows(self) -> tuple[TaskRowData, ...]:
+        """返回全部保留记录的自然新近顺序，不沿用阅读时冻结的可视列表位置。"""
+        return tuple(entry.row for entry in self._entries.values())
+
+    def navigation_snapshot(self) -> TaskNavigationSnapshot:
+        """提供未筛选的逻辑任务统计，成功身份只来自观察到的实时终态转换。"""
+        return self._navigation
+
+    def select_entry(
+        self, key: str, *, clear_filters: bool = False, mark_read: bool = True,
+    ) -> bool:
+        """显式选择稳定身份；自动呈现不消费异常版本，重复显式请求仍可打开宿主。"""
+        if self._closed or key not in self._entries:
+            return False
+        if clear_filters:
+            self._reset_filters()
+        if not self._external_details and key not in self.table.rows:
+            return False
+        if self._external_details:
+            self._selected_key = key
+            self._frozen_order = self._ordered_keys
+        else:
+            # 行点击默认消费已读；公共选择入口单独按 mark_read 提交，避免同步信号抢先确认。
+            self._selecting_entry = True
+            try:
+                self.table.set_expanded(key)
+            finally:
+                self._selecting_entry = False
+        self._show_detail(key)
+        if mark_read:
+            self._mark_read(key)
+        self.detail_requested.emit(key)
+        if not self._external_details and key in self.table.rows:
+            header = self.table.rows[key].header
+            # 两层视口依次定位，在行头下方留出一行阅读空间。
+            for area in (self.table.view, self._scroll):
+                anchor = header.mapTo(area.widget(), QPoint(0, header.height()))
+                area.ensureVisible(anchor.x(), anchor.y(), 0, header.height())
+        return True
+
+    def close_detail(self) -> None:
+        """立即释放失效或收起的身份；已挂载的正文随抽屉末帧一起隐藏。"""
+        if not self.selected_key:
+            return
+        if not self._external_details:
+            self.table.set_expanded("")
+            return
+        self._selected_key = ""
+        self._frozen_order = ()
+        self._detail_signature = None
+        if not self._reader_hosted:
+            self.detail.hide()
+        self.detail_closed.emit()
+        if not self._closed:
+            self.refresh()
+
+    def cancel_entry(self, key: str) -> None:
+        """按原提交身份请求取消，不将请求受理视作执行资源已释放。"""
+        if not self._closed:
+            self._cancel_entry(key)
+
+    def request_session_stop(self, key: str, expected_revision: str) -> None:
+        """仅转发手势按下时仍匹配的原会话；版本换代后不能重新解释成停止新运行。"""
+        entry = self._entries.get(key)
+        if self._closed or entry is None or not isinstance(entry.payload, SessionTaskSnapshot):
+            return
+        session = entry.payload
+        if (session.revision == expected_revision and session.resource_owned
+                and session.stop_enabled):
+            self.session_stop_requested.emit(session.key, expected_revision)
+
     def present_action_result(self, result: ActionResult) -> None:
         """后台推送只更新原记录，不主动展开、切换阅读项或滚动页面。"""
         if self._closed:
             return
         self.action_results.present(
             result,
-            preserve_selection=self.table.expanded_key.startswith("action:"),
+            preserve_selection=self.selected_key.startswith("action:"),
         )
         self.refresh()
-        if not self.table.expanded_key.startswith("action:"):
+        if not self.selected_key.startswith("action:"):
             self.action_results.hide()
 
     def select_request(self, request_id: str) -> bool:
         """通知精确定位请求；撤销阻挡目标的条件，不提交设备动作。"""
-        key = f"action:{request_id}"
-        if self._closed or key not in self._entries:
-            return False
-        with (
-            QSignalBlocker(self.search_edit),
-            QSignalBlocker(self.kind_combo),
-            QSignalBlocker(self.state_combo),
-        ):
-            self.search_edit.clear()
-            self.kind_combo.setCurrentIndex(0)
-            self.state_combo.setCurrentIndex(0)
-        self._render()
-        self.table.set_expanded(key)
-        self._show_detail(key)
-        self._scroll.ensureWidgetVisible(self.table.rows[key].header, 0, 12)
-        return True
+        return self.select_entry(f"action:{request_id}", clear_filters=True)
 
     def _select_reader_request(self, request_id: str) -> None:
         key = f"action:{request_id}"
-        if self.table.expanded_key != key:
+        if self.selected_key != key:
             self.select_request(request_id)
+
+    def set_session_snapshots(self, snapshots: tuple[SessionTaskSnapshot, ...]) -> None:
+        """接收原 owner 的内存投影；停止受理或来源消失不能推断资源已成功释放。"""
+        if self._closed or snapshots == self._session_snapshots:
+            return
+        self._session_snapshots = snapshots
+        retained = {snapshot.key for snapshot in snapshots}
+        self._session_read_versions = {
+            key: version for key, version in self._session_read_versions.items() if key in retained
+        }
+        self.refresh()
+
+    @staticmethod
+    def _session_version(snapshot: SessionTaskSnapshot) -> tuple:
+        """稳定异常版本不含轮询时钟；同 owner 的下一次运行仍需要重新确认。"""
+        return snapshot.revision, snapshot.state, snapshot.detail
 
     def refresh(self, *_args) -> None:
         """读取不可变快照并合并明确关联，普通操作正文与列表共用同一有界缓存。"""
@@ -486,6 +659,31 @@ class TaskCenterPage(QWidget):
                 progress=round(op.progress),
             )
             entries.append(_Entry(row, op, state, kind, True, (op.operation_id,), row.title))
+        for session in self._session_snapshots:
+            title = tr({"performance": "性能采集", "logcat": "实时 Logcat",
+                        "remote": "远程控制"}.get(session.kind, "持续会话"))
+            target = " · ".join(session.target_labels) or tr("任务提交时的目标")
+            row = TaskRowData(
+                f"session:{session.key}", title,
+                tr("性能") if session.kind == "performance" else tr("系统"),
+                target, tr("已停止") if session.state == "cancelled"
+                else tr(_STATE_LABELS.get(session.state, session.state)),
+                _STATE_TONES.get(session.state, "accent" if session.resource_owned else "neutral"),
+                tr("进行中") if session.resource_owned else tr("已结束"), tr("持续会话"),
+                cancellable=session.resource_owned
+                and (session.stop_enabled or session.state == "stopping"),
+                cancelling=session.resource_owned and session.state == "stopping"
+                and not session.stop_enabled,
+                unread=session.state in ("failed", "partial", "warning")
+                and self._session_read_versions.get(session.key) != self._session_version(session),
+                stop_action=True,
+                stop_revision=session.revision,
+            )
+            entries.append(_Entry(
+                row, session, session.state,
+                "performance" if session.kind == "performance" else "system",
+                session.resource_owned, search_text=f"{title} {target}",
+            ))
         if self._library is not None:
             for record in self._library.records_view:
                 title = tr("性能采集") if record.kind == "performance" else tr("Monkey 测试")
@@ -534,7 +732,22 @@ class TaskCenterPage(QWidget):
                     )
                 )
         entries = self._order_entries(entries)
+        previous = self._entries
         self._entries = {entry.row.key: entry for entry in entries}
+        # 消失、旧归档和说明更新不代表成功；只消费明确观察到的业务终态。
+        if any(
+            key in previous and previous[key].active and not entry.active
+            and entry.state == "succeeded" and (
+                isinstance(entry.payload, ActionResult)
+                and entry.payload.spec.presentation != "notes"
+                or isinstance(entry.payload, SessionTaskSnapshot)
+                and isinstance(previous[key].payload, SessionTaskSnapshot)
+                and cast(SessionTaskSnapshot, previous[key].payload).revision
+                == entry.payload.revision
+            )
+            for key, entry in self._entries.items()
+        ):
+            self._success_sequence += 1
         retained = {item.request_id for item in self.action_results.records_snapshot()}
         self._read_versions = {
             key: version for key, version in self._read_versions.items() if key in retained
@@ -547,8 +760,36 @@ class TaskCenterPage(QWidget):
             else natural
         )
         self._render()
-        if self.table.expanded_key:
-            self._show_detail(self.table.expanded_key)
+        if self.selected_key:
+            if self.selected_key not in self._entries:
+                self.close_detail()
+            else:
+                self._show_detail(self.selected_key)
+                if self._external_details:
+                    self.detail_changed.emit(self.selected_key)
+        # 同线程订阅者会立即查询页面；排序、行数据和失效选择必须先完成本代提交。
+        self._publish_navigation()
+
+    def _publish_navigation(self) -> None:
+        """筛选与阅读状态只影响展示；全局统计始终使用合并后的逻辑任务。"""
+        snapshot = TaskNavigationSnapshot(
+            active_count=sum(entry.active for entry in self._entries.values()),
+            busy_count=sum(
+                entry.active and (
+                    not isinstance(entry.payload, SessionTaskSnapshot)
+                    or entry.payload.busy
+                    or entry.payload.state in {"starting", "stopping", "finalizing"}
+                )
+                for entry in self._entries.values()
+            ),
+            unread_count=sum(entry.row.unread for entry in self._entries.values()),
+            success_event_id=(
+                f"task-success:{self._success_sequence}" if self._success_sequence else None
+            ),
+        )
+        if snapshot != self._navigation:
+            self._navigation = snapshot
+            self.navigation_snapshot_changed.emit(snapshot)
 
     def _render(self, *_args) -> None:
         if self._rendering:
@@ -556,26 +797,11 @@ class TaskCenterPage(QWidget):
         self._rendering = True
         try:
             query = self.search_edit.text().strip().casefold()
-            kind, state = self.kind_combo.currentData(), self.state_combo.currentData()
-            description = (
-                tr("部分成功 / 结果不完整")
-                if state == "partial"
-                else self.state_combo.currentText()
-            )
-            self.state_combo.setToolTip(description)
-            self.state_combo.setAccessibleDescription(description)
+            kind = self.kind_combo.currentData()
             rows = tuple(
                 self._entries[key].row
                 for key in self._ordered_keys
                 if (not kind or self._entries[key].kind == kind)
-                and (
-                    not state
-                    or (
-                        self._entries[key].active
-                        if state == "active"
-                        else self._entries[key].state == state
-                    )
-                )
                 and (not query or query in self._entries[key].search_text.casefold())
             )
             self.table.set_rows(rows)
@@ -604,23 +830,28 @@ class TaskCenterPage(QWidget):
     def _clear_filters(self) -> None:
         """只撤销查看条件，不改变任务、设备选择或任务执行状态。"""
 
+        self._reset_filters()
+        self.search_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _reset_filters(self) -> None:
         with (
-            QSignalBlocker(self.search_edit), QSignalBlocker(self.state_combo),
-            QSignalBlocker(self.kind_combo),
+            QSignalBlocker(self.search_edit), QSignalBlocker(self.kind_combo),
         ):
             self.search_edit.clear()
-            self.state_combo.setCurrentIndex(0)
             self.kind_combo.setCurrentIndex(0)
         self._render()
-        self.search_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _expanded(self, key: str) -> None:
         self._frozen_order = self._ordered_keys if key else ()
         self._detail_signature = None
         if key:
             self._show_detail(key)
+            if not self._selecting_entry:
+                self._mark_read(key)
+                self.detail_requested.emit(key)
         else:
             self.detail.hide()
+            self.detail_closed.emit()
             if not self._rendering:
                 self.refresh()
 
@@ -630,8 +861,17 @@ class TaskCenterPage(QWidget):
             return
         self._detail_signature = entry.payload
         result = entry.payload
+        if key != self._operation_action_key:
+            self._operation_interaction.revoke()
+            self._operation_action_key = key
+        # 抽屉状态提示统一承载保留说明；持续会话的来源提示仍是正文契约，不能一并隐藏。
+        self.detail_meta.setVisible(
+            not self._reader_hosted or isinstance(result, SessionTaskSnapshot),
+        )
         self.action_results.setVisible(isinstance(result, ActionResult))
-        self.operation_output.setVisible(isinstance(result, (OperationSnapshot, TaskHistoryEntry)))
+        self.operation_output.setVisible(
+            isinstance(result, (OperationSnapshot, TaskHistoryEntry, SessionTaskSnapshot))
+        )
         if self.run_results is not None:
             self.run_results.setVisible(isinstance(result, RunRecord))
         self.detail_meta.setText(
@@ -641,16 +881,44 @@ class TaskCenterPage(QWidget):
         )
         self.device_summary.hide()
         if isinstance(result, ActionResult):
-            self._read_versions[result.request_id] = self._version(result)
-            if entry.row.unread:
-                updated = replace(entry, row=replace(entry.row, unread=False))
-                self._entries[key] = updated
-                self.table.rows[key].update_data(updated.row)
-                self._render()
             self.action_results.select_request(result.request_id)
             lines = []
+            if (
+                result.targets and result.state in ("succeeded", "partial", "failed", "cancelled")
+                and result.spec.presentation != "notes"
+            ):
+                counts = ActionResults.target_outcomes(result)
+                if result.state == "partial" and not counts["failed"] and not counts["cancelled"]:
+                    # 请求级收尾失败没有逐台归属，不能把子命令成功冒充设备最终成功。
+                    lines.append(
+                        tr("部分操作失败")
+                        + tr(" · {count} 台目标设备").format(count=len(result.targets))
+                    )
+                elif not self._reader_hosted or len(result.targets) > 1:
+                    labels = {
+                        "succeeded": tr("成功 {count} 台"),
+                        "failed": tr("失败 {count} 台"),
+                        "cancelled": tr("未完成 {count} 台"),
+                    }
+                    lines.append(" · ".join(
+                        label.format(count=counts[state])
+                        for state, label in labels.items() if counts[state]
+                    ))
+            if (self._reader_hosted and result.spec.presentation != "notes"
+                    and len(result.items) == 1):
+                item = result.items[0]
+                # 单条没有可切换项；仅补充与请求标题不一致的归属和子命令状态。
+                same_target = (not item.target and not result.targets
+                               or result.targets == (item.target,))
+                if not same_target or item.state != result.state:
+                    item_state = tr(ITEM_STATE_LABELS.get(item.state, item.state))
+                    lines.append(item_state if same_target else (
+                        f"{result_target_caption(result, item.target)} · {item_state}"
+                    ))
             for target in result.targets:
                 items = [item for item in result.items if item.target == target]
+                if self._reader_hosted and (len(result.targets) < 2 or items):
+                    continue
                 states = Counter(item.state for item in items)
                 status = (
                     " · ".join(
@@ -663,11 +931,25 @@ class TaskCenterPage(QWidget):
                     if items
                     else tr(_STATE_LABELS.get(result.state, result.state))
                 )
-                lines.append(f"{ActionResults.target_label(result, target)}  ·  {status}")
+                if self._reader_hosted:
+                    # 未返回设备不能借用请求的部分成功或子项完成状态。
+                    status = tr("运行中") if result.state == "running" else tr("结果不完整")
+                name = (result_target_caption(result, target) if self._reader_hosted
+                        else ActionResults.target_label(result, target))
+                lines.append(f"{name}  ·  {status}")
             self.device_summary.setText("\n".join(lines))
             self.device_summary.setVisible(bool(lines))
         elif isinstance(result, RunRecord) and self.run_results is not None:
             self.run_results.present_record(result)
+        elif isinstance(result, SessionTaskSnapshot):
+            source_hint = tr("完整会话内容请返回来源页面查看。")
+            text = result.detail or source_hint
+            if self.operation_output.toPlainText() != text[:64000]:
+                self.operation_output.setPlainText(text[:64000])
+            self.device_summary.setText("\n".join(result.target_labels))
+            self.device_summary.setVisible(bool(result.target_labels) and not self._reader_hosted)
+            self.detail_meta.setText(source_hint)
+            self.operation_output.setVisible(not self._reader_hosted or text != source_hint)
         elif isinstance(result, (OperationSnapshot, TaskHistoryEntry)):
             message = result.message if isinstance(result, OperationSnapshot) else result.detail
             text = (
@@ -677,11 +959,36 @@ class TaskCenterPage(QWidget):
             )
             if self.operation_output.toPlainText() != text:
                 self.operation_output.setPlainText(text[:64000])
-        self.table.set_expanded(key, self.detail)
+        if self._external_details:
+            self.detail.show()
+        else:
+            self.table.set_expanded(key, self.detail)
+
+    def _mark_read(self, key: str) -> None:
+        """只消费用户明确查看时的版本；相同请求的新异常仍需再次确认。"""
+        entry = self._entries.get(key)
+        if entry is None:
+            return
+        if isinstance(entry.payload, ActionResult):
+            self._read_versions[entry.payload.request_id] = self._version(entry.payload)
+        elif isinstance(entry.payload, SessionTaskSnapshot):
+            self._session_read_versions[entry.payload.key] = self._session_version(entry.payload)
+        else:
+            return
+        if entry.row.unread:
+            updated = replace(entry, row=replace(entry.row, unread=False))
+            self._entries[key] = updated
+            self._render()
+            self._publish_navigation()
 
     def _cancel_entry(self, key: str) -> None:
         entry = self._entries.get(key)
         if entry is not None:
+            if isinstance(entry.payload, SessionTaskSnapshot):
+                session = entry.payload
+                if session.resource_owned and session.stop_enabled:
+                    self.session_stop_requested.emit(session.key, session.revision)
+                return
             for operation_id in entry.operation_ids:
                 self._cancel(operation_id)
 
@@ -732,7 +1039,7 @@ class TaskCenterPage(QWidget):
         apply_label_role(self.title_label, FontRole.TITLE, bold=True)
         apply_label_role(self.empty_title, FontRole.UI, bold=True)
         for control in (
-            self.search_edit, self.state_combo, self.kind_combo, self.clear_filters_button,
+            self.search_edit, self.kind_combo, self.clear_filters_button,
         ):
             configure_fluent_control(control)
         for label in (self.count_label, self.empty_label, self.detail_meta, self.device_summary):
@@ -755,49 +1062,24 @@ class TaskCenterPage(QWidget):
         return super().eventFilter(watched, event)
 
     def _reflow_filters(self) -> None:
+        """类型按钮按全部选项统一预算，窄窗只把搜索与类型分成两行。"""
         width = max(0, min(self.width() - 64, self.filters.width()))
-        state_size = self._filter_preferred_size(self.state_combo)
         kind_size = self._filter_preferred_size(self.kind_combo)
-        state_width, kind_width = state_size.width(), kind_size.width()
-        height = max(state_size.height(), kind_size.height())
-        combo_width = state_width + kind_width + 8
-        inline = width >= combo_width + 240
-        stacked = width < combo_width
-        # 固定预算不随当前选项变化；同一排布模式下缩窗也必须更新封顶宽度。
-        self.state_combo.setFixedSize(min(state_width, width), height)
-        self.kind_combo.setFixedSize(min(kind_width, width), height)
-        self.search_edit.setFixedHeight(height)
-        if self._layout_mode == (inline, stacked):
+        inline = width >= kind_size.width() + 248
+        self.kind_combo.setFixedSize(min(kind_size.width(), width), kind_size.height())
+        self.search_edit.setFixedHeight(kind_size.height())
+        if self._layout_mode == (inline, False):
             return
-        self._layout_mode = (inline, stacked)
+        self._layout_mode = (inline, False)
         while self._filter_layout.count():
             self._filter_layout.takeAt(0)
-        for column in range(3):
-            self._filter_layout.setColumnStretch(column, 0)
-        if inline:
-            self._filter_layout.addWidget(self.search_edit, 0, 0)
-            self._filter_layout.addWidget(self.state_combo, 0, 1)
-            self._filter_layout.addWidget(self.kind_combo, 0, 2)
-            self._filter_layout.setColumnStretch(0, 1)
-        else:
-            self._filter_layout.addWidget(self.search_edit, 0, 0, 1, 3)
-            self._filter_layout.addWidget(
-                self.state_combo,
-                1,
-                0,
-                1,
-                3 if stacked else 1,
-                Qt.AlignmentFlag.AlignLeft,
-            )
-            self._filter_layout.addWidget(
-                self.kind_combo,
-                2 if stacked else 1,
-                0 if stacked else 1,
-                1,
-                3 if stacked else 1,
-                Qt.AlignmentFlag.AlignLeft,
-            )
-            self._filter_layout.setColumnStretch(2, 1)
+        self._filter_layout.setColumnStretch(0, 1)
+        self._filter_layout.setColumnStretch(1, 0)
+        self._filter_layout.addWidget(self.search_edit, 0, 0, 1, 1 if inline else 2)
+        self._filter_layout.addWidget(
+            self.kind_combo, 0 if inline else 1, 1 if inline else 0,
+            Qt.AlignmentFlag.AlignLeft,
+        )
 
     @staticmethod
     def _filter_preferred_size(combo: ElidingComboBox) -> QSize:
@@ -831,8 +1113,7 @@ class TaskCenterPage(QWidget):
             max((size.height() for size in sizes), default=0),
         )
 
-    @staticmethod
-    def _order_entries(entries: list[_Entry]) -> list[_Entry]:
+    def _order_entries(self, entries: list[_Entry]) -> list[_Entry]:
         """在途优先；按墙钟插入归档，同时保留普通结果的实际完成/更新顺序。"""
         active = [entry for entry in entries if entry.active]
         actions = deque(
@@ -847,7 +1128,9 @@ class TaskCenterPage(QWidget):
                     for entry in entries
                     if not entry.active and isinstance(entry.payload, (RunRecord, TaskHistoryEntry))
                 ),
-                key=lambda entry: entry.payload.finished_at or 0,
+                key=lambda entry: (
+                    cast(RunRecord | TaskHistoryEntry, entry.payload).finished_at or 0
+                ),
                 reverse=True,
             )
         )
@@ -861,11 +1144,48 @@ class TaskCenterPage(QWidget):
                 if (action.finished_at or action.started_at) >= other.finished_at
                 else others.popleft()
             )
-        return [*active, *actions, *others]
+        sessions = [entry for entry in entries
+                    if not entry.active and isinstance(entry.payload, SessionTaskSnapshot)]
+        ordered = [*active, *actions, *others]
+        # 会话没有完成时间。仅记本页观察到的收尾次序，与普通结果的原排序归并。
+        # 首次出现的终态会话排在已知结果之后，不把载入、改名或阅读当成刚完成。
+        sequence = max(self._recent_ranks.values(), default=0) + 1
+        ranks = {}
+        for entry in entries:
+            if entry.active:
+                continue
+            key = entry.row.key
+            old = self._entries.get(key)
+            previous = self._recent_ranks.get(key, 0)
+            if isinstance(entry.payload, SessionTaskSnapshot):
+                if (old is None or not isinstance(old.payload, SessionTaskSnapshot)
+                        or old.payload.revision != entry.payload.revision):
+                    ranks[key] = 0
+                else:
+                    ranks[key] = sequence if old.active else previous
+            else:
+                ranks[key] = sequence if old is None or old.payload != entry.payload else previous
+        self._recent_ranks = ranks
+        if not sessions:
+            return ordered
+        pending = deque(sorted(sessions, key=lambda entry: ranks[entry.row.key], reverse=True))
+        merged = []
+        for entry in ordered:
+            while not entry.active and pending and ranks[pending[0].row.key] > ranks[entry.row.key]:
+                merged.append(pending.popleft())
+            merged.append(entry)
+        return [*merged, *pending]
 
     @staticmethod
     def _version(result: ActionResult) -> tuple:
         """已读仅按事件身份与终态保存，不延长大段正文的保留周期。"""
+        if result.spec.presentation == "notes":
+            # 容量轮转移除较旧异常不代表新事件；最近异常身份足以识别后续新增异常。
+            return next((
+                (item.job_id, item.state)
+                for item in reversed(result.items)
+                if item.state in ("failed", "partial", "warning")
+            ), ())
         return (
             result.state,
             result.finished_at,

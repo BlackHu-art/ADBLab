@@ -109,12 +109,13 @@ class RemotePanelDock(QObject):
                 continue
             tracker = self._tracker_factory(pid, session.config.window_title)
             native_tracker = tracker if tracker.supported else None
-            independent = (
-                sys.platform == "linux" and QGuiApplication.platformName() == "xcb"
-                and native_tracker is not None
+            platform = (sys.platform, QGuiApplication.platformName())
+            independent = native_tracker is not None and platform in (
+                ("linux", "xcb"), ("darwin", "cocoa"),
             )
-            # X11 下有父控件的 winId() 会连带将主导航原生化，造成实际画面停止刷新。
-            # 独立工具窗由 entries 持有并经 _remove 释放，原生瞬态归属仍绑定镜像窗口。
+            # 在嵌套页面下获取工具窗句柄，会把 Cocoa 和 X11 的工作区子控件也转成原生窗口。
+            # Cocoa 可能分帧提交抽屉与缩放热区，使旧位置的像素短暂可见。
+            # 独立工具窗由 entries 持有并经 _remove 释放，跟随位置与窗口层级仍绑定目标镜像。
             toolbar = RemoteToolbar(
                 None if independent else self._owner, portable=native_tracker is None,
             )

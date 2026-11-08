@@ -29,7 +29,7 @@ def test_progress_refresh_preserves_pressed_cancel_and_unaffected_rows(qt_applic
     qt_application.processEvents()
     keys = [f"operation:{operation.operation_id}" for operation in operations]
     rows = [page.table.rows[key] for key in keys]
-    rows[0].toggle.click()
+    rows[0].title.click()
     button = rows[0].cancel
     QTest.mousePress(button, Qt.MouseButton.LeftButton)
     manager.update_progress(operations[0].operation_id, 35, message="正在安装应用")

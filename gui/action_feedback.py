@@ -10,11 +10,10 @@ from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QFileDialog, QScrollArea
 
 from controllers.action_catalog import ACTION_SIGNALS
-from core.diagnostics import redact_diagnostic
 from gui.i18n import tr
 from gui.notifications import ToastLevel, show_toast
 from gui.pages.device_hub import _device_name
-from services.tasks.action_results import ActionResult, ActionResults, ActionSpec
+from services.tasks.action_results import ActionResult, ActionSpec
 
 
 class ActionFeedbackPresenter(QObject):
@@ -24,7 +23,6 @@ class ActionFeedbackPresenter(QObject):
         super().__init__(frame)
         self.frame = frame
         self._ended: set[str] = set()
-        self._started: set[str] = set()
         self._diagnostics = frame.left_panel._apps_tab.diagnostic_results
         self._reports = frame.left_panel._apps_tab.report_artifacts
         self._reports.artifact_requested.connect(frame.run_library.open_artifact)
@@ -78,11 +76,6 @@ class ActionFeedbackPresenter(QObject):
                 apps = self.frame.left_panel.app_panel
                 if apps is not None:
                     apps.on_screenshot_submission_rejected()
-            show_toast(
-                self.frame, tr(pending.spec.title), tr("该操作正在进行，请等待完成。"),
-                level="info", action_text=tr("查看任务"),
-                on_action=lambda: self.open_task(pending.request_id), key=pending.request_id,
-            )
             return
         try:
             store.run(
@@ -140,7 +133,7 @@ class ActionFeedbackPresenter(QObject):
         self.export_result("application-diagnostics", self.frame.log_service.diagnostics.text())
 
     def present(self, result: ActionResult) -> None:
-        """完整过程只进任务中心；普通页面只收到分级终态提示，两个专用区消费业务产物。"""
+        """原请求进入共享阅读器；后台更新不切页或抢走其他正在阅读的任务。"""
         if self.frame._closing:
             return
         self.frame._task_page.present_action_result(result)
@@ -150,64 +143,17 @@ class ActionFeedbackPresenter(QObject):
             self._diagnostics.present(result)
         elif result.spec.section == "apps.reports":
             self._reports.present(result)
-        if result.state == "running" and result.request_id not in self._started:
-            self._started.add(result.request_id)
-            QTimer.singleShot(500, self, lambda key=result.request_id: self._show_running(key))
         if result.state != "running" and result.request_id not in self._ended:
             self._ended.add(result.request_id)
             if len(self._ended) > 160:
                 retained = self.frame.adb_controller.action_results.recent()
-                # 去重只保留真正发过终态通知的请求；在途身份仍保留延迟通知的幂等性。
+                # 去重只保留仍在结果存储中的终态请求，不额外延长历史保留。
                 self._ended.intersection_update(
                     item.request_id for item in retained if item.state != "running"
                 )
-                self._started.intersection_update(item.request_id for item in retained)
-            if result.state == "cancelled" and not result.items:
-                return
-            levels: dict[str, ToastLevel] = {
-                "succeeded": "success", "partial": "warning", "failed": "error",
-                "cancelled": "info", "recorded": "info", "warning": "warning",
-            }
-            labels = {
-                "succeeded": tr("已完成"), "partial": tr("部分操作失败"),
-                "failed": tr("操作未完成，请查看任务了解原因。"), "cancelled": tr("操作已取消"),
-                "recorded": tr("已记录操作说明"), "warning": tr("请查看任务中的注意事项。"),
-            }
-            message = labels[result.state]
-            if result.targets:
-                counts = ActionResults.target_outcomes(result)
-                if result.state == "partial" and not counts["failed"] and not counts["cancelled"]:
-                    # 批次收尾的语义失败没有逐台归属，不能把命令成功数冒充设备最终成功数。
-                    message += tr(" · {count} 台目标设备").format(count=len(result.targets))
-                else:
-                    count_labels = {
-                        "succeeded": tr("成功 {count} 台"),
-                        "failed": tr("失败 {count} 台"),
-                        "cancelled": tr("未完成 {count} 台"),
-                    }
-                    summary = " · ".join(
-                        label.format(count=counts[state])
-                        for state, label in count_labels.items() if counts[state]
-                    )
-                    if summary:
-                        message += " · " + summary
-            show_toast(
-                self.frame, tr(result.spec.title), message, level=levels[result.state],
-                action_text=tr("查看任务"), on_action=lambda: self.open_task(result.request_id),
-                key=result.request_id,
-            )
-
-    def _show_running(self, request_id: str) -> None:
-        if self.frame._closing:
-            return
-        result = next((item for item in self.frame.adb_controller.action_results.recent()
-                       if item.request_id == request_id), None)
-        if result is not None and result.state == "running":
-            show_toast(
-                self.frame, tr(result.spec.title), tr("正在处理，请稍候。"),
-                level="info", action_text=tr("查看任务"),
-                on_action=lambda: self.open_task(request_id), key=request_id,
-            )
+            # 成功和过程只更新页面与导航；失败资格由任务页的同一只读边界判断。
+            if self.frame._task_page.allows_automatic_details(f"action:{result.request_id}"):
+                self.frame._task_feedback.open_request(result.request_id, automatic=True)
 
     def record_notice(
         self, source: str, title: str, message: str, level: ToastLevel, target: str = "", *,
@@ -221,31 +167,20 @@ class ActionFeedbackPresenter(QObject):
             (target,) if target else (), message, level,
             target_labels=(self.frame._global_device_bar.device_label(target),) if target else (),
         )
-        if notify and result is not None:
-            detail = redact_diagnostic(result.items[-1].detail).strip()
-            lines = [line.strip() for line in detail.splitlines() if line.strip()]
-            # 短业务提示保留下一步指导；多行或长正文在原任务中完整阅读，避免通知承载技术输出。
-            summary = (
-                lines[0] if len(lines) == 1 and len(detail) <= 160
-                else tr("详情已记录，可在任务中心查看。")
-            )
-            show_toast(
-                self.frame, tr(title), summary, level=level,
-                action_text=tr("查看任务"), on_action=lambda: self.open_task(result.request_id),
-                key=result.request_id + ":" + level,
-            )
+        if (notify and result is not None
+                and self.frame._task_page.allows_automatic_details(f"action:{result.request_id}")):
+            self.frame._task_feedback.open_request(result.request_id, automatic=True)
 
     def open_task(self, request_id: str) -> None:
         """通知只定位提交时的任务，不切换设备、不重复执行命令。"""
         if self.frame._closing:
             return
         page = self.frame._task_page
-        self.frame._on_nav_requested("tasks")
         result = next((item for item in self.frame.adb_controller.action_results.recent()
                        if item.request_id == request_id), None)
         if result is not None:
             page.present_action_result(result)
-        page.select_request(request_id)
+        self.frame._task_feedback.open_request(request_id)
 
     def open_section(self, section: str, request_id: str = "") -> None:
         """以稳定功能位置返回原分区，使用当次结果而不是当前设备重新执行。"""
@@ -260,6 +195,10 @@ class ActionFeedbackPresenter(QObject):
             self.frame._on_nav_requested("settings")
         elif section == "apps.media":
             self.frame._open_workspace_feature("apps", "media")
+        elif section in {"devices.files", "devices.remote", "apps.manager", "system.logcat",
+                         "system.performance"}:
+            owner, feature = section.split(".", 1)
+            self.frame._open_workspace_feature(owner, feature)
         else:
             self.frame._open_workspace_feature(section.split(".")[0], "overview")
 

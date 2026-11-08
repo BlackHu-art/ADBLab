@@ -56,6 +56,14 @@ from utils.user_data import user_data_root
 _RESULT_SEGMENT_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
+@dataclass(frozen=True, slots=True)
+class MobilePerfResourceSnapshot:
+    """仅含 owner 已确认的内存证据，未知进程/清理状态保守保留资源义务。"""
+
+    resource_owned: bool
+    running: bool
+
+
 @dataclass(slots=True)
 class _MobilePerfRunContext:
     """保存单次 MobilePerf 运行中不得跨代复用的进程和回调状态。"""
@@ -179,11 +187,60 @@ class MobilePerfRunner:
         with self._state_lock:
             self._resource_contexts = [
                 context for context in self._resource_contexts
-                if self._context_resources_active(context)
+                if not context.process_tracking_released or not context.config_cleaned
+                or any(item is context for item in self._residual_contexts)
+                or self._context_resources_active(context)
             ]
             return bool(self._resource_contexts or self._residual_contexts) or (
                 self._proc is not None and self._proc.poll() is None
             )
+
+    def resource_snapshot(self) -> MobilePerfResourceSnapshot:
+        """GUI 只读内存，不竞争启动锁，不 poll 进程或扫描客户端目录。
+
+        发布的 context 引用与布尔证据由原执行/停止路径维护；尚未确认解除跟踪，
+        或线程尚未退出都继续计入资源。列表引用先复制，避免查询过程中被原 owner
+        裁剪；清理确认的推进仍属于原后台生命周期，本接口不代为执行清理。
+        """
+        residuals = tuple(self._residual_contexts)
+        contexts = (*tuple(self._resource_contexts), *residuals)
+        active = self._active_context
+        if active is not None:
+            contexts = (*contexts, active)
+        owned = bool(residuals) or any(
+            not context.threads_submitted or not context.process_tracking_released
+            or not context.config_cleaned
+            or any(thread is not None and thread.is_alive() for thread in (
+                context.log_thread, context.diagnostic_thread, context.mode_thread,
+            ))
+            for context in contexts
+        )
+        # 无 context 的兼容进程也不能因没有可读释放证据而视为空闲。
+        owned = owned or (not contexts and self._proc is not None)
+        return MobilePerfResourceSnapshot(
+            owned, active is not None and not active.finished_notified,
+        )
+
+    def probe_resource_snapshot(self) -> MobilePerfResourceSnapshot:
+        """只供受监督后台查询确认实际资源；可等待启动锁和读取客户端租约。
+
+        不发停止请求、不代替原 owner 清理。物理租约退出仍可能欠跟踪、配置与
+        residual 登记的收口；这些义务必须由原停止路径完成后才能发布空闲。
+        """
+        with self._state_lock:
+            contexts = (*tuple(self._resource_contexts), *tuple(self._residual_contexts))
+            proc, active = self._proc, self._active_context
+        physical_owned = any(self._context_resources_active(context) for context in contexts)
+        owned = physical_owned or bool(self._residual_contexts) or any(
+            not context.process_tracking_released or not context.config_cleaned
+            for context in contexts
+        )
+        if not contexts and proc is not None:
+            owned = proc.poll() is None or (
+                isinstance(proc, OwnedWorkerProcess) and not proc.resources_released()
+            )
+        running = active is not None and not active.finished_notified
+        return MobilePerfResourceSnapshot(bool(owned), running)
 
     def is_current_run_complete(self) -> bool:
         """最近代次的完成回调和真实线程均退出后才交付报告，不等待旧代资源。"""

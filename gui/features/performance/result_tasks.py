@@ -18,7 +18,7 @@ class PerformanceResultWorker(QThread):
     artifacts_ready = Signal()
 
     def __init__(self, query, generation, active, exit_code, had_config, cancelled_run, parent,
-                 present_result=True):
+                 present_result=True, resource_probe=False, task_generation=0):
         super().__init__(parent)
         self.query = query
         self.generation = generation
@@ -32,12 +32,25 @@ class PerformanceResultWorker(QThread):
         self.chart_error = False
         self.present_result = present_result
         self.artifacts_delivered = False
+        self.resource_probe = resource_probe
+        self.task_generation = task_generation
+        self.resource_status = None
 
     def abort(self):
         """非阻塞停止图表工作；正在执行的文件 I/O 保留真实退出屏障。"""
         self.cancelled.set()
 
     def run(self):
+        if self.resource_probe:
+            try:
+                if not self.cancelled.is_set():
+                    self.resource_status = self.query()
+            except (OSError, ValueError, RuntimeError):
+                # 查询失败保留未知；不能据此发布资源已经归零。
+                self.resource_status = None
+            finally:
+                self.artifacts_ready.emit()
+            return
         try:
             self.artifacts = self.query.discover()
         except (OSError, ValueError, RuntimeError):
@@ -75,14 +88,15 @@ class PerformanceResultLoader(QObject):
         self.request_stop()
 
     def submit(self, query, *, active=None, exit_code=None, had_config=True, cancelled_run=False,
-               present_result=True):
+               present_result=True, resource_probe=False):
         """接管一次结果发现：首个 worker 立即启动，其余排队。
 
         代次在提交时冻结；取消只跳过图表解析，既有运行的结果归档仍须交付。
         """
         worker = PerformanceResultWorker(
             query, self.generation, active, exit_code, had_config, cancelled_run, self,
-            present_result=present_result,
+            present_result=present_result, resource_probe=resource_probe,
+            task_generation=self.frame._run_controller._generation,
         )
         if self.frame._closing:
             worker.abort()
@@ -93,6 +107,16 @@ class PerformanceResultLoader(QObject):
             start = len(self._workers) == 1
         if start:
             self._start_worker(worker)
+
+    def request_resource_probe(self) -> bool:
+        """复用现有受监督单队列，最多保留一个资源查询到真实 join 和结果交付。"""
+        if self.frame._closing or any(worker.resource_probe for worker in self._workers):
+            return False
+        query = getattr(self.frame._runner, "probe_resource_snapshot", None)
+        if not callable(query):
+            return False
+        self.submit(query, active=None, present_result=False, resource_probe=True)
+        return True
 
     def _start_worker(self, worker):
         """启动失败也交付错误归档；绝不在 GUI 补做发现或越过真实线程退出屏障。"""
@@ -110,6 +134,16 @@ class PerformanceResultLoader(QObject):
     def _artifacts_ready(self):
         worker = self.sender()
         if not isinstance(worker, PerformanceResultWorker):
+            return
+        if worker.resource_probe:
+            if (worker.generation == self.generation
+                    and worker.task_generation == self.frame._run_controller._generation
+                    and not worker.cancelled.is_set() and not self.frame._closing
+                    and worker.resource_status is not None):
+                self.frame._accept_session_resource_snapshot(
+                    worker.resource_status, worker.task_generation,
+                )
+            worker.artifacts_delivered = True
             return
         if worker.active is not None:
             self.frame._library_controller.finish(
@@ -134,7 +168,8 @@ class PerformanceResultLoader(QObject):
         if worker.isRunning() or not worker.wait(0) or not worker.artifacts_delivered:
             self._timer.start()
             return
-        if (worker.generation == self.generation and not worker.cancelled.is_set()
+        if (not worker.resource_probe
+                and worker.generation == self.generation and not worker.cancelled.is_set()
                 and not self.frame._closing):
             self.frame.chart_view.set_series(
                 {name: item.values for name, item in worker.metrics.items()},

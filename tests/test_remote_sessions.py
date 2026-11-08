@@ -676,6 +676,54 @@ def test_finished_session_diagnostics_redact_device_after_selection_is_cleared(
     assert "synthetic-secret-device" not in text
 
 
+@pytest.mark.parametrize("requested", [True, False], ids=["requested", "unexpected"])
+def test_watchdog_routes_nonzero_exit_after_cleanup(remote_session, qt_application, requested):
+    remote, service = remote_session
+    remote.set_target_devices(["first"])
+    remote.btn_start.click()
+    assert _wait(qt_application, lambda: service.started == ["first"])
+    session = remote._device_sessions["first"]
+    process = service.processes["first"]
+    feedback = QSignalSpy(remote._feedback_received)
+    diagnostics = QSignalSpy(remote.signals.log_message)
+    process_exited = threading.Event()
+    allow_completion = threading.Event()
+    exit_message = "scrcpy exited with code -15"
+
+    def stop(key, timeout=2):
+        service.keys[key].finish(-15)
+        process_exited.set()
+        allow_completion.wait(timeout)
+
+    service.cleanup_pending.add(session.key)
+    try:
+        if requested:
+            service.stop = stop
+            remote.btn_stop.click()
+            assert process_exited.wait(1)
+        else:
+            process.finish(-15)
+        remote._poll_process()
+        assert session.resource_owned and session.key in remote._scrcpy_process_keys()
+        assert session.state == "stopping"
+        assert feedback.count() == diagnostics.count() == 0
+
+        # 进程和 helper 均已退出，主动停止的完成回调仍未投递到 GUI。
+        service.cleanup_pending.clear()
+        remote._poll_process()
+        assert not session.resource_owned
+        assert session.state == ("stopped" if requested else "failed")
+        assert [feedback.at(i) for i in range(feedback.count())] == (
+            [] if requested else [["WARNING", exit_message]]
+        )
+        assert [diagnostics.at(i) for i in range(diagnostics.count())] == (
+            [["DEBUG", exit_message]] if requested else []
+        )
+    finally:
+        allow_completion.set()
+        service.cleanup_pending.clear()
+
+
 def test_parent_exit_retains_process_key_until_helper_cleanup_finishes(
     remote_session, qt_application,
 ):

@@ -13,6 +13,7 @@ from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import alive_signal_emitter
 from gui.i18n import tr
 from gui.styles import BaseStyles
+from services.mobileperf_runner import MobilePerfResourceSnapshot
 from services.performance.results import PerformanceArtifacts
 
 
@@ -60,18 +61,26 @@ class PerformanceLauncherRun(QObject):
 
     _runner_log = Signal(object, str)
     _runner_done = Signal(object)
+    _stop_done = Signal(object, object, object)
 
     def __init__(self, frame):
         super().__init__(frame)
         self._frame = frame
         self._start_worker: PerformanceStartWorker | None = None
         self._generation = 0
+        self._pending_stop: tuple[int, object, threading.Thread] | None = None
+        self._stop_outcome: bool | None = None
+        self._stop_wait_timer = QTimer(self)
+        self._stop_wait_timer.setSingleShot(True)
+        self._stop_wait_timer.setInterval(25)
+        self._stop_wait_timer.timeout.connect(self._finish_stop_delivery)
         self._finished_during_start = False
         self._start_timer = QTimer(self)
         self._start_timer.setInterval(25)
         self._start_timer.timeout.connect(self._finish_start)
         self._runner_log.connect(self._on_run_log, Qt.ConnectionType.QueuedConnection)
         self._runner_done.connect(self._on_run_finished, Qt.ConnectionType.QueuedConnection)
+        self._stop_done.connect(self._on_stop_done, Qt.ConnectionType.QueuedConnection)
 
     @property
     def starting(self):
@@ -100,11 +109,15 @@ class PerformanceLauncherRun(QObject):
             return
         if self.starting:
             self._finished_during_start = True
+        elif self._pending_stop is not None:
+            # 本次停止还未交回真实线程退出屏障，运行回调不能提前恢复重入。
+            return
         else:
             self._mark_runner_finished()
 
     def start_mobileperf(self):
-        if self._frame._closing or self._frame._configuration_locked:
+        if (self._frame._closing or self._frame._configuration_locked
+                or self._pending_stop is not None or self._frame._stopping):
             return
         if not self._frame._can_operate_device():
             FluentMessageBox.warning(
@@ -198,8 +211,10 @@ class PerformanceLauncherRun(QObject):
                 return
             if worker.error:
                 frame._library_controller.finish(start_error=worker.error)
+                frame._record_session_task_terminal("failed")
             else:
                 frame._library_controller.finish(artifact_snapshot=PerformanceArtifacts())
+                frame._record_session_task_terminal("cancelled")
             frame._runner_finished_handled = True
             frame._stopping = False
             if not frame._closing:
@@ -294,17 +309,21 @@ class PerformanceLauncherRun(QObject):
         self._frame.start_btn.setEnabled(False)
         self._frame.stop_btn.setEnabled(False)
         self._set_status(tr("Stopping"), "stopping")
-        self._frame._stop_thread = threading.Thread(
+        token = object()
+        thread = threading.Thread(
             target=self._stop_runner_worker,
             args=(
                 self._frame._runner,
                 alive_signal_emitter(self._frame, "log_received", "ERROR"),
-                alive_signal_emitter(self._frame, "runner_finished"),
+                alive_signal_emitter(self, "_stop_done", self._generation, token),
             ),
             name="adblab-mobileperf-stop",
             daemon=True,
         )
-        self._frame._stop_thread.start()
+        self._pending_stop = (self._generation, token, thread)
+        self._stop_outcome = None
+        self._frame._stop_thread = thread
+        thread.start()
 
     @staticmethod
     def _stop_runner_worker(runner, error_callback, finished_callback):
@@ -313,7 +332,57 @@ class PerformanceLauncherRun(QObject):
         except Exception as exc:
             error_callback(tr('Stop failed: {value0}').format(value0=exc))
         finally:
-            finished_callback()
+            try:
+                owned = bool(runner.has_active_resources())
+            except Exception as exc:
+                owned = True
+                error_callback(tr('Stop failed: {value0}').format(value0=exc))
+            finished_callback(owned)
+
+    def _on_stop_done(self, generation, token, owned) -> None:
+        """接收本次停止的后台结论，代次与请求身份均匹配才等待实际退出。"""
+        pending = self._pending_stop
+        if pending is None or pending[0] != generation or pending[1] is not token:
+            return
+        self._stop_outcome = bool(owned)
+        self._finish_stop_delivery()
+
+    def _finish_stop_delivery(self) -> None:
+        """线程实际退出后独立结算停止请求，不重复提交已经归档的运行结果。"""
+        pending = self._pending_stop
+        if pending is None or self._stop_outcome is None:
+            return
+        generation, _token, thread = pending
+        frame = self._frame
+        if generation != self._generation or frame._stop_thread is not thread or frame._closing:
+            self.cancel_stop_delivery()
+            return
+        if thread.is_alive():
+            self._stop_wait_timer.start()
+            return
+        thread.join(0)
+        outcome = self._stop_outcome
+        self.cancel_stop_delivery()
+        if not frame._runner_finished_handled:
+            self._mark_runner_finished()
+            return
+        # 后台结论只用于兼容 runner；真实 runner 的当前纯内存证据优先。
+        provider = getattr(frame._runner, "resource_snapshot", None)
+        resources = provider() if callable(provider) else None
+        owned = (
+            resources.resource_owned
+            if isinstance(resources, MobilePerfResourceSnapshot) else outcome
+        )
+        frame._stopping = False
+        self._set_running(bool(owned))
+        self._set_status(tr("Stop failed") if owned else tr("已停止"),
+                         "warning" if owned else "cancelled")
+
+    def cancel_stop_delivery(self) -> None:
+        """仅停止 GUI 交付节拍；原停止线程和资源仍由原关闭屏障等待。"""
+        self._stop_wait_timer.stop()
+        self._pending_stop = None
+        self._stop_outcome = None
 
     def _poll_runner(self):
         if self.starting:
@@ -404,6 +473,11 @@ class PerformanceLauncherRun(QObject):
         result_dir, report_file, artifact_error = (
             artifacts.result_dir, artifacts.report_file, artifacts.error,
         )
+        if had_config or cancelled_run or artifact_error:
+            self._frame._record_session_task_terminal(
+                "failed" if artifact_error else "cancelled" if cancelled_run
+                else "succeeded" if report_file and exit_code == 0 else "failed"
+            )
         self._frame._last_result_root = result_dir
         self._frame._update_result_action()
         if artifact_error:

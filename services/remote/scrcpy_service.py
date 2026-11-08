@@ -1,5 +1,7 @@
 """提供 ADBLab Remote 页签使用的无界面 scrcpy 服务。"""
 
+import errno
+import io
 import os
 import platform
 import re
@@ -53,6 +55,55 @@ def _reserve_port() -> int:
     raise OSError("No free port is available for this mirror session.")
 
 
+class _PtyStdout(io.RawIOBase):
+    """独占 PTY master；只将 slave 全部关闭时的 EIO 规范为输出结束。"""
+
+    def __init__(self, descriptor: int) -> None:
+        super().__init__()
+        self._descriptor = descriptor
+
+    def readable(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed PTY")
+        return self._descriptor
+
+    def readinto(self, buffer) -> int:
+        try:
+            data = os.read(self.fileno(), len(buffer))
+        except OSError as exc:
+            if exc.errno == errno.EIO:
+                return 0
+            raise
+        buffer[:len(data)] = data
+        return len(data)
+
+    def close(self) -> None:
+        """reader 退出后回收本端；重复关闭不影响后来复用相同 fd 的资源。"""
+        if not self.closed:
+            try:
+                os.close(self._descriptor)
+            finally:
+                super().close()
+
+
+def _open_posix_stdout() -> tuple[io.TextIOWrapper, int]:
+    """spawn 前建好输出 reader；子进程看到 terminal 后会逐行交付 C stdio。"""
+    import pty
+
+    master, slave = pty.openpty()
+    raw = _PtyStdout(master)
+    try:
+        reader = io.TextIOWrapper(io.BufferedReader(raw), encoding="utf-8", errors="ignore")
+    except Exception:
+        raw.close()
+        os.close(slave)
+        raise
+    return reader, slave
+
+
 @dataclass
 class _BridgeSession:
     """保留本次子进程环境及清理线程，直到系统确认线程已经结束。"""
@@ -83,6 +134,7 @@ class ScrcpyService:
         self._bridge_sessions: dict[str, _BridgeSession] = {}
         self._bridge_lock = threading.Lock()
         self._encoder_scopes: set[NativeCommandScope] = set()
+        self._encoder_inflight: set[NativeCommandScope] = set()
         self._encoder_lock = threading.Lock()
         self._encoder_stopped = False
 
@@ -258,6 +310,7 @@ class ScrcpyService:
             if self._encoder_stopped:
                 raise InterruptedError("scrcpy encoder probes stopped")
             self._encoder_scopes.add(scope)
+            self._encoder_inflight.add(scope)
 
         def query_cancelled() -> bool:
             return scope._stop_requested() or bool(cancelled and cancelled())
@@ -275,18 +328,28 @@ class ScrcpyService:
                 raise
             return None
         finally:
+            # 进程核对可能进入原生客户端，不得持有展示快照和关闭准入共用的登记锁。
+            running = scope.is_running()
             with self._encoder_lock:
-                running = scope.is_running()
+                self._encoder_inflight.discard(scope)
                 if not running:
                     self._encoder_scopes.discard(scope)
             if running:
                 raise OSError("编码器查询尚未完成清理，不能启动投屏。")
         return (result.output or "") if result.success else None
 
-    def encoder_probes_running(self) -> bool:
-        """残留查询独立于启动 worker 保留，直到进程退出得到确认。"""
+    def encoder_probes_owned(self) -> bool:
+        """只读内存登记；后台尚未确认退出的编码器客户端仍归投屏所有。"""
         with self._encoder_lock:
-            self._encoder_scopes = {scope for scope in self._encoder_scopes if scope.is_running()}
+            return bool(self._encoder_scopes)
+
+    def encoder_probes_running(self) -> bool:
+        """核对已交还的原生资源；查询执行方尚未建好句柄时也不能提前解除登记。"""
+        with self._encoder_lock:
+            returned = self._encoder_scopes - self._encoder_inflight
+        released = [scope for scope in returned if not scope.is_running()]
+        with self._encoder_lock:
+            self._encoder_scopes.difference_update(released)
             return bool(self._encoder_scopes)
 
     def request_stop_encoder_probes(self) -> None:
@@ -429,6 +492,9 @@ class ScrcpyService:
             folder = Path(tempfile.mkdtemp(prefix="session-", dir=root))
             environment["ADBLAB_SCRCPY_SESSION_FILE"] = str(folder / "session.json")
         session = _BridgeSession(environment or {}, folder)
+        stdout_reader = None
+        stdout_slave = None
+        process = None
         try:
             with self._bridge_lock:
                 if key in self._bridge_sessions:
@@ -446,19 +512,44 @@ class ScrcpyService:
                 if plan.backend == "direct":
                     assert environment is not None
                     environment["ADBLAB_SCRCPY_PORT_RANGE"] = f"{session.port}:{session.port}"
+            # POSIX 的 C stdout 在 PIPE 下会块缓冲，Texture 可能直到停止才交付。
+            # 仅输出端接入私有 PTY；保留原进程身份、stderr 和既有 reader 关闭归属。
+            if os.name == "posix":
+                stdout_reader, stdout_slave = _open_posix_stdout()
             process = self.process_runner.start(
-                key, args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                key, args, stdout=stdout_slave if stdout_slave is not None else subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="ignore", bufsize=1, env=environment,
                 native_tool=True,
             )
+            session.process = process
+            if stdout_reader is not None:
+                process.stdout = stdout_reader
+            if stdout_slave is not None:
+                slave, stdout_slave = stdout_slave, None
+                os.close(slave)
         except Exception:
-            with self._bridge_lock:
-                if self._bridge_sessions.get(key) is session:
-                    self._bridge_sessions.pop(key)
-            self._release_port(session)
-            if session.folder is not None:
-                self._remove_session_folder(session.folder)
+            try:
+                if process is not None:
+                    # spawn 已成功时保留本代资源，不能因输出交接异常移除活进程或端口。
+                    session.starting = False
+                    session.cleanup_failed = True
+                    session.output_unclaimed = True
+                    self.process_runner.request_stop(key)
+                else:
+                    with self._bridge_lock:
+                        if self._bridge_sessions.get(key) is session:
+                            self._bridge_sessions.pop(key)
+                    self._release_port(session)
+                    if session.folder is not None:
+                        self._remove_session_folder(session.folder)
+            finally:
+                if stdout_reader is not None:
+                    stdout_reader.close()
             raise
+        finally:
+            if stdout_slave is not None:
+                os.close(stdout_slave)
         with self._bridge_lock:
             session.process = process
             try:

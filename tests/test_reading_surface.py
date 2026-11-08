@@ -389,3 +389,45 @@ def test_copy_from_reading_surface_preserves_text_parameters_and_log_cache(
     cursor.clearSelection()
     cursor.movePosition(QTextCursor.MoveOperation.Start)
     reader.setTextCursor(cursor)
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_hosted_result_uses_flat_document_and_restores_native_reader(qt_application, theme):
+    from services.tasks.action_results import ActionItem, ActionResult, ActionSpec
+
+    BaseStyles.switch_theme(theme)
+    view = ActionResultView(inline=True)
+    sample = ActionResult("read", ActionSpec("query", "device", "查询", "text"), (), 1,
+                          "succeeded", (ActionItem("job", "", "本机", "succeeded", "line\n"*200),))
+    view.present(sample)
+    view.detail_toggle.setChecked(True)
+    view.resize(450, 600)
+    view.show()
+    qt_application.processEvents()
+    editor = view.output
+    document = editor.document()
+    try:
+        view.set_hosted_full_results(True)
+        cursor = editor.textCursor()
+        cursor.setPosition(120)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfWord, QTextCursor.MoveMode.KeepAnchor)
+        editor.setTextCursor(cursor)
+        editor.verticalScrollBar().setValue(30)
+        selection = cursor.selectedText()
+        assert selection
+        position = editor.verticalScrollBar().value()
+        assert position > 0
+        BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+        qt_application.processEvents()
+        assert "background-color: transparent" in str(editor.property("lightCustomQss"))
+        assert not editor.viewport().autoFillBackground()
+        assert editor.document() is document
+        assert editor.textCursor().selectedText() == selection
+        assert editor.verticalScrollBar().value() == position
+        view.set_hosted_full_results(False)
+        assert "background" not in str(editor.property("lightCustomQss"))
+        assert editor.document() is document
+        assert editor.textCursor().selectedText() == selection
+    finally:
+        view.close()
+        view.deleteLater()

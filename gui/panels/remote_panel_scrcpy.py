@@ -3,9 +3,11 @@
 import re
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field, replace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, QTimer
+from shiboken6 import isValid
 
 from core.diagnostics import redact_diagnostic
 from gui.i18n import tr
@@ -593,11 +595,26 @@ class RemotePanelScrcpy:
         self._frame._watchdog.start(500)
 
     def _on_launch_finished(self, worker):
-        if self._frame._launch_worker is not worker:
+        frame = self._frame
+        if isinstance(worker, QThread) and not isValid(worker):
+            return
+        if frame._launch_worker is not worker:
+            if isinstance(worker, QThread):
+                # 关闭路径已将旧 worker 移交给回收器；已入队的 finished 不再处置它。
+                if frame._closing or worker in frame._orphaned_launch_workers:
+                    return
+                if not worker.wait(0):
+                    frame._defer_launch_worker_delete(worker)
+                    return
             worker.deleteLater()
             return
-        if hasattr(self._frame, "_device_sessions"):
-            frame = self._frame
+        if not worker.wait(0):
+            # finished 比原生 join 早；下一批、销毁与关闭监督仍归原 worker。
+            QTimer.singleShot(50, frame, lambda: (
+                self._on_launch_finished(worker) if frame._launch_worker is worker else None
+            ))
+            return
+        if hasattr(frame, "_device_sessions"):
             frame._launch_worker = None
             worker.deleteLater()
             if getattr(frame, "_closing", False):
@@ -702,7 +719,9 @@ class RemotePanelScrcpy:
                     stopped = session.stop_requested or rc == 0
                     session.state = "stopped" if stopped else "failed"
                     if rc is not None and rc != 0:
-                        self._frame._log("WARNING", f"scrcpy exited with code {rc}")
+                        # 主动终止也可返回非零；资源已释放时只保留退出码诊断。
+                        level = "DEBUG" if session.stop_requested else "WARNING"
+                        self._frame._log(level, f"scrcpy exited with code {rc}")
             self._refresh_sessions()
             return
         processes = getattr(self._frame, "_processes", {})
@@ -970,12 +989,13 @@ class RemotePanelScrcpy:
             remember_error(exc)
             running = True
 
-        waited = not running
         if running:
             try:
                 self._frame._request_launch_worker_interruption_once(worker)
             except Exception as exc:
                 remember_error(exc)
+        waited = not running
+        if running or isinstance(worker, QThread):
             try:
                 waited = bool(worker.wait(wait_ms))
             except Exception as exc:
@@ -990,6 +1010,8 @@ class RemotePanelScrcpy:
                 self._frame._defer_launch_worker_delete(worker)
         else:
             try:
+                if isinstance(worker, QThread):
+                    self._frame._retiring_launch_worker = weakref.ref(worker)
                 self._frame._defer_launch_worker_delete(worker)
             except Exception as exc:
                 remember_error(exc)

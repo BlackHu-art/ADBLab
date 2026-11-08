@@ -300,22 +300,45 @@ def test_generator_close_failure_still_aborts_window_and_reports_failure(qt_appl
     startup.deleteLater()
 
 
-def test_close_after_first_paint_before_handoff_never_reports_ready(qt_application):
+def test_close_after_first_paint_before_handoff_never_reports_ready(qt_application, monkeypatch):
     from gui.startup import StartupController
 
-    class ClosingWindow(_Window):
+    class PaintObservedWindow(_Window):
+        painting = False
+
         def paintEvent(self, event):
-            super().paintEvent(event)
-            self.close()
+            self.painting = True
+            try:
+                super().paintEvent(event)
+            finally:
+                self.painting = False
+                self.events.append("paint-returned")
 
     events = []
     splash = _Splash(events)
-    window = ClosingWindow(events)
+    window = PaintObservedWindow(events)
     startup = StartupController(splash)
     ready = []
     cancelled = []
+    settled = []
     startup.ready.connect(ready.append)
     startup.cancelled.connect(lambda: cancelled.append(True))
+    startup.settled.connect(lambda: settled.append(True))
+    handoff = startup._handoff
+
+    def close_before_handoff():
+        assert "window-painted" in events
+        assert "paint-returned" in events
+        assert not window.painting
+        assert not startup.is_settled
+        events.append("window-close")
+        window.close()
+        handoff()
+        events.append("handoff-returned")
+
+    # 排队交接时才关闭原生窗，避免在 Cocoa 绘制栈内销毁平台对象；
+    # 仍调用真实交接，验证已受理的关闭能阻止排队回调发布完成态。
+    monkeypatch.setattr(startup, "_handoff", close_before_handoff)
 
     def stages():
         startup.set_window(window)
@@ -327,9 +350,19 @@ def test_close_after_first_paint_before_handoff_never_reports_ready(qt_applicati
     assert ready == []
     assert window.abort_count == 1
     assert cancelled == []
+    assert settled == []
+    assert not startup.is_settled
+    assert 100 not in splash.progress
+    assert events.count("window-close") == 1
+    assert (
+        events.index("window-painted") < events.index("paint-returned")
+        < events.index("window-close") < events.index("handoff-returned")
+    )
     window.startup_aborted.emit()
     _drain_until(lambda: bool(cancelled))
     assert cancelled == [True]
+    assert settled == [True]
+    assert startup.is_settled
     assert ready == []
     assert 100 not in splash.progress
     assert not window.isVisible()

@@ -33,7 +33,11 @@ def _assert_wrapped_text_fits(label):
 @pytest.mark.parametrize("width,font_size", [(360, 12), (360, 22), (1000, 12), (1000, 22)])
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_title_and_empty_state_follow_workspace_geometry(
-    qt_application, monkeypatch, width, font_size, theme,
+    qt_application,
+    monkeypatch,
+    width,
+    font_size,
+    theme,
 ):
     settings = {"ui_font_size": font_size, "font_family": "Arial", "log_font_size": 11}
     monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
@@ -80,10 +84,15 @@ def test_no_matches_can_clear_all_filters_without_changing_tasks(qt_application)
     manager.mark_running(operation.operation_id)
     stop = Mock()
     page = TaskCenterPage(manager, stop_hook=stop)
-    page.present_action_result(ActionResult(
-        "failed-request", ActionSpec("shell_command", "system.shell", "执行 Shell", "text"),
-        (), 100, state="failed",
-    ))
+    page.present_action_result(
+        ActionResult(
+            "failed-request",
+            ActionSpec("shell_command", "system.shell", "执行 Shell", "text"),
+            (),
+            100,
+            state="failed",
+        )
+    )
     page.resize(900, 650)
     page.show()
     try:
@@ -92,7 +101,6 @@ def test_no_matches_can_clear_all_filters_without_changing_tasks(qt_application)
         assert page.empty_state.isHidden()
         page.search_edit.setText("no-such-task")
         page.kind_combo.setCurrentIndex(page.kind_combo.findData("file"))
-        page.state_combo.setCurrentIndex(page.state_combo.findData("succeeded"))
         qt_application.processEvents()
         assert page.empty_title.text() == tr("没有匹配的任务")
         assert page.empty_state.isVisibleTo(page)
@@ -100,7 +108,7 @@ def test_no_matches_can_clear_all_filters_without_changing_tasks(qt_application)
         assert page.clear_filters_button.isVisibleTo(page)
         QTest.mouseClick(page.clear_filters_button, Qt.MouseButton.LeftButton)
         assert page.search_edit.text() == ""
-        assert page.kind_combo.currentData() == page.state_combo.currentData() == ""
+        assert page.kind_combo.currentData() == ""
         assert set(page.table.rows) == keys
         assert page.table.isVisibleTo(page)
         assert page.empty_state.isHidden()

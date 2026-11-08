@@ -34,23 +34,17 @@ def test_headers_and_record_columns_align_and_fit(qt_application, width, theme):
     table.show()
     qt_application.processEvents()
     try:
-        for index, cell in enumerate(table.header_cells):
-            if cell.isHidden():
-                continue
-            header_x = cell.mapTo(table, QPoint()).x()
-            for row in table.rows.values():
-                peer = row.cells[index]
-                assert not peer.isHidden()
-                assert peer.mapTo(table, QPoint()).x() == header_x
-                assert peer.width() == cell.width()
+        view = table.view
         for row in table.rows.values():
-            assert row.width() <= width
+            for header, cell in zip(table.header_cells, row.cells):
+                assert cell.isVisibleTo(table)
+                assert cell.mapTo(table, QPoint()).x() == header.mapTo(table, QPoint()).x()
+                assert cell.width() == header.width()
             title_y = row.title.mapTo(table, row.title.rect().center()).y()
             status_y = row.status.mapTo(table, row.status.rect().center()).y()
             assert abs(title_y - status_y) <= 2
-            for cell in row.cells:
-                if not cell.isHidden():
-                    assert cell.geometry().right() < row.width()
+        if width == 300:
+            assert view.horizontalScrollBar().maximum() > 0
     finally:
         table.close()
 
@@ -69,22 +63,29 @@ def test_refresh_reuses_rows_and_inline_detail_stays_below_its_task(qt_applicati
         table.set_rows(_records())
         qt_application.processEvents()
         assert table.rows["first"] is first
-        assert detail.isVisibleTo(first)
-        assert detail.mapTo(first, QPoint()).y() >= first.header.height()
-        first.toggle.click()
+        assert table.isAncestorOf(detail)
+        assert detail.isVisibleTo(table)
+        assert (
+            detail.mapTo(table.view.viewport(), QPoint()).y()
+            >= first.header.mapTo(table.view.viewport(), first.header.rect().bottomLeft()).y()
+        )
+        first.title.click()
         assert not detail.isVisibleTo(table)
         assert table.expanded_key == ""
-        assert first.toggle.accessibleName() == "展开任务详情"
+        assert first.title.accessibleDescription() == "展开任务详情"
     finally:
         table.close()
 
 
 def test_font_round_trip_reelides_capped_target_without_replacing_row(
-    qt_application, monkeypatch,
+    qt_application,
+    monkeypatch,
 ):
     values = dict(DEFAULTS, ui_font_size=12, font_family="Arial")
     monkeypatch.setattr(
-        AppSettings, "instance", classmethod(lambda _cls: SimpleNamespace(get=values.get)),
+        AppSettings,
+        "instance",
+        classmethod(lambda _cls: SimpleNamespace(get=values.get)),
     )
     BaseStyles.reload_from_settings()
     record = replace(
@@ -109,7 +110,9 @@ def test_font_round_trip_reelides_capped_target_without_replacing_row(
                 (row.target, record.target, 0),
             ):
                 expected = widget.fontMetrics().elidedText(
-                    full_text, Qt.TextElideMode.ElideRight, max(0, widget.width() - padding),
+                    full_text,
+                    Qt.TextElideMode.ElideRight,
+                    max(0, widget.contentsRect().width() - padding),
                 )
                 assert widget.text() == expected
                 assert widget.toolTip() == widget.accessibleName() == full_text
@@ -134,8 +137,9 @@ def test_font_width_change_reelides_text_without_a_resize(qt_application, column
         qt_application.processEvents()
         assert control.size() == before
         expected = control.fontMetrics().elidedText(
-            getattr(record, column), Qt.TextElideMode.ElideRight,
-            max(0, control.width() - (16 if column == "title" else 0)),
+            getattr(record, column),
+            Qt.TextElideMode.ElideRight,
+            max(0, control.contentsRect().width() - (16 if column == "title" else 0)),
         )
         assert control.text() == expected
     finally:

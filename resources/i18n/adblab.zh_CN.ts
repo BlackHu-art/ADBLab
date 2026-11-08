@@ -7196,7 +7196,6 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>MIME不能包含控制字符</source>
             <translation>MIME不能包含控制字符</translation>
         </message>
-
         <message>
             <source>当前用户未安装此应用</source>
             <translation>当前用户未安装此应用</translation>
@@ -7709,7 +7708,6 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>操作主窗口当前已选的在线设备，无需启动镜像</source>
             <translation>操作主窗口当前已选的在线设备，无需启动镜像</translation>
         </message>
-
         <message>
             <source>此项不能为空，请输入内容</source>
             <translation>此项不能为空，请输入内容</translation>
@@ -8107,6 +8105,134 @@ Android 设备管理、应用操作与诊断工作台</translation>
         <message>
             <source>默认跟随系统字号，也可手动选择；已有字号保持不变</source>
             <translation>默认跟随系统字号，也可手动选择；已有字号保持不变</translation>
+        </message>
+        <message>
+            <source>任务详情</source>
+            <translation>任务详情</translation>
+        </message>
+        <message>
+            <source>在任务中心查看</source>
+            <translation>在任务中心查看</translation>
+        </message>
+        <message>
+            <source>收起</source>
+            <translation>收起</translation>
+        </message>
+        <message>
+            <source>收起任务详情，任务继续执行</source>
+            <translation>收起任务详情，任务继续执行</translation>
+        </message>
+        <message>
+            <source>未读异常 {count} 项</source>
+            <translation>未读异常 {count} 项</translation>
+        </message>
+        <message>
+            <source>返回来源页面</source>
+            <translation>返回来源页面</translation>
+        </message>
+        <message>
+            <source>进行中 {count} 项</source>
+            <translation>进行中 {count} 项</translation>
+        </message>
+        <message>
+            <source>全部</source>
+            <translation>全部</translation>
+        </message>
+        <message>
+            <source>异常</source>
+            <translation>异常</translation>
+        </message>
+        <message>
+            <source>已结束</source>
+            <translation>已结束</translation>
+        </message>
+        <message>
+            <source>查看任务详情</source>
+            <translation>查看任务详情</translation>
+        </message>
+        <message>
+            <source>停止 {task}</source>
+            <translation>停止 {task}</translation>
+        </message>
+        <message>
+            <source>停止会话</source>
+            <translation>停止会话</translation>
+        </message>
+        <message>
+            <source>完整会话内容请返回来源页面查看。</source>
+            <translation>完整会话内容请返回来源页面查看。</translation>
+        </message>
+        <message>
+            <source>性能采集已停止</source>
+            <translation>性能采集已停止</translation>
+        </message>
+        <message>
+            <source>性能采集已完成</source>
+            <translation>性能采集已完成</translation>
+        </message>
+        <message>
+            <source>性能采集运行中</source>
+            <translation>性能采集运行中</translation>
+        </message>
+        <message>
+            <source>持续会话</source>
+            <translation>持续会话</translation>
+        </message>
+        <message>
+            <source>日志采集或清理失败，请返回来源查看原因</source>
+            <translation>日志采集或清理失败，请返回来源查看原因</translation>
+        </message>
+        <message>
+            <source>日志采集运行中</source>
+            <translation>日志采集运行中</translation>
+        </message>
+        <message>
+            <source>正在停止</source>
+            <translation>正在停止</translation>
+        </message>
+        <message>
+            <source>正在停止日志采集并等待资源释放</source>
+            <translation>正在停止日志采集并等待资源释放</translation>
+        </message>
+        <message>
+            <source>正在停止采集或等待资源清理</source>
+            <translation>正在停止采集或等待资源清理</translation>
+        </message>
+        <message>
+            <source>正在停止镜像并等待批次资源释放</source>
+            <translation>正在停止镜像并等待批次资源释放</translation>
+        </message>
+        <message>
+            <source>正在准备镜像批次</source>
+            <translation>正在准备镜像批次</translation>
+        </message>
+        <message>
+            <source>正在启动性能采集</source>
+            <translation>正在启动性能采集</translation>
+        </message>
+        <message>
+            <source>设备 {count}</source>
+            <translation>设备 {count}</translation>
+        </message>
+        <message>
+            <source>采集已停止，正在整理结果</source>
+            <translation>采集已停止，正在整理结果</translation>
+        </message>
+        <message>
+            <source>采集或资源清理未完成，请返回来源查看原因</source>
+            <translation>采集或资源清理未完成，请返回来源查看原因</translation>
+        </message>
+        <message>
+            <source>镜像或资源清理失败，请返回来源查看原因</source>
+            <translation>镜像或资源清理失败，请返回来源查看原因</translation>
+        </message>
+        <message>
+            <source>镜像批次已停止</source>
+            <translation>镜像批次已停止</translation>
+        </message>
+        <message>
+            <source>镜像批次运行中</source>
+            <translation>镜像批次运行中</translation>
         </message>
     </context>
 </TS>

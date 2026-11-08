@@ -1,4 +1,4 @@
-# Python 3.11 / Windows 当前开发环境的活动依赖闭包，更新时同步验证。
+# 基于 Python 3.11 / Windows 开发环境的活动依赖闭包；Qt 四个绑定包跨平台统一为 6.9.1。
 # requirements*.txt 决定安装范围；本文件只固定解析版本，不额外安装包。
 # 这不是跨平台完整锁文件：macOS 独有依赖及制品哈希未在此环境验证。
 altgraph==0.17.5
@@ -25,9 +25,9 @@ pygments==2.21.0
 pyinstaller==6.22.2
 pyinstaller-hooks-contrib==2026.7
 pyright==1.1.411
-pyside6==6.8.1.1
-pyside6-addons==6.8.1.1
-pyside6-essentials==6.8.1.1
+pyside6==6.9.1
+pyside6-addons==6.9.1
+pyside6-essentials==6.9.1
 pyside6-fluent-widgets==1.11.3
 pysidesix-frameless-window==0.8.2
 pytest==9.1.1
@@ -41,6 +41,6 @@ ruff==0.16.3
 scipy==1.17.1
 segno==1.6.6
 setuptools==82.0.0
-shiboken6==6.8.1.1
+shiboken6==6.9.1
 typing-extensions==4.16.0
 virtualenv==21.7.10

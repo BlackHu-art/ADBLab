@@ -19,6 +19,7 @@ from services.tasks.action_results import (
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     wait_for_stable_geometry,
+    wait_until,
 )
 
 
@@ -71,7 +72,7 @@ def test_result_font_changes_preserve_reading_and_keep_actions_reachable(
             assert view.output.textCursor().selectedText() == "reading-marker"
             assert view.output.font().pointSize() == 11
             for control in (view.copy_button, view.export_button):
-                assert_scroll_target_reachable(page._scroll, control)
+                assert_scroll_target_reachable(page.table.view, control)
                 assert control.width() >= control.sizeHint().width()
         QTest.mouseClick(view.export_button, Qt.MouseButton.LeftButton)
         assert exported.count() == 1
@@ -141,6 +142,7 @@ def test_artifact_actions_fit_narrow_main_window_after_font_changes(
         _MainFrameSettings,
         build_main_frame,
     )
+    from tests.ui_lifecycle_helpers import cleanup_ui_windows
 
     settings = _MainFrameSettings()
     settings.values.update({"font_family": "Sans Serif", "ui_font_size": 12})
@@ -166,40 +168,53 @@ def test_artifact_actions_fit_narrow_main_window_after_font_changes(
         ),),
         finished_at=2,
     ))
-    assert page.select_request("artifact")
     view = page.action_results
     assert view.artifact_section is not None
-    view.detail_toggle.setChecked(True)
+    drawer = frame._task_feedback.drawer
+    scroll = drawer.scroll_area
     opened = QSignalSpy(view.artifact_requested)
     try:
         frame.show()
         frame._bind_window_screen()
         frame._on_nav_requested("tasks")
-        view.artifact_section.toggle_button.setChecked(True)
-        view.artifact_section.reveal.finish()
+        original_page = frame.stackedWidget.currentWidget()
+        assert frame._task_feedback.open_request("artifact")
+        drawer.animation.setCurrentTime(drawer.animation.duration())
+        wait_until(qt_application, lambda: drawer.isVisibleTo(frame))
+        assert drawer.selected_key == "action:artifact"
+        assert drawer.isAncestorOf(view)
+        assert scroll.widget().isAncestorOf(view)
+        assert view.detail_toggle.isHidden()
+        assert view.output.isVisibleTo(drawer)
+        assert view.artifact_section.toggle_button.isHidden()
+        assert view.artifacts.isVisibleTo(drawer)
         for size in (12, 22, 12):
             settings.values["ui_font_size"] = size
             BaseStyles.reload_from_settings()
+            view.detail_reveal.finish()
             view.artifact_section.reveal.finish()
-            wait_for_stable_geometry(qt_application, (frame, page, view, view.folder_button))
+            wait_for_stable_geometry(qt_application, (frame, drawer, view, view.folder_button))
             assert frame.width() == 452
-            assert page._scroll.horizontalScrollBar().maximum() == 0
-            assert page._scroll.widget().width() <= page._scroll.viewport().width()
+            assert drawer.opened
+            assert drawer.selected_key == "action:artifact"
+            assert frame.stackedWidget.currentWidget() is original_page
+            assert view.isVisibleTo(drawer)
+            assert scroll.horizontalScrollBar().maximum() == 0
+            assert scroll.widget().width() <= scroll.viewport().width()
             assert view.artifacts.currentData() == "/tmp/narrow-result.txt"
             for button in (view.open_button, view.folder_button):
-                assert_scroll_target_reachable(page._scroll, button)
+                assert button.isVisibleTo(frame)
+                assert_scroll_target_reachable(scroll, button)
                 assert button.width() >= button.sizeHint().width()
                 assert button.height() >= button.fontMetrics().height()
         for button in (view.open_button, view.folder_button):
-            assert_scroll_target_reachable(page._scroll, button)
+            assert_scroll_target_reachable(scroll, button)
             QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert opened.count() == 2
         assert [opened.at(index) for index in range(opened.count())] == [
             ["/tmp/narrow-result.txt", False], ["/tmp/narrow-result.txt", True],
         ]
     finally:
-        page.shutdown()
-        frame._unbind_window_screen()
-        frame._close_ready = True
-        frame.close()
+        assert not cleanup_ui_windows((frame,), cleanup_records={})
         for translator in translators:
             qt_application.removeTranslator(translator)

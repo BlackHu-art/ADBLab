@@ -74,8 +74,10 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.panels.side_panel import SidePanel
 from gui.run_library import RunLibraryController
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
+from gui.session_tasks import SessionTaskOwner, SessionTaskRegistry
 from gui.startup_stages import WindowStartupStage
 from gui.styles.icon_loader import DEVICE_ICON
+from gui.task_feedback import TaskFeedbackCoordinator
 from gui.widgets.device_context_bar import DeviceContextBar
 from gui.widgets.frame_animation import FrameAnimation
 from gui.widgets.frameless_resize import FramelessResizeController
@@ -83,6 +85,7 @@ from gui.widgets.layout_settle import settle_responsive_layout
 from gui.widgets.navigation_theme import NavigationThemeToggle
 from gui.widgets.page_transition import PageTransition
 from gui.widgets.responsive_controller import ReflowReason
+from gui.widgets.task_navigation import TaskNavigationButton
 from gui.window_layout import (
     DEFAULT_WINDOW_SIZE,
     MINIMUM_WINDOW_SIZE,
@@ -182,6 +185,7 @@ class MainFrame(FluentWindow):
             self._refresh_workspace_after_responsive_layout
         )
         self._navigation_wide_state: bool | None = None
+        self._navigation_user_collapsed_wide = False
         self._navigation_history: list[str | WorkspaceRoute] = []
         self._current_navigation_location: str | WorkspaceRoute | None = None
         self._workspace_navigation_in_progress = False
@@ -1256,6 +1260,7 @@ class MainFrame(FluentWindow):
             history_store=self._task_history,
             stop_hook=self._stop_operation_from_task_center,
             run_library=self.run_library,
+            external_details=True,
             parent=self,
         )
         assert self._task_page.run_results is not None
@@ -1268,6 +1273,20 @@ class MainFrame(FluentWindow):
             tr("查看任务进度、测试归档与本次操作结果"),
             self._task_page,
             scroll=False,
+            parent=self,
+        )
+        self._session_task_registry = SessionTaskRegistry(
+            self._session_task_owners, self._session_task_labels,
+        )
+        self._task_feedback = TaskFeedbackCoordinator(
+            self._task_page,
+            self._content_surface,
+            session_registry=self._session_task_registry,
+            navigation_parent=self.navigationInterface,
+            show_task_center=lambda: self._on_nav_requested("tasks"),
+            open_source=lambda section: self._action_feedback.open_section(section),
+            open_session_source=self._open_session_task_source,
+            is_task_center=lambda: self.stackedWidget.currentWidget() is self._tasks_page,
             parent=self,
         )
         yield WindowStartupStage.TASKS_PAGE
@@ -1325,10 +1344,15 @@ class MainFrame(FluentWindow):
             self._workspace_navigation_keys[(section, feature)] = route_key
             self._workspace_pages[section].set_route_presentation(feature, label, subtitle)
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
-        for page, icon, label in (
-            (self._tasks_page, FluentIcon.HISTORY, tr("任务中心")),
-        ):
-            self.addSubInterface(page, icon, label, NavigationItemPosition.SCROLL)
+        self._tasks_page.setProperty("isStackedTransparent", False)
+        self.stackedWidget.addWidget(self._tasks_page)
+        self.navigationInterface.addWidget(
+            routeKey=self._tasks_page.objectName(),
+            widget=self._task_feedback.navigation_button,
+            onClick=lambda: self._on_nav_requested("tasks"),
+            position=NavigationItemPosition.SCROLL,
+            tooltip=tr("任务中心"),
+        )
         self._theme_navigation_widget = NavigationThemeToggle(self.navigationInterface)
         self.navigationInterface.addWidget(
             routeKey="themeToggle",
@@ -1386,6 +1410,7 @@ class MainFrame(FluentWindow):
             page.routeChanged.connect(self._sync_global_session_controls)
         self._visible_workspace_section: str | None = None
         self.stackedWidget.currentChanged.connect(self._on_stacked_page_changed)
+        self.stackedWidget.currentChanged.connect(self._task_feedback.dismiss)
         current = self.stackedWidget.currentWidget()
         if current is not None:
             self._current_navigation_location = self._navigation_location_for_page(
@@ -1425,6 +1450,56 @@ class MainFrame(FluentWindow):
             return []
         return [device for device in context.selected_devices
                 if device in context.connected_devices]
+
+    def _session_task_owners(self) -> tuple[SessionTaskOwner, ...]:
+        """只枚举已有会话；隐藏、离线及失选不改变原资源 owner，不触发页面创建。"""
+        owners = []
+        for host in getattr(self, "_workspace_feature_hosts", {}).values():
+            for key in host.registry.keys():
+                if key.feature not in ("performance", "logcat"):
+                    continue
+                page = host.registry.get(key)
+                if page is not None and isValid(page):
+                    owners.append(cast(SessionTaskOwner, page))
+        panel = getattr(self, "left_panel", None)
+        remote = panel.remote_panel if panel is not None else None
+        if remote is not None and isValid(remote):
+            owners.append(cast(SessionTaskOwner, remote))
+        return tuple(owners)
+
+    def _session_task_labels(self, owner: SessionTaskOwner) -> tuple[str, ...] | None:
+        """展示采用原会话的安全设备名称，不把当前全局选择当作持续任务目标。"""
+        bar = getattr(self, "_global_device_bar", None)
+        if bar is not None:
+            for host in getattr(self, "_workspace_feature_hosts", {}).values():
+                for key in host.registry.keys():
+                    if host.registry.get(key) is owner and key.device_id:
+                        return (bar.device_label(key.device_id),)
+        return None
+
+    def _open_session_task_source(self, task_key: str) -> bool:
+        """只定位公开快照匹配的现有 owner，不为旧记录创建替代页面或改全局选择。"""
+        if self._closing or not task_key.startswith("session:"):
+            return False
+        owner_key = task_key.removeprefix("session:")
+        for section, host in self._workspace_feature_hosts.items():
+            for key in host.registry.keys():
+                if key.feature not in ("logcat", "performance"):
+                    continue
+                owner = host.registry.get(key)
+                if owner is None or not isValid(owner) or host.registry.is_disposing(key):
+                    continue
+                snapshot = cast(SessionTaskOwner, owner).task_snapshot()
+                if snapshot is not None and snapshot.key == owner_key:
+                    return self._open_workspace_feature(
+                        section, key.feature, device_id=key.device_id,
+                    )
+        remote = self.left_panel.remote_panel
+        if remote is not None and isValid(remote):
+            snapshot = remote.task_snapshot()
+            if snapshot is not None and snapshot.key == owner_key:
+                return self._open_workspace_feature("devices", "remote")
+        return False
 
     def _stop_operation_from_task_center(self, operation_id: str) -> None:
         """把任务中心取消动作路由到拥有实际资源的控制器用例。"""
@@ -1654,9 +1729,13 @@ class MainFrame(FluentWindow):
         """按内容可用宽度切换常驻左栏或覆盖菜单。"""
 
         panel = self.navigationInterface.panel
+        # 首帧原生缩放会留下宽度协调，用户的手动选择优先于这次旧请求。
+        self._navigation_layout_timer.stop()
+        wide = self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             if bool(animation.property("expand")):
+                self._navigation_user_collapsed_wide = wide
                 animation.stop()
                 panel.collapse()
             else:
@@ -1664,13 +1743,16 @@ class MainFrame(FluentWindow):
                 # 点击，在收起尾沿重新展开，确保快速双击不会丢失用户意图。
                 self._navigation_reopen_after_collapse = True
                 self._navigation_reopen_requires_wide = False
+                self._navigation_user_collapsed_wide = False
             return
         if panel.displayMode in {
             NavigationDisplayMode.COMPACT,
             NavigationDisplayMode.MINIMAL,
         }:
+            self._navigation_user_collapsed_wide = False
             self._expand_navigation_panel(use_animation=True)
             return
+        self._navigation_user_collapsed_wide = wide
         panel.collapse()
 
     def _expand_navigation_panel(self, *, use_animation: bool) -> None:
@@ -1702,6 +1784,9 @@ class MainFrame(FluentWindow):
         wide = self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
         if not wide:
             self._navigation_wide_state = False
+            self._navigation_user_collapsed_wide = False
+            return
+        if self._navigation_user_collapsed_wide:
             return
         if (
             self._navigation_wide_state is True
@@ -1826,6 +1911,10 @@ class MainFrame(FluentWindow):
             item = self._navigation_widget(route_key)
             if item is None:
                 continue
+            if isinstance(item, TaskNavigationButton):
+                # 通用重同步不能覆盖在途数量和未读异常；重复快照不会重播成功动画。
+                item.set_snapshot(self._task_page.navigation_snapshot())
+                continue
             item.setAccessibleName(label)
             item.setToolTip(label)
 
@@ -1869,6 +1958,8 @@ class MainFrame(FluentWindow):
     def _on_workspace_route_changed(self, route: WorkspaceRoute) -> None:
         page = getattr(self, "_workspace_pages", {}).get(route.section)
         if page is self.stackedWidget.currentWidget():
+            if self._stable_workspace_route(route) != self._current_navigation_location:
+                self._task_feedback.dismiss()
             location = (route.section, route.feature)
             if location != getattr(self, "_device_popup_location", None):
                 self._global_device_bar.dismiss_popups()

@@ -103,6 +103,12 @@ def assert_non_overlapping(widgets: Iterable[QWidget], ancestor: QWidget) -> Non
 def assert_scroll_target_reachable(scroll_area: QScrollArea, target: QWidget) -> None:
     """断言普通目标可完整显示，超宽目标的左右边缘均可到达。"""
 
+    content = scroll_area.widget()
+    assert content is not None, "scroll area requires a content widget"
+    # QWidget.mapTo 要求有效祖先；共享抽屉中的控件不能映射到原页面滚动区。
+    assert target is content or content.isAncestorOf(target), (
+        "scroll target must belong to the scroll area's content widget"
+    )
     horizontal = scroll_area.horizontalScrollBar()
     vertical = scroll_area.verticalScrollBar()
     viewport_rect = scroll_area.viewport().rect()
@@ -123,7 +129,11 @@ def assert_scroll_target_reachable(scroll_area: QScrollArea, target: QWidget) ->
         assert (
             target_rect.top() >= viewport_rect.top()
             and target_rect.bottom() <= viewport_rect.bottom()
-        ), f"scroll target vertical extent is not reachable from {vertical_value}: {target_rect!r}"
+        ), (
+            f"scroll target vertical extent is not reachable from {vertical_value}: "
+            f"target={target_rect!r}, viewport={viewport_rect!r}, content={content.rect()!r}, "
+            f"scrollbar=({vertical.minimum()}, {vertical.maximum()}, {vertical.value()})"
+        )
 
     if target.width() <= viewport_rect.width():
         for horizontal_value in (horizontal.minimum(), horizontal.maximum()):
@@ -149,8 +159,6 @@ def assert_scroll_target_reachable(scroll_area: QScrollArea, target: QWidget) ->
             assert target_rect.right() <= viewport_rect.right()
         return
 
-    content = scroll_area.widget()
-    assert content is not None
     target_x = target.mapTo(content, QPoint(0, 0)).x()
     horizontal.setValue(max(horizontal.minimum(), min(horizontal.maximum(), target_x)))
     _process_events()

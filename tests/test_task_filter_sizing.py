@@ -50,10 +50,8 @@ def test_selection_keeps_filter_and_search_geometry_stable(
     font_size,
 ):
     page = make_filter_page(language, font_size)
-    geometry = tuple(
-        widget.geometry() for widget in (page.search_edit, page.state_combo, page.kind_combo)
-    )
-    for combo in (page.state_combo, page.kind_combo):
+    geometry = tuple(widget.geometry() for widget in (page.search_edit, page.kind_combo))
+    for combo in (page.kind_combo,):
         for index in range(combo.count()):
             combo.setCurrentIndex(index)
             wait_for_stable_geometry(qt_application, (page.filters, combo))
@@ -62,7 +60,6 @@ def test_selection_keeps_filter_and_search_geometry_stable(
                     widget.geometry()
                     for widget in (
                         page.search_edit,
-                        page.state_combo,
                         page.kind_combo,
                     )
                 )
@@ -75,7 +72,7 @@ def test_selection_keeps_filter_and_search_geometry_stable(
 @pytest.mark.parametrize("language", ["zh_CN", "zh_HK", "en_US"])
 def test_popup_visual_panel_matches_filter_button(qt_application, make_filter_page, language):
     page = make_filter_page(language)
-    for combo in (page.state_combo, page.kind_combo):
+    for combo in (page.kind_combo,):
         combo._showComboMenu()
         menu = combo.dropMenu
         try:
@@ -101,18 +98,15 @@ def test_filter_resize_preserves_values_and_fits_current_viewport(
     width,
 ):
     page = make_filter_page("en_US", 22)
-    page.state_combo.setCurrentIndex(page.state_combo.findData("partial"))
     page.kind_combo.setCurrentIndex(page.kind_combo.findData("performance"))
-    state_changed = QSignalSpy(page.state_combo.currentIndexChanged)
     kind_changed = QSignalSpy(page.kind_combo.currentIndexChanged)
     page.resize(width, 650)
-    wait_for_stable_geometry(qt_application, (page, page.filters, page.state_combo))
-    for combo in (page.state_combo, page.kind_combo):
+    wait_for_stable_geometry(qt_application, (page, page.filters, page.kind_combo))
+    for combo in (page.kind_combo,):
         assert page.filters.rect().contains(combo.geometry())
         assert_text_fits(combo)
-    assert page.state_combo.currentData() == "partial"
     assert page.kind_combo.currentData() == "performance"
-    assert state_changed.count() == kind_changed.count() == 0
+    assert kind_changed.count() == 0
     assert page._scroll.horizontalScrollBar().maximum() == 0
 
 
@@ -122,7 +116,7 @@ def test_filter_font_round_trip_keeps_values_and_restores_compact_size(
 ):
     page = make_filter_page()
     page.kind_combo.setCurrentIndex(page.kind_combo.findData("shell"))
-    controls = (page.search_edit, page.state_combo, page.kind_combo)
+    controls = (page.search_edit, page.kind_combo)
     initial = tuple(control.size() for control in controls)
     settings = AppSettings.instance()
     for size in (22, 12):
@@ -133,3 +127,25 @@ def test_filter_font_round_trip_keeps_values_and_restores_compact_size(
         assert page.kind_combo.currentData() == "shell"
         if size == 12:
             assert tuple(control.size() for control in controls) == initial
+
+
+@pytest.mark.parametrize("language", ["zh_CN", "zh_HK", "en_US"])
+@pytest.mark.parametrize("font_size,width", [(12, 360), (22, 360), (22, 700)])
+def test_search_and_type_fit_without_status_controls(
+    qt_application,
+    make_filter_page,
+    language,
+    font_size,
+    width,
+):
+    page = make_filter_page(language, font_size, width)
+    page.kind_combo.setCurrentIndex(page.kind_combo.findData("shell"))
+    page.search_edit.setText("synthetic")
+    wait_for_stable_geometry(qt_application, (page, page.filters, page.kind_combo))
+    for control in (page.search_edit, page.kind_combo):
+        assert page.filters.rect().contains(control.geometry())
+        assert_text_fits(control)
+    assert page.kind_combo.currentData() == "shell"
+    assert page.search_edit.text() == "synthetic"
+    assert len(page.filters.findChildren(type(page.kind_combo))) == 1
+    assert page._scroll.horizontalScrollBar().maximum() == 0

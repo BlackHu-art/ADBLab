@@ -16,11 +16,17 @@ from tests import test_native_process
 frozen_launcher = test_native_process.frozen_launcher
 
 
+@pytest.fixture
+def client_executable():
+    """框架版 macOS Python 的启动器会换成 Python.app，探针须使用真实客户端映像。"""
+    return psutil.Process().exe() if sys.platform == "darwin" else sys._base_executable
+
+
 @pytest.mark.parametrize("cancel", [True, False])
 @pytest.mark.parametrize("parent_exits", [False, True])
 @pytest.mark.parametrize("isolate", [False, True])
 def test_encoder_probe_reaps_client_and_preserves_independent_server(
-    tmp_path, cancel, parent_exits, isolate, request, monkeypatch,
+    tmp_path, cancel, parent_exits, isolate, request, monkeypatch, client_executable,
 ):
     if isolate:
         request.getfixturevalue("frozen_launcher")
@@ -36,7 +42,7 @@ def test_encoder_probe_reaps_client_and_preserves_independent_server(
 
     monkeypatch.setattr(psutil.Process, "children", children)
     marker = tmp_path / "processes.json"
-    executable = sys._base_executable
+    executable = client_executable
     server_code = "import time; time.sleep(120)"
     client_code = (
         "import subprocess,sys,time,json; from pathlib import Path; "
@@ -104,9 +110,11 @@ def test_encoder_probe_reaps_client_and_preserves_independent_server(
                 pass
 
 
-def test_probe_cleanup_failure_remains_owned_after_parent_exit(tmp_path, monkeypatch):
+def test_probe_cleanup_failure_remains_owned_after_parent_exit(
+    tmp_path, monkeypatch, client_executable,
+):
     marker = tmp_path / "client.pid"
-    executable = sys._base_executable
+    executable = client_executable
     code = (
         "import subprocess,sys,time; from pathlib import Path; "
         "client=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)']); "

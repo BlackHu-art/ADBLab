@@ -29,8 +29,10 @@ py -3.11 -m venv .venv
 - `requirements-build.txt`：包含运行依赖，并增加 PyInstaller。
 - `requirements-dev.txt`：包含构建依赖，并增加 pytest、Ruff、coverage、pytest-cov、
   pytest-xdist、pre-commit 和 pyright。
-- `constraints.txt`：由 `requirements.txt` 引入，固定 Python 3.11 / Windows 已验证环境的活动
-  依赖闭包，包括构建 hooks 和开发工具的传递依赖；它只约束版本，不改变三个安装入口的范围。
+- `constraints.txt`：由 `requirements.txt` 引入，基于 Python 3.11 / Windows 的既有活动依赖
+  闭包维护，包括构建 hooks 和开发工具的传递依赖；它只约束版本，不改变三个安装入口的范围。
+  Qt 的四个绑定包按运行清单统一固定，以包含 macOS 辅助功能表格缓存的上游修复；对应平台
+  验收以实际测试与构建记录为准，不将旧环境验证泛化到升级版本。
   更新依赖时同步更新约束并验证对应安装入口、`pip check` 与受影响测试。该快照不包含制品哈希，
   也未锁定 macOS 独有依赖，不将它称为所有平台的完整锁文件。
 

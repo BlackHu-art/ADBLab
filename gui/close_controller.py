@@ -244,6 +244,12 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        task_feedback = getattr(self._frame, "_task_feedback", None)
+        if task_feedback is not None:
+            try:
+                task_feedback.shutdown()
+            except Exception as exc:
+                self._record_shutdown_failure("task_feedback_preparation", exc)
         # 升级线程的停止只能在 GUI 发起，必须先于其他可失败的页面清理且逐项尝试。
         installer_update = getattr(self._frame, "_installer_update", None)
         if installer_update is not None:
@@ -270,7 +276,9 @@ class CloseController:
         device_hub = getattr(self._frame, "_device_hub", None)
         if device_hub is not None:
             device_hub.prepare_shutdown()
-        tasks_page = getattr(self._frame, "_tasks_page", None)
+        tasks_page = getattr(self._frame, "_task_page", None)
+        if tasks_page is None:
+            tasks_page = getattr(self._frame, "_tasks_page", None)
         shutdown_tasks = getattr(tasks_page, "shutdown", None)
         if callable(shutdown_tasks):
             # 关闭期间窗口仍可见，hideEvent 不会触发；这里显式停止任务中心轮询。

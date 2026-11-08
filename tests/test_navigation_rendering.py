@@ -342,6 +342,11 @@ def test_wide_navigation_manual_collapse_waits_for_user_to_reopen(qt_application
             lambda: panel.displayMode == NavigationDisplayMode.EXPAND
             and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
         )
+        wait_for_stable_geometry(qt_application, (frame, frame._content_surface))
+        stable_size = frame.size()
+        assert stable_size.width() >= frame.NAVIGATION_EXPAND_BREAKPOINT
+        # 模拟原生首次显示后尚未消费的宽度协调，不让用户选择被尾沿 timer 覆盖。
+        frame._navigation_layout_timer.start(1)
         finished = QSignalSpy(panel.expandAni.finished)
         panel.menuButton.click()
         wait_until(qt_application, lambda: finished.count() == 1)
@@ -349,7 +354,7 @@ def test_wide_navigation_manual_collapse_waits_for_user_to_reopen(qt_application
         QTest.qWait(panel.expandAni.duration() + 100)
         assert panel.displayMode == NavigationDisplayMode.COMPACT
         assert panel.width() == 48
-        assert frame.width() == 1600
+        assert frame.size() == stable_size
 
         panel.menuButton.click()
         wait_until(
@@ -527,11 +532,22 @@ def test_mica_toggle_reveals_backdrop_and_restores_opaque_surfaces(
     _assert_stack_gap_matches_surface(frame, "mica disabled")
 
 
+@pytest.fixture
+def controlled_mica_backend(monkeypatch):
+    """只替换平台 DWM 能力边界，Qt 材质合成与不支持路径分别验证。"""
+    def set_native_mica(window, enabled):
+        window._isMicaEnabled = enabled
+        window.setBackgroundColor(window._normalBackgroundColor())
+
+    monkeypatch.setattr(FluentWindow, "setMicaEffectEnabled", set_native_mica)
+
+
 def test_light_mica_limits_white_tint_and_keeps_text_readable_for_different_backdrops(
-    qt_application, monkeypatch, theme_probe_frame
+    qt_application, monkeypatch, theme_probe_frame, controlled_mica_backend,
 ):
     """浅色云母只覆盖一层低白色染色，保留冷暖底色并验证正文及次要文字对比度。"""
     frame = theme_probe_frame("Light", True)
+    assert frame.isMicaEffectEnabled()
     frame._on_nav_requested("settings")
     animation = frame._page_transition.animation
     animation.setCurrentTime(animation.duration())
@@ -687,7 +703,7 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
 def test_shared_content_keeps_round_corner_when_material_changes(
-    qt_application, monkeypatch, theme_probe_frame, theme_name,
+    qt_application, monkeypatch, theme_probe_frame, theme_name, controlled_mica_backend,
 ):
     """内容壳在云母开关前后保留同一原生层次、边框和项目圆角。"""
     frame = theme_probe_frame(theme_name, True)

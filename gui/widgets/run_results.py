@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 
 from PySide6.QtCore import QDateTime, QSignalBlocker, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QResizeEvent
@@ -38,6 +39,7 @@ from gui.styles.fluent import (
     use_smooth_scroll,
 )
 from gui.widgets.collapsible_tools import CollapsibleTools
+from gui.widgets.reader_interaction import ReaderInteraction
 from services.run_library import RunRecord
 
 
@@ -72,8 +74,14 @@ class RunResultsWidget(QWidget):
         super().__init__(parent)
         self._library = library
         self._detail_only = detail_only
+        self._hosted_full_results = False
+        self._interaction_guard: Callable[[], bool] | None = None
         self._visible_records: tuple[RunRecord, ...] = ()
         self._selected: RunRecord | None = None
+        self._interaction = ReaderInteraction(
+            self, self._allows_user_action,
+            lambda: self._selected.run_id if self._selected is not None else "",
+        )
         self._layout_mode: tuple[bool, bool, bool, int, bool] | None = None
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -142,20 +150,29 @@ class RunResultsWidget(QWidget):
         detail_layout.setSpacing(8)
         self.summary_edit = PlainTextEdit(self.details)
         self.summary_edit.setReadOnly(True)
+        self._interaction.watch_editor(self.summary_edit)
         apply_reading_surface(self.summary_edit)
         self.summary_edit.setAccessibleName(tr("运行摘要"))
         detail_layout.addWidget(self.summary_edit)
         self.parameters_edit = PlainTextEdit(self.details)
         self.parameters_edit.setReadOnly(True)
+        self._interaction.watch_editor(self.parameters_edit)
         apply_reading_surface(self.parameters_edit)
         self.parameters_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.parameters_edit.setAccessibleName(tr("本次运行参数"))
+        self.parameters_heading = apply_label_role(
+            BodyLabel(tr("本次运行参数"), self.details), FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
+        )
+        self.parameters_heading.hide()
+        detail_layout.addWidget(self.parameters_heading)
         self.parameters_section = CollapsibleTools(
             "本次运行参数",
             self.parameters_edit,
             self.details,
             tooltip="查看并复制本次运行的参数快照",
         )
+        self.parameters_section.toggle_button.toggled.connect(self._keep_hosted_sections_open)
         detail_layout.addWidget(self.parameters_section)
         self.action_row = QWidget(self.details)
         self._action_layout = QGridLayout(self.action_row)
@@ -182,12 +199,19 @@ class RunResultsWidget(QWidget):
         )
         detail_layout.addWidget(self.action_row)
         self.artifact_section: CollapsibleTools | None = None
+        self.artifact_heading = apply_label_role(
+            BodyLabel(tr("生成文件"), self.details), FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
+        )
+        self.artifact_heading.hide()
         if detail_only:
             detail_layout.removeWidget(self.action_row)
             self.artifact_section = CollapsibleTools(
                 "生成文件", self.action_row, self.details,
                 tooltip="查看本次测试保存的附件",
             )
+            self.artifact_section.toggle_button.toggled.connect(self._keep_hosted_sections_open)
+            detail_layout.addWidget(self.artifact_heading)
             detail_layout.addWidget(self.artifact_section)
             detail_layout.addWidget(self.reuse_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.details)
@@ -205,11 +229,13 @@ class RunResultsWidget(QWidget):
         self.state_combo.currentIndexChanged.connect(self.refresh)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.artifact_combo.currentIndexChanged.connect(self._update_artifact_actions)
-        self.open_button.clicked.connect(self._open_artifact)
-        self.folder_button.clicked.connect(self._open_folder)
-        self.reuse_button.clicked.connect(self._reuse)
+        self._interaction.bind_button(self.open_button, self._open_artifact)
+        self._interaction.bind_button(self.folder_button, self._open_folder)
+        self._interaction.bind_button(self.reuse_button, self._reuse)
         library.changed.connect(self.refresh)
         BaseStyles.ui_font_changed.connect(self._apply_fonts)
+        BaseStyles.theme_changed.connect(self._refresh_control_styles)
+        BaseStyles.accent_color_changed.connect(self._refresh_control_styles)
         if detail_only:
             for widget in (self.filters, self.count_label, self.empty_label, self.table):
                 widget.hide()
@@ -322,6 +348,8 @@ class RunResultsWidget(QWidget):
     def present_record(self, record: RunRecord | None) -> None:
         """展示宿主指定的记录快照；不选择设备、不启动测试，也不改变共享测试库。"""
         previous_id = self._selected.run_id if self._selected is not None else ""
+        if previous_id != (record.run_id if record is not None else ""):
+            self.revoke_interactions()
         previous_path = self.artifact_combo.currentData()
         self._selected = copy.deepcopy(record)
         self.details.setVisible(self._selected is not None)
@@ -364,37 +392,84 @@ class RunResultsWidget(QWidget):
     def _update_artifact_actions(self, *_args) -> None:
         path = self.artifact_combo.currentData()
         enabled = self._selected is not None and isinstance(path, str) and bool(path)
+        has_parameters = self._selected is not None and bool(self._selected.parameters)
+        self.parameters_heading.setVisible(self._hosted_full_results and has_parameters)
+        self.parameters_section.setVisible(not self._hosted_full_results or has_parameters)
         self.artifact_combo.setEnabled(enabled)
         self.open_button.setEnabled(enabled)
         self.folder_button.setEnabled(enabled)
         if self.artifact_section is not None:
             self.artifact_section.setVisible(enabled)
+        self.artifact_heading.setVisible(
+            enabled and self._hosted_full_results and self._detail_only,
+        )
         self.artifact_combo.setToolTip(
             path if isinstance(path, str) and enabled else tr("此记录没有保存附件")
         )
 
+    def set_interaction_guard(self, guard: Callable[[], bool] | None) -> None:
+        """可选宿主动作资格；不更改业务 enabled 状态或屏蔽后台归档更新。"""
+        self.revoke_interactions()
+        self._interaction_guard = guard
+
+    def set_hosted_full_results(self, enabled: bool) -> None:
+        """抽屉直接呈现同一参数与附件控件，不改变参数复用、附件或资源归属。"""
+        if self._hosted_full_results == enabled:
+            return
+        self._hosted_full_results = enabled
+        for section in (self.parameters_section, self.artifact_section):
+            if section is None:
+                continue
+            section.toggle_button.setVisible(not enabled)
+        if enabled:
+            self._keep_hosted_sections_open()
+        detail_layout = self.details.layout()
+        if self._detail_only and isinstance(detail_layout, QVBoxLayout):
+            detail_layout.removeWidget(self.reuse_button)
+            if enabled:
+                detail_layout.insertWidget(detail_layout.indexOf(self.parameters_section) + 1,
+                                           self.reuse_button, 0, Qt.AlignmentFlag.AlignLeft)
+            else:
+                detail_layout.addWidget(self.reuse_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._update_artifact_actions()
+
+    def _keep_hosted_sections_open(self, *_args) -> None:
+        """完整模式抵御旧 toggle 的晚到切换，保留原参数、附件及动作对象。"""
+        if not self._hosted_full_results:
+            return
+        for section in (self.parameters_section, self.artifact_section):
+            if section is not None:
+                with QSignalBlocker(section.toggle_button):
+                    section.toggle_button.setChecked(True)
+                section.reveal.set_expanded(True, animated=False)
+                section.reveal.finish()
+
+    def revoke_interactions(self) -> None:
+        """只撤销旧呈现动作和菜单；归档选择、正文与附件数据继续保留。"""
+        self._interaction.revoke()
+
+    def _allows_user_action(self) -> bool:
+        return self._interaction_guard is None or self._interaction_guard()
+
     def _open_artifact(self) -> None:
         """控制器异步核验本地路径；页面不在 GUI 线程执行文件探测。"""
         path = self.artifact_combo.currentData()
-        if self.open_button.isEnabled() and isinstance(path, str):
+        if self._allows_user_action() and self.open_button.isEnabled() and isinstance(path, str):
             self._library.open_artifact(path)
 
     def _open_folder(self) -> None:
         path = self.artifact_combo.currentData()
-        if self.folder_button.isEnabled() and isinstance(path, str):
+        if self._allows_user_action() and self.folder_button.isEnabled() and isinstance(path, str):
             self._library.open_artifact(path, folder=True)
 
     def _reuse(self) -> None:
-        if self._selected is not None:
+        if self._allows_user_action() and self._selected is not None:
             self.reuse_requested.emit(copy.deepcopy(self._selected))
 
     def _apply_fonts(self, *_args) -> None:
         font = BaseStyles.font_for_role(FontRole.UI)
         self.setFont(font)
-        for control in (self.search_edit, self.kind_combo, self.state_combo, self.artifact_combo):
-            configure_fluent_control(control)
-        for button in (self.open_button, self.folder_button, self.reuse_button):
-            configure_fluent_control(button)
+        self._refresh_control_styles()
         self.table.setFont(font)
         # Fluent 表格委托优先读取单元格字体，否则会退回固定 13 像素字体。
         for row in range(self.table.rowCount()):
@@ -428,6 +503,14 @@ class RunResultsWidget(QWidget):
         )
         self._layout_mode = None
         self._reflow()
+
+    def _refresh_control_styles(self, *_args) -> None:
+        """借出后的控件独立跟随主题及强调色，不重置正文、选区或附件选择。"""
+        for control in (self.search_edit, self.kind_combo, self.state_combo, self.artifact_combo,
+                        self.open_button, self.folder_button, self.reuse_button):
+            configure_fluent_control(control)
+        for label in (self.parameters_heading, self.artifact_heading):
+            apply_label_role(label, FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

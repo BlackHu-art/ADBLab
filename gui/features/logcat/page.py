@@ -4,6 +4,7 @@ import uuid
 from collections import deque
 
 from PySide6.QtCore import QTimer, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QGridLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -17,9 +18,10 @@ from qfluentwidgets import (
 )
 
 from core.tasks.qt_supervisor import QtTaskSupervisor
-from core.tasks.supervision import TaskStopResult
+from core.tasks.supervision import StopDisposition, TaskStopResult
 from gui.dialogs.lifecycle import safe_disconnect
 from gui.i18n import tr
+from gui.session_tasks import SessionTaskSnapshot
 from gui.styles import BaseStyles
 
 from .form import LiveLogcatForm, _LogcatStatusLabel
@@ -29,6 +31,7 @@ from .worker import (
     CurrentPackageWorker,
     LogcatBatch,
     LogcatTermination,
+    LogcatTerminationKind,
     LogcatWorker,
 )
 
@@ -50,6 +53,7 @@ class LiveLogcatPage(QWidget):
     _filters_layout: QGridLayout
     _controls: QWidget
     output: PlainTextEdit
+    stop_action: QAction
 
     def __init__(
         self,
@@ -69,6 +73,9 @@ class LiveLogcatPage(QWidget):
         self._device_selected = True
         self._supervisor_owner_id = f"live-logcat-page-{uuid.uuid4()}"
         self._supervisor_task_id = None
+        self._session_task_key = f"session:logcat:{uuid.uuid4().hex}"
+        self._session_task_revision = ""
+        self._session_task_failed = False
         self.worker = None
         self._pkg_worker = None
         self.entries = deque(maxlen=self.MAX_BUFFER)
@@ -297,9 +304,54 @@ class LiveLogcatPage(QWidget):
         (getattr(self, "_form_controller", None) or LiveLogcatForm(self))._reflow_filters()
 
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
+        if self._supervisor_task_id and self._supervisor_task_id != self._session_task_revision:
+            self._session_task_revision = self._supervisor_task_id
+            self._session_task_failed = False
         return (
             getattr(self, "_form_controller", None) or LiveLogcatForm(self)
         )._set_running_actions(running, stopping=stopping)
+
+    def task_snapshot(self) -> SessionTaskSnapshot | None:
+        """capture worker 只有实际释放后才解除活动，不把查询或导出计为采集。"""
+        if self._supervisor_task_id and self._supervisor_task_id != self._session_task_revision:
+            self._session_task_revision = self._supervisor_task_id
+            self._session_task_failed = False
+        if not self._session_task_revision:
+            return None
+        owned = self.worker is not None
+        capture_state = self._stream_controller._empty_capture_state
+        if self._session_task_failed or owned and capture_state in {
+            "failed", "start_failed", "cleanup_pending",
+        }:
+            state = "failed"
+        elif not owned:
+            state = "cancelled"
+        elif self._logcat_stopping or self._closing:
+            state = "stopping"
+        elif capture_state == "starting":
+            state = "starting"
+        else:
+            state = "running"
+        detail = {
+            "starting": tr("正在启动日志采集"),
+            "running": tr("日志采集运行中"),
+            "stopping": tr("正在停止日志采集并等待资源释放"),
+            "failed": tr("日志采集或清理失败，请返回来源查看原因"),
+            "cancelled": tr("日志采集已停止"),
+        }[state]
+        return SessionTaskSnapshot(
+            self._session_task_key, self._session_task_revision, "logcat", state, owned,
+            owned and not self._closing and self.stop_action.isEnabled(), (tr("设备"),), detail,
+        )
+
+    def request_task_stop(self, expected_revision: str) -> bool:
+        """校验原 capture 版本后只调用原异步停止入口，不改变设备选择。"""
+        snapshot = self.task_snapshot()
+        if (snapshot is None or snapshot.revision != expected_revision
+                or not snapshot.resource_owned or not snapshot.stop_enabled):
+            return False
+        self._stop()
+        return True
 
     # ── 流式控制器委托 wrapper ─────────────────────────────────────────
 
@@ -435,6 +487,10 @@ class LiveLogcatPage(QWidget):
         )._on_worker_status(worker, msg)
 
     def _on_worker_terminated(self, worker: LogcatWorker, result: LogcatTermination):
+        if (self.worker is worker and not self._closing
+                and not self._logcat_stop_result_received
+                and result.kind is not LogcatTerminationKind.CANCELLED):
+            self._session_task_failed = True
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._on_worker_terminated(worker, result)
@@ -442,6 +498,10 @@ class LiveLogcatPage(QWidget):
     # ── 生命周期控制器委托 wrapper ─────────────────────────────────────
 
     def _on_task_stopped(self, result: TaskStopResult):
+        if (result.owner_id == self._supervisor_owner_id
+                and result.task_id == self._supervisor_task_id
+                and result.disposition in {StopDisposition.TIMED_OUT, StopDisposition.FAILED}):
+            self._session_task_failed = True
         return (
             getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
         )._on_task_stopped(result)

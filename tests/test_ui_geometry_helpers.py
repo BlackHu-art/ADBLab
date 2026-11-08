@@ -104,6 +104,30 @@ def test_geometry_helpers_reach_both_edges_of_oversized_target(qt_application):
     assert_scroll_target_reachable(scroll, target)
 
 
+@pytest.mark.parametrize("target_location", ["sibling", "unrelated", "viewport"])
+def test_scroll_target_requires_content_ancestry_before_qt_mapping(
+    qt_application, monkeypatch, target_location,
+):
+    from unittest.mock import Mock
+
+    host = QWidget()
+    scroll = QScrollArea(host)
+    content = QWidget()
+    scroll.setWidget(content)
+    parent = {
+        "sibling": host,
+        "unrelated": None,
+        "viewport": scroll.viewport(),
+    }[target_location]
+    target = QPushButton("Wrong scroll owner", parent)
+    ensure_visible = Mock(side_effect=AssertionError("must reject before Qt mapping"))
+    monkeypatch.setattr(scroll, "ensureWidgetVisible", ensure_visible)
+
+    with pytest.raises(AssertionError, match="scroll target must belong"):
+        assert_scroll_target_reachable(scroll, target)
+    ensure_visible.assert_not_called()
+
+
 def test_geometry_helpers_validate_positive_and_square_dimensions(qt_application):
     widget = QWidget()
     widget.resize(32, 32)

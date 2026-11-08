@@ -60,6 +60,10 @@ class RemotePanelInput:
             self._frame._mark_remote_submitted()
             try:
                 future = executor.submit(_wrapped)
+                if cancelled is not None:
+                    track_mirror = getattr(self._frame, "_track_mirror_input_future", None)
+                    if callable(track_mirror):
+                        track_mirror(future)
                 track_future = getattr(self._frame, "_track_remote_future", None)
                 if callable(track_future):
                     track_future(future)

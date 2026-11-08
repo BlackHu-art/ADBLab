@@ -4,11 +4,13 @@ import os  # noqa: F401  测试通过 remote_panel 命名空间补丁 os.path.is
 import re
 import threading
 import time
+import weakref
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -29,7 +31,9 @@ from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
 from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
-from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
+from gui.panels.remote_panel_scrcpy import RemoteDeviceSession, RemotePanelScrcpy
+from gui.session_tasks import SessionTaskSnapshot
+from gui.widgets.collapsible_tools import ContentReveal
 from gui.widgets.device_context_bar import DeviceRowOperation
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 from services.remote.types import ScrcpyToolError
@@ -303,6 +307,7 @@ class RemotePanel(BasePanel):
     remote_subtitle: BodyLabel
     remote_status_badge: InfoBadge
     panel_header: QWidget
+    _mirror_diagnostic_reveal: ContentReveal
     category_stack: "AdaptiveCategoryStack"
     _remote_section_groups: list[QWidget]
     _remote_action_binding: "ResponsiveGridBinding"
@@ -393,6 +398,14 @@ class RemotePanel(BasePanel):
         self._process = None
         self._running = False
         self._session_state = self._SESSION_IDLE
+        self._session_task_key = f"session:remote:{uuid4().hex}"
+        self._session_task_revision = 0
+        self._session_task_owned = False
+        self._session_task_members: dict[str, RemoteDeviceSession] = {}
+        self._session_task_labels: dict[str, str] = {}
+        self._session_task_input_futures: set[Future] = set()
+        self._session_probe_check: Future | None = None
+        self._retiring_launch_worker: weakref.ReferenceType[QThread] | None = None
         self._watchdog = QTimer(self)
         self._watchdog.timeout.connect(self._poll_process)
         self._settings = AppSettings.instance()
@@ -739,6 +752,118 @@ class RemotePanel(BasePanel):
             )
         return operations
 
+    def task_snapshot(self) -> SessionTaskSnapshot | None:
+        """保守投影整个镜像批次；准备取消或父进程结束不替代真实资源排空。"""
+        sessions = tuple(getattr(self, "_device_sessions", {}).values())
+        retiring = self._retiring_launch_worker
+        worker_owned = self._launch_worker is not None or (
+            retiring is not None and retiring() in self._orphaned_launch_workers
+        )
+        session_owned = any(item.resource_owned or item.state == "preparing" for item in sessions)
+        # 进程键由原停止和退出回调在确认清理后撤销；不能在任务展示中再 poll 进程。
+        process_owned = bool(self._session_process_keys)
+        thread_owned = any(thread.is_alive() for thread in self._scrcpy_threads)
+        with self._warmup_threads_lock:
+            thread_owned = thread_owned or any(thread.is_alive() for thread in self._warmup_threads)
+        with self._remote_futures_lock:
+            input_owned = any(not future.done() for future in self._session_task_input_futures)
+        probe_owned = self._encoder_probe_owned()
+        owned = bool(worker_owned or session_owned or process_owned or thread_owned
+                     or input_owned or probe_owned or getattr(self, "_pending_launch_configs", ()))
+        if owned and not self._session_task_owned:
+            self._session_task_revision += 1
+            self._session_task_members = {}
+            self._session_task_labels = {}
+        if owned:
+            for session in sessions:
+                if session.resource_owned or session.state == "preparing":
+                    device = session.config.device
+                    self._session_task_members[device] = session
+                    if device not in self._session_task_labels:
+                        bar = getattr(self.window(), "_global_device_bar", None)
+                        label = bar.device_label(device) if bar is not None else ""
+                        self._session_task_labels[device] = label or tr("设备 {count}").format(
+                            count=len(self._session_task_labels) + 1,
+                        )
+        self._session_task_owned = owned
+        if self._session_task_revision == 0:
+            return None
+        failed = any(
+            item.state == "failed" or item.resource_owned and item.error_type == "StopFailed"
+            for item in self._session_task_members.values()
+        )
+        if failed:
+            state = "failed"
+        elif not owned:
+            state = "cancelled"
+        elif self._closing or self._session_state == self._SESSION_STOPPING or any(
+            item.stop_requested and (item.resource_owned or item.state == "preparing")
+            for item in self._session_task_members.values()
+        ):
+            state = "stopping"
+        elif worker_owned and not any(item.resource_owned for item in sessions):
+            state = "starting"
+        elif session_owned or process_owned:
+            state = "running"
+        else:
+            state = "stopping"
+        detail = {
+            "starting": tr("正在准备镜像批次"),
+            "running": tr("镜像批次运行中"),
+            "stopping": tr("正在停止镜像并等待批次资源释放"),
+            "failed": tr("镜像或资源清理失败，请返回来源查看原因"),
+            "cancelled": tr("镜像批次已停止"),
+        }[state]
+        # 就绪只由原进程输出回调确认；reader 存活属于资源义务，不代表仍在启动。
+        # StopFailed 可被 watchdog 改写为 stopping；未重新停止时仍只是待重试残留。
+        member_busy = any(
+            item.state == "preparing" or item.resource_owned and (
+                item.stop_inflight
+                or item.state in {"connecting", "stopping"} and item.error_type != "StopFailed"
+            )
+            for item in sessions
+        )
+        busy = bool(owned and (
+            worker_owned or member_busy or probe_owned
+            or getattr(self, "_pending_launch_configs", ())
+            or self._closing or self._session_state == self._SESSION_STOPPING
+            or not session_owned and not process_owned
+        ))
+        labels = tuple(self._session_task_labels.values())
+        button = getattr(self, "btn_stop", None)
+        enabled = bool(owned and not self._closing and button is not None and button.isEnabled())
+        return SessionTaskSnapshot(
+            self._session_task_key, str(self._session_task_revision), "remote", state,
+            owned, enabled, labels, detail, busy=busy,
+        )
+
+    def _encoder_probe_owned(self) -> bool:
+        """只读取服务的内存登记；不触碰进程、客户端及其清理锁。"""
+        reader = getattr(self._scrcpy_service, "encoder_probes_owned", None)
+        return callable(reader) and reader() is True
+
+    def refresh_task_snapshot(self) -> None:
+        """准备线程交还残留后，借原有受监督队列核对释放；同一时间至多一个核对。"""
+        if (self._closing or self._remote_input_closing or self._launch_worker is not None
+                or not self._encoder_probe_owned() or self._remote_executor is None):
+            return
+        previous = self._session_probe_check
+        if previous is not None and not previous.done():
+            return
+        self._session_probe_check = self._remote_executor.submit(
+            self._scrcpy_service.encoder_probes_running,
+        )
+        self._track_remote_future(self._session_probe_check)
+
+    def request_task_stop(self, expected_revision: str) -> bool:
+        """只停止仍匹配的原资源批次，沿用停止全部的冻结目标与排空算法。"""
+        snapshot = self.task_snapshot()
+        if (snapshot is None or snapshot.revision != expected_revision
+                or not snapshot.resource_owned or not snapshot.stop_enabled):
+            return False
+        self._stop_scrcpy()
+        return True
+
     def request_device_operation(self, device: str, action: str) -> None:
         """行按钮按点击时状态重新准入，拒绝旧快照或错误动作且不改变勾选。"""
         operation = self.device_operations().get(device)
@@ -1024,6 +1149,8 @@ class RemotePanel(BasePanel):
             if worker is None:
                 return False
             try:
+                if isinstance(worker, QThread):
+                    return not worker.wait(0)
                 return worker.isRunning()
             except RuntimeError:
                 return False
@@ -1188,6 +1315,17 @@ class RemotePanel(BasePanel):
 
         future.add_done_callback(release)
 
+    def _track_mirror_input_future(self, future: Future) -> None:
+        """仅跟踪已绑定镜像会话令牌的输入，独立广播与客户端重检不归镜像。"""
+        with self._remote_futures_lock:
+            self._session_task_input_futures.add(future)
+
+        def release(completed: Future) -> None:
+            with self._remote_futures_lock:
+                self._session_task_input_futures.discard(completed)
+
+        future.add_done_callback(release)
+
     def _has_running_remote_future(self) -> bool:
         lock = self._remote_future_lock()
         futures = getattr(self, "_remote_futures", set())
@@ -1341,7 +1479,6 @@ class RemotePanel(BasePanel):
                     if current is not state:
                         return
                     current["finished_seen"] = True
-                    current["known_stopped"] = True
                 cls._schedule_launch_worker_delete(worker, restart_exhausted=True)
 
             try:
@@ -1358,10 +1495,10 @@ class RemotePanel(BasePanel):
             running = bool(worker.isRunning())
         except Exception:
             running = None
-        if running is False:
+        if running is False or isinstance(worker, QThread):
             with cls._launch_worker_reaper_lock:
                 current = cls._launch_worker_reaper_states.get(worker_key)
-                if current is state:
+                if current is state and running is False:
                     current["known_stopped"] = True
             # finished 可能早于回收器连接；已结束线程必须主动进入事件循环重试。
             cls._schedule_launch_worker_delete(worker, restart_exhausted=True)
@@ -1372,6 +1509,7 @@ class RemotePanel(BasePanel):
         worker: ScrcpyLaunchWorker,
         *,
         restart_exhausted: bool,
+        delay_ms: int | None = None,
     ) -> None:
         """幂等安排一次删除尝试；真实 QObject 始终回到自身 GUI 线程执行。"""
 
@@ -1392,10 +1530,11 @@ class RemotePanel(BasePanel):
 
         try:
             application = QCoreApplication.instance()
+            delay = cls._LAUNCH_WORKER_DELETE_RETRY_MS if delay_ms is None else delay_ms
             if application is not None:
-                QTimer.singleShot(cls._LAUNCH_WORKER_DELETE_RETRY_MS, application, callback)
+                QTimer.singleShot(delay, application, callback)
             else:
-                QTimer.singleShot(cls._LAUNCH_WORKER_DELETE_RETRY_MS, callback)
+                QTimer.singleShot(delay, callback)
         except Exception:
             with cls._launch_worker_reaper_lock:
                 current = cls._launch_worker_reaper_states.get(worker_key)
@@ -1415,6 +1554,10 @@ class RemotePanel(BasePanel):
                 return
             state["scheduled"] = False
 
+        # finished 槽和线程局部析构仍可能占有原生线程；只让一个待 join 的回收节拍续约。
+        if isinstance(worker, QThread) and not worker.wait(0):
+            cls._schedule_launch_worker_delete(worker, restart_exhausted=False, delay_ms=50)
+            return
         try:
             worker.deleteLater()
         except Exception:
@@ -1446,6 +1589,11 @@ class RemotePanel(BasePanel):
             if state is None:
                 return True
             stopped_by_evidence = bool(state["known_stopped"] or state["finished_seen"])
+        if isinstance(worker, QThread):
+            if not worker.wait(0):
+                return False
+            cls._forget_launch_worker(worker)
+            return True
         if stopped_by_evidence:
             cls._forget_launch_worker(worker)
             return True
@@ -1564,6 +1712,8 @@ class RemotePanel(BasePanel):
         if not self.selected_devices:
             self.device_selection_requested.emit()
             return
+        # 新资源加入前观察旧批次是否已排空，不能依赖两次点击之间恰好有轮询。
+        self.task_snapshot()
         return (
             getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
         )._start_scrcpy()
@@ -1584,6 +1734,7 @@ class RemotePanel(BasePanel):
 
     def _retry_device_scrcpy(self, device: str) -> None:
         """已选且没有活动进程的设备可以重新准备。"""
+        self.task_snapshot()
         self._scrcpy_controller._start_scrcpy([device])
 
     @Slot(str, object, bool)  # type: ignore[reportArgumentType]  # PySide6 Slot 桩未包含 self。
@@ -1636,6 +1787,8 @@ class RemotePanel(BasePanel):
             self._last_mirror_status = ""
         RemotePanel._refresh_mirror_presentation(self)
         self.workspace_target_lock_changed.emit(state != self._SESSION_IDLE)
+        if hasattr(self, "_session_task_key"):
+            self.task_snapshot()
         return result
 
     def _scrcpy_config(self, exe: str, device: str) -> ScrcpyConfig:

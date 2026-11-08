@@ -34,7 +34,7 @@ def test_task_center_shared_inline_reader_ignores_hidden_archive_detail_height(
         assert not page.table.expanded_key
         assert not page.run_results.isVisibleTo(page)
         assert not page.action_results.isVisibleTo(page)
-        page.table.rows["run:7"].toggle.click()
+        page.table.rows["run:7"].title.click()
         wait_for_stable_geometry(qt_application, (page, page._scroll.widget(), page.detail))
         detail = page.detail
         run_height = page.run_results.height()
@@ -69,7 +69,7 @@ def test_task_center_shared_inline_reader_ignores_hidden_archive_detail_height(
         assert page.table.expanded_key == "action:local-operation-79"
         assert page.action_results.output.isVisibleTo(page)
         assert page.action_results.output.toPlainText().startswith("本次操作 79\n")
-        assert_scroll_target_reachable(page._scroll, page.action_results.export_button)
+        assert_scroll_target_reachable(page.table.view, page.action_results.export_button)
         operation_height = page._scroll.widget().height()
         # 未挂载的归档详情改变高度，也不能撑高正在阅读的操作行。
         page.run_results.parameters_section.toggle_button.click()
@@ -77,7 +77,7 @@ def test_task_center_shared_inline_reader_ignores_hidden_archive_detail_height(
         assert not page.run_results.parameters_section.content.isHidden()
         assert page._scroll.widget().height() == operation_height
         page.run_results.parameters_section.toggle_button.click()
-        page.table.rows["run:7"].toggle.click()
+        page.table.rows["run:7"].title.click()
         wait_until(qt_application, lambda: page.run_results.isVisibleTo(page))
         wait_for_stable_geometry(qt_application, (page._scroll.widget(), page.detail))
         assert page.detail is detail
@@ -86,7 +86,7 @@ def test_task_center_shared_inline_reader_ignores_hidden_archive_detail_height(
         assert page.run_results.selected_record == selected
         assert page.run_results.parameters_section.content.isHidden()
         assert page.run_results.height() == run_height
-        assert_scroll_target_reachable(page._scroll, page.run_results.reuse_button)
+        assert_scroll_target_reachable(page.table.view, page.run_results.reuse_button)
         operation = manager.begin("install")
         manager.mark_running(operation.operation_id)
         page.refresh()

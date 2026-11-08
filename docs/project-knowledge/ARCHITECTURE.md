@@ -310,6 +310,11 @@ flowchart LR
 | PerformanceResultLoader / 结果读取 QThread | 按运行快照后台发现附件并单次解析 CSV；新图表代次不覆盖旧运行归档，线程退出、实际 join 和 GUI 归档交付均确认后才释放页面义务 |
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，完成通知与线程实际退出分别确认；本机进程结束与远端清理义务分别确认 |
 
+POSIX 上的 scrcpy 长进程使用私有 PTY 交付 stdout，避免 C stdio 将画面就绪日志缓存到退出；
+Windows 的 stdout 和各平台 stderr 保留 PIPE。启动计划仍返回同一个 ProcessRunner 进程句柄，
+两个 reader 分别关闭自有流；PTY 的 EOF/EIO 仅表示输出结束，不替代真实 Texture/录制就绪证据，
+也不表示进程和 helper 资源已经释放。输出尚未交付 reader 时，由原停止与后台清理路径回收。
+
 MobilePerf 的 `has_active_resources()` 覆盖所有代次的进程、stdout/stderr reader、模式同步线程及
 远端清理义务，`wait()` 在同一预算内确认这些资源。业务用的 `is_running()` 保留原模式线程与
 进程判定；不能用它代替资源归零。`is_current_run_complete()` 只判断最近一次运行的完成通知、
@@ -383,10 +388,19 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
   局部动画只负责视觉过渡，业务取消、晚到结果拦截与资源释放仍走原生命周期。
 - 通用操作由 `ActionResults` 管理请求身份与不可变结果，`ActionEnvelope` 穿过原异步模型边界；
   `ActionFeedbackPresenter` 订阅 `action_result_changed` 并将快照投影到任务中心“本次操作”，
-  同时驱动分级 Toast、报告文件入口及诊断正文阅读器，
+  同时驱动共享右侧任务抽屉、报告文件入口及诊断正文阅读器，
   不把过程日志解释为终态；普通功能页不设置通用操作结果面板。
   资源与取消仍由既有 OperationManager、use case 和 supervisor 管理，详见
   [操作结果](../guides/OPERATION_RESULTS.md)。
+- `TaskFeedbackCoordinator` 由主窗口拥有，组合任务页的固定阅读器、右侧覆盖抽屉及导航状态控件。
+  隐藏任务页仍以 UI 线程节拍读取内存快照；可见页保留自身轮询。图标只消费不可变活动／未读／
+  实时成功事件投影，不读取 Controller 或操作资源；应用关闭先停止这些呈现时钟，再走原资源屏障。
+- 持续会话通过 `gui/session_tasks.py` 的不可变快照与弱路由纳入任务中心。性能、Logcat、RemotePanel
+  公开资源 owner 快照与版本化停止入口；MainFrame 只枚举已有 registry 页面及唯一镜像面板，
+  协调器沿原刷新节拍投影。显示状态与 `resource_owned` 独立，停止请求不改变原释放屏障，
+  隐藏或失选不迁移资源所有权；仅显示元数据进入内存，不复制日志或新增持久化格式。
+  镜像快照只读原面板的进程归属和服务的编码器登记；准备线程交还的客户端由既有后台队列
+  核对退出，展示与停止前的版本复核均不访问原生进程。性能页承担所有代次尚未交付并退出的归档。
 - 主窗口向任务中心注入 `RunLibraryController`，由“测试结果”显示持久化测试记录。
   `TaskHistoryStore` 与旧历史卡保留为兼容入口；主窗口中的旧历史卡隐藏，不是通用操作正文的存储源。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
