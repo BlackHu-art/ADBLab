@@ -32,6 +32,11 @@ def _write_image(path, color: Qt.GlobalColor) -> str:
     return str(path)
 
 
+def _available_layout_height(page):
+    # 布局失效后几何可暂为空，从页面实际内容区扣除布局边距测量可用高度。
+    return page.contentsRect().marginsRemoved(page.layout().contentsMargins()).height()
+
+
 def test_image_details_reveal_keeps_canvas_and_image_unchanged(qt_application, tmp_path):
     path = _write_image(tmp_path / "details.png", Qt.GlobalColor.green)
     page = make_screenshot_page([path])
@@ -196,22 +201,29 @@ def test_screenshot_flip_view_preserves_mixed_image_aspect_ratios(qt_application
         page.show()
         view = page._view
         wait_for_stable_geometry(qt_application, (page, view))
-        for index, rgb, ratio in ((0, (255, 0, 0), 540 / 960), (1, (0, 255, 0), 3)):
+        for index, ratio in enumerate((540 / 960, 3)):
             view.setCurrentIndex(index)
             page._reset_zoom()
             wait_until(qt_application, lambda: (
                 view.scrollBar.ani.state() == QAbstractAnimation.State.Stopped
             ))
             rendered = view.viewport().grab().toImage()
-            points = [
-                (x, y)
-                for y in range(rendered.height())
-                for x in range(rendered.width())
-                if rendered.pixelColor(x, y).getRgb()[:3] == rgb
-            ]
-            assert points, "主图必须实际绘制截图"
-            width = max(p[0] for p in points) - min(p[0] for p in points) + 1
-            height = max(p[1] for p in points) - min(p[1] for p in points) + 1
+            # 红、绿测试图居中时可能有两条半像素边缘。透明视口用 alpha，
+            # 合成到灰阶底色的视口用主色与其余通道的差值，均按实际覆盖计量。
+            column_coverage = [0.0] * rendered.width()
+            row_coverage = [0.0] * rendered.height()
+            for y in range(rendered.height()):
+                for x in range(rendered.width()):
+                    red, green, blue, alpha = rendered.pixelColor(x, y).getRgb()
+                    primary, other = (red, green) if index == 0 else (green, red)
+                    strength = primary - max(other, blue)
+                    if strength > 0:
+                        coverage = (strength / 255) * (alpha / 255)
+                        column_coverage[x] = max(column_coverage[x], coverage)
+                        row_coverage[y] = max(row_coverage[y], coverage)
+            width = sum(column_coverage)
+            height = sum(row_coverage)
+            assert width > 0 and height > 0, "主图必须实际绘制截图"
             assert abs(width - height * ratio) <= 2
             drawn = view.delegate.itemSize(index)
             assert abs(width / rendered.devicePixelRatio() - drawn.width()) <= 2
@@ -514,7 +526,7 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
         assert page.dialog_subtitle.isVisibleTo(page)
         assert page.status_badge.isVisibleTo(page)
         original_canvas_height = canvas.height()
-        original_content_height = page.layout().contentsRect().height()
+        original_content_height = _available_layout_height(page)
         header_height = page.header_card.height()
         count_changes = QSignalSpy(page.image_count_changed)
         original_view = page._view
@@ -528,7 +540,7 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
         assert not page.dialog_title.isVisibleTo(page)
         assert not page.dialog_subtitle.isVisibleTo(page)
         assert not page.status_badge.isVisibleTo(page)
-        content_height_delta = page.layout().contentsRect().height() - original_content_height
+        content_height_delta = _available_layout_height(page) - original_content_height
         assert canvas.height() >= original_canvas_height + header_height + content_height_delta
         assert page._command_bar.isVisibleTo(page)
         assert page._view is original_view
@@ -933,13 +945,11 @@ def test_screenshot_metadata_and_pager_live_inside_expanded_canvas(
         page.prepare_for_workspace()
         page.resize(width, height)
         page.show()
-        # 元数据通过零时计时器重排；连续相同的几何快照不代表待处理回调已完成。
-        wait_until(qt_application, lambda: all(
+        wait_for_stable_geometry(qt_application, (page, page._canvas_frame))
+        # 放大画布时，旧角标也在新边界内；等本次画布重排完成后再检查贴边位置。
+        wait_until(qt_application, lambda: not page._metadata_reflow_timer.isActive() and all(
             page._canvas_frame.rect().contains(overlay.geometry())
             for overlay in (page._details_bar, page._pager_bar, page._zoom_label)
-        ))
-        wait_for_stable_geometry(qt_application, (
-            page, page._canvas_frame, page._details_bar, page._pager_bar, page._zoom_label,
         ))
         canvas = page._canvas_frame
         for overlay in (page._details_bar, page._pager_bar, page._zoom_label):
@@ -953,7 +963,7 @@ def test_screenshot_metadata_and_pager_live_inside_expanded_canvas(
         assert page._zoom_label.geometry().bottom() >= canvas.height() - 12
         assert not page._pager_bar.geometry().intersects(page._zoom_label.geometry())
         assert canvas.height() == (
-            page.layout().contentsRect().height()
+            _available_layout_height(page)
             - page._command_bar.height()
             - page.layout().spacing()
         )

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-11-02
+last_verified: 2026-11-09
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -29,7 +29,9 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
    并选择本次运行的执行模式（自动/手动快速/手动原生）；具体生效时机见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#启动)
    与 [ADB_FAST](../guides/ADB_FAST.md)。
 8. 结果管理：任务中心保留本次操作的逐台结果、正文与附件；Monkey/性能测试另有跨重启归档和命名
-   参数方案，支持回填参数而不自动开始测试。应用诊断可在设置页导出。
+   参数方案，支持回填参数而不自动开始测试。投屏、实时 Logcat 和性能采集以持续会话进入任务
+   中心，详情通过主窗口共享右侧阅读器展示，边界见[操作结果指南](../guides/OPERATION_RESULTS.md)。
+   应用诊断可在设置页导出。
 
 当前主界面是 qfluentwidgets `FluentWindow` 工作台；长期功能内嵌，纯消息在窗口内提示，
 输入与系统文件选择保留瞬态交互。完整页面路由与设备选择规则见

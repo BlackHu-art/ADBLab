@@ -2,13 +2,15 @@
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
 from qfluentwidgets import SwitchButton, TransparentPushButton, TransparentToolButton
 
 from gui.styles import BaseStyles
 from gui.styles.typography import FontConfig, typography_manager
 from tests import test_remote_layout
-from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry
+from tests.test_responsive_panels import _show_remote_controller
+from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
 
 pytestmark = pytest.mark.ui
 remote_layout = test_remote_layout.remote_layout
@@ -50,6 +52,12 @@ def _assert_no_rectangular_border(button):
     for x, y in ((width // 2, 1), (1, height // 2), (width - 2, height // 2)):
         assert _pixel(image, x, y) == background, (button.text(), x, y)
     return image
+
+
+def _move_pointer(window, point):
+    # QWidget 在原生后端移动桌面指针；离屏窗口通过 QWindow 路由到命中的子控件。
+    target = window.windowHandle() if QGuiApplication.platformName() == "offscreen" else window
+    QTest.mouseMove(target, point)
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
@@ -189,34 +197,44 @@ def test_session_surface_follows_mica_backdrop_changes(qt_application, theme):
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
-def test_remote_actions_are_transparent_without_idle_borders(remote_layout, theme):
-    _panel, remote, scroll, content, _settings = remote_layout
+def test_remote_actions_are_transparent_without_idle_borders(remote_layout, qt_application, theme):
+    _panel, remote, _scroll, _content, _settings = remote_layout
     BaseStyles.switch_theme(theme)
     remote.set_target_devices(["synthetic-device"])
+    window, scroll, _ = _show_remote_controller(qt_application, remote, 760)
     for button in remote._remote_control_buttons:
         assert isinstance(button, (TransparentPushButton, TransparentToolButton))
         assert button.property("adblabKeyboardFocusOnly")
         scroll.ensureWidgetVisible(button)
         button.clearFocus()
-        QTest.mouseMove(scroll.windowHandle(), QPoint(scroll.width() - 2, 2))
+        _move_pointer(window, QPoint(2, 2))
+        wait_until(qt_application, lambda: not button.underMouse())
         _assert_no_rectangular_border(button)
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
+@pytest.mark.parametrize("surface", ("page", "controller"))
 def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
-    remote_layout, qt_application, theme,
+    remote_layout, qt_application, theme, surface,
 ):
-    _panel, remote, _scroll, content, _settings = remote_layout
+    _panel, remote, scroll, _content, _settings = remote_layout
     BaseStyles.switch_theme(theme)
     remote.set_target_devices(["synthetic-device"])
-    for button in (
-        remote.btn_start, remote.btn_stop,
-        *remote._remote_control_buttons,
-    ):
+    if surface == "controller":
+        window, scroll, _ = _show_remote_controller(qt_application, remote, 760)
+        buttons = remote._remote_control_buttons
+    else:
+        window = scroll.window()
+        buttons = (remote.btn_start, remote.btn_stop)
+    window.raise_()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+    for button in buttons:
         button.setEnabled(True)
         button.clearFocus()
-        _scroll.ensureWidgetVisible(button)
-        QTest.mouseMove(_scroll.windowHandle(), QPoint(_scroll.width() - 2, 2))
+        scroll.ensureWidgetVisible(button)
+        _move_pointer(window, QPoint(2, 2))
+        wait_until(qt_application, lambda: not button.underMouse())
         wait_for_stable_geometry(qt_application, button)
         original_hint = button.minimumSizeHint()
         original_geometry = button.geometry()
@@ -225,13 +243,11 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
             if isinstance(button, (TransparentPushButton, TransparentToolButton))
             else button.grab().toImage()
         )
-        # QWidget 的 mouseMove 在离屏后端可能只移动位置而不生成 Enter；窗口事件
-        # 路径仍经过 Qt 命中测试，必须由实际按钮接收悬停，不能直接设置 isHover。
-        QTest.mouseMove(_scroll.windowHandle(), button.mapTo(_scroll, button.rect().center()))
-        QTest.qWait(40)
-        assert button.underMouse() and button.isHover, (
-            button.text(), mapped_rect(button, _scroll.viewport()),
-        )
+        assert button.isVisible() and button.window() is window
+        target = button.mapTo(window, button.rect().center())
+        assert window.childAt(target) is button, (button.text(), window.childAt(target))
+        _move_pointer(window, target)
+        wait_until(qt_application, lambda: button.underMouse() and button.isHover)
         hovered = button.grab().toImage()
         assert hovered != idle, f"{button.text()} 悬停应保留原生背景反馈"
         assert _pixel(hovered, button.width() // 2, 4) != _pixel(
@@ -242,7 +258,8 @@ def test_remote_actions_show_native_hover_and_focus_without_changing_geometry(
         assert button.geometry() == original_geometry
         # 在按钮外释放，验证按压绘制而不触发真实动作。
         QTest.mouseRelease(button, Qt.MouseButton.LeftButton, pos=QPoint(-1, -1))
-        QTest.mouseMove(_scroll.windowHandle(), QPoint(_scroll.width() - 2, 2))
+        _move_pointer(window, QPoint(2, 2))
+        wait_until(qt_application, lambda: not button.underMouse())
         # 鼠标按下已取得焦点，先离焦才能真实触发键盘 FocusIn。
         button.clearFocus()
         button.setFocus(Qt.FocusReason.TabFocusReason)

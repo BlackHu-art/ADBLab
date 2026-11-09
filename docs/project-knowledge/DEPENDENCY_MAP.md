@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-11-02
+last_verified: 2026-11-09
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -85,9 +85,13 @@ PySide6、执行基础设施及业务服务；gui/workers 和 gui/adapters 包�
 
 ## 外部边界与命令接口
 
-ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 提供桌面 GUI、
-`--mobileperf-worker --config <path>`、`--self-check packaging`，以及隔离原生工具环境的
-内部 `--adblab-native-launch` 入口；后者由 `core/native_process.py` 调用，不是用户设备操作接口。
+ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。桌面 GUI 由 `main.py` 启动。
+`main.py --self-check packaging` 检查依赖、资源及运行时工具，
+`main.py --self-check gui` 启动最小窗口检查 Qt 显示后端和事件循环。
+`--mobileperf-worker --config <path>` 运行性能采集子进程，`--startup-splash <server_name>`
+运行启动画面子进程，通过 `QLocalServer`/`QLocalSocket` 与主进程通信。
+Windows 冻结程序需要隔离原生工具环境时，由 `core/native_process.py` 调用 `--adblab-native-launch`。
+这些进程入口的归属见[启动与组合根](ARCHITECTURE.md#启动与组合根)。
 
 主应用有两条出站 HTTPS 流，均复用 QtNetwork 与平台 TLS 后端且不携带令牌：应用更新检查匿名
 读取 `utils/app_metadata.py` 中的 GitHub 公共 Releases API；Windows 安装版用户显式下载安装包时，
@@ -121,8 +125,11 @@ service/model 构造。
 ### scrcpy 进程接口
 
 `services/remote/scrcpy_args.py` 将 `ScrcpyConfig` 转为参数数组，`ScrcpyService.build_launch_plan()`
-先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stdout/stderr 均排空，
-INFO 中的纹理/录制就绪与 FPS 更新页面状态，错误与开发诊断统一脱敏。
+检查版本、执行 ADB 预检，并在预检成功时探测编码器。`start_plan()` 再通过 `ProcessRunner.start()`
+启动镜像进程。POSIX stdout 通过
+私有 PTY 避免子进程缓冲就绪行；Windows stdout 及各平台 stderr 保留 PIPE，均由原 reader
+排空，进程归属不变。页面依据当前进程的 Texture 或无窗口录制的 Recording started 识别就绪，
+不能用进程存活代替画面就绪；FPS 更新状态，错误与开发诊断统一脱敏。
 输出 reader 使用启动计划冻结的设备与工具路径进行脱敏，保留已知路径后的上传统计和错误说明；
 scrcpy 的警告、错误和 `Aborted` 进入应用诊断，普通输出保持 DEBUG，不逐行触发 Remote 操作提示。
 启动诊断只记录后端和版本，便于区分能力探测通过与本次实际选择的执行路径。

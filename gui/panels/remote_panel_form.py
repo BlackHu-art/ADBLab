@@ -41,7 +41,6 @@ from gui.panels.remote_panel_controls import (
     RemoteSessionHint,
     RemoteSwitchButton,
     RemoteToolbarSeparators,
-    RemoteWindowToggle,
 )
 from gui.panels.remote_panel_dock import RemoteControllerWindow, RemotePanelDock
 from gui.styles import BaseStyles, FontRole
@@ -89,7 +88,6 @@ class RemotePanelForm(QObject):
         self._switches = []
         self._toggle_buttons = []
         self._toolbar_separators = []
-        self._group_titles = []
         self._frame._remote_split_groups = []
         self._build_header(lo)
         self._frame._feedback_received.connect(self._show_feedback)
@@ -277,13 +275,6 @@ class RemotePanelForm(QObject):
         self._fields.append((container, label, control))
         return container
 
-    def _group_title(self, layout, text: str) -> None:
-        label = apply_label_role(
-            BodyLabel(tr(text)), FontRole.UI, color_key="TEXT_SECONDARY", bold=True,
-        )
-        self._group_titles.append(label)
-        layout.addWidget(label)
-
     def _switch(self, text: str, tooltip: str) -> SwitchButton:
         switch = RemoteSwitchButton(indicatorPos=IndicatorPosition.LEFT)
         switch.setOnText(tr(text))
@@ -305,20 +296,8 @@ class RemotePanelForm(QObject):
         self._switches.append(switch)
         return switch
 
-    def _window_toggle(self, text: str, icon: str, tooltip: str):
-        button = RemoteWindowToggle()
-        configure_button(button, text=tr(text), tooltip=tr(tooltip))
-        button.setIcon(get_fluent_icon(icon))
-        button.setProperty("iconName", icon)
-        button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        self._toggle_buttons.append(button)
-        return button
-
     def refresh_control_metrics(self) -> None:
         """随宿主字体刷新复合字段的度量，不请求额外布局代次。"""
-        for label in self._group_titles:
-            apply_label_role(label, FontRole.UI, color_key="TEXT_SECONDARY", bold=True)
-            label.setMinimumHeight(label.fontMetrics().height())
         # 字段容器承担布局下限，字体变化仍需重测其内部下拉框的选项宽度。
         for name in ("preset", "maxsize", "fps", "buffer", "bitrate", "orientation"):
             self._frame._refresh_responsive_widget_minimum(getattr(self._frame, name))
@@ -1008,17 +987,6 @@ class RemotePanelForm(QObject):
         button.setIcon(get_fluent_icon(icon))
         button.setProperty("iconName", icon)
         button.setAccessibleName(label)
-        return button
-
-    def _icon_button(self, label: str, icon: str, tooltip: str) -> ToolButton:
-        """无可见文字的动作仍保留名称与提示，图标交由 Fluent 原生控件绘制。"""
-        button = ToolButton()
-        configure_button(button, text="", tooltip=tooltip)
-        button.setAccessibleName(label)
-        button.setIcon(get_fluent_icon(icon))
-        button.setProperty("iconName", icon)
-        button.setIconSize(QSize(20, 20))
-        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         return button
 
     # ── 设置持久化 ──────────────────────────────────────────────────────

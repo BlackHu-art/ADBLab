@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-10-24
+last_verified: 2026-11-09
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -43,7 +43,9 @@ Qt worker 旧/新导入身份、依赖重绑定及新入口导入边界由
 | 一级功能与应用包工具 | 左栏语义导航、可访问名称映射、应用与诊断顶部常显的应用包卡、截图与屏幕页复用的设备工具；与单设备会话分开所有权 | `gui/main_frame.py`、`gui/panels/app_panel.py` | `test_flat_feature_navigation.py`、`test_workspace_consolidation.py` |
 | 侧栏主题入口 | 收起时图标切换、展开时原生深色开关；复用应用主题状态和设置持久化，不参与页面导航 | `gui/widgets/navigation_theme.py`、`gui/main_frame.py` | `test_navigation_theme.py` |
 | 自适应功能导航 | 独立宿主与分类栈的 Pivot/ComboBox 呈现、选择提交和焦点连续性；主窗口中隐藏，不拥有业务会话 | `gui/widgets/adaptive_navigation.py` | `test_adaptive_navigation.py`、`test_adaptive_category_stack.py` |
-| 操作反馈与任务中心 | 声明式动作归属、逐台 ActionResult 和通知；任务中心同时显示普通操作在途入口、可取消 operation 和测试归档，TaskHistoryStore 留作独立页面的兼容入口 | `controllers/action_catalog.py`、`services/tasks/action_results.py`、`gui/action_feedback.py`、`gui/pages/tasks_page.py`、`gui/widgets/action_result_view.py` | `test_task_center.py`、`test_action_results.py`、`test_action_feedback.py`、`test_task_history.py` |
+| 操作反馈与任务中心 | 声明式动作归属与逐台 ActionResult；统一列表汇集普通操作、可取消 operation、测试归档及持续会话，TaskHistoryStore 留作独立页面的兼容入口 | `controllers/action_catalog.py`、`services/tasks/action_results.py`、`gui/action_feedback.py`、`gui/pages/tasks_page.py`、`gui/widgets/action_result_view.py` | `test_task_center.py`、`test_action_results.py`、`test_action_feedback.py`、`test_task_history.py` |
+| 任务详情与导航状态 | 主窗口右侧抽屉复用当前任务的阅读器。导航图标按活动数、忙碌状态和未读异常更新 | `gui/task_feedback.py`、`gui/widgets/task_detail_drawer.py`、`gui/widgets/task_navigation.py` | `test_task_feedback.py`、`test_task_inspector.py`、`test_task_session_busy.py` |
+| 持续会话展示与停止路由 | 枚举已创建的 Logcat、性能采集和投屏会话。用户请求停止时，核对原会话实例、任务标识、版本及可停止状态，再交给原实例处理 | `gui/session_tasks.py`、`gui/main_frame.py` 中的 `MainFrame._session_task_owners()` | `test_session_task_projection.py`、`test_session_task_center.py` |
 | 测试结果与方案 | 跨重启的有界结果索引、命名参数方案、跨实例保存协调、附件打开与历史参数回填 | `services/run_library.py`、`gui/run_library.py`、`gui/widgets/run_results.py`、`gui/widgets/run_preset_bar.py`、`gui/features/performance/library.py` | `test_run_library.py`、`test_run_library_concurrency.py`、`test_run_library_ui.py`、`test_run_results.py`、`test_run_library_integration.py`、`test_monkey_library.py`、`test_performance_library.py` |
 | 业务面板与分类布局 | DeviceManager、AppPanel、SystemPanel 和 RemotePanel 的内容、信号、设备上下文和响应式布局 | `gui/panels/`、`gui/widgets/category_stack.py`、`gui/widgets/responsive_*.py` | `test_app_panel_categories.py`、`test_system_panel_categories.py`、`test_responsive_panels.py`、`test_model_panels.py` |
 | 内嵌功能页 | App Manager、File Explorer、Live Logcat、Performance、Screenshot 与 Settings About 页面；五类功能的实现和协作者在各自功能包，旧 dialogs 路径兼容；media 保留实际包入口定义 | `gui/features/app_manager/`、`gui/features/file_explorer/`、`gui/features/logcat/`、`gui/features/performance/`、`gui/features/media/`、`gui/widgets/performance_progress.py` | `test_app_manager_selection.py`、`test_screenshot_page.py`、`test_model_performance_launcher.py`、`test_logcat_module_compatibility.py`、`test_app_manager_module_compatibility.py`、`test_file_explorer_module_compatibility.py`、`test_performance_module_compatibility.py`、`test_media_module_compatibility.py` |

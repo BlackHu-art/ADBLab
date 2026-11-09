@@ -18,11 +18,9 @@ from qfluentwidgets import (
     ComboBox,
     HorizontalSeparator,
     Pivot,
-    PushButton,
     Slider,
     SwitchButton,
     TransparentPushButton,
-    TransparentTogglePushButton,
     VerticalSeparator,
     themeColor,
 )
@@ -162,13 +160,6 @@ class RemoteSessionHint(BodyLabel):
         super().resizeEvent(event)
         if event.size().width() != event.oldSize().width():
             self.refresh_height()
-
-
-class RemoteWindowToggle(TransparentTogglePushButton):
-    """透明选中态沿用普通图标配色，避免原生强调色底板的反色图标失去对比度。"""
-
-    def _drawIcon(self, icon, painter, rect):
-        PushButton._drawIcon(self, icon, painter, rect)
 
 
 class RemoteCommandButton(TransparentPushButton):

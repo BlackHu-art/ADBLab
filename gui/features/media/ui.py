@@ -70,10 +70,6 @@ class ScreenshotViewerUI:
         ):
             QShortcut(QKeySequence(key), frame, callback)
 
-    @staticmethod
-    def _theme_color(key: str) -> str:
-        return BaseStyles.color(key)
-
     def _apply_theme(self, _value=None):
         """同步项目字体和可访问性，保留 Fluent 控件自身的主题及溢出菜单绘制。"""
 
