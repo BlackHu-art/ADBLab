@@ -1550,6 +1550,19 @@ class DeviceContextBar(QWidget):
         """立即反映用户展开意图，收起过渡中的残留画面不接受设备操作。"""
         return self._selector_open
 
+    def locate_device(self, device: str) -> bool:
+        """只展开并聚焦已有设备行；不提交勾选、会话切换或设备操作。"""
+        self.open_picker()
+        assert self._picker is not None
+        row = self._picker._rows.get(device)
+        if row is None:
+            return False
+        self._picker.device_list.setCurrentItem(row.item)
+        self._picker.device_list.scrollToItem(row.item)
+        self._picker._ensure_current_visible()
+        self._picker.device_list.setFocus(Qt.FocusReason.OtherFocusReason)
+        return True
+
     def toggle_selector(self) -> None:
         """用户点击页头切换列表，保留程序调用 open_picker 的幂等契约。"""
         if self.is_selector_expanded:

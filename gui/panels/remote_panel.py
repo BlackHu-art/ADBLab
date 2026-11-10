@@ -842,6 +842,93 @@ class RemotePanel(BasePanel):
         reader = getattr(self._scrcpy_service, "encoder_probes_owned", None)
         return callable(reader) and reader() is True
 
+    def task_snapshots(self) -> tuple[SessionTaskSnapshot, ...]:
+        """逐台展示原会话；准备、reader 和输入排空仍计入原设备的资源义务。"""
+        batch = self.task_snapshot()
+        probe_reader = getattr(self._scrcpy_service, "encoder_probe_devices_owned", None)
+        probe_devices = probe_reader() if callable(probe_reader) else frozenset()
+        snapshots = []
+        for device, session in getattr(self, "_device_sessions", {}).items():
+            if not session.task_label:
+                bar = getattr(self.window(), "_global_device_bar", None)
+                label = self._session_task_labels.get(device) or (
+                    bar.device_label(device) if bar is not None else ""
+                )
+                session.task_label = label or tr("设备 {count}").format(count=len(snapshots) + 1)
+            session.task_workers[:] = [
+                reference for reference in session.task_workers
+                if (worker := reference()) is not None and (
+                    worker is self._launch_worker or worker in self._orphaned_launch_workers
+                )
+            ]
+            session.task_threads[:] = [
+                thread for thread in session.task_threads if thread.is_alive()
+            ]
+            with self._remote_futures_lock:
+                input_owned = any(not future.done() for future in session.task_futures)
+            probe_owned = device in probe_devices
+            owned = bool(
+                session.resource_owned or session.state == "preparing" or session.task_workers
+                or session.task_threads or input_owned or probe_owned
+            )
+            failed = session.state == "failed" or (
+                session.resource_owned and session.error_type == "StopFailed"
+            )
+            if failed:
+                state = "failed"
+            elif not owned:
+                state = "cancelled"
+            elif (self._closing or session.stop_requested or session.state == "stopping"
+                  or getattr(self, "_stop_all_pending", False)):
+                state = "stopping"
+            elif session.state in {"preparing", "connecting"}:
+                state = "starting"
+            elif session.resource_owned:
+                state = "running"
+            else:
+                state = "stopping"
+            detail = {
+                "starting": tr("准备中") if session.state == "preparing" else tr("连接中"),
+                "running": tr("录制中") if session.config.no_window else tr("镜像中"),
+                "stopping": tr("正在停止镜像并等待批次资源释放"),
+                "failed": self._mirror_failure_reason(session.error_type),
+                "cancelled": tr("已停止"),
+            }[state]
+            enabled = bool(
+                not self._closing and not getattr(self, "_stop_all_pending", False)
+                and not session.stop_inflight
+                and (session.resource_owned or session.state == "preparing")
+                and (not session.stop_requested or session.error_type == "StopFailed")
+            )
+            snapshots.append(SessionTaskSnapshot(
+                session.task_key, str(session.task_revision), "remote", state,
+                owned, enabled, (session.task_label,), detail,
+                busy=owned and (session.stop_inflight or state in {"starting", "stopping"}),
+            ))
+        # 旧兼容入口或批次级后台义务没有单台归属时，保留整批收尾行，不能提前归零。
+        if batch is not None and batch.resource_owned and not any(
+            snapshot.resource_owned for snapshot in snapshots
+        ):
+            snapshots.append(batch)
+        return tuple(snapshots)
+
+    def task_device(self, key: str) -> str | None:
+        """来源定位只解析现存逐台任务的内部目标，不改变全局选择或会话。"""
+        return next((device for device, session in getattr(self, "_device_sessions", {}).items()
+                     if session.task_key == key), None)
+
+    def request_task_snapshot_stop(self, key: str, expected_revision: str) -> bool:
+        """按逐台任务身份复核原配置代次，停止动作不作用于其他镜像。"""
+        if key == self._session_task_key:
+            return self.request_task_stop(expected_revision)
+        snapshot = next((item for item in self.task_snapshots() if item.key == key), None)
+        device = self.task_device(key)
+        if (device is None or snapshot is None or snapshot.revision != expected_revision
+                or not snapshot.resource_owned or not snapshot.stop_enabled):
+            return False
+        self._stop_device_scrcpy(device)
+        return True
+
     def refresh_task_snapshot(self) -> None:
         """准备线程交还残留后，借原有受监督队列核对释放；同一时间至多一个核对。"""
         if (self._closing or self._remote_input_closing or self._launch_worker is not None
@@ -1315,14 +1402,20 @@ class RemotePanel(BasePanel):
 
         future.add_done_callback(release)
 
-    def _track_mirror_input_future(self, future: Future) -> None:
+    def _track_mirror_input_future(
+        self, future: Future, session: RemoteDeviceSession | None = None,
+    ) -> None:
         """仅跟踪已绑定镜像会话令牌的输入，独立广播与客户端重检不归镜像。"""
         with self._remote_futures_lock:
             self._session_task_input_futures.add(future)
+            if session is not None:
+                session.task_futures.add(future)
 
         def release(completed: Future) -> None:
             with self._remote_futures_lock:
                 self._session_task_input_futures.discard(completed)
+                if session is not None:
+                    session.task_futures.discard(completed)
 
         future.add_done_callback(release)
 

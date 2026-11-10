@@ -77,16 +77,16 @@ class StartupSplash(QWidget):
 
     @staticmethod
     def _liquid_boundary() -> QPainterPath:
-        """按原图的 256 单位坐标限定遮罩，瓶身、高光轮廓和白色符号不重画。"""
+        """覆盖原图液体及其抗锯齿亮边，瓶身轮廓和白色符号不重画。"""
 
-        path = QPainterPath(QPointF(43.4, 179.5))
-        path.cubicTo(72, 165, 98, 176, 115, 180.5)
-        path.cubicTo(157, 192.5, 180, 174.4, 201, 176)
-        path.quadTo(208, 176, 212, 178.5)
-        path.lineTo(221, 197.5)
-        path.cubicTo(230, 216, 218, 224, 201, 224)
-        path.lineTo(55, 224)
-        path.cubicTo(32, 224, 26.5, 212, 34, 195)
+        path = QPainterPath(QPointF(38, 177.5))
+        path.cubicTo(60, 162, 86, 174, 115, 179)
+        path.cubicTo(157, 188, 186, 168, 207, 175)
+        path.quadTo(212, 177, 216, 181)
+        path.lineTo(227, 201)
+        path.cubicTo(231, 216, 220, 226, 204, 226)
+        path.lineTo(47, 226)
+        path.cubicTo(28, 226, 22, 215, 28, 198)
         path.closeSubpath()
         return path
 
@@ -192,7 +192,8 @@ class StartupSplash(QWidget):
             painter.setClipPath(self._liquid)
             # 保留原像素 alpha，透明边缘不能因反复叠色变成不透明描边。
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-            boundary = 31 + 194 * self._progress / 100
+            # 端点越过液体两侧并留出波幅，零进度不能露出已完成的亮边。
+            boundary = 22 + 212 * self._progress / 100
             wave_phase = self._activity_phase * math.tau
             liquid_path = QPainterPath()
             liquid_path.moveTo(boundary, 232)

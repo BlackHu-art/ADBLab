@@ -106,6 +106,7 @@ def test_gui_propagates_resolved_auto_platform_before_starting_children(
     monkeypatch.setattr(QtWidgets, "QApplication", Application)
     if entry == "self-check":
         monkeypatch.setattr(QtWidgets, "QWidget", child_boundary)
+    monkeypatch.setattr("utils.app_icon.load_app_icon", lambda: None)
     monkeypatch.setattr("PySide6.QtGui.QIcon", lambda _path: None)
     monkeypatch.setattr(settings_manager.AppSettings, "instance", lambda **_kwargs: {})
     monkeypatch.setattr(settings_manager, "_error_sink", None)
@@ -630,6 +631,7 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         reload_from_settings=reload_fonts, set_accent_color=Mock(), switch_theme=Mock(),
     )
     monkeypatch.setattr("PySide6.QtWidgets.QApplication", FakeApplication)
+    monkeypatch.setattr("utils.app_icon.load_app_icon", lambda: None)
     monkeypatch.setattr("PySide6.QtGui.QIcon", Mock())
     monkeypatch.setattr(main, "setup_qt_search_paths", Mock())
     monkeypatch.setattr("models.device_store.DeviceStore.load", lambda _cancel: None)

@@ -122,6 +122,33 @@ def test_liquid_progress_preserves_original_art_and_alpha(splash):
     assert not splash.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
 
 
+@pytest.mark.parametrize(
+    ("progress", "edge_points"),
+    [
+        (
+            0,
+            [
+                (30, 200), (28, 210), (34, 218), (42, 222), (64, 174),
+                (218, 190), (222, 200), (224, 210), (214, 222),
+            ],
+        ),
+        (50, [(218, 190), (222, 200), (224, 210), (214, 222)]),
+    ],
+)
+def test_unfinished_liquid_does_not_retain_bright_side_or_bottom_edges(
+    splash, progress, edge_points,
+):
+    original = _original_frame(splash.devicePixelRatioF())
+    splash.set_progress(progress, animate=False)
+    unfinished = splash.grab().toImage()
+
+    for x, y in edge_points:
+        source_color = _pixel(original, x, y)
+        actual = _pixel(unfinished, x, y)
+        assert source_color.green() >= 150
+        assert actual.green() <= source_color.green() * .75, (progress, x, y, actual)
+
+
 def test_animation_only_advances_and_stops_at_the_completed_stage(splash):
     original = _original_frame(splash.devicePixelRatioF())
     samples = []
@@ -442,18 +469,33 @@ def test_cold_qt_splash_uses_dpr_without_loading_fluent_or_settings(tmp_path, sc
     script = """
 import json, sys
 from PySide6.QtWidgets import QApplication
-from gui.widgets.startup_splash import StartupSplash
+from gui.widgets.startup_splash import LIQUID_SCALE, SPLASH_MARGIN, StartupSplash
 app = QApplication([])
 widget = StartupSplash()
-widget.set_progress(100, animate=False)
 widget.show()
 app.processEvents()
+edge_greens = {}
+for progress in (0, 50, 100):
+    widget.set_progress(progress, animate=False)
+    frame = widget.grab().toImage()
+    dpr = frame.devicePixelRatio()
+    edge_greens[progress] = [
+        frame.pixelColor(
+            round((SPLASH_MARGIN + x * LIQUID_SCALE) * dpr),
+            round((SPLASH_MARGIN + y * LIQUID_SCALE) * dpr),
+        ).green()
+        for x, y in (
+            (30, 200), (28, 210), (34, 218), (42, 222), (64, 174),
+            (218, 190), (222, 200), (224, 210), (214, 222),
+        )
+    ]
 pixmap = widget.grab()
 print(json.dumps({
     'logical': [widget.width(), widget.height()],
     'physical': [pixmap.width(), pixmap.height()],
     'dpr': pixmap.devicePixelRatio(),
     'alpha': pixmap.toImage().pixelColor(0, 0).alpha(),
+    'edge_greens': edge_greens,
     'forbidden': [name for name in sys.modules if name == 'qfluentwidgets'
                   or name == 'gui.styles' or name == 'core.settings_manager'],
 }))
@@ -476,3 +518,11 @@ widget.finish()
     assert payload["dpr"] == float(scale)
     assert payload["alpha"] == 0
     assert payload["forbidden"] == []
+    for actual, completed in zip(
+        payload["edge_greens"]["0"], payload["edge_greens"]["100"], strict=True,
+    ):
+        assert actual <= completed * .75
+    for actual, completed in zip(
+        payload["edge_greens"]["50"][5:], payload["edge_greens"]["100"][5:], strict=True,
+    ):
+        assert actual <= completed * .75

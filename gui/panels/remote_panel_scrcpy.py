@@ -4,7 +4,9 @@ import re
 import threading
 import time
 import weakref
+from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
+from uuid import uuid4
 
 from PySide6.QtCore import Qt, QThread, QTimer
 from shiboken6 import isValid
@@ -87,6 +89,12 @@ class RemoteDeviceSession:
     stop_inflight: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
     launch_plan: ScrcpyLaunchPlan | None = None
+    task_key: str = field(default_factory=lambda: f"session:remote-device:{uuid4().hex}")
+    task_revision: int = 1
+    task_label: str = ""
+    task_threads: list[threading.Thread] = field(default_factory=list)
+    task_futures: set[Future] = field(default_factory=set)
+    task_workers: list[weakref.ReferenceType[QThread]] = field(default_factory=list)
 
 
 class RemotePanelScrcpy:
@@ -155,7 +163,15 @@ class RemotePanelScrcpy:
             controller = getattr(frame, "_input_controller", None)
             if old is not None and controller is not None:
                 controller._invalidate_session_input(old)
-            sessions[config.device] = RemoteDeviceSession(config)
+            session = RemoteDeviceSession(config)
+            if old is not None:
+                # 同设备行保持身份；旧代次尚未退出的后台资源继续由原屏障等待。
+                session.task_key = old.task_key
+                session.task_revision = old.task_revision + 1
+                session.task_threads = old.task_threads
+                session.task_futures = old.task_futures
+                session.task_workers = old.task_workers
+            sessions[config.device] = session
         frame._status_device_info = ""
         frame._launch_admission_revision = getattr(frame, "_device_admission_revision", 0)
         self._queue_launch_configs(configs)
@@ -172,6 +188,8 @@ class RemotePanelScrcpy:
                 frame._pending_launch_configs = [
                     *getattr(frame, "_pending_launch_configs", ()), *configs,
                 ]
+            for config in configs:
+                frame._device_sessions[config.device].task_workers.append(weakref.ref(worker))
             return
         config = configs[0] if len(configs) == 1 else configs
         worker = ScrcpyLaunchWorker(config, service=frame._scrcpy_service)
@@ -183,6 +201,8 @@ class RemotePanelScrcpy:
             Qt.ConnectionType.QueuedConnection,
         )
         frame._launch_worker = worker
+        for config in configs:
+            frame._device_sessions[config.device].task_workers.append(weakref.ref(worker))
         try:
             worker.start()
         except Exception as exc:
@@ -240,11 +260,11 @@ class RemotePanelScrcpy:
         frame.signals.log_message.emit(
             "DEBUG", f"scrcpy launch backend={backend} version={version}",
         )
-        self._start_process_task(self._read_process_stderr, process, diagnostics)
-        self._start_process_task(self._read_process_stdout, process, diagnostics)
+        self._start_process_task(self._read_process_stderr, process, diagnostics, session=session)
+        self._start_process_task(self._read_process_stdout, process, diagnostics, session=session)
         if not config.no_window:
-            self._start_process_task(self._focus_window_title, config.window_title)
-        self._start_process_task(self._warm_device_input, session)
+            self._start_process_task(self._focus_window_title, config.window_title, session=session)
+        self._start_process_task(self._warm_device_input, session, session=session)
         frame._watchdog.start(500)
 
     def _on_device_plan_failed(self, config: ScrcpyConfig, error_type: str) -> None:
@@ -409,7 +429,7 @@ class RemotePanelScrcpy:
                 frame._log("ERROR", f"scrcpy stop failed: {type(exc).__name__}")
             frame._device_stop_completed_requested.emit(device, session, stopped)
 
-        if not self._start_process_task(stop, None):
+        if not self._start_process_task(stop, None, session=session):
             self._on_device_stop_completed(device, session, False)
 
     def _on_device_stop_completed(self, device: str, original_session, stopped: bool) -> None:
@@ -470,7 +490,9 @@ class RemotePanelScrcpy:
                 frame._release_scrcpy_stop_claim(claim)
             frame._stop_completed_requested.emit(succeeded)
 
-        if not self._start_process_task(stop_all, None):
+        if not self._start_process_task(
+            stop_all, None, sessions=tuple(frame._device_sessions.values()),
+        ):
             frame._release_scrcpy_stop_claim(claim)
             self._on_stop_completed(False)
 
@@ -521,7 +543,11 @@ class RemotePanelScrcpy:
             frame._set_running(False)
             frame._update_status("Error", None)
 
-    def _start_process_task(self, target, argument, *extra_arguments) -> bool:
+    def _start_process_task(
+        self, target, argument, *extra_arguments,
+        session: RemoteDeviceSession | None = None,
+        sessions: tuple[RemoteDeviceSession, ...] = (),
+    ) -> bool:
         """保留每个镜像 reader/焦点任务，关闭屏障等待它们退出后再释放面板。"""
         frame = self._frame
         with frame._shutdown_lifecycle_lock():
@@ -543,6 +569,9 @@ class RemotePanelScrcpy:
                 return False
             # 发布与启动共用关闭锁，清理快照不能漏掉已启动但尚未登记的线程。
             threads.append(thread)
+            for member in ((session,) if session is not None else sessions):
+                member.task_threads[:] = [item for item in member.task_threads if item.is_alive()]
+                member.task_threads.append(thread)
             return True
 
     def _on_launch_ready(self, args: list, device_info: str):

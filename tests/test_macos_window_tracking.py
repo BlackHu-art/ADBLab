@@ -250,16 +250,53 @@ def test_macos_closed_window_cannot_rebind_same_title_and_close_releases_referen
     assert native.api.window_handles() == []
 
 
-def test_macos_requires_explicit_existing_accessibility_authorization(monkeypatch):
+def test_macos_requires_existing_permission_to_verify_window_titles(monkeypatch):
     from services.remote.windowing.macos import MacOSWindowApi
 
     ax = Accessibility()
     ax.trusted = False
     monkeypatch.setattr("services.remote.windowing.macos._load_macos", lambda: (
-        SimpleNamespace(NSThread=SimpleNamespace(isMainThread=lambda: True)), ax, None, None,
+        SimpleNamespace(NSThread=SimpleNamespace(isMainThread=lambda: True)), ax,
+        SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: False), None,
     ))
     with pytest.raises(OSError, match="辅助功能"):
         MacOSWindowApi(os.getpid())
+
+
+def test_macos_metadata_only_binds_verified_title_and_process(native, monkeypatch):
+    from services.remote.windowing.macos import MacOSWindowApi
+
+    native.ax.trusted = False
+    window = dict(native.quartz.CGWindowListCopyWindowInfo(0, 0)[0])
+    foreign = dict(window, kCGWindowNumber=444, kCGWindowOwnerPID=900,
+                   kCGWindowName="session-title")
+    rows = [foreign, window]
+    monkeypatch.setattr(native.quartz, "CGPreflightScreenCaptureAccess", lambda: True,
+                        raising=False)
+    monkeypatch.setattr(native.quartz, "CGWindowListCopyWindowInfo", lambda *_: rows)
+    monkeypatch.setattr(native.quartz, "CGWindowListCreateDescriptionFromArray",
+                        lambda numbers: [r for r in rows if r["kCGWindowNumber"] in numbers],
+                        raising=False)
+    now = [0.0]
+    tracker = WindowsWindowTracker(100, "session-title", api=MacOSWindowApi(100),
+                                   clock=lambda: now[0])
+    try:
+        assert tracker.snapshot() is None   # 标题被遮蔽，同名的无关进程也不能授权输入。
+        window["kCGWindowName"] = "other"
+        now[0] += 1
+        assert tracker.snapshot() is None
+        window["kCGWindowName"] = "session-title"
+        now[0] += 1
+        snapshot = tracker.snapshot()
+        assert snapshot is not None and snapshot.pid == 200
+        assert tracker.position_tool(88, snapshot, (1016, 224, 112, 680))
+        assert native.tool.orders[-1] == (1, 333)
+        window["kCGWindowOwnerPID"] = 900
+        assert tracker.snapshot() is None and tracker.lost
+        assert not tracker.position_tool(88, snapshot, (1016, 224, 112, 680))
+        assert native.ax.accessed == []
+    finally:
+        tracker.close()
 
 
 def test_macos_verified_window_subscribes_native_motion_and_releases_late_events(

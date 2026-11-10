@@ -452,17 +452,17 @@ def _run_gui_session(trace, *, handoff=None) -> int:
     _configure_gui_scaling(settings.get("ui_scale", "Auto"))
     trace.record("settings")
     from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from gui.startup import StartupController
     from gui.startup_process import StartupSplashProcess
+    from utils.app_icon import load_app_icon
 
     app = QApplication(sys.argv)
     if automatic_platform:
         # 自动候选已由 Qt 完成连接验证，子进程继承实际平台，避免混用 X11/Wayland。
         os.environ["QT_QPA_PLATFORM"] = app.platformName()
-    app.setWindowIcon(QIcon(resource_path("icon.ico")))
+    app.setWindowIcon(load_app_icon())
     setup_qt_search_paths()
     splash = StartupSplashProcess(parent=app)
     startup = StartupController(splash, parent=app)

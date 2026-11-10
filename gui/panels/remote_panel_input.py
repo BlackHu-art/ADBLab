@@ -27,7 +27,10 @@ class RemotePanelInput:
             or getattr(self._frame, "_remote_input_closing", False)
         )
 
-    def _submit_remote_input(self, task, *, cancelled: Callable[[], bool] | None = None):
+    def _submit_remote_input(
+        self, task, *, cancelled: Callable[[], bool] | None = None,
+        session: RemoteDeviceSession | None = None,
+    ):
         """共用输入队列；广播检查选择代次，会话任务只接受已冻结的取消令牌。"""
         if cancelled is None and not self._frame._can_operate_device():
             return
@@ -63,7 +66,7 @@ class RemotePanelInput:
                 if cancelled is not None:
                     track_mirror = getattr(self._frame, "_track_mirror_input_future", None)
                     if callable(track_mirror):
-                        track_mirror(future)
+                        track_mirror(future, session)
                 track_future = getattr(self._frame, "_track_remote_future", None)
                 if callable(track_future):
                     track_future(future)
@@ -125,6 +128,7 @@ class RemotePanelInput:
                 device, key_name, cancelled=cancelled,
             ),
             cancelled=cancelled,
+            session=session,
         )
 
     def _send_session_action(self, session: RemoteDeviceSession, action: str) -> None:
@@ -138,6 +142,7 @@ class RemotePanelInput:
                 device, action, cancelled=cancelled,
             ),
             cancelled=cancelled,
+            session=session,
         )
 
     def _mark_remote_submitted(self):

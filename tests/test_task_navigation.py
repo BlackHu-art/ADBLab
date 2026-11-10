@@ -4,12 +4,26 @@ import importlib
 import importlib.util
 
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QSignalSpy, QTest
 
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
+
+
+class _PaintProbe(QObject):
+    """观察真实绘制区域，验证状态动画不会连带刷新导航正文。"""
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        self.regions = []
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Paint:
+            self.regions.append(event.region())
+        return False
 
 
 @pytest.fixture
@@ -50,6 +64,39 @@ def test_active_and_unread_priority_discard_superseded_success(navigation):
     assert tr("进行中") not in button.accessibleName()
     button.set_snapshot(snapshot())
     assert button.accessibleName() == tr("任务中心")
+
+
+def test_repeated_snapshot_does_not_repaint_navigation(navigation, qt_application):
+    button, snapshot = navigation()
+    button.setCompacted(False)
+    current = snapshot(unread_count=1)
+    button.set_snapshot(current)
+    qt_application.processEvents()
+    probe = _PaintProbe(button)
+
+    button.set_snapshot(current)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.UpdateRequest)
+    qt_application.processEvents()
+
+    assert not probe.regions
+    assert tr("未读异常") in button.accessibleName()
+
+
+def test_activity_frame_repaints_icon_without_navigation_text(navigation, qt_application):
+    button, snapshot = navigation()
+    button.setCompacted(False)
+    button.set_snapshot(snapshot(active_count=2, busy_count=1))
+    qt_application.processEvents()
+    probe = _PaintProbe(button)
+
+    button._advance_animation()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.UpdateRequest)
+    qt_application.processEvents()
+
+    assert probe.regions
+    assert all(not region.contains(QPoint(80, 18)) for region in probe.regions)
+    assert all(region.boundingRect().right() < 40 for region in probe.regions)
+    assert "2" in button.accessibleName()
 
 
 def test_initial_snapshot_and_suppressed_success_never_replay(navigation):

@@ -92,6 +92,257 @@ def test_registry_label_override_preserves_identity_and_original_stop_route():
     assert owner.stops == ["run"]
 
 
+def test_remote_registry_projects_each_device_and_keeps_failure_independent(
+    remote_session, qt_application, monkeypatch,
+):
+    api = _api()
+    remote, service = remote_session
+    labels = {"first": "设备 3 · 型号甲", "second": "设备 8 · 型号乙"}
+    monkeypatch.setattr(
+        remote.window(), "_global_device_bar",
+        SimpleNamespace(device_label=labels.__getitem__, device_display_name=labels.__getitem__),
+        raising=False,
+    )
+    service.failures.add("second")
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: (
+        service.started == ["first"] and remote._launch_worker is None
+    ))
+    remote._on_scrcpy_output(service.processes["first"], "INFO: Texture: 1080x2400")
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    snapshots = registry.collect()
+    assert len(snapshots) == 2
+    first, second = snapshots
+    assert first.key != second.key
+    assert first.target_labels == ("设备 3 · 型号甲",)
+    assert first.state == "running" and first.resource_owned and not first.busy
+    assert second.target_labels == ("设备 8 · 型号乙",)
+    assert second.state == "failed" and not second.resource_owned
+    assert not second.stop_enabled
+    remote.set_target_devices([])
+    assert registry.collect() == snapshots
+    from gui.pages.tasks_page import TaskCenterPage
+
+    page = TaskCenterPage()
+    try:
+        page.set_session_snapshots(snapshots)
+        rows = page.recent_rows()
+        assert len(rows) == 2
+        assert {row.target for row in rows} == {"设备 3 · 型号甲", "设备 8 · 型号乙"}
+        assert {row.state for row in rows} == {"运行中", "失败"}
+        assert page.navigation_snapshot().active_count == 1
+        assert page.navigation_snapshot().unread_count == 1
+    finally:
+        page.shutdown()
+        page.close()
+
+
+def test_remote_registry_stops_only_original_device_and_rejects_duplicate_and_old_revision(
+    remote_session, qt_application,
+):
+    api = _api()
+    remote, service = remote_session
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: len(service.started) == 2 and remote._launch_worker is None)
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    first, second = registry.collect()
+    assert len(first.target_labels) == len(second.target_labels) == 1
+    original = remote._device_sessions["first"]
+    assert registry.request_stop(first.key, first.revision)
+    assert not registry.request_stop(first.key, first.revision)
+    wait_until(qt_application, lambda: not original.resource_owned)
+    wait_until(qt_application, lambda: not registry.collect()[0].resource_owned)
+    assert service.processes["second"].poll() is None
+    assert registry.collect()[1].resource_owned
+    remote._retry_device_scrcpy("first")
+    wait_until(qt_application, lambda: service.started.count("first") == 2)
+    current = registry.collect()[0]
+    assert current.key == first.key and current.revision != first.revision
+    assert not registry.request_stop(first.key, first.revision)
+    remote._on_device_stop_completed("first", original, True)
+    assert registry.collect()[0].resource_owned
+    assert service.processes["first"].poll() is None
+
+
+def test_remote_registry_keeps_single_device_stop_failure_active_and_retryable(
+    remote_session, qt_application, monkeypatch,
+):
+    api = _api()
+    remote, service = remote_session
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: len(service.started) == 2 and remote._launch_worker is None)
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    first, second = registry.collect()
+    original_stop = service.stop
+
+    def fail_first_stop(key, timeout=2):
+        if key != remote._device_sessions["first"].key:
+            original_stop(key, timeout)
+
+    monkeypatch.setattr(service, "stop", fail_first_stop)
+    assert registry.request_stop(first.key, first.revision)
+    wait_until(qt_application, lambda: registry.collect()[0].state == "failed")
+    failed, unaffected = registry.collect()
+    assert failed.resource_owned and failed.stop_enabled and not failed.busy
+    assert unaffected.key == second.key and unaffected.resource_owned
+    entered, release = threading.Event(), threading.Event()
+
+    def delayed_stop(key, timeout=2):
+        entered.set()
+        assert release.wait(2)
+        original_stop(key, timeout)
+
+    monkeypatch.setattr(service, "stop", delayed_stop)
+    try:
+        assert registry.request_stop(failed.key, failed.revision)
+        assert entered.wait(1)
+        retrying = registry.collect()[0]
+        assert retrying.state == "failed" and retrying.resource_owned
+        assert retrying.busy and not retrying.stop_enabled
+    finally:
+        release.set()
+    wait_until(qt_application, lambda: not registry.collect()[0].resource_owned)
+    assert registry.collect()[1].resource_owned
+
+
+def test_remote_registry_cancelled_preflight_keeps_ownership_until_worker_join(
+    remote_session, qt_application, monkeypatch,
+):
+    api = _api()
+    remote, service = remote_session
+    entered, release = threading.Event(), threading.Event()
+    original_prepare = service.build_launch_plan
+
+    def delayed_prepare(config, *, cancelled):
+        if config.device == "first":
+            entered.set()
+            assert release.wait(2)
+        return original_prepare(config, cancelled=cancelled)
+
+    monkeypatch.setattr(service, "build_launch_plan", delayed_prepare)
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    try:
+        wait_until(qt_application, lambda: entered.is_set() and "second" in service.started)
+        first, _second = registry.collect()
+        assert registry.request_stop(first.key, first.revision)
+        pending = registry.collect()[0]
+        assert pending.resource_owned and pending.state == "stopping"
+        assert not pending.stop_enabled
+        assert service.processes["second"].poll() is None
+    finally:
+        release.set()
+    wait_until(qt_application, lambda: remote._launch_worker is None)
+    assert not registry.collect()[0].resource_owned
+    assert registry.collect()[0].state == "cancelled"
+    assert registry.collect()[1].resource_owned
+
+
+def test_remote_registry_attributes_input_tail_to_original_device_only(
+    remote_session, qt_application, monkeypatch,
+):
+    api = _api()
+    remote, service = remote_session
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: len(service.started) == 2 and remote._launch_worker is None)
+    for process in service.processes.values():
+        remote._on_scrcpy_output(process, "INFO: Texture: 1080x2400")
+    entered, release = threading.Event(), threading.Event()
+
+    def delayed_key(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        return True
+
+    monkeypatch.setattr(remote._remote_control, "send_keyevent", delayed_key)
+    remote._input_controller._send_session_keyevent(remote._device_sessions["first"], "HOME")
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    try:
+        assert entered.wait(1)
+        first, _second = registry.collect()
+        assert registry.request_stop(first.key, first.revision)
+        wait_until(qt_application, lambda: not remote._device_sessions["first"].resource_owned)
+        pending, unaffected = registry.collect()
+        assert pending.resource_owned and pending.state == "stopping"
+        assert unaffected.resource_owned and unaffected.state == "running" and not unaffected.busy
+    finally:
+        release.set()
+    wait_until(qt_application, lambda: not registry.collect()[0].resource_owned)
+    assert registry.collect()[1].resource_owned
+
+
+def test_remote_registry_natural_exit_keeps_device_busy_until_helper_cleanup(
+    remote_session, qt_application,
+):
+    api = _api()
+    remote, service = remote_session
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: len(service.started) == 2 and remote._launch_worker is None)
+    for process in service.processes.values():
+        remote._on_scrcpy_output(process, "INFO: Texture: 1080x2400")
+    original = remote._device_sessions["first"]
+    service.cleanup_pending.add(original.key)
+    service.processes["first"].finish()
+    remote._poll_process()
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    try:
+        pending, unaffected = registry.collect()
+        assert pending.state == "stopping" and pending.resource_owned and pending.busy
+        assert unaffected.state == "running" and unaffected.resource_owned and not unaffected.busy
+    finally:
+        service.cleanup_pending.discard(original.key)
+    remote._poll_process()
+    wait_until(qt_application, lambda: not registry.collect()[0].resource_owned)
+
+
+def test_remote_registry_new_probe_never_reactivates_previously_stopped_device(
+    remote_session, qt_application, monkeypatch,
+):
+    api = _api()
+    remote, service = remote_session
+    probe_devices = set()
+    monkeypatch.setattr(service, "encoder_probes_owned", lambda: bool(probe_devices), raising=False)
+    monkeypatch.setattr(
+        service, "encoder_probe_devices_owned", lambda: frozenset(probe_devices), raising=False,
+    )
+    monkeypatch.setattr(
+        service, "encoder_probes_running", lambda: bool(probe_devices), raising=False,
+    )
+    remote.set_target_devices(["first", "second"])
+    remote._start_scrcpy()
+    wait_until(qt_application, lambda: len(service.started) == 2 and remote._launch_worker is None)
+    registry = api.SessionTaskRegistry(lambda: (remote,))
+    first, _second = registry.collect()
+    assert registry.request_stop(first.key, first.revision)
+    wait_until(qt_application, lambda: not registry.collect()[0].resource_owned)
+    release = service.gates["third"] = threading.Event()
+    service.failures.add("third")
+    remote.set_target_devices(["second", "third"])
+    remote._start_scrcpy()
+    try:
+        wait_until(qt_application, lambda: "third" in service.prepared)
+        probe_devices.add("third")
+        stopped, running, preparing = registry.collect()
+        assert stopped.state == "cancelled" and not stopped.resource_owned
+        assert running.resource_owned and preparing.resource_owned
+        release.set()
+        wait_until(qt_application, lambda: remote._launch_worker is None)
+        stopped, running, residual = registry.collect()
+        assert not stopped.resource_owned
+        assert running.resource_owned
+        assert residual.state == "failed" and residual.resource_owned
+    finally:
+        release.set()
+        probe_devices.clear()
+    wait_until(qt_application, lambda: not registry.collect()[2].resource_owned)
+
+
 @pytest.fixture
 def performance_page(qt_application):
     from gui.features.performance.page import PerformancePage

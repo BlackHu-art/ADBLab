@@ -5,7 +5,7 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Protocol, cast
 
 from shiboken6 import isValid
 
@@ -38,6 +38,15 @@ class SessionTaskOwner(Protocol):
         ...
 
 
+def owner_task_snapshots(owner: SessionTaskOwner) -> tuple[SessionTaskSnapshot, ...]:
+    """兼容单会话 owner；多设备 owner 可公开逐台快照而不拆分资源所有权。"""
+    snapshots = getattr(owner, "task_snapshots", None)
+    if callable(snapshots):
+        return tuple(cast(Callable[[], Iterable[SessionTaskSnapshot]], snapshots)())
+    snapshot = owner.task_snapshot()
+    return (snapshot,) if snapshot is not None else ()
+
+
 class SessionTaskRegistry:
     """只保留弱路由；停止前重新枚举，防止旧实例或旧版本按钮操作新会话。"""
 
@@ -63,17 +72,15 @@ class SessionTaskRegistry:
             refresh = getattr(owner, "refresh_task_snapshot", None)
             if callable(refresh):
                 refresh()
-            snapshot = owner.task_snapshot()
-            if snapshot is None:
-                continue
-            if snapshot.key in routes:
-                raise ValueError("duplicate session task owner key")
-            routes[snapshot.key] = weakref.ref(owner)
-            if self._labels is not None:
-                labels = self._labels(owner)
-                if labels is not None:
-                    snapshot = replace(snapshot, target_labels=labels)
-            snapshots.append(snapshot)
+            for snapshot in owner_task_snapshots(owner):
+                if snapshot.key in routes:
+                    raise ValueError("duplicate session task owner key")
+                routes[snapshot.key] = weakref.ref(owner)
+                if self._labels is not None:
+                    labels = self._labels(owner)
+                    if labels is not None:
+                        snapshot = replace(snapshot, target_labels=labels)
+                snapshots.append(snapshot)
         self._routes = routes
         return tuple(snapshots)
 
@@ -88,10 +95,13 @@ class SessionTaskRegistry:
         for owner in self._owners():
             if owner is not original:
                 continue
-            snapshot = owner.task_snapshot()
-            if (snapshot is None or snapshot.key != key or snapshot.revision != revision
+            snapshot = next((item for item in owner_task_snapshots(owner) if item.key == key), None)
+            if (snapshot is None or snapshot.revision != revision
                     or not snapshot.resource_owned or not snapshot.stop_enabled):
                 return False
+            stop = getattr(owner, "request_task_snapshot_stop", None)
+            if callable(stop):
+                return cast(Callable[[str, str], bool], stop)(key, revision)
             return owner.request_task_stop(revision)
         return False
 

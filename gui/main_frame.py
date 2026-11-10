@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCloseEvent, QFocusEvent, QIcon, QRegion, QResizeEvent
+from PySide6.QtGui import QCloseEvent, QFocusEvent, QRegion, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -98,7 +98,7 @@ from gui.workers.device_discovery import _ScanThread as _ScanThread
 from models.device_store import DeviceStore
 from services.run_library import RunLibrary, RunRecord
 from services.task_history import TaskHistoryStore
-from utils.resource_path import resource_path
+from utils.app_icon import load_app_icon
 
 from .styles import BaseStyles, FontRole
 from .styles.fluent import (
@@ -568,7 +568,7 @@ class MainFrame(FluentWindow):
 
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
-        self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        self.setWindowIcon(load_app_icon())
         # 复用系统标题标签，名称处的鼠标操作仍交给标题栏处理拖动和双击。
         label = cast(FluentTitleBar, self.titleBar).titleLabel
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -1496,9 +1496,12 @@ class MainFrame(FluentWindow):
                     )
         remote = self.left_panel.remote_panel
         if remote is not None and isValid(remote):
-            snapshot = remote.task_snapshot()
-            if snapshot is not None and snapshot.key == owner_key:
-                return self._open_workspace_feature("devices", "remote")
+            if any(snapshot.key == owner_key for snapshot in remote.task_snapshots()):
+                opened = self._open_workspace_feature("devices", "remote")
+                device = remote.task_device(owner_key)
+                if opened and device is not None:
+                    self._global_device_bar.locate_device(device)
+                return opened
         return False
 
     def _stop_operation_from_task_center(self, operation_id: str) -> None:

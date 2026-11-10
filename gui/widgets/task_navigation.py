@@ -6,7 +6,7 @@ import weakref
 from collections import deque
 from dataclasses import dataclass
 
-from PySide6.QtCore import QLineF, QRectF, Qt, QTimer
+from PySide6.QtCore import QLineF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QIconEngine, QPainter, QPainterPath, QPen, QPixmap
 from qfluentwidgets import FluentIcon, NavigationPushButton
 
@@ -94,6 +94,8 @@ class TaskNavigationButton(NavigationPushButton):
         """消费全局快照；重复事件不延长成功期限，高优先状态立即丢弃成功提示。"""
         if self._closed:
             return
+        if self._initialized and snapshot == self._snapshot:
+            return
         self._snapshot = snapshot
         event_id = snapshot.success_event_id
         unseen_success = event_id is not None and event_id not in self._success_ids
@@ -109,7 +111,7 @@ class TaskNavigationButton(NavigationPushButton):
             self._success_timer.start()
         self._sync_animation()
         self._update_description()
-        self.update()
+        self._update_status()
 
     def set_presentation_enabled(self, enabled: bool) -> None:
         """宿主隐藏或最小化时停钟并丢弃成功提示；仍消费快照，恢复不重播后台成功。"""
@@ -134,9 +136,15 @@ class TaskNavigationButton(NavigationPushButton):
 
     def _clear_success(self) -> None:
         self._success_timer.stop()
+        if not self._success_visible:
+            return
         self._success_visible = False
         self._update_description()
-        self.update()
+        self._update_status()
+
+    def _update_status(self) -> None:
+        """仅刷新原生图标及环、角标的外沿，避免动画反复合成整行透明背景。"""
+        self.update(QRect(7 + self._margins().left(), 4, 30, 29))
 
     def _is_busy(self) -> bool:
         """旧调用沿用活动动画，任务页显式区分资源活动与阶段忙碌。"""
@@ -152,8 +160,10 @@ class TaskNavigationButton(NavigationPushButton):
             self._animation_timer.stop()
 
     def _advance_animation(self) -> None:
+        if self._closed:
+            return
         self._angle = (self._angle + 12) % 360
-        self.update()
+        self._update_status()
 
     def _refresh_appearance(self, *_args) -> None:
         if not self._closed:

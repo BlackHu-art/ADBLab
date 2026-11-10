@@ -39,6 +39,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md, UI_IMPLEMENTATION.md]
 其中原生退出探针只覆盖受控 Windows 离屏场景，不证明历史退出异常的唯一原因，也不替代
 真实磁盘阻塞、Linux/macOS 窗口管理器和真实安装交接验收。已有 UI 断言及类型检查基线失败
 仍未闭环，准确节点与基线对照见[修复验证记录](../reviews/2026-10-28-full-audit/REMEDIATION_VALIDATION.md)。
+2026-11-08 的镜像关联测试另复现 9 项既有失败，逐项 HEAD 对照及本轮验证范围见
+[UI 修复验证记录](../reviews/2026-11-08-ui-refinements-validation.md#既有失败与基线对照)。
 
 ## 应用内升级验收边界
 

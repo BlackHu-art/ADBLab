@@ -134,6 +134,7 @@ class ScrcpyService:
         self._bridge_sessions: dict[str, _BridgeSession] = {}
         self._bridge_lock = threading.Lock()
         self._encoder_scopes: set[NativeCommandScope] = set()
+        self._encoder_devices: dict[NativeCommandScope, str] = {}
         self._encoder_inflight: set[NativeCommandScope] = set()
         self._encoder_lock = threading.Lock()
         self._encoder_stopped = False
@@ -310,6 +311,7 @@ class ScrcpyService:
             if self._encoder_stopped:
                 raise InterruptedError("scrcpy encoder probes stopped")
             self._encoder_scopes.add(scope)
+            self._encoder_devices[scope] = config.device
             self._encoder_inflight.add(scope)
 
         def query_cancelled() -> bool:
@@ -334,6 +336,7 @@ class ScrcpyService:
                 self._encoder_inflight.discard(scope)
                 if not running:
                     self._encoder_scopes.discard(scope)
+                    self._encoder_devices.pop(scope, None)
             if running:
                 raise OSError("编码器查询尚未完成清理，不能启动投屏。")
         return (result.output or "") if result.success else None
@@ -343,6 +346,11 @@ class ScrcpyService:
         with self._encoder_lock:
             return bool(self._encoder_scopes)
 
+    def encoder_probe_devices_owned(self) -> frozenset[str]:
+        """只读原查询登记的设备归属；不核对进程或把新查询计入已停止设备。"""
+        with self._encoder_lock:
+            return frozenset(self._encoder_devices.values())
+
     def encoder_probes_running(self) -> bool:
         """核对已交还的原生资源；查询执行方尚未建好句柄时也不能提前解除登记。"""
         with self._encoder_lock:
@@ -350,6 +358,8 @@ class ScrcpyService:
         released = [scope for scope in returned if not scope.is_running()]
         with self._encoder_lock:
             self._encoder_scopes.difference_update(released)
+            for scope in released:
+                self._encoder_devices.pop(scope, None)
             return bool(self._encoder_scopes)
 
     def request_stop_encoder_probes(self) -> None:

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-11-02
+last_verified: 2026-11-08
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md, UI_IMPLEMENTATION.md]
 ---
 
@@ -28,8 +28,9 @@ ADBLab 通过 Qt Signal/Slot 连接桌面界面与异步设备操作。普通面
 Remote窗口契约和Win32/X11/macOS/事件订阅实现位于 `services/remote/windowing/`；原 `window_tracking.py` 保留实际
 跟踪策略和平台工厂。平台模块只依赖契约，不反向导入策略；旧X11和事件入口保留相同类/资源集合的兼容导出。
 macOS 后端只在 cocoa 界面线程创建，使用现有 PyObjC 的辅助功能接口验证会话窗口，AppKit
-仅定位本进程的侧栏；缺少辅助功能授权时保留便携工具栏，不自动请求或修改系统权限。
-已验证窗口通过主 RunLoop 的 AXObserver 通知几何与状态变化，绑定的 CG 窗口编号和 PID
+仅定位本进程的侧栏。辅助功能未授权时，若系统已允许读取窗口标题，则按进程树、精确标题与
+CG 窗口编号核验归属，按 60ms 轮询几何和可见性。两种权限均不可用时保留便携工具栏。
+辅助功能路径通过主 RunLoop 的 AXObserver 通知几何与状态变化，绑定的 CG 窗口编号和 PID
 用于轻量几何刷新。macOS 空闲以 60ms 检查几何，移动期间按屏幕刷新率合并采样，静止后
 降频；独立的 250ms 生命周期检查和每次设备输入仍完整核验 AX 身份。状态通知使下一次
 几何刷新先核验身份；订阅暂时失败可节流重试。关闭先作废回调、移除 RunLoop source 和
@@ -397,7 +398,9 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
   实时成功事件投影，不读取 Controller 或操作资源；应用关闭先停止这些呈现时钟，再走原资源屏障。
 - 持续会话通过 `gui/session_tasks.py` 的不可变快照与弱路由纳入任务中心。性能、Logcat、RemotePanel
   公开资源 owner 快照与版本化停止入口；MainFrame 只枚举已有 registry 页面及唯一镜像面板，
-  协调器沿原刷新节拍投影。显示状态与 `resource_owned` 独立，停止请求不改变原释放屏障，
+  协调器沿原刷新节拍投影。镜像面板通过 `task_snapshots()` 公开逐台快照，注册表兼容原单会话
+  接口；逐台停止复核 key 与 revision，批次级清理仍由原面板拥有。
+  显示状态与 `resource_owned` 独立，停止请求不改变原释放屏障，
   隐藏或失选不迁移资源所有权；仅显示元数据进入内存，不复制日志或新增持久化格式。
   镜像快照只读原面板的进程归属和服务的编码器登记；准备线程交还的客户端由既有后台队列
   核对退出，展示与停止前的版本复核均不访问原生进程。性能页承担所有代次尚未交付并退出的归档。

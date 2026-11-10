@@ -469,19 +469,27 @@ def test_native_remote_projection_keeps_global_labels_for_single_and_batch_after
     coordinator = frame._task_feedback
     try:
         coordinator._refresh_hidden_page()
-        snapshot = remote.task_snapshot()
+        snapshot, = remote.task_snapshots()
         key = "session:" + snapshot.key
         assert frame._task_page.detail_row(key).target == bar.device_label(devices[2])
         assert bar.device_label(devices[2]) == tr("设备 {number}").format(number=3)
         remote._device_sessions[devices[1]] = member(devices[1])
         coordinator._refresh_hidden_page()
-        expected = " · ".join((bar.device_label(devices[2]), bar.device_label(devices[1])))
-        assert frame._task_page.detail_row(key).target == expected
+        second_key = "session:" + remote._device_sessions[devices[1]].task_key
+        expected = {
+            key: tr("设备 {number}").format(number=3),
+            second_key: tr("设备 {number}").format(number=2),
+        }
+        assert frame._task_page.navigation_snapshot().active_count == 2
+        for task_key, label in expected.items():
+            assert frame._task_page.detail_row(task_key).target == label
         bar.set_context([], [], "ready")
         remote.set_target_devices([])
         remote.set_connected_devices([])
         coordinator._refresh_hidden_page()
-        assert frame._task_page.detail_row(key).target == expected
+        assert frame._task_page.navigation_snapshot().active_count == 2
+        for task_key, label in expected.items():
+            assert frame._task_page.detail_row(task_key).target == label
         frame._on_nav_requested("tasks")
         coordinator.open_entry(key)
         coordinator.drawer.source_requested.emit(key)

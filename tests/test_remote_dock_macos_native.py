@@ -86,10 +86,10 @@ app.exec()
 
 
 @contextmanager
-def _mirror_process(qt_application):
+def _mirror_process(qt_application, *, require_ax=True):
     import ApplicationServices
 
-    if not ApplicationServices.AXIsProcessTrusted():
+    if require_ax and not ApplicationServices.AXIsProcessTrusted():
         pytest.skip("真实窗口跟随需已有辅助功能授权；未授权降级由接口测试覆盖")
     title = "ADBLab-macos-dock-" + uuid.uuid4().hex
     process = subprocess.Popen(
@@ -169,6 +169,55 @@ def macos_dock(qt_application, mirror):
 def _snapshot_matches(tracker, predicate):
     snapshot = tracker.snapshot()
     return snapshot is not None and predicate(snapshot)
+
+
+def test_macos_existing_window_metadata_follows_external_mirror_without_ax(
+    qt_application, monkeypatch,
+):
+    import ApplicationServices
+    import Quartz
+
+    from gui.panels.remote_panel_dock import RemotePanelDock, dock_geometry
+    from tests.test_remote_dock import Frame, session
+
+    if not Quartz.CGPreflightScreenCaptureAccess():
+        pytest.skip("本例只使用系统已允许读取的窗口元数据")
+    monkeypatch.setattr(ApplicationServices, "AXIsProcessTrusted", lambda: False)
+    with _mirror_process(qt_application, require_ax=False) as mirror:
+        owner, frame = QWidget(), Frame()
+        current = session("a", mirror.process.pid)
+        current.config.window_title = mirror.title
+        current.process = mirror.process
+        frame._device_sessions["a"] = current
+        dock = RemotePanelDock(frame, owner)
+        try:
+            dock.sync()
+            entry = dock.entries["a"]
+            assert entry.tracker is not None
+            wait_until(qt_application, entry.toolbar.isVisible)
+            initial = entry.tracker.snapshot()
+
+            def attached():
+                state = entry.tracker.snapshot()
+                if state is None or not state.visible or state.rect == initial.rect:
+                    return False
+                scale = state.dpi / 96
+                rect = tuple(round(v * scale) for v in entry.toolbar.frameGeometry().getRect())
+                return rect == dock_geometry(state.rect, state.work_area, rect[2:])
+
+            mirror.send("move", 260, 150)
+            wait_until(qt_application, attached)
+            mirror.send("resize", 450, 400)
+            wait_until(qt_application, lambda: attached() and
+                       entry.tracker.snapshot().rect[2] != initial.rect[2])
+            mirror.send("minimize")
+            wait_until(qt_application, lambda: not entry.toolbar.isVisible())
+            mirror.send("restore")
+            wait_until(qt_application, lambda: entry.toolbar.isVisible() and attached())
+            assert entry.tracker.snapshot().hwnd == initial.hwnd
+        finally:
+            dock.close()
+            owner.close()
 
 
 def test_macos_native_motion_places_toolbar_flush_without_full_state_polling(

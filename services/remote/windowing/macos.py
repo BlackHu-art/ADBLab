@@ -1,4 +1,4 @@
-"""以辅助功能接口读取会话窗口，仅用 AppKit 定位本进程的投屏侧栏。"""
+"""通过 macOS 可用的窗口元数据核验镜像，仅用 AppKit 定位本进程的侧栏。"""
 
 from __future__ import annotations
 
@@ -54,17 +54,18 @@ class _Window:
 
 
 class MacOSWindowApi:
-    """GUI 线程拥有 AX 引用；只读取本次进程树，关闭时释放全部窗口和应用引用。
+    """GUI 线程核验本次进程树内的窗口，只定位本应用拥有的侧栏。
 
-    不请求或更改系统权限。缺少辅助功能授权时由工厂使用便携侧栏；短时 AX 超时
-    抛出 OSError 保留已绑定身份，只有原生对象失效才允许跟踪器结束会话绑定。
+    优先使用辅助功能；当前进程已有读取窗口标题的权限时也可用 CG 元数据跟随。
+    不请求系统权限或获取屏幕图像。短时 AX 超时抛出 OSError 保留已绑定身份。
     """
 
     def __init__(self, root_pid: int) -> None:
         self._appkit, self._ax, self._quartz, self._objc = _load_macos()
         if not self._appkit.NSThread.isMainThread():
             raise OSError("macOS 窗口跟随必须在 GUI 主线程初始化")
-        if not self._ax.AXIsProcessTrusted():
+        self._use_ax = bool(self._ax.AXIsProcessTrusted())
+        if not self._use_ax and not self._quartz.CGPreflightScreenCaptureAccess():
             raise OSError("macOS 窗口跟随需要在系统设置中授予启动程序辅助功能权限")
         self._root_pid = root_pid
         self._parents: dict[int, int] = {}
@@ -109,9 +110,19 @@ class MacOSWindowApi:
             raise OSError("无法限制 macOS 镜像窗口查询时间")
 
     def window_handles(self) -> list[int]:
-        """只枚举本次进程树中已注册 GUI 应用的 AX 窗口，保留稳定的不透明身份。"""
+        """仅保留原进程树的候选；精确标题由跟踪器在绑定前后核验。"""
         if self._closed:
             return []
+        if not self._use_ax:
+            cg = self._quartz
+            infos = cg.CGWindowListCopyWindowInfo(cg.kCGWindowListOptionAll, cg.kCGNullWindowID)
+            self._windows.clear()
+            for info in infos or ():
+                pid = int(info["kCGWindowOwnerPID"])
+                if self._belongs(pid) and info.get("kCGWindowName"):
+                    number = int(info["kCGWindowNumber"])
+                    self._windows[number] = _Window(pid, None, None, number=number)
+            return list(self._windows)
         handles = []
         workspace = self._appkit.NSWorkspace.sharedWorkspace()
         for running in workspace.runningApplications():
@@ -142,11 +153,15 @@ class MacOSWindowApi:
         return handles
 
     def identity(self, hwnd: int) -> tuple[int, str] | None:
-        """精确标题由 AX 读取，不需要屏幕录制权限，也不以无标题窗口猜测身份。"""
+        """每次核验从原生窗口读取标题，禁止仅凭进程、编号或几何猜测目标。"""
         window = self._windows.get(hwnd)
         if self._closed or window is None:
             return None
-        title = self._attribute(window.element, "AXTitle")
+        if self._use_ax:
+            title = self._attribute(window.element, "AXTitle")
+        else:
+            info = self._metadata(window)
+            title = info.get("kCGWindowName") if info is not None else None
         return (window.pid, title) if isinstance(title, str) else None
 
     def subscribe_changes(
@@ -154,7 +169,8 @@ class MacOSWindowApi:
     ) -> _WindowSubscription | None:
         """仅为已发现且身份仍有效的会话窗口注册通知，调用方拥有并负责关闭订阅。"""
         window = self._windows.get(hwnd)
-        if self._closed or window is None or window.pid != pid or self.identity(hwnd) is None:
+        if (not self._use_ax or self._closed or window is None
+                or window.pid != pid or self.identity(hwnd) is None):
             return None
         from services.remote.windowing.macos_events import MacOSWindowSubscription
 
@@ -199,6 +215,18 @@ class MacOSWindowApi:
 
         return max(screens, key=rank), primary_top
 
+    def _metadata(self, window: _Window) -> Any:
+        """按已知编号读取所属进程的描述；最小化或隐藏时仍能核验原窗口。"""
+        infos = self._quartz.CGWindowListCreateDescriptionFromArray([window.number])
+        if infos is None:
+            raise OSError("macOS 窗口元数据暂时不可读取")
+        for info in infos:
+            if (info.get("kCGWindowOwnerPID") == window.pid
+                    and info.get("kCGWindowNumber") == window.number):
+                window.level = int(info.get("kCGWindowLayer", 0))
+                return info
+        return None
+
     def _window_info(self, window: _Window, rect: tuple[float, float, float, float]) -> Any:
         """首次按 AX 几何匹配 CG 编号，移动期间只查该编号，避免逐帧枚举整个桌面。"""
         cg = self._quartz
@@ -229,10 +257,12 @@ class MacOSWindowApi:
         return None
 
     def snapshot(self, hwnd: int) -> NativeWindowSnapshot | None:
-        """读取完整状态；跟踪器在调用前后验证 AX 身份，已绑定几何由 CG 提供。"""
+        """读取窗口状态；跟踪器在调用前后验证同一进程与精确标题。"""
         window = self._windows.get(hwnd)
         if self._closed or window is None:
             return None
+        if not self._use_ax:
+            return self.motion_snapshot(hwnd, window.pid)
         info = self._window_info(window, (0, 0, 0, 0)) if window.number else None
         rect = _cg_rect(info) or self._rect(window)
         if rect is None:
@@ -267,12 +297,12 @@ class MacOSWindowApi:
         )
 
     def motion_snapshot(self, hwnd: int, pid: int) -> NativeWindowSnapshot | None:
-        """移动只查已绑定 CG 编号；状态通知或编号失效交还完整 AX 核验，不授权输入。"""
+        """按绑定编号读取几何；设备输入另由跟踪器重新核验进程和标题。"""
         window = self._windows.get(hwnd)
         if (self._closed or window is None or window.pid != pid
                 or not window.number or window.needs_verification):
             return None
-        info = self._window_info(window, (0, 0, 0, 0))
+        info = self._window_info(window, (0, 0, 0, 0)) if self._use_ax else self._metadata(window)
         if info is None:
             return None
         rect = _cg_rect(info)

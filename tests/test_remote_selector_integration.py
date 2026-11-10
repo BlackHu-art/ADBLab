@@ -28,6 +28,26 @@ def test_empty_mirror_start_opens_shared_selector(frame, qt_application):
     assert remote.selected_devices == []
 
 
+def test_remote_task_source_locates_original_row_without_changing_targets(frame, qt_application):
+    from gui.panels.remote_panel_scrcpy import RemoteDeviceSession
+    from services.remote import ScrcpyConfig
+
+    remote, bar = _open_remote(frame)
+    frame.left_panel.set_selected_devices(["demo-b"])
+    config = ScrcpyConfig("", "", "demo-a", "1024", "30", "4M", "auto", "0", "")
+    session = RemoteDeviceSession(config, state="stopped")
+    remote._device_sessions = {"demo-a": session}
+    frame._on_nav_requested("tasks")
+    assert frame._open_session_task_source(f"session:{session.task_key}")
+    qt_application.processEvents()
+    assert bar.is_selector_expanded
+    assert bar._picker.device_list.currentItem() is bar._picker._rows["demo-a"].item
+    assert frame.left_panel.selected_devices == ["demo-b"]
+    assert remote._device_sessions["demo-a"] is session
+    assert not bar.locate_device("missing-device")
+    assert frame.left_panel.selected_devices == ["demo-b"]
+
+
 def test_remote_operations_follow_visible_page_without_changing_targets(
     frame, qt_application, monkeypatch,
 ):

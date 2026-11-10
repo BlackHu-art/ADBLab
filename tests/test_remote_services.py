@@ -28,6 +28,43 @@ from services.remote.control_mapping import directional_swipe, notification_swip
 _TEST_ADB = ""
 
 
+def test_encoder_probe_device_ownership_is_memory_only_and_released_independently(monkeypatch):
+    import time
+    from dataclasses import replace
+
+    scopes = []
+
+    class Scope:
+        def __init__(self, *_args):
+            self.token = str(len(scopes))
+            self.running = True
+            scopes.append(self)
+
+        def is_running(self):
+            return self.running
+
+        def _stop_requested(self):
+            return False
+
+    monkeypatch.setattr("services.remote.scrcpy_service.ScrcpyEncoderScope", Scope)
+    service = ScrcpyService()
+    config = ScrcpyConfig("scrcpy", "adb", "first", "1024", "30", "4M", "auto", "0", "")
+    monkeypatch.setattr(service, "run_command", lambda *_args, **_kwargs: CommandResult(True, ""))
+    for device in ("first", "second"):
+        with pytest.raises(OSError, match="清理"):
+            service._encoder_listing(replace(config, device=device), deadline=time.monotonic() + 1)
+    assert service.encoder_probe_devices_owned() == frozenset({"first", "second"})
+    assert service.encoder_probes_owned()
+    scopes[0].running = False
+    assert service.encoder_probes_running()
+    scopes[1].is_running = Mock(side_effect=AssertionError("展示不可核对原生进程"))
+    assert service.encoder_probe_devices_owned() == frozenset({"second"})
+    assert service.encoder_probes_owned()
+    scopes[1].is_running = lambda: False
+    assert not service.encoder_probes_running()
+    assert service.encoder_probe_devices_owned() == frozenset()
+
+
 def _idle_input_bridge(**kwargs):
     """这些编排用例不创建输入进程，替身明确提供资源已退出的查询协议。"""
     return Mock(
